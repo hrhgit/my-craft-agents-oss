@@ -15,14 +15,14 @@ class FakeWebContents extends EventEmitter {
 describe('loadRendererTarget', () => {
   it('builds a canonical cross-page URL without leaking prior page state', () => {
     const playground = rendererPageUrl('file:///app/index.html?workspaceId=w1&ws=alpha#session', 'playground.html')
-    playground.searchParams.set('scenario', 'remote-ui-composer')
-    expect(playground.toString()).toBe('file:///app/playground.html?scenario=remote-ui-composer')
+    playground.searchParams.set('scenario', 'extension-interaction-composer')
+    expect(playground.toString()).toBe('file:///app/playground.html?scenario=extension-interaction-composer')
     expect(rendererPageUrl(playground.toString(), 'index.html').toString()).toBe('file:///app/index.html')
   })
 
   it('settles only when the requested target finishes despite an ERR_ABORTED startup navigation', async () => {
     const webContents = new FakeWebContents()
-    const target = 'file:///app/playground.html?scenario=remote-ui-composer'
+    const target = 'file:///app/playground.html?scenario=extension-interaction-composer'
     const window = {
       isDestroyed: () => false,
       webContents,

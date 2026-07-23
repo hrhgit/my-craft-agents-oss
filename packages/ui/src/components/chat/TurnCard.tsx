@@ -247,6 +247,36 @@ export interface ResponseContent {
   artifact?: PlanArtifactV1
 }
 
+export interface TurnCardSearchTarget {
+  type: 'turn' | 'message' | 'tool-call' | 'tool-result'
+  id: string
+}
+
+export interface TurnCardSearchReveal {
+  expandTurn: boolean
+  activityGroupId: string | null
+}
+
+export function getTurnCardSearchReveal(
+  activities: readonly ActivityItem[],
+  target: TurnCardSearchTarget | undefined,
+): TurnCardSearchReveal {
+  if (!target || (target.type !== 'tool-call' && target.type !== 'tool-result')) {
+    return { expandTurn: false, activityGroupId: null }
+  }
+
+  const activity = activities.find(candidate => candidate.id === target.id)
+  if (!activity) return { expandTurn: false, activityGroupId: null }
+
+  const parent = activity.parentId
+    ? activities.find(candidate => candidate.toolUseId === activity.parentId)
+    : undefined
+  return {
+    expandTurn: true,
+    activityGroupId: parent?.id ?? null,
+  }
+}
+
 export interface ArtifactContributionPresentation {
   aside?: React.ReactNode
   asideTitle?: string
@@ -311,6 +341,10 @@ export interface TurnCardProps {
   expandedActivityGroups?: Set<string>
   /** Callback when activity group expansion changes */
   onExpandedActivityGroupsChange?: (groups: Set<string>) => void
+  /** Search target whose concrete semantic wrapper must be revealed. */
+  activeSearchTarget?: TurnCardSearchTarget
+  /** Reports the concrete target after any required activity expansion. */
+  onSearchTargetReady?: (element: HTMLElement | null) => void
   /** Callback when file path is clicked */
   onOpenFile?: (path: string) => void
   /** Callback when URL is clicked */
@@ -367,6 +401,16 @@ export interface TurnCardProps {
   openAnnotationRequest?: OpenAnnotationRequest | null
   /** Annotation interaction mode (viewer uses tooltip-only to suppress the island) */
   annotationInteractionMode?: AnnotationInteractionMode
+}
+
+function ActivitySearchTarget({ activity, children }: { activity: ActivityItem; children: React.ReactNode }) {
+  return (
+    <div data-mortise-search-target-type="tool-call" data-mortise-search-target-id={activity.id}>
+      <div data-mortise-search-target-type="tool-result" data-mortise-search-target-id={activity.id}>
+        {children}
+      </div>
+    </div>
+  )
 }
 
 // ============================================================================
@@ -1276,7 +1320,9 @@ function ActivityGroupRow({ group, expandedGroups: externalExpandedGroups, onExp
         </motion.div>
 
         {/* Status icon - aligned with tool call icons */}
-        <ActivityStatusIcon status={group.parent.status} toolName={group.parent.toolName} />
+        <ActivitySearchTarget activity={group.parent}>
+          <ActivityStatusIcon status={group.parent.status} toolName={group.parent.toolName} />
+        </ActivitySearchTarget>
 
         {/* Subagent type badge */}
         <span className="shrink-0 px-1.5 py-0.5 rounded-[4px] bg-background shadow-minimal text-[10px] font-medium">
@@ -1359,19 +1405,21 @@ function ActivityGroupRow({ group, expandedGroups: externalExpandedGroups, onExp
                   transition={{ delay: idx * 0.02 }}
                   className="ml-[-4px]"
                 >
-                  {renderActivity ? renderActivity(child, <ActivityRow
-                    activity={child}
-                    onOpenDetails={onOpenActivityDetails ? () => onOpenActivityDetails(child) : undefined}
-                    isLastChild={idx === group.children.length - 1}
-                    sessionFolderPath={sessionFolderPath}
-                    displayMode={displayMode}
-                  />) : <ActivityRow
-                    activity={child}
-                    onOpenDetails={onOpenActivityDetails ? () => onOpenActivityDetails(child) : undefined}
-                    isLastChild={idx === group.children.length - 1}
-                    sessionFolderPath={sessionFolderPath}
-                    displayMode={displayMode}
-                  />}
+                  <ActivitySearchTarget activity={child}>
+                    {renderActivity ? renderActivity(child, <ActivityRow
+                      activity={child}
+                      onOpenDetails={onOpenActivityDetails ? () => onOpenActivityDetails(child) : undefined}
+                      isLastChild={idx === group.children.length - 1}
+                      sessionFolderPath={sessionFolderPath}
+                      displayMode={displayMode}
+                    />) : <ActivityRow
+                      activity={child}
+                      onOpenDetails={onOpenActivityDetails ? () => onOpenActivityDetails(child) : undefined}
+                      isLastChild={idx === group.children.length - 1}
+                      sessionFolderPath={sessionFolderPath}
+                      displayMode={displayMode}
+                    />}
+                  </ActivitySearchTarget>
                 </motion.div>
               ))}
             </div>
@@ -2897,6 +2945,8 @@ export const TurnCard = React.memo(function TurnCard({
   onExpandedChange,
   expandedActivityGroups: externalExpandedActivityGroups,
   onExpandedActivityGroupsChange,
+  activeSearchTarget,
+  onSearchTargetReady,
   onOpenFile,
   onOpenUrl,
   onPopOut,
@@ -2994,6 +3044,59 @@ export const TurnCard = React.memo(function TurnCard({
   const [localExpandedActivityGroups, setLocalExpandedActivityGroups] = useState<Set<string>>(new Set())
   const expandedActivityGroups = externalExpandedActivityGroups ?? localExpandedActivityGroups
   const handleExpandedActivityGroupsChange = onExpandedActivityGroupsChange ?? setLocalExpandedActivityGroups
+  const searchRootRef = useRef<HTMLDivElement>(null)
+  const searchReveal = useMemo(
+    () => getTurnCardSearchReveal(activities, activeSearchTarget),
+    [activities, activeSearchTarget],
+  )
+
+  useEffect(() => {
+    if (searchReveal.expandTurn && !isExpanded) {
+      if (onExpandedChange) onExpandedChange(true)
+      else setLocalExpandedTurns(previous => new Set(previous).add(turnId))
+    }
+
+    const groupId = searchReveal.activityGroupId
+    if (groupId && !expandedActivityGroups.has(groupId)) {
+      const next = new Set(expandedActivityGroups)
+      next.add(groupId)
+      handleExpandedActivityGroupsChange(next)
+    }
+  }, [
+    expandedActivityGroups,
+    handleExpandedActivityGroupsChange,
+    isExpanded,
+    onExpandedChange,
+    searchReveal,
+    turnId,
+  ])
+
+  useLayoutEffect(() => {
+    if (!onSearchTargetReady || !activeSearchTarget) return
+
+    const findTarget = () => {
+      const root = searchRootRef.current
+      if (!root) return null
+      if (activeSearchTarget.type === 'turn' && activeSearchTarget.id === turnId) return root
+      const candidates = root.querySelectorAll<HTMLElement>('[data-mortise-search-target-type][data-mortise-search-target-id]')
+      return Array.from(candidates).find(element => (
+        element.dataset.mortiseSearchTargetType === activeSearchTarget.type
+        && element.dataset.mortiseSearchTargetId === activeSearchTarget.id
+      )) ?? null
+    }
+
+    let reported = findTarget()
+    onSearchTargetReady(reported)
+    const frame = reported ? null : requestAnimationFrame(() => {
+      reported = findTarget()
+      onSearchTargetReady(reported)
+    })
+
+    return () => {
+      if (frame !== null) cancelAnimationFrame(frame)
+      onSearchTargetReady(null)
+    }
+  }, [activeSearchTarget, expandedActivityGroups, isExpanded, onSearchTargetReady, turnId])
 
   // Check if response is in buffering state
   // No polling needed - parent updates trigger re-evaluation naturally
@@ -3086,10 +3189,15 @@ export const TurnCard = React.memo(function TurnCard({
   const isThinking = shouldShowThinkingIndicator(turnPhase, isBuffering)
 
   return (
-    <div className="space-y-1">
-      {/* Activity Section - excluded from search highlighting (matches ripgrep behavior) */}
+    <div
+      ref={searchRootRef}
+      className="space-y-1"
+      data-mortise-search-target-type="turn"
+      data-mortise-search-target-id={turnId}
+    >
+      {/* Activity Section */}
       {hasActivities && (
-        <div className="group select-none" data-search-exclude="true">
+        <div className="group select-none">
           {/* Collapsed Header / Toggle */}
           <button
             onClick={toggleExpanded}
@@ -3196,17 +3304,19 @@ export const TurnCard = React.memo(function TurnCard({
                           animate={{ opacity: 1, x: 0 }}
                           transition={{ delay: hasUserToggled.current ? (index < SIZE_CONFIG.staggeredAnimationLimit ? index * 0.03 : SIZE_CONFIG.staggeredAnimationLimit * 0.03) : 0 }}
                         >
-                          {renderActivity ? renderActivity(item, <ActivityRow
-                            activity={item}
-                            onOpenDetails={onOpenActivityDetails ? () => onOpenActivityDetails(item) : undefined}
-                            sessionFolderPath={sessionFolderPath}
-                            displayMode={displayMode}
-                          />) : <ActivityRow
-                            activity={item}
-                            onOpenDetails={onOpenActivityDetails ? () => onOpenActivityDetails(item) : undefined}
-                            sessionFolderPath={sessionFolderPath}
-                            displayMode={displayMode}
-                          />}
+                          <ActivitySearchTarget activity={item}>
+                            {renderActivity ? renderActivity(item, <ActivityRow
+                              activity={item}
+                              onOpenDetails={onOpenActivityDetails ? () => onOpenActivityDetails(item) : undefined}
+                              sessionFolderPath={sessionFolderPath}
+                              displayMode={displayMode}
+                            />) : <ActivityRow
+                              activity={item}
+                              onOpenDetails={onOpenActivityDetails ? () => onOpenActivityDetails(item) : undefined}
+                              sessionFolderPath={sessionFolderPath}
+                              displayMode={displayMode}
+                            />}
+                          </ActivitySearchTarget>
                         </motion.div>
                       )
                     ))
@@ -3224,19 +3334,21 @@ export const TurnCard = React.memo(function TurnCard({
                         // Only animate on user toggle, not initial mount
                         transition={{ delay: hasUserToggled.current ? (index < SIZE_CONFIG.staggeredAnimationLimit ? index * 0.03 : SIZE_CONFIG.staggeredAnimationLimit * 0.03) : 0 }}
                       >
-                        {renderActivity ? renderActivity(activity, <ActivityRow
-                          activity={activity}
-                          onOpenDetails={onOpenActivityDetails ? () => onOpenActivityDetails(activity) : undefined}
-                          isLastChild={lastChildSet.has(activity.id)}
-                          sessionFolderPath={sessionFolderPath}
-                          displayMode={displayMode}
-                        />) : <ActivityRow
-                          activity={activity}
-                          onOpenDetails={onOpenActivityDetails ? () => onOpenActivityDetails(activity) : undefined}
-                          isLastChild={lastChildSet.has(activity.id)}
-                          sessionFolderPath={sessionFolderPath}
-                          displayMode={displayMode}
-                        />}
+                        <ActivitySearchTarget activity={activity}>
+                          {renderActivity ? renderActivity(activity, <ActivityRow
+                            activity={activity}
+                            onOpenDetails={onOpenActivityDetails ? () => onOpenActivityDetails(activity) : undefined}
+                            isLastChild={lastChildSet.has(activity.id)}
+                            sessionFolderPath={sessionFolderPath}
+                            displayMode={displayMode}
+                          />) : <ActivityRow
+                            activity={activity}
+                            onOpenDetails={onOpenActivityDetails ? () => onOpenActivityDetails(activity) : undefined}
+                            isLastChild={lastChildSet.has(activity.id)}
+                            sessionFolderPath={sessionFolderPath}
+                            displayMode={displayMode}
+                          />}
+                        </ActivitySearchTarget>
                       </motion.div>
                     ))
                   )}
@@ -3279,7 +3391,12 @@ export const TurnCard = React.memo(function TurnCard({
 
       {/* Plan Activities - rendered as full ResponseCards, time-sorted with other activities */}
       {planActivities.map((planActivity, index) => (
-        <div key={planActivity.id} className={cn("select-text", (hasActivities || index > 0) && "mt-2")}>
+        <div
+          key={planActivity.id}
+          className={cn("select-text", (hasActivities || index > 0) && "mt-2")}
+          data-mortise-search-target-type="message"
+          data-mortise-search-target-id={planActivity.messageId ?? planActivity.id}
+        >
           {renderMessageNode(planActivity.messageId ?? planActivity.id, <ResponseCard
             text={planActivity.content || ''}
             isStreaming={false}
@@ -3317,6 +3434,8 @@ export const TurnCard = React.memo(function TurnCard({
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.3, ease: "easeOut" }}
               className={cn("select-text", hasActivities && "mt-2")}
+              data-mortise-search-target-type="message"
+              data-mortise-search-target-id={response.messageId}
             >
               {renderMessageNode(response.messageId, <ResponseCard
                 text={response.text}
@@ -3354,7 +3473,11 @@ export const TurnCard = React.memo(function TurnCard({
       )}
       {/* Non-animated version for regular app use */}
       {!animateResponse && response && !isBuffering && (
-        <div className={cn("select-text", hasActivities && "mt-2")}>
+        <div
+          className={cn("select-text", hasActivities && "mt-2")}
+          data-mortise-search-target-type="message"
+          data-mortise-search-target-id={response.messageId}
+        >
           {renderMessageNode(response.messageId, <ResponseCard
             text={response.text}
             isStreaming={response.isStreaming}
@@ -3402,6 +3525,9 @@ export const TurnCard = React.memo(function TurnCard({
   // Re-render if expansion state changed
   if (prev.isExpanded !== next.isExpanded) return false
   if (prev.expandedActivityGroups !== next.expandedActivityGroups) return false
+  if (prev.activeSearchTarget?.type !== next.activeSearchTarget?.type
+    || prev.activeSearchTarget?.id !== next.activeSearchTarget?.id) return false
+  if (prev.onSearchTargetReady !== next.onSearchTargetReady) return false
 
   // Re-render if isLastResponse changed (for Accept Plan button visibility)
   if (prev.isLastResponse !== next.isLastResponse) return false

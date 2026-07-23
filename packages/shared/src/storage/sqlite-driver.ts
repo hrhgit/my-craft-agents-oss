@@ -69,7 +69,7 @@ function isBunRuntime(): boolean {
   return typeof (process.versions as Record<string, string | undefined>).bun === 'string'
 }
 
-function openCraftSqliteDatabaseNative(
+function openMortiseSqliteDatabaseNative(
   databasePath: string,
   options: { busyTimeoutMs?: number } = {},
 ): MortiseSqliteDatabase {
@@ -126,16 +126,16 @@ function openCraftSqliteDatabaseNative(
 }
 
 /** Open the runtime-native SQLite adapter without introducing an async boundary. */
-export function openCraftSqliteDatabaseSync(
+export function openMortiseSqliteDatabaseSync(
   databasePath: string,
   options: { busyTimeoutMs?: number } = {},
 ): MortiseSqliteDatabase {
-  return openCraftSqliteDatabaseNative(databasePath, options)
+  return openMortiseSqliteDatabaseNative(databasePath, options)
 }
 
-export async function openCraftSqliteDatabase(
+export async function openMortiseSqliteDatabase(
   databasePath: string,
   options: { busyTimeoutMs?: number } = {},
 ): Promise<MortiseSqliteDatabase> {
-  return openCraftSqliteDatabaseNative(databasePath, options)
+  return openMortiseSqliteDatabaseNative(databasePath, options)
 }

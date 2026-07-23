@@ -1,4 +1,5 @@
 import { listSkillsSync as listPiSkillsSync } from '@mortise/pi-coding-agent/host-facade';
+import { MORTISE_AGENT_DIR, MORTISE_PROJECT_DIR } from '../config/paths.ts';
 import { validateSkillSlug } from '../skills/storage.ts';
 
 export type PiSkillTier = 'global' | 'project';
@@ -21,8 +22,16 @@ function tierForIndex(index: number): PiSkillTier {
 export class PiSkillResolver {
   constructor(private readonly projectRoot?: string) {}
 
+  private listSkills() {
+    return listPiSkillsSync({
+      cwd: this.projectRoot,
+      agentDir: MORTISE_AGENT_DIR,
+      projectConfigDir: MORTISE_PROJECT_DIR,
+    });
+  }
+
   getSkillPaths(): PiSkillPath[] {
-    return listPiSkillsSync({ cwd: this.projectRoot }).skillRoots.map((dir, index) => ({
+    return this.listSkills().skillRoots.map((dir, index) => ({
       tier: tierForIndex(index),
       dir,
     }));
@@ -31,7 +40,7 @@ export class PiSkillResolver {
   resolveSkill(slug: string): PiResolvedSkill | null {
     if (validateSkillSlug(slug) === null) return null;
 
-    const result = listPiSkillsSync({ cwd: this.projectRoot });
+    const result = this.listSkills();
     const skill = result.skills.find(candidate => candidate.slug === slug);
     if (!skill) return null;
 

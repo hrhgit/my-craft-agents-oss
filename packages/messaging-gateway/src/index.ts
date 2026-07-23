@@ -30,7 +30,6 @@ export type {
   ButtonPress,
   ChannelBinding,
   BindingConfig,
-  RawBindingConfig,
   MessagingConfig,
   MessagingLogger,
   MessagingLogContext,
@@ -43,7 +42,7 @@ export {
   DEFAULT_BINDING_CONFIG,
   DEFAULT_MESSAGING_CONFIG,
   getDefaultBindingConfig,
-  normalizeBindingConfig,
+  createBindingConfig,
 } from './types'
 
 export { createFanOutSink, type EventSinkFn } from './event-fanout'

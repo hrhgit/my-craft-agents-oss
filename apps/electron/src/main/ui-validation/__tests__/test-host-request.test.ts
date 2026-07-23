@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { parseElectronActionParams, parseElectronWaitParams } from '../test-host-request'
+import { parseElectronActionParams, parseElectronWaitParams, parseRendererPerformanceDuration } from '../test-host-request'
 
 describe('Electron Test Host public request parsing', () => {
   it('normalizes legacy ref actions and accepts one stable selector', () => {
@@ -40,5 +40,15 @@ describe('Electron Test Host public request parsing', () => {
     expect(() => parseElectronWaitParams({
       predicate: { kind: 'node', target: { semanticId: 'save', role: 'button' } },
     })).toThrow('exactly one')
+  })
+
+  it('accepts only bounded numeric renderer performance durations', () => {
+    expect(parseRendererPerformanceDuration(undefined)).toBe(1_000)
+    expect(parseRendererPerformanceDuration(100)).toBe(100)
+    expect(parseRendererPerformanceDuration(5_000)).toBe(5_000)
+    expect(parseRendererPerformanceDuration(99)).toBeNull()
+    expect(parseRendererPerformanceDuration(5_001)).toBeNull()
+    expect(parseRendererPerformanceDuration('250')).toBeNull()
+    expect(parseRendererPerformanceDuration(Number.NaN)).toBeNull()
   })
 })

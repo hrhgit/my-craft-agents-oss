@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { pathToFileURL } from 'url'
@@ -62,10 +62,8 @@ function setupWorkspaceConfigDir() {
 }
 
 function runEval(configDir: string, code: string): string {
-  // Isolate ~/.pi/agent/settings.json to a per-config temp dir so the test
-  // neither pollutes the real pi settings nor reads stale real values.
-  // getDefaultThinkingLevel() now prefers pi settings.json as the SoT.
-  const piAgentDir = join(configDir, 'pi-agent')
+  // Isolate the Mortise Agent settings from real user state.
+  const piAgentDir = join(configDir, 'agent')
   mkdirSync(piAgentDir, { recursive: true })
   const run = Bun.spawnSync([
     process.execPath,
@@ -99,7 +97,7 @@ describe('default thinking level storage', () => {
     const config = JSON.parse(readFileSync(configPath, 'utf-8'))
     expect(config.defaultThinkingLevel).toBeUndefined()
 
-    const piSettings = JSON.parse(readFileSync(join(configDir, 'pi-agent', 'settings.json'), 'utf-8'))
+    const piSettings = JSON.parse(readFileSync(join(configDir, 'agent', 'settings.json'), 'utf-8'))
     expect(piSettings.defaultThinkingLevel).toBe('xhigh')
   }, 15_000)
 
@@ -126,9 +124,9 @@ describe('default thinking level storage', () => {
     expect(output.split(/\r?\n/)).toEqual(levels)
   }, 15_000)
 
-  it('normalizes legacy "think" value from pi settings to "medium"', () => {
+  it('rejects the retired "think" value persisted in pi settings instead of migrating it', () => {
     const { configDir } = setupWorkspaceConfigDir()
-    const piAgentDir = join(configDir, 'pi-agent')
+    const piAgentDir = join(configDir, 'agent')
     mkdirSync(piAgentDir, { recursive: true })
     writeFileSync(
       join(piAgentDir, 'settings.json'),
@@ -136,16 +134,32 @@ describe('default thinking level storage', () => {
       'utf-8',
     )
 
+    // No aliasing/migration: the retired literal is invalid, so the getter
+    // falls back to the workspace default ('off') rather than returning 'medium'.
+    // Mutation guard: if the think -> medium alias is reintroduced, this fails.
     const output = runEval(configDir, "console.log(String(getDefaultThinkingLevel()))")
-    expect(output).toBe('medium')
+    expect(output).toBe('off')
+    expect(output).not.toBe('medium')
   }, 15_000)
 
-  it('normalizes legacy "max" value to "xhigh"', () => {
+  it('rejects the retired "max" value at the setter boundary without persisting an alias', () => {
     const { configDir } = setupWorkspaceConfigDir()
-    runEval(configDir, "await setDefaultThinkingLevel('max'); console.log(String(getDefaultThinkingLevel()))")
+    // setDefaultThinkingLevel returns false when normalization fails; it must
+    // not persist anything. Mutation guard: if the max -> xhigh alias is
+    // reintroduced, the setter returns true and persists 'xhigh'.
+    const accepted = runEval(configDir, "console.log(String(await setDefaultThinkingLevel('max')))")
+    expect(accepted).toBe('false')
 
-    const piSettings = JSON.parse(readFileSync(join(configDir, 'pi-agent', 'settings.json'), 'utf-8'))
-    expect(piSettings.defaultThinkingLevel).toBe('xhigh')
+    const piSettingsPath = join(configDir, 'agent', 'settings.json')
+    const persistedLevel = existsSync(piSettingsPath)
+      ? (JSON.parse(readFileSync(piSettingsPath, 'utf-8')) as { defaultThinkingLevel?: unknown }).defaultThinkingLevel
+      : undefined
+    expect(persistedLevel).not.toBe('xhigh')
+    expect(persistedLevel).toBeUndefined()
+
+    // Getter still returns the workspace default, proving nothing was persisted.
+    const output = runEval(configDir, "console.log(String(getDefaultThinkingLevel()))")
+    expect(output).toBe('off')
   }, 15_000)
 
   it('does not read legacy defaultThinkingLevel from mortise config', () => {

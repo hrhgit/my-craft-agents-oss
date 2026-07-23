@@ -228,7 +228,7 @@ describe('extractToolStarts', () => {
   it('re-emits duplicate empty-input tool_start when metadata arrives late', () => {
     const toolUseId = 'toolu_browser_1'
     const streamBlocks: ContentBlock[] = [
-      makeToolUseBlock('mcp__session__browser_open', {}, toolUseId),
+      makeToolUseBlock('browser_tool', {}, toolUseId),
     ]
 
     try {
@@ -249,7 +249,7 @@ describe('extractToolStarts', () => {
         timestamp: Date.now(),
       })
 
-      // Duplicate assistant event still has empty input for browser_open,
+      // Duplicate assistant event still has empty input for browser_tool,
       // but should re-emit now that metadata is available.
       const events2 = extractToolStarts(streamBlocks, null, toolIndex, emittedIds)
       expect(events2).toHaveLength(1)

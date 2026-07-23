@@ -13,7 +13,6 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@mortise/shared": "workspace:*",
     "beautiful-mermaid": "*",
     "zod": "^3.23.0",
     "zod-to-json-schema": "^3.25.0",

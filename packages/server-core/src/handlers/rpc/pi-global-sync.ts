@@ -1,12 +1,12 @@
 /**
  * Pi Global → Mortise thin wrapper
  *
- * ~/.pi/agent/ 是 "pure Pi + custom provider" 模式的唯一数据源（SoT）。
- * Mortise 现在直接读写 ~/.pi/agent/，不再在 config.json 中维护 `pi-*`
- * Pi 凭证统一存储在 ~/.pi/agent/auth.json。
+ * ~/.mortise/agent/ 是 "pure Pi + custom provider" 模式的唯一数据源（SoT）。
+ * Mortise 现在直接读写 ~/.mortise/agent/，不再在 config.json 中维护 `pi-*`
+ * Pi 凭证统一存储在 ~/.mortise/agent/auth.json。
  *
  * 职责（thin wrapper）：
- * - 读取 ~/.pi/agent/ 的 providers + settings（用于启动校验与 defaultProvider
+ * - 读取 ~/.mortise/agent/ 的 providers + settings（用于启动校验与 defaultProvider
  *   自动修复）。
  *
  * 不再做的事：
@@ -21,7 +21,6 @@
  */
 
 import {
-  migratePiGlobalProviderApiKeysToAuth,
   readPiGlobalProviders,
   readPiGlobalSettings,
   setPiGlobalDefault,
@@ -35,9 +34,9 @@ export interface SyncResult {
 }
 
 /**
- * ~/.pi/agent/ 的 thin wrapper。
+ * ~/.mortise/agent/ 的 thin wrapper。
  *
- * - 读取 ~/.pi/agent/ 的 providers + default，并对失效的 defaultProvider 做自动修复。
+ * - 读取 ~/.mortise/agent/ 的 providers + default，并对失效的 defaultProvider 做自动修复。
  * - 不写入 Mortise 旧配置或旧凭证路径。
  *
  * 返回 SyncResult。永不抛错——错误会被记录并以 `error` 字段返回。
@@ -48,21 +47,11 @@ export async function syncPiGlobalConfig(): Promise<SyncResult> {
   let changed = false
 
   try {
-    const migration = migratePiGlobalProviderApiKeysToAuth()
-    changed = migration.changed
-  } catch (e) {
-    return {
-      changed: false,
-      error: `Failed to migrate ~/.pi/agent/models.json apiKey fields into auth.json: ${e instanceof Error ? e.message : String(e)}`,
-    }
-  }
-
-  try {
     providers = readPiGlobalProviders()
   } catch (e) {
     return {
       changed: false,
-      error: `Failed to read ~/.pi/agent/models.json: ${e instanceof Error ? e.message : String(e)}`,
+      error: `Failed to read ~/.mortise/agent/models.json: ${e instanceof Error ? e.message : String(e)}`,
     }
   }
   try {
@@ -93,7 +82,7 @@ export async function syncPiGlobalConfig(): Promise<SyncResult> {
         console.error('[pi-global-sync] 自动修复 defaultProvider 失败:', e)
         return {
           changed: false,
-          error: `Failed to repair ~/.pi/agent/settings.json defaultProvider: ${e instanceof Error ? e.message : String(e)}`,
+          error: `Failed to repair ~/.mortise/agent/settings.json defaultProvider: ${e instanceof Error ? e.message : String(e)}`,
         }
       }
     }

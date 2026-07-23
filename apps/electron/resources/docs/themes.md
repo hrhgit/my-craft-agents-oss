@@ -39,27 +39,18 @@ The rest of this document describes the **GUI theme only**.
 
 ### Decoupling Protocol
 
-Pi and Mortise are decoupled by a `string[]` contract. The flow for extension
-widgets:
-
-1. A Pi extension calls `ctx.ui.setWidget(key, renderFn, { placement })`.
-2. Inside the `Pi RpcClient` child process, the bridged
-   `ExtensionUIContext` (built on Pi SDK's `createHeadlessUIContext`) invokes
-   `renderFn(width, theme)` — `width` is the terminal width in characters,
-   `theme` is the Pi TUI theme object. Both come from the child process.
-3. The child process resolves `renderFn` to a plain `string[]` (one string per
-   rendered line) and forwards it over JSONL as an `extension_widget` message:
-   `{ type: 'extension_widget', key, content: string[], placement, source }`.
-4. The Mortise main process relays the message to the renderer via IPC.
-5. The renderer's generic `ExtensionWidgetZone` surfaces render the `string[]`
-   verbatim. Structured Mortise features such as plan artifacts use their own
-   versioned message protocol instead. **Neither path sees the Pi `theme`
-   object.**
+Pi and Mortise exchange only versioned, serializable contributions. In RPC
+mode, `ctx.ui.setWidget(key, string[], { placement })` is an authoring
+convenience that Pi converts directly into a V1 text contribution on
+`composer.above` or `composer.below`. Clearing the widget emits a contribution
+removal. Mortise validates and renders the contribution through the same host
+surfaces used by `ctx.ui.upsertContribution`; there is no widget-specific wire
+event or renderer adapter. Function-based TUI widgets remain local to the TUI
+and are not serialized to Mortise.
 
 Consequences of this contract:
 
-- Mortise GUI does not touch the Pi theme object; fg/bold/ANSI → plain-text
-  downgrading happens inside the child process bridge.
+- Mortise GUI does not touch the Pi theme object.
 - Mortise GUI theme (the 6-color OKLCH palette) is independent of the Pi TUI
   theme. Changing one does not affect the other.
 - Pi extensions cannot reach the Mortise GUI theme, the DOM, or Electron APIs —

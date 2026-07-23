@@ -8,7 +8,7 @@ import { useTranslation } from 'react-i18next'
 
 // ============================================================================
 // Pre-flight banner — pure visual demo of the warning shown above
-// AttachmentPreview when the active model is text-only on a pi_compat
+// AttachmentPreview when the active model is text-only on a pi_custom
 // connection. The banner is dumb: parent decides when to show it. These
 // variants render it directly to verify copy and layout.
 // ============================================================================
@@ -45,7 +45,7 @@ function BannerDemo({
 
 // ============================================================================
 // Per-model picker row — renders the same JSX shape as the chat-input model
-// picker uses. Variants cover the gate (pi_compat vs not), and the toggle
+// picker uses. Variants cover the gate (pi_custom vs not), and the toggle
 // states (vision-on, vision-off, currently selected).
 // ============================================================================
 
@@ -145,7 +145,7 @@ export const imageSupportComponents: ComponentEntry[] = [
     name: 'Image Support — Picker Row',
     category: 'Chat Inputs',
     description:
-      'A single chat-input model picker row with the per-model image-support toggle. The icon is gated to pi_compat connections — built-in providers (anthropic / pi) hide it because their catalogs are SDK-owned.',
+      'A single chat-input model picker row with the per-model image-support toggle. The icon is gated to pi_custom connections — built-in providers (anthropic / pi) hide it because their catalogs are SDK-owned.',
     component: PickerRow,
     layout: 'centered',
     props: [
@@ -161,7 +161,7 @@ export const imageSupportComponents: ComponentEntry[] = [
       },
       {
         name: 'showVisionToggle',
-        description: 'true for pi_compat (custom endpoints), false for built-in providers',
+        description: 'true for pi_custom (custom endpoints), false for built-in providers',
         control: { type: 'boolean' },
         defaultValue: true,
       },
@@ -174,17 +174,17 @@ export const imageSupportComponents: ComponentEntry[] = [
     ],
     variants: [
       {
-        name: 'pi_compat — text-only (default)',
+        name: 'pi_custom — text-only (default)',
         description: 'Toggle visible, dim icon — image support disabled',
         props: { modelName: 'qwen3-coder', isSelected: false, showVisionToggle: true, visionOn: false },
       },
       {
-        name: 'pi_compat — vision-on',
+        name: 'pi_custom — vision-on',
         description: 'Toggle visible, bright icon — per-model override true',
         props: { modelName: 'minimax-vision', isSelected: false, showVisionToggle: true, visionOn: true },
       },
       {
-        name: 'pi_compat — selected, vision-on',
+        name: 'pi_custom — selected, vision-on',
         description: 'Both Check and bright icon visible',
         props: { modelName: 'minimax-vision', isSelected: true, showVisionToggle: true, visionOn: true },
       },

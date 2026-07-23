@@ -20,6 +20,7 @@ import type {
   UnreadSummary,
   PiProjectionEventV1,
   PiProjectionSnapshotV1,
+  ExtensionInteractionResponseV1,
 } from '@mortise/shared/protocol'
 import type { ProjectionApplyResult } from '../projection'
 import type { SessionBundle, DispatchMode } from '@mortise/shared/sessions'
@@ -68,7 +69,6 @@ export interface ISessionManager {
 
   setSessionPermissionMode(sessionId: string, mode: PermissionMode): void
   setSessionThinkingLevel(sessionId: string, level: ThinkingLevel): void
-  updateWorkingDirectory(sessionId: string, path: string): void
   setSessionProvider(sessionId: string, provider: string): Promise<void>
   clearDeletedProviderReferences(provider: string): Promise<void>
   updateSessionModel(sessionId: string, workspaceId: string, model: string | null, provider?: string): Promise<void>
@@ -88,6 +88,8 @@ export interface ISessionManager {
     onAck?: (messageId: string) => void,
     rpcContext?: { callerClientId?: string },
   ): Promise<void>
+  /** Retry only the host-owned durability boundary for an already accepted turn. */
+  retryPendingSettlement(sessionId: string): Promise<void>
   cancelProcessing(sessionId: string, silent?: boolean): Promise<void>
   killShell(sessionId: string, shellId: string): Promise<{ success: boolean; error?: string }>
   getTaskOutput(taskId: string): Promise<string | null>
@@ -113,16 +115,10 @@ export interface ISessionManager {
   ): boolean
   getSessionPermissionModeState(sessionId: string): PermissionModeState | null
 
-  /**
-   * 回复 pi 扩展发起的 remoteui:request。
-   * 仅 Pi 后端实现（PiAgent.sendRemoteUIResponse）；其他后端可不实现。
-   * payload=null 表示用户取消。
-   */
-  sendRemoteUIResponse(
+  respondToExtensionInteraction(
     sessionId: string,
     requestId: string,
-    payload: unknown | null,
-    reason?: 'cancelled' | 'no_remote' | 'disconnected',
+    response: ExtensionInteractionResponseV1,
   ): boolean
 
   /**
@@ -251,11 +247,11 @@ export interface ISessionManager {
   reloadProviderRuntime(provider?: string): Promise<void>
   /** Inspect one loaded Pi runtime for the global agent settings surface. */
   getAgentRuntimeProfile(): Promise<import('@mortise/shared/config').AgentRuntimeProfile | null>
-  executePromptAutomation(input: ExecutePromptAutomationInput): Promise<{ sessionId: string }>
 
   /**
-   * Install a callback invoked from `executePromptAutomation` after a session
-   * is created when the matcher declared `telegramTopic`. Wired by the
+   * Install a callback invoked from the canonical V3 automation prompt
+   * delivery after a session is created when the matcher declared
+   * `telegramTopic`. Wired by the
    * messaging-gateway bootstrap so the SessionManager doesn't need to import
    * the messaging package (avoids a circular package-level import).
    *
@@ -264,32 +260,6 @@ export interface ISessionManager {
   setAutomationBinder?(
     fn: (input: { workspaceId: string; sessionId: string; topicName: string }) => Promise<void>,
   ): void
-}
-
-/**
- * Input for executePromptAutomation. Options-object form replaces the
- * previous positional-args signature once the param list grew past
- * readability — new optional fields (thinkingLevel, future cwd/permissions
- * overrides) can be added without churn at every call site.
- */
-export interface ExecutePromptAutomationInput {
-  workspaceId: string
-  workspaceRootPath: string
-  prompt: string
-  labels?: string[]
-  permissionMode?: PermissionMode
-  mentions?: string[]
-  provider?: string
-  model?: string
-  /** Override the global default thinking level for the spawned session. */
-  thinkingLevel?: ThinkingLevel
-  automationName?: string
-  /**
-   * Optional Telegram forum-topic name. When set and the workspace has a
-   * paired supergroup, the new session is bound to a topic of this name
-   * (created on first use). Silently ignored when prerequisites aren't met.
-   */
-  telegramTopic?: string
 }
 
 /**
@@ -308,4 +278,10 @@ export interface CreateAndSendFirstTurnInput {
   sendOptions?: SendMessageOptions
   callerClientId?: string
   signal?: AbortSignal
+  /**
+   * Host-only publication hook. Runs after Session metadata and projection are
+   * durable but before the Session becomes visible or emits public events.
+   * A failure aborts and rolls back the provisional Session.
+   */
+  beforePublish?: (session: Session) => Promise<void> | void
 }

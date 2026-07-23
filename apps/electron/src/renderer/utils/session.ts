@@ -113,14 +113,13 @@ export function getSessionPreviewText(session: SessionLike | SessionMeta, maxLen
 }
 
 /**
- * Get the ID of the last final assistant or plan message (not intermediate)
+ * Get the ID of the last final assistant message (not intermediate).
  * Used for unread message tracking
  */
 export function getLastFinalAssistantMessageId(session: Session): string | undefined {
   for (let i = session.messages.length - 1; i >= 0; i--) {
     const msg = session.messages[i]
-    // Include plan messages as final responses (they're AI-generated content)
-    if ((msg.role === 'assistant' || msg.role === 'plan') && !msg.isIntermediate) {
+    if (msg.role === 'assistant' && !msg.isIntermediate) {
       return msg.id
     }
   }
@@ -144,9 +143,9 @@ export function hasUnreadMessages(session: Session): boolean {
  * Returns the count of final assistant messages after lastReadMessageId
  */
 export function countUnreadMessages(session: Session): number {
-  // Helper to check if message is a final response (assistant or plan)
+  // Helper to check if message is a final response.
   const isFinalResponse = (msg: Message) =>
-    (msg.role === 'assistant' || msg.role === 'plan') && !msg.isIntermediate
+    msg.role === 'assistant' && !msg.isIntermediate
 
   if (!session.lastReadMessageId) {
     // Never read - count all final messages

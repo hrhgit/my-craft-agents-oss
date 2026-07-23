@@ -14,7 +14,7 @@ import {
  * @param source - Object containing session fields
  * @returns Object with only Mortise metadata fields that exist in source
  */
-export function pickCraftSessionMetadata<T extends object>(
+export function pickMortiseSessionMetadata<T extends object>(
   source: T
 ): Partial<Record<MortiseSessionMetadataField, unknown>> {
   const result: Partial<Record<MortiseSessionMetadataField, unknown>> = {};
@@ -24,14 +24,4 @@ export function pickCraftSessionMetadata<T extends object>(
     }
   }
   return result;
-}
-
-/**
- * Compatibility alias for older call sites. New code should use
- * pickCraftSessionMetadata() to make the Pi/Mortise boundary explicit.
- */
-export function pickSessionFields<T extends object>(
-  source: T
-): Partial<Record<MortiseSessionMetadataField, unknown>> {
-  return pickCraftSessionMetadata(source);
 }

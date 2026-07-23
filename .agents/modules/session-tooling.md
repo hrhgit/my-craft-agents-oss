@@ -17,7 +17,7 @@ collaborates_with: [extension-runtime, conversation-ui]
 validation:
   - { id: session-tooling-regression, kind: unit, command: "bun test packages/session-tools-core packages/session-mcp-server", description: "Run session tool and MCP server regressions.", triggers: [owned-change], required: true, evidence: "Bun test exit status and output." }
   - { id: session-tool-contract, kind: contract, command: "bun run typecheck:all", description: "Verify session tool contracts compile across consumers.", triggers: [contract-change], required: true, evidence: "TypeScript compiler exit status and diagnostics." }
-scope_digest: 18cd4930583517fa6440321af9fc2b01806c39a0
+scope_digest: 757f7f7425c74327ae1ec46594422f7178bf66d0
 ---
 
 ## Purpose
@@ -48,6 +48,11 @@ Run package tests and downstream agent host tests for schema or lifecycle change
 Tool schema drift can break model calls without TypeScript errors; delegated sessions can outlive parent expectations.
 
 ## Semantic history
+- 2026-07-23: Moved the Session MCP server's Session and global-skill roots to the Mortise-owned Agent root and removed independent Pi path compatibility from the generated production bundle.
+- 2026-07-21: Removed the host-neutral config validator's retired JSON fallback; SQLite config and aggregate validation now require an injected authoritative validator and fail explicitly when unavailable.
+- 2026-07-21: Removed Pi coding/TUI runtime imports from the Session MCP entrypoint; it now consumes only host-neutral tool types, canonical skill roots, and narrow path/validation contracts.
+- 2026-07-21: Removed `mcp__session__*` and `session__*` tool-name aliases and prefix-producing helper options; session tools now accept and emit canonical names only.
+- 2026-07-21: Made `session-tools-core` host-neutral by owning its result contract and resolving skills exclusively from injected ordered skill roots, removing its dependency on `@mortise/shared`.
 - 2026-07-20: Removed Data Sources validation, authentication, credential prompts, API wrappers, and source-test tools while retaining session tools and the generic MCP transport.
 - 2026-07-07: Added RPC host hooks and child-session support.
 - 2026-07-10: Hardened plan workflow and Pi runtime integration.

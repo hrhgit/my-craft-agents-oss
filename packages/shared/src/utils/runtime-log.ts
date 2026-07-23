@@ -8,10 +8,18 @@ import {
   rmSync,
   statSync,
 } from 'node:fs';
+import {
+  appendFile,
+  mkdir,
+  open,
+  rename,
+  rm,
+  stat,
+} from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import pino, { type DestinationStream } from 'pino';
-import { lockSync } from 'proper-lockfile';
+import { lock, lockSync } from 'proper-lockfile';
 import { CONFIG_DIR } from '../config/paths.ts';
 
 export type RuntimeLogLevel = 'debug' | 'info' | 'warn' | 'error';
@@ -89,6 +97,9 @@ const MAX_STRING_LENGTH = 16 * 1024;
 const MAX_ENTRY_BYTES = 256 * 1024;
 const FALLBACK_MAX_LENGTH = 512;
 const FALLBACK_THROTTLE_MS = 10_000;
+const MAX_PENDING_LINES = 2_048;
+const DRAIN_BATCH_SIZE = 32;
+const MAX_WRITE_BATCH_BYTES = 1024 * 1024;
 const REDACTED = '[redacted]';
 const TRUNCATED = '[truncated]';
 const PROCESS_INSTANCE_ID = randomUUID();
@@ -264,6 +275,172 @@ function appendRuntimeLogLine(line: string): void {
   }
 }
 
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await stat(path);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    throw error;
+  }
+}
+
+async function rotateRuntimeLogAsync(): Promise<void> {
+  const oldest = `${RUNTIME_LOG_PATH}.${RUNTIME_LOG_BACKUP_COUNT}`;
+  await rm(oldest, { force: true });
+  for (let index = RUNTIME_LOG_BACKUP_COUNT - 1; index >= 1; index -= 1) {
+    const source = `${RUNTIME_LOG_PATH}.${index}`;
+    if (await pathExists(source)) await rename(source, `${RUNTIME_LOG_PATH}.${index + 1}`);
+  }
+  if (await pathExists(RUNTIME_LOG_PATH)) await rename(RUNTIME_LOG_PATH, `${RUNTIME_LOG_PATH}.1`);
+}
+
+async function appendRuntimeLogLineAsync(line: string): Promise<void> {
+  await mkdir(dirname(RUNTIME_LOG_PATH), { recursive: true });
+  const handle = await open(RUNTIME_LOG_PATH, 'a');
+  await handle.close();
+  const release = await lock(RUNTIME_LOG_PATH, {
+    realpath: false,
+    stale: 10_000,
+    retries: {
+      retries: 100,
+      factor: 1,
+      minTimeout: 1,
+      maxTimeout: 5,
+      randomize: false,
+    },
+  });
+  try {
+    const currentSize = (await stat(RUNTIME_LOG_PATH)).size;
+    if (currentSize > 0 && currentSize + Buffer.byteLength(line) > RUNTIME_LOG_MAX_BYTES) {
+      await rotateRuntimeLogAsync();
+    }
+    await appendFile(RUNTIME_LOG_PATH, line, 'utf8');
+  } finally {
+    await release();
+  }
+}
+
+/**
+ * Keep filesystem rotation and locking off the caller's hot path. The queue is
+ * deliberately bounded: debug records may be dropped during a diagnostic
+ * storm, while warning/error records are retained whenever a lower-priority
+ * record is available to evict.
+ */
+class RuntimeLogWriter {
+  private readonly pending: Array<{ line: string; level: RuntimeLogLevel }> = [];
+  private draining = false;
+  private readonly dropped: Record<RuntimeLogLevel, number> = { debug: 0, info: 0, warn: 0, error: 0 };
+  private failed = 0;
+  private highWaterMark = 0;
+  private waiters: Array<() => void> = [];
+
+  enqueue(line: string): void {
+    const level = this.readLevel(line);
+    if (this.pending.length >= MAX_PENDING_LINES) {
+      const evictionLevels: RuntimeLogLevel[] = level === 'error'
+        ? ['debug', 'info', 'warn', 'error']
+        : level === 'warn'
+          ? ['debug', 'info']
+          : level === 'info'
+            ? ['debug']
+            : [];
+      const evictionIndex = evictionLevels
+        .map(candidate => this.pending.findIndex(item => item.level === candidate))
+        .find(index => index >= 0) ?? -1;
+      if (evictionIndex < 0) {
+        this.dropped[level] += 1;
+        return;
+      }
+      const [evicted] = this.pending.splice(evictionIndex, 1);
+      if (evicted) this.dropped[evicted.level] += 1;
+    }
+    this.pending.push({ line, level });
+    this.highWaterMark = Math.max(this.highWaterMark, this.pending.length);
+    this.schedule();
+  }
+
+  async flush(): Promise<void> {
+    if (!this.pending.length && !this.draining) return;
+    await new Promise<void>(resolve => this.waiters.push(resolve));
+    if (this.pending.length || this.draining) return this.flush();
+  }
+
+  flushSync(): void {
+    while (this.pending.length) {
+      const batch = this.takeBatch();
+      try {
+        appendRuntimeLogLine(batch.map(item => item.line).join(''));
+      } catch (error) {
+        this.failed += batch.length;
+        reportRuntimeLogFailure(error);
+      }
+    }
+  }
+
+  stats(): {
+    pending: number;
+    dropped: Readonly<Record<RuntimeLogLevel, number>>;
+    failed: number;
+    highWaterMark: number;
+    draining: boolean;
+  } {
+    return {
+      pending: this.pending.length,
+      dropped: { ...this.dropped },
+      failed: this.failed,
+      highWaterMark: this.highWaterMark,
+      draining: this.draining,
+    };
+  }
+
+  private readLevel(line: string): RuntimeLogLevel {
+    const match = /"level":"(debug|info|warn|error)"/.exec(line);
+    return (match?.[1] as RuntimeLogLevel | undefined) ?? 'info';
+  }
+
+  private takeBatch(): Array<{ line: string; level: RuntimeLogLevel }> {
+    const batch: Array<{ line: string; level: RuntimeLogLevel }> = [];
+    let bytes = 0;
+    while (batch.length < DRAIN_BATCH_SIZE && this.pending.length) {
+      const next = this.pending[0]!;
+      const nextBytes = Buffer.byteLength(next.line);
+      if (batch.length && bytes + nextBytes > MAX_WRITE_BATCH_BYTES) break;
+      batch.push(this.pending.shift()!);
+      bytes += nextBytes;
+    }
+    return batch;
+  }
+
+  private schedule(): void {
+    if (this.draining) return;
+    this.draining = true;
+    setImmediate(() => this.drain());
+  }
+
+  private async drain(): Promise<void> {
+    try {
+      const batch = this.takeBatch();
+      if (batch.length) {
+        try {
+          await appendRuntimeLogLineAsync(batch.map(item => item.line).join(''));
+        } catch (error) {
+          this.failed += batch.length;
+          reportRuntimeLogFailure(error);
+        }
+      }
+    } finally {
+      if (this.pending.length) {
+        setImmediate(() => this.drain());
+        return;
+      }
+      this.draining = false;
+      const waiters = this.waiters.splice(0);
+      for (const resolve of waiters) resolve();
+    }
+  }
+}
+
 function reportRuntimeLogFailure(error: unknown): void {
   const now = Date.now();
   if (now - lastFallbackAt < FALLBACK_THROTTLE_MS) return;
@@ -290,9 +467,11 @@ function boundEnvelope(entry: RuntimeLogEnvelopeV1): RuntimeLogEnvelopeV1 {
   };
 }
 
+const runtimeLogWriter = new RuntimeLogWriter();
+
 const runtimeLogDestination: DestinationStream = {
   write(line: string): void {
-    appendRuntimeLogLine(line.endsWith('\n') ? line : `${line}\n`);
+    runtimeLogWriter.enqueue(line.endsWith('\n') ? line : `${line}\n`);
   },
 };
 
@@ -325,6 +504,26 @@ export function writeRuntimeLog(level: RuntimeLogLevel, input: RuntimeLogEntryIn
   } catch (error) {
     reportRuntimeLogFailure(error);
   }
+}
+
+/** Flush queued runtime records before an orderly process shutdown. */
+export async function flushRuntimeLogs(): Promise<void> {
+  await runtimeLogWriter.flush();
+}
+
+/** Reserved for process exit hooks where asynchronous work can no longer run. */
+export function flushRuntimeLogsSync(): void {
+  runtimeLogWriter.flushSync();
+}
+
+export function getRuntimeLogQueueStats(): {
+  pending: number;
+  dropped: Readonly<Record<RuntimeLogLevel, number>>;
+  failed: number;
+  highWaterMark: number;
+  draining: boolean;
+} {
+  return runtimeLogWriter.stats();
 }
 
 export function createRuntimeLogger(

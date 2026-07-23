@@ -19,7 +19,6 @@
  * - clearEntityIconCache() — clear by entity type
  * - useEntityIcon() — React hook (calls loadEntityIcon internally)
  *
- * Legacy skill wrappers are thin shims over the canonical API.
  */
 
 import { useState, useEffect, useMemo } from 'react'
@@ -80,28 +79,6 @@ export interface LoadEntityIconOptions {
  * - status:wsId:relativePath
  */
 export const iconCache = new Map<string, string>()
-
-// ============================================================================
-// Legacy exports (for backward compatibility during migration)
-// These are views into the unified cache, not separate maps.
-// ============================================================================
-
-// Proxy objects that redirect to the unified cache with appropriate prefixes
-// This allows consumers to continue using the old API while we migrate them
-
-/** @deprecated Use iconCache directly with 'skill:' prefix */
-const skillIconCache = {
-  get: (key: string) => iconCache.get(`skill:${key}`),
-  set: (key: string, value: string) => iconCache.set(`skill:${key}`, value),
-  has: (key: string) => iconCache.has(`skill:${key}`),
-  delete: (key: string) => iconCache.delete(`skill:${key}`),
-  clear: () => {
-    // Clear only skill entries
-    for (const key of iconCache.keys()) {
-      if (key.startsWith('skill:')) iconCache.delete(key)
-    }
-  },
-}
 
 // ============================================================================
 // Cache Management
@@ -186,13 +163,13 @@ export async function loadEntityIcon(opts: LoadEntityIconOptions): Promise<strin
 // ----------------------------------------------------------------------------
 
 /**
- * Resolve a skill icon. Extracted from the legacy loadSkillIcon.
+ * Resolve a skill icon for the canonical entity icon loader.
  *
  * Resolution priority:
  * 1. Emoji in metadata.icon → Return emoji marker
  * 2. URL in metadata.icon → Return URL directly
  * 3. Known iconPath → Load from file
- * 4. Auto-discover .pi/skills/{slug}/icon.{svg,png} → Load from file
+ * 4. Auto-discover .mortise/skills/{slug}/icon.{svg,png} → Load from file
  */
 async function resolveSkillIcon(
   opts: LoadEntityIconOptions,
@@ -218,9 +195,9 @@ async function resolveSkillIcon(
 
   // Priority 3: Known icon path - load file
   if (skillConfig.iconPath) {
-    const skillsMatch = skillConfig.iconPath.replace(/\\/g, '/').match(/\.pi\/skills\/([^/]+)\/(.+)$/)
+    const skillsMatch = skillConfig.iconPath.replace(/\\/g, '/').match(/\.mortise\/skills\/([^/]+)\/(.+)$/)
     if (skillsMatch) {
-      const relativePath = `.pi/skills/${skillsMatch[1]}/${skillsMatch[2]}`
+      const relativePath = `.mortise/skills/${skillsMatch[1]}/${skillsMatch[2]}`
       const loaded = await loadWorkspaceIcon(workspaceId, relativePath)
       if (loaded) {
         iconCache.set(cacheKey, loaded)
@@ -231,13 +208,13 @@ async function resolveSkillIcon(
 
   // Priority 4: Auto-discover icon files (when no explicit icon configured)
   if (!iconValue) {
-    const svgIcon = await loadWorkspaceIcon(workspaceId, `.pi/skills/${identifier}/icon.svg`)
+    const svgIcon = await loadWorkspaceIcon(workspaceId, `.mortise/skills/${identifier}/icon.svg`)
     if (svgIcon) {
       iconCache.set(cacheKey, svgIcon)
       return svgIcon
     }
 
-    const pngIcon = await loadWorkspaceIcon(workspaceId, `.pi/skills/${identifier}/icon.png`)
+    const pngIcon = await loadWorkspaceIcon(workspaceId, `.mortise/skills/${identifier}/icon.png`)
     if (pngIcon) {
       iconCache.set(cacheKey, pngIcon)
       return pngIcon
@@ -268,34 +245,6 @@ async function loadWorkspaceIcon(workspaceId: string, relativePath: string): Pro
     // Security errors or I/O failures still throw - handle them gracefully
     return null
   }
-}
-
-// ============================================================================
-// Legacy Skill Icon Wrappers (@deprecated — use loadEntityIcon)
-// ============================================================================
-
-/**
- * Load a skill icon into the cache.
- * @deprecated Use `loadEntityIcon({ entityType: 'skill', ... })`.
- */
-export async function loadSkillIcon(
-  skill: SkillConfig,
-  workspaceId: string,
-): Promise<string | null> {
-  return loadEntityIcon({
-    entityType: 'skill',
-    workspaceId,
-    identifier: skill.slug,
-    skillConfig: skill,
-  })
-}
-
-/**
- * Get a skill icon synchronously from cache.
- * @deprecated Use `getEntityIconSync({ entityType: 'skill', ... })`.
- */
-export function getSkillIconSync(workspaceId: string, slug: string): string | null {
-  return getEntityIconSync({ entityType: 'skill', workspaceId, identifier: slug })
 }
 
 // ============================================================================
@@ -382,10 +331,10 @@ const ICON_FILE_EXTENSIONS = ['.svg', '.png', '.jpg', '.jpeg']
 
 /**
  * Pre-compiled regex for extracting workspace-relative icon paths from absolute paths.
- * Matches any known entity directory prefix (.pi/skills/ or statuses/)
+ * Matches any known entity directory prefix (.mortise/skills/ or statuses/)
  * followed by the rest of the path.
  */
-const ICON_PATH_PATTERN = /(?:\.pi\/skills|statuses)\/.+$/
+const ICON_PATH_PATTERN = /(?:\.mortise\/skills|statuses)\/.+$/
 
 /**
  * Options for the useEntityIcon hook.
@@ -399,13 +348,13 @@ export interface UseEntityIconOptions {
   identifier: string
   /**
    * Known relative path to icon file (for entities with pre-resolved paths).
-   * e.g. '.pi/skills/my-skill/icon.svg'
+   * e.g. '.mortise/skills/my-skill/icon.svg'
    * If provided, only this exact path is attempted (no auto-discovery).
    */
   iconPath?: string
   /**
    * Directory to auto-discover icon files in (relative to workspace).
-   * e.g. '.pi/skills/review' → tries icon.svg, icon.png, etc.
+   * e.g. '.mortise/skills/review' → tries icon.svg, icon.png, etc.
    * Ignored if iconPath is provided.
    */
   iconDir?: string

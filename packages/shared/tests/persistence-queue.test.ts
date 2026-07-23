@@ -8,8 +8,8 @@ import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { mkdirSync, rmSync, existsSync, readFileSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { tmpdir } from 'os';
-import { SessionPersistenceQueue } from '../src/sessions/persistence-queue.ts';
-import { getSessionFilePath, setSharedPiSessionsDirForTests } from '../src/sessions/storage.ts';
+import { SessionPersistenceError, SessionPersistenceQueue } from '../src/sessions/persistence-queue.ts';
+import { getSessionFilePath, getSessionPath, setSharedPiSessionsDirForTests } from '../src/sessions/storage.ts';
 import type { StoredSession } from '../src/sessions/types.ts';
 
 const emptyTokenUsage = {
@@ -34,13 +34,16 @@ function createTestSession(
     createdAt: Date.now(),
     lastUsedAt: Date.now(),
     lastMessageAt: Date.now(),
-    messages: [],
+    messages: [
+      { id: `${id}-u1`, type: 'user', content: 'seed', timestamp: Date.now() },
+      { id: `${id}-a1`, type: 'assistant', content: 'seeded', timestamp: Date.now() + 1 },
+    ],
     tokenUsage: emptyTokenUsage,
     sdkSessionId,
   };
 }
 
-function createSessionWithoutCraftId(
+function createSessionWithoutMortiseId(
   id: string,
   workspaceRootPath: string,
   sdkSessionId?: string
@@ -52,8 +55,8 @@ function createSessionWithoutCraftId(
   } as unknown as StoredSession;
 }
 
-function readWrittenHeader(workspaceRootPath: string, sessionId: string): any {
-  const filePath = getSessionFilePath(workspaceRootPath, sessionId);
+function readWrittenHeader(workspaceRootPath: string, sessionId: string, createdAt: number): any {
+  const filePath = getSessionFilePath(workspaceRootPath, sessionId, createdAt);
   const content = readFileSync(filePath, 'utf-8');
   return JSON.parse(content.split('\n')[0]);
 }
@@ -106,11 +109,11 @@ describe('SessionPersistenceQueue', () => {
     queue.enqueue(session);
     await queue.flush('test-session');
 
-    const filePath = getSessionFilePath(testDir, 'test-session');
+    const filePath = getSessionFilePath(testDir, 'test-session', session.createdAt);
     expect(existsSync(filePath)).toBe(true);
 
-    const header = readWrittenHeader(testDir, 'test-session');
-    expect(header.id).toBe('sdk-123');
+    const header = readWrittenHeader(testDir, 'test-session', session.createdAt);
+    expect(header.id).toBe('test-session');
     expect(header.mortise.sdkSessionId).toBe('sdk-123');
   });
 
@@ -134,7 +137,7 @@ describe('SessionPersistenceQueue', () => {
     await Promise.all([flush1, flush2]);
 
     // The final file should have the NEWER data (new-thread-id)
-    const header = readWrittenHeader(testDir, 'test-session');
+    const header = readWrittenHeader(testDir, 'test-session', session2.createdAt);
 
     // Before the fix, this could randomly be undefined due to race condition
     expect(header.mortise.sdkSessionId).toBe('new-thread-id');
@@ -155,15 +158,105 @@ describe('SessionPersistenceQueue', () => {
     ]);
 
     // Both should be written correctly
-    const headerA = readWrittenHeader(testDir, 'session-a');
-    const headerB = readWrittenHeader(testDir, 'session-b');
+    const headerA = readWrittenHeader(testDir, 'session-a', sessionA.createdAt);
+    const headerB = readWrittenHeader(testDir, 'session-b', sessionB.createdAt);
 
     expect(headerA.mortise.sdkSessionId).toBe('id-a');
     expect(headerB.mortise.sdkSessionId).toBe('id-b');
   });
 
+  it('rejects flush on write failure and clears the failure after a successful retry', async () => {
+    const blockedRoot = join(testDir, 'blocked-root');
+    writeFileSync(blockedRoot, 'not a directory', 'utf-8');
+    setSharedPiSessionsDirForTests(blockedRoot);
+    const session = createTestSession('write-failure', testDir, 'sdk-failure');
+
+    queue.enqueue(session);
+    await expect(queue.flush(session.mortiseId)).rejects.toMatchObject({
+      name: 'SessionPersistenceError',
+      code: 'SESSION_PERSISTENCE_FAILED',
+      retryable: true,
+      sessionId: session.mortiseId,
+    });
+    expect(queue.hasFailedWrite(session.mortiseId)).toBe(true);
+
+    setSharedPiSessionsDirForTests(join(testDir, 'pi-sessions'));
+    const retrySession = createTestSession(session.mortiseId, testDir, 'sdk-retry');
+    queue.enqueue(retrySession);
+    await queue.flush(session.mortiseId);
+
+    expect(queue.hasFailedWrite(session.mortiseId)).toBe(false);
+    expect(readWrittenHeader(testDir, session.mortiseId, retrySession.createdAt).mortise.sdkSessionId).toBe('sdk-retry');
+  });
+
+  it('rejects flushAll when any session write fails', async () => {
+    const blockedRoot = join(testDir, 'blocked-root-all');
+    const good = createTestSession('good-session', testDir, 'sdk-good');
+    queue.enqueue(good);
+    await queue.flush(good.mortiseId);
+    const goodFile = getSessionFilePath(testDir, good.mortiseId, good.createdAt);
+
+    writeFileSync(blockedRoot, 'not a directory', 'utf-8');
+    setSharedPiSessionsDirForTests(blockedRoot);
+    const bad = createTestSession('bad-session', testDir, 'sdk-bad');
+    queue.enqueue(bad);
+
+    await expect(queue.flushAll()).rejects.toBeInstanceOf(SessionPersistenceError);
+    expect(existsSync(goodFile)).toBe(true);
+    expect(queue.hasFailedWrite(bad.mortiseId)).toBe(true);
+  });
+
+  it('rejects flush when the overlay atomic write fails after a valid header update', async () => {
+    const session = createTestSession('overlay-write-failure', testDir, 'sdk-overlay');
+    queue.enqueue(session);
+    await queue.flush(session.mortiseId);
+
+    const overlayPath = join(getSessionPath(testDir, session.mortiseId), 'overlay.json');
+    mkdirSync(overlayPath, { recursive: true });
+    queue.enqueue({
+      ...session,
+      messages: [{
+        id: 'overlay-message',
+        type: 'user',
+        content: '',
+        timestamp: Date.now(),
+        badges: [{ type: 'skill', label: 'Test', rawText: '@test', start: 0, end: 5 }],
+      }],
+    });
+
+    await expect(queue.flush(session.mortiseId)).rejects.toMatchObject({
+      name: 'SessionPersistenceError',
+      code: 'SESSION_PERSISTENCE_FAILED',
+      retryable: true,
+      sessionId: session.mortiseId,
+    });
+    expect(queue.hasFailedWrite(session.mortiseId)).toBe(true);
+  });
+
+  it('rejects a persisted metadata signature that differs from the requested state', async () => {
+    const session = { ...createTestSession('metadata-mismatch', testDir), name: 'original' };
+    queue.enqueue(session);
+    await queue.flush(session.mortiseId);
+
+    const filePath = getSessionFilePath(testDir, session.mortiseId, session.createdAt);
+    const lines = readFileSync(filePath, 'utf-8').trim().split('\n');
+    const header = JSON.parse(lines[0]);
+    header.mortise.name = 'external edit';
+    writeFileSync(filePath, [JSON.stringify(header), ...lines.slice(1)].join('\n') + '\n', 'utf-8');
+
+    queue.enqueue({ ...session, name: 'requested update', lastUsedAt: Date.now() + 1 });
+    await expect(queue.flush(session.mortiseId)).rejects.toMatchObject({
+      name: 'SessionPersistenceError',
+      code: 'SESSION_PERSISTENCE_FAILED',
+      retryable: false,
+      sessionId: session.mortiseId,
+    });
+    expect(queue.hasFailedWrite(session.mortiseId)).toBe(true);
+    expect(readWrittenHeader(testDir, session.mortiseId, session.createdAt).mortise.name).toBe('external edit');
+  });
+
   it('rejects legacy id-only sessions without accepting id as the persistence key', async () => {
-    const session = createSessionWithoutCraftId('legacy-a', testDir, 'id-a');
+    const session = createSessionWithoutMortiseId('legacy-a', testDir, 'id-a');
 
     queue.enqueue(session);
     await queue.flush('legacy-a');
@@ -196,7 +289,7 @@ describe('SessionPersistenceQueue', () => {
   it('drops enqueue calls that arrive while delete cancellation waits on an in-progress write', async () => {
     const session = createTestSession('delete-race-session', testDir, 'sdk-blocked');
     const blocker = blockNextWrite(queue);
-    const filePath = getSessionFilePath(testDir, session.mortiseId, undefined, session.createdAt);
+    const filePath = getSessionFilePath(testDir, session.mortiseId, session.createdAt);
 
     queue.enqueue(session);
     await blocker.started;
@@ -219,7 +312,7 @@ describe('SessionPersistenceQueue', () => {
     expect(existsSync(filePath)).toBe(false);
   });
 
-  it('preserves active externally edited metadata while stripping retired organization fields', async () => {
+  it('rejects a header contaminated with retired metadata instead of reporting false success', async () => {
     const session = {
       ...createTestSession('external-metadata-session', testDir, 'sdk-external'),
       name: 'old name',
@@ -228,7 +321,7 @@ describe('SessionPersistenceQueue', () => {
     queue.enqueue(session);
     await queue.flush(session.mortiseId);
 
-    const filePath = getSessionFilePath(testDir, session.mortiseId, undefined, session.createdAt);
+    const filePath = getSessionFilePath(testDir, session.mortiseId, session.createdAt);
     const lines = readFileSync(filePath, 'utf-8').trim().split('\n');
     const header = JSON.parse(lines[0]);
     header.mortise.name = 'external name';
@@ -243,28 +336,11 @@ describe('SessionPersistenceQueue', () => {
       ...session,
       lastUsedAt: Date.now() + 1,
     });
-    await queue.flush(session.mortiseId);
-
-    const updated = readWrittenHeader(testDir, session.mortiseId);
-    expect(updated.mortise.name).toBe('external name');
-    expect(updated.mortise.sessionStatus).toBeUndefined();
-    expect(updated.mortise.labels).toBeUndefined();
-    expect(updated.mortise.isFlagged).toBeUndefined();
-    expect(updated.mortise.isArchived).toBeUndefined();
-    expect(updated.mortise.archivedAt).toBeUndefined();
-
-    queue.enqueue({
-      ...session,
-      lastUsedAt: Date.now() + 2,
+    await expect(queue.flush(session.mortiseId)).rejects.toMatchObject({
+      code: 'SESSION_PERSISTENCE_FAILED',
+      retryable: false,
+      sessionId: session.mortiseId,
     });
-    await queue.flush(session.mortiseId);
-
-    const updatedAgain = readWrittenHeader(testDir, session.mortiseId);
-    expect(updatedAgain.mortise.name).toBe('external name');
-    expect(updatedAgain.mortise.sessionStatus).toBeUndefined();
-    expect(updatedAgain.mortise.labels).toBeUndefined();
-    expect(updatedAgain.mortise.isFlagged).toBeUndefined();
-    expect(updatedAgain.mortise.isArchived).toBeUndefined();
-    expect(updatedAgain.mortise.archivedAt).toBeUndefined();
+    expect(queue.hasFailedWrite(session.mortiseId)).toBe(true);
   });
 });

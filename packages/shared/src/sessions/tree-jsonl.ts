@@ -3,11 +3,11 @@
  *
  */
 
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, statSync, utimesSync } from 'fs';
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, statSync } from 'fs';
 import { dirname, join } from 'path';
 import {
   SessionManager as PiSessionManager,
-  setCraftSessionMetadata as setPiCraftSessionMetadata,
+  setMortiseSessionMetadata as setPiMortiseSessionMetadata,
 } from '@mortise/pi-coding-agent/host-facade';
 import type { MessageRole } from '@mortise/core/types';
 import type {
@@ -18,12 +18,12 @@ import type {
   StoredMessage,
   StoredSession,
 } from './types.ts';
-import { pickCraftSessionMetadata } from './utils.ts';
+import { pickMortiseSessionMetadata } from './utils.ts';
 import { sanitizeSessionId } from './validation.ts';
 import { debug } from '../utils/debug.ts';
 import { expandPath, toPortablePath } from '../utils/paths.ts';
-import { atomicWriteFileSync } from '../utils/files.ts';
-import { stripLeadingCraftInjectedUserContext } from '../prompts/strip-injected-user-context.ts';
+import { atomicWriteFile } from '../utils/files.ts';
+import { stripLeadingMortiseInjectedUserContext } from '../prompts/strip-injected-user-context.ts';
 import { applyPlanCustomMessageToStored } from './plan-artifact-projection.ts';
 import type { PlanModeStateV1 } from '@mortise/core/types';
 
@@ -38,11 +38,6 @@ export type MortiseMetadataOnDisk =
   & {
   /** Mortise session ID (on-disk 字段名是 id，对应 SessionHeader.mortiseId) */
   id?: string;
-};
-
-type MortiseMetadataWithLegacyProviderLock = MortiseMetadataOnDisk & {
-  connectionLocked?: unknown;
-  providerLocked?: unknown;
 };
 
 export interface TreeSessionSpawnConfig {
@@ -195,22 +190,41 @@ export interface TreeSessionProjectionLike {
   entries: unknown[];
 }
 
-export interface WriteTreeSessionCraftMetadataOptions {
+export interface WriteTreeSessionMortiseMetadataOptions {
   lastWrittenHeaderSignature?: string;
+}
+
+class InvalidCanonicalSessionHeaderError extends Error {
+  readonly retryable = false;
+
+  constructor(sessionFile: string) {
+    super(`Cannot update Mortise metadata because the canonical Session header is invalid: ${sessionFile}`);
+    this.name = 'InvalidCanonicalSessionHeaderError';
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
 }
 
-export function getCraftIdFromTreeHeader(
+function isCurrentMessageRole(value: unknown): value is MessageRole {
+  return value === 'user'
+    || value === 'assistant'
+    || value === 'tool'
+    || value === 'error'
+    || value === 'status'
+    || value === 'info'
+    || value === 'warning';
+}
+
+export function getMortiseIdFromTreeHeader(
   header: TreeSessionHeader,
   sessionIdPrefix = '',
 ): string {
   return header.mortise?.id ?? `${sessionIdPrefix}${header.id}`;
 }
 
-function getCraftHeaderMetadataSignature(mortise: Partial<MortiseMetadataOnDisk>): string {
+function getMortiseHeaderMetadataSignature(mortise: Partial<MortiseMetadataOnDisk>): string {
   return JSON.stringify({
     name: mortise.name,
     permissionMode: mortise.permissionMode,
@@ -220,24 +234,23 @@ function getCraftHeaderMetadataSignature(mortise: Partial<MortiseMetadataOnDisk>
 }
 
 function hasExternalMetadataChange(
-  previousCraft: Partial<MortiseMetadataOnDisk>,
-  options: WriteTreeSessionCraftMetadataOptions,
+  previousMortise: Partial<MortiseMetadataOnDisk>,
+  options: WriteTreeSessionMortiseMetadataOptions,
 ): boolean {
   return !!options.lastWrittenHeaderSignature
-    && getCraftHeaderMetadataSignature(previousCraft) !== options.lastWrittenHeaderSignature;
+    && getMortiseHeaderMetadataSignature(previousMortise) !== options.lastWrittenHeaderSignature;
 }
 
-function buildCraftMetadataOnDisk(
+function buildMortiseMetadataOnDisk(
   session: StoredSession,
-  previousCraft: MortiseMetadataOnDisk = {},
-  options: WriteTreeSessionCraftMetadataOptions = {},
+  previousMortise: MortiseMetadataOnDisk = {},
+  options: WriteTreeSessionMortiseMetadataOptions = {},
 ): MortiseMetadataOnDisk {
   const mortiseMetadata = {
-    ...previousCraft,
-    ...(pickCraftSessionMetadata(session) as Partial<MortiseSessionMetadata>),
+    ...previousMortise,
+    ...(pickMortiseSessionMetadata(session) as Partial<MortiseSessionMetadata>),
     id: session.mortiseId,
     workspaceRootPath: toPortablePath(session.workspaceRootPath),
-    workingDirectory: toPortablePath(session.workspaceRootPath),
     lastUsedAt: session.lastUsedAt ?? Date.now(),
     messageCount: session.messageCount ?? session.messages.length,
     preview: session.preview ?? extractPreview(session.messages),
@@ -246,15 +259,15 @@ function buildCraftMetadataOnDisk(
     tokenUsage: session.tokenUsage,
   } as MortiseMetadataOnDisk & { mortiseId?: unknown };
 
-  if (hasExternalMetadataChange(previousCraft, options)) {
+  if (hasExternalMetadataChange(previousMortise, options)) {
     for (const field of [
       'name',
       'permissionMode',
       'hasUnread',
       'lastReadMessageId',
     ] as const) {
-      if (field in previousCraft) {
-        (mortiseMetadata as Record<string, unknown>)[field] = previousCraft[field];
+      if (field in previousMortise) {
+        (mortiseMetadata as Record<string, unknown>)[field] = previousMortise[field];
       } else {
         delete (mortiseMetadata as Record<string, unknown>)[field];
       }
@@ -262,21 +275,12 @@ function buildCraftMetadataOnDisk(
   }
 
   delete mortiseMetadata.mortiseId;
-  // Provider selection is no longer locked after agent creation. Remove both
-  // the old connection flag and its short-lived migration alias on rewrite.
-  delete (mortiseMetadata as Record<string, unknown>).connectionLocked;
-  delete (mortiseMetadata as Record<string, unknown>).providerLocked;
-  delete (mortiseMetadata as Record<string, unknown>).sessionStatus;
-  delete (mortiseMetadata as Record<string, unknown>).labels;
-  delete (mortiseMetadata as Record<string, unknown>).isFlagged;
-  delete (mortiseMetadata as Record<string, unknown>).isArchived;
-  delete (mortiseMetadata as Record<string, unknown>).archivedAt;
   return mortiseMetadata;
 }
 
-function getCraftOverlayPath(sessionFile: string, mortiseId: string): string {
-  const safeCraftId = sanitizeSessionId(mortiseId) || '_invalid-session';
-  return join(dirname(sessionFile), '.mortise', safeCraftId, 'overlay.json');
+function getMortiseOverlayPath(sessionFile: string, mortiseId: string): string {
+  const safeMortiseId = sanitizeSessionId(mortiseId) || '_invalid-session';
+  return join(dirname(sessionFile), '.mortise', safeMortiseId, 'overlay.json');
 }
 
 function isCanonicalStoredMessage(message: StoredMessage): boolean {
@@ -295,13 +299,13 @@ function getCanonicalMessageKeys(message: StoredMessage): Set<string> {
   return canonicalKeys;
 }
 
-function hasCraftOnlyMessageFields(message: StoredMessage): boolean {
+function hasMortiseOnlyMessageFields(message: StoredMessage): boolean {
   const canonicalKeys = getCanonicalMessageKeys(message);
   return Object.keys(message).some(key => !canonicalKeys.has(key));
 }
 
-function buildCraftOnlyMessagePatch(message: StoredMessage): (Partial<StoredMessage> & { id: string }) | null {
-  if (!hasCraftOnlyMessageFields(message)) return null;
+function buildMortiseOnlyMessagePatch(message: StoredMessage): (Partial<StoredMessage> & { id: string }) | null {
+  if (!hasMortiseOnlyMessageFields(message)) return null;
 
   const canonicalKeys = getCanonicalMessageKeys(message);
   const patch: Partial<StoredMessage> & { id: string } = { id: message.id };
@@ -313,10 +317,10 @@ function buildCraftOnlyMessagePatch(message: StoredMessage): (Partial<StoredMess
   return Object.keys(patch).length > 1 ? patch : null;
 }
 
-function buildCraftOverlay(session: StoredSession): MortiseOverlayFile | null {
+function buildMortiseOverlay(session: StoredSession): MortiseOverlayFile | null {
   const messages = session.messages.flatMap((message) => {
     if (!isCanonicalStoredMessage(message)) return [message];
-    const patch = buildCraftOnlyMessagePatch(message);
+    const patch = buildMortiseOnlyMessagePatch(message);
     return patch ? [patch] : [];
   });
   const annotations: Record<string, StoredMessage['annotations']> = {};
@@ -338,32 +342,16 @@ function buildCraftOverlay(session: StoredSession): MortiseOverlayFile | null {
   };
 }
 
-export function writeCraftSessionOverlay(sessionFile: string, session: StoredSession): void {
-  const overlay = buildCraftOverlay(session);
-  const overlayPath = getCraftOverlayPath(sessionFile, session.mortiseId);
-  if (!overlay) {
-    if (existsSync(overlayPath)) {
-      atomicWriteFileSync(overlayPath, JSON.stringify({ version: 1 }, null, 2) + '\n');
-    }
-    return;
-  }
-
-  const overlayDir = dirname(overlayPath);
-  if (!existsSync(overlayDir)) {
-    mkdirSync(overlayDir, { recursive: true });
-  }
-  atomicWriteFileSync(overlayPath, JSON.stringify(overlay, null, 2) + '\n');
-}
-
-function readCraftSessionOverlay(sessionFile: string, mortiseId: string): MortiseOverlayFile | null {
-  const overlayPath = getCraftOverlayPath(sessionFile, mortiseId);
+function readMortiseSessionOverlay(sessionFile: string, mortiseId: string): MortiseOverlayFile | null {
+  const overlayPath = getMortiseOverlayPath(sessionFile, mortiseId);
   if (!existsSync(overlayPath)) return null;
 
   try {
     const parsed = JSON.parse(readFileSync(overlayPath, 'utf-8')) as unknown;
     if (!isRecord(parsed) || parsed.version !== 1) return null;
     const messages = Array.isArray(parsed.messages)
-      ? parsed.messages.filter(isRecord) as unknown as StoredMessage[]
+      ? parsed.messages.filter(value => isRecord(value)
+        && (value.type === undefined || isCurrentMessageRole(value.type))) as unknown as StoredMessage[]
       : undefined;
     const annotations = isRecord(parsed.annotations)
       ? parsed.annotations as Record<string, StoredMessage['annotations']>
@@ -375,7 +363,7 @@ function readCraftSessionOverlay(sessionFile: string, mortiseId: string): Mortis
   }
 }
 
-function mergeCraftOverlayMessages(messages: StoredMessage[], overlay: MortiseOverlayFile | null): StoredMessage[] {
+function mergeMortiseOverlayMessages(messages: StoredMessage[], overlay: MortiseOverlayFile | null): StoredMessage[] {
   if (!overlay) return messages;
 
   const merged = messages.map(message => {
@@ -388,7 +376,7 @@ function mergeCraftOverlayMessages(messages: StoredMessage[], overlay: MortiseOv
     for (const overlayMessage of overlay.messages) {
       const existingIndex = indexById.get(overlayMessage.id);
       if (existingIndex === undefined) {
-        const inferredType = typeof overlayMessage.type === 'string'
+        const inferredType = isCurrentMessageRole(overlayMessage.type)
           ? overlayMessage.type
           : overlayMessage.attachments?.length || overlayMessage.badges?.length
             ? 'user'
@@ -436,11 +424,26 @@ function mergeCraftOverlayMessages(messages: StoredMessage[], overlay: MortiseOv
 }
 
 export function isTreeSessionHeader(value: unknown): value is TreeSessionHeader {
-  return isRecord(value)
-    && value.type === 'session'
-    && typeof value.id === 'string'
-    && typeof value.timestamp === 'string'
-    && typeof value.cwd === 'string';
+  if (!isRecord(value)
+    || value.type !== 'session'
+    || typeof value.id !== 'string'
+    || typeof value.timestamp !== 'string'
+    || typeof value.cwd !== 'string') return false;
+  const mortise = value.mortise;
+  if (isRecord(mortise) && REMOVED_MORTISE_METADATA_FIELDS.some(field => field in mortise)) return false;
+  return true;
+}
+
+export async function writeMortiseSessionOverlayAsync(sessionFile: string, session: StoredSession): Promise<void> {
+  const overlay = buildMortiseOverlay(session);
+  const overlayPath = getMortiseOverlayPath(sessionFile, session.mortiseId);
+  if (!overlay) {
+    if (existsSync(overlayPath)) {
+      await atomicWriteFile(overlayPath, JSON.stringify({ version: 1 }, null, 2) + '\n');
+    }
+    return;
+  }
+  await atomicWriteFile(overlayPath, JSON.stringify(overlay, null, 2) + '\n');
 }
 
 /**
@@ -451,41 +454,16 @@ export function isTreeSessionHeader(value: unknown): value is TreeSessionHeader 
  * lookup scenarios (e.g. findSharedPiSessionFileInDir) that only need the
  * header's `id` / `mortise.id` fields.
  */
-const RETIRED_LEGACY_METADATA_FIELDS = [
+const REMOVED_MORTISE_METADATA_FIELDS = [
+  'connectionLocked',
+  'providerLocked',
+  'workingDirectory',
   'sessionStatus',
   'labels',
   'isFlagged',
   'isArchived',
   'archivedAt',
 ] as const;
-
-function stripRetiredCraftMetadata(
-  header: TreeSessionHeader,
-): { header: TreeSessionHeader; changed: boolean } {
-  if (!isRecord(header.mortise)) return { header, changed: false };
-
-  let changed = false;
-  for (const field of RETIRED_LEGACY_METADATA_FIELDS) {
-    if (field in header.mortise) {
-      delete (header.mortise as Record<string, unknown>)[field];
-      changed = true;
-    }
-  }
-  return { header, changed };
-}
-
-function persistCleanedTreeHeader(sessionFile: string, header: TreeSessionHeader): void {
-  const originalStat = statSync(sessionFile);
-  const content = readFileSync(sessionFile);
-  const firstNewline = content.indexOf(0x0a);
-  const remainder = firstNewline >= 0 ? content.subarray(firstNewline) : Buffer.alloc(0);
-  atomicWriteFileSync(sessionFile, JSON.stringify(header) + remainder.toString('utf8'));
-  try {
-    utimesSync(sessionFile, originalStat.atime, originalStat.mtime);
-  } catch (error) {
-    debug('[tree-jsonl] Failed to restore session timestamps after metadata cleanup:', sessionFile, error);
-  }
-}
 
 export function readTreeSessionHeader(sessionFile: string): TreeSessionHeader | null {
   try {
@@ -519,15 +497,7 @@ export function readTreeSessionHeader(sessionFile: string): TreeSessionHeader | 
       closeSync(fd);
     }
 
-    const cleaned = stripRetiredCraftMetadata(parsedHeader);
-    if (cleaned.changed) {
-      try {
-        persistCleanedTreeHeader(sessionFile, cleaned.header);
-      } catch (error) {
-        debug('[tree-jsonl] Failed to persist retired Mortise metadata cleanup:', sessionFile, error);
-      }
-    }
-    return cleaned.header;
+    return parsedHeader;
   } catch {
     return null;
   }
@@ -563,25 +533,25 @@ export function readTreeSessionJsonl(sessionFile: string): ParsedTreeSession | n
   }
 }
 
-export function writeTreeSessionCraftMetadata(
+export async function writeTreeSessionMortiseMetadata(
   sessionFile: string,
   session: StoredSession,
-  options: WriteTreeSessionCraftMetadataOptions = {},
-): boolean {
+  options: WriteTreeSessionMortiseMetadataOptions = {},
+): Promise<boolean> {
   try {
     const header = readTreeSessionHeader(sessionFile);
     if (!isTreeSessionHeader(header)) return false;
 
-    const previousCraft = isRecord(header.mortise) ? header.mortise as MortiseMetadataOnDisk : {};
-    const mortiseMetadata = buildCraftMetadataOnDisk(session, previousCraft, options);
+    const previousMortise = isRecord(header.mortise) ? header.mortise as MortiseMetadataOnDisk : {};
+    const mortiseMetadata = buildMortiseMetadataOnDisk(session, previousMortise, options);
 
-    setPiCraftSessionMetadata({
+    await setPiMortiseSessionMetadata({
       sessionPath: sessionFile,
       sessionDir: dirname(sessionFile),
       cwdOverride: session.workspaceRootPath,
       metadata: mortiseMetadata,
     });
-    writeCraftSessionOverlay(sessionFile, session);
+    await writeMortiseSessionOverlayAsync(sessionFile, session);
     return true;
   } catch (error) {
     debug('[tree-jsonl] Failed to update tree session Mortise metadata:', sessionFile, error);
@@ -592,30 +562,26 @@ export function writeTreeSessionCraftMetadata(
 /**
  * Async facade-compatible metadata update for persistence queue hot paths.
  */
-export async function writeTreeSessionCraftMetadataAsync(
+export async function writeTreeSessionMortiseMetadataAsync(
   sessionFile: string,
   session: StoredSession,
-  options: WriteTreeSessionCraftMetadataOptions = {},
-): Promise<boolean> {
-  try {
-    const header = readTreeSessionHeader(sessionFile);
-    if (!isTreeSessionHeader(header)) return false;
-
-    const previousCraft = isRecord(header.mortise) ? header.mortise as MortiseMetadataOnDisk : {};
-    const mortiseMetadata = buildCraftMetadataOnDisk(session, previousCraft, options);
-
-    setPiCraftSessionMetadata({
-      sessionPath: sessionFile,
-      sessionDir: dirname(sessionFile),
-      cwdOverride: session.workspaceRootPath,
-      metadata: mortiseMetadata,
-    });
-    writeCraftSessionOverlay(sessionFile, session);
-    return true;
-  } catch (error) {
-    debug('[tree-jsonl] Failed to update tree session Mortise metadata:', sessionFile, error);
-    return false;
+  options: WriteTreeSessionMortiseMetadataOptions = {},
+): Promise<void> {
+  const header = readTreeSessionHeader(sessionFile);
+  if (!isTreeSessionHeader(header)) {
+    throw new InvalidCanonicalSessionHeaderError(sessionFile);
   }
+
+  const previousMortise = isRecord(header.mortise) ? header.mortise as MortiseMetadataOnDisk : {};
+  const mortiseMetadata = buildMortiseMetadataOnDisk(session, previousMortise, options);
+
+  await setPiMortiseSessionMetadata({
+    sessionPath: sessionFile,
+    sessionDir: dirname(sessionFile),
+    cwdOverride: session.workspaceRootPath,
+    metadata: mortiseMetadata,
+  });
+  await writeMortiseSessionOverlayAsync(sessionFile, session);
 }
 
 type PiAppendMessageInput = Parameters<PiSessionManager['appendMessage']>[0];
@@ -698,12 +664,12 @@ function piMessagesEquivalent(existing: TreeAgentMessage, expected: PiAppendMess
  * the same source messages are idempotent: existing matching Pi entries are
  * reused and only a missing suffix is appended.
  */
-export function appendStoredMessagesViaPiSessionManager(
+export async function appendStoredMessagesViaPiSessionManager(
   sessionFile: string,
   sessionDir: string,
   cwd: string,
   messages: StoredMessage[],
-): Map<string, string> {
+): Promise<Map<string, string>> {
   const manager = PiSessionManager.open(sessionFile, sessionDir, cwd);
   const idMap = new Map<string, string>();
   const appendableMessages = messages.flatMap((msg) => {
@@ -730,16 +696,44 @@ export function appendStoredMessagesViaPiSessionManager(
   for (const { originalId, piMessage } of appendableMessages.slice(matchedCount)) {
     idMap.set(originalId, manager.appendMessage(piMessage));
   }
+  await manager.flush();
+  return idMap;
+}
+
+export async function materializeStoredSessionViaPiSessionManager(
+  sessionFile: string,
+  sessionDir: string,
+  cwd: string,
+  session: StoredSession,
+): Promise<Map<string, string>> {
+  const manager = PiSessionManager.create(cwd, sessionDir, {
+    id: session.mortiseId,
+    timestamp: new Date(session.createdAt).toISOString(),
+  });
+  if (manager.getSessionFile() !== sessionFile) {
+    throw new Error(`Pi Session path mismatch: expected ${sessionFile}, received ${manager.getSessionFile()}`);
+  }
+  manager.setMortiseMetadata(buildMortiseMetadataOnDisk(session, {}));
+  const idMap = new Map<string, string>();
+  for (const message of session.messages) {
+    const piMessage = storedMessageToPiAppendMessage(message);
+    if (piMessage) idMap.set(message.id, manager.appendMessage(piMessage));
+  }
+  await manager.flush();
+  if (!existsSync(sessionFile) && session.hidden === true) {
+    await manager.publishHiddenSession();
+  }
+  if (existsSync(sessionFile)) await writeMortiseSessionOverlayAsync(sessionFile, session);
   return idMap;
 }
 
 /** Copies canonical Pi message entries without flattening content blocks. */
-export function appendPiBranchMessagesViaSessionManager(
+export async function appendPiBranchMessagesViaSessionManager(
   sessionFile: string,
   sessionDir: string,
   cwd: string,
   entries: PiBranchMessageEntryInput[],
-): Map<string, string> {
+): Promise<Map<string, string>> {
   const manager = PiSessionManager.open(sessionFile, sessionDir, cwd);
   const idMap = new Map<string, string>();
   const appendableEntries = entries.filter((entry): entry is { id: string; message: PiAppendMessageInput } => (
@@ -765,6 +759,7 @@ export function appendPiBranchMessagesViaSessionManager(
   for (const entry of appendableEntries.slice(matchedCount)) {
     idMap.set(entry.id, manager.appendMessage(structuredClone(entry.message)));
   }
+  await manager.flush();
   return idMap;
 }
 
@@ -877,7 +872,7 @@ function appendContentBlockMessages(
     out.push({
       id: entry.id,
       type: role,
-      content: role === 'user' ? stripLeadingCraftInjectedUserContext(content) : content,
+      content: role === 'user' ? stripLeadingMortiseInjectedUserContext(content) : content,
       timestamp: ts,
     });
   }
@@ -894,7 +889,7 @@ function appendAgentMessage(out: StoredMessage[], entry: TreeMessageEntry): void
       out.push({
         id: entry.id,
         type: roleRaw,
-        content: roleRaw === 'user' ? stripLeadingCraftInjectedUserContext(content) : content,
+        content: roleRaw === 'user' ? stripLeadingMortiseInjectedUserContext(content) : content,
         timestamp: ts,
       });
     } else if (Array.isArray(content)) {
@@ -1134,11 +1129,17 @@ function extractPreview(messages: StoredMessage[]): string | undefined {
 function extractLastMessageRole(messages: StoredMessage[]): SessionHeader['lastMessageRole'] {
   for (let i = messages.length - 1; i >= 0; i--) {
     const role = messages[i]?.type;
-    if (role === 'user' || role === 'assistant' || role === 'plan' || role === 'tool' || role === 'error') {
+    if (role === 'user' || role === 'assistant' || role === 'tool' || role === 'error') {
       return role;
     }
   }
   return undefined;
+}
+
+function currentLastMessageRole(value: unknown): SessionHeader['lastMessageRole'] {
+  return value === 'user' || value === 'assistant' || value === 'tool' || value === 'error'
+    ? value
+    : undefined;
 }
 
 function extractLastFinalMessageId(messages: StoredMessage[]): string | undefined {
@@ -1172,19 +1173,17 @@ function projectParsedTreeSessionAsStoredSession(
   const mortise = parsed.header.mortise ?? {}
   // on-disk mortise.id → 扁平 SessionHeader.mortiseId
   // 优先用 mortise.id（Mortise 人类可读 ID），无则退回 Pi 顶层 id + 前缀
-  const mortiseId = getCraftIdFromTreeHeader(parsed.header, options.sessionIdPrefix ?? '');
-  const messages = mergeCraftOverlayMessages(baseMessages, readCraftSessionOverlay(sessionFile, mortiseId));
+  const mortiseId = getMortiseIdFromTreeHeader(parsed.header, options.sessionIdPrefix ?? '');
+  const messages = mergeMortiseOverlayMessages(baseMessages, readMortiseSessionOverlay(sessionFile, mortiseId));
 
   // Strip on-disk `id` before spreading so it doesn't leak as a phantom `id`
   // field onto SessionHeader (which declares only `mortiseId`). Without this,
   // tree-derived headers would carry `.id === mortiseId` while legacy-derived
   // headers carry no `.id`, causing silent source-dependent divergence.
   const {
-    id: _craftIdOnDisk,
-    connectionLocked: _connectionLocked,
-    providerLocked: _providerLocked,
+    id: _onDiskId,
     ...mortiseRest
-  } = mortise as MortiseMetadataWithLegacyProviderLock;
+  } = mortise;
 
   return {
     ...mortiseRest,
@@ -1207,11 +1206,10 @@ function projectParsedTreeSessionAsStoredSession(
     lastUsedAt: mortise.lastUsedAt ?? lastUsedAt,
     lastMessageAt: mortise.lastMessageAt ?? lastUsedAt,
     name: mortise.name ?? latestSessionName(parsed.entries),
-    workingDirectory: workspaceRootPath,
     sdkCwd: mortise.sdkCwd ?? workspaceRootPath,
     messageCount: mortise.messageCount ?? messages.length,
     preview: mortise.preview ?? extractPreview(messages),
-    lastMessageRole: mortise.lastMessageRole ?? extractLastMessageRole(messages),
+    lastMessageRole: currentLastMessageRole(mortise.lastMessageRole) ?? extractLastMessageRole(messages),
     lastFinalMessageId: mortise.lastFinalMessageId ?? extractLastFinalMessageId(messages),
     planModeState: planProjection.planModeState ?? mortise.planModeState,
     messages,
@@ -1242,13 +1240,11 @@ export function projectTreeSessionHeaderAsSessionHeader(
     ?? header.cwd
     ?? dirname(sessionFile);
   const mortise = header.mortise ?? {};
-  const mortiseId = getCraftIdFromTreeHeader(header, options.sessionIdPrefix ?? '');
+  const mortiseId = getMortiseIdFromTreeHeader(header, options.sessionIdPrefix ?? '');
   const {
-    id: _craftIdOnDisk,
-    connectionLocked: _connectionLocked,
-    providerLocked: _providerLocked,
+    id: _onDiskId,
     ...mortiseRest
-  } = mortise as MortiseMetadataWithLegacyProviderLock;
+  } = mortise;
 
   return {
     ...mortiseRest,
@@ -1264,7 +1260,6 @@ export function projectTreeSessionHeaderAsSessionHeader(
     createdAt: mortise.createdAt ?? createdAt,
     lastUsedAt: mortise.lastUsedAt ?? lastUsedAt,
     lastMessageAt: mortise.lastMessageAt ?? lastUsedAt,
-    workingDirectory: workspaceRootPath,
     sdkCwd: mortise.sdkCwd ?? workspaceRootPath,
     messageCount: mortise.messageCount ?? 0,
     tokenUsage: mortise.tokenUsage ?? emptySessionTokenUsage(),

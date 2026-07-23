@@ -1,3 +1,5 @@
+import { MORTISE_PROJECT_SKILLS_DIR } from './paths.ts'
+
 export type CliDomainNamespace = 'skill' | 'automation' | 'permission' | 'theme'
 
 export interface CliDomainPolicy {
@@ -14,7 +16,7 @@ const POLICIES: Record<CliDomainNamespace, CliDomainPolicy> = {
   skill: {
     namespace: 'skill',
     helpCommand: 'mortise skill --help',
-    workspacePathScopes: ['.pi/skills/**'],
+    workspacePathScopes: [`${MORTISE_PROJECT_SKILLS_DIR}/**`],
     readActions: ['list', 'get', 'validate', 'where'],
     quickExamples: [
       'mortise skill list',
@@ -26,7 +28,7 @@ const POLICIES: Record<CliDomainNamespace, CliDomainPolicy> = {
   automation: {
     namespace: 'automation',
     helpCommand: 'mortise automation --help',
-    workspacePathScopes: ['automations.json', 'automations-history.jsonl'],
+    workspacePathScopes: [],
     readActions: ['list', 'get', 'validate', 'history', 'last-executed', 'test', 'lint'],
     quickExamples: [
       'mortise automation list',
@@ -35,7 +37,6 @@ const POLICIES: Record<CliDomainNamespace, CliDomainPolicy> = {
       'mortise automation history <id> --limit 20',
       'mortise automation validate',
     ],
-    bashGuardPaths: ['automations.json', 'automations-history.jsonl'],
   },
   permission: {
     namespace: 'permission',
@@ -53,7 +54,7 @@ const POLICIES: Record<CliDomainNamespace, CliDomainPolicy> = {
   theme: {
     namespace: 'theme',
     helpCommand: 'mortise theme --help',
-    workspacePathScopes: ['config.json', 'theme.json', 'themes/*.json'],
+    workspacePathScopes: ['theme.json', 'themes/*.json'],
     readActions: ['get', 'validate', 'list-presets', 'get-preset'],
     quickExamples: [
       'mortise theme get',
@@ -62,7 +63,7 @@ const POLICIES: Record<CliDomainNamespace, CliDomainPolicy> = {
       'mortise theme set-workspace-color-theme default',
       'mortise theme set-override --json "{\"accent\":\"#3b82f6\"}"',
     ],
-    bashGuardPaths: ['config.json', 'theme.json', 'themes/*.json'],
+    bashGuardPaths: ['theme.json', 'themes/*.json'],
   },
 }
 

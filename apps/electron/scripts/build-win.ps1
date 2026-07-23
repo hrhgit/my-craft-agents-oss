@@ -118,7 +118,7 @@ Write-Host "Skipping 'bun install' (reusing dev node_modules with Pi symlinks)" 
 # Skipping install means stale workspace links from removed packages can linger in
 # node_modules. electron-builder's npm collector follows those links and fails on
 # missing targets, even when the package is no longer declared anywhere.
-function Remove-StaleCraftWorkspaceLinks {
+function Remove-StaleMortiseWorkspaceLinks {
     param([string]$ScopeDir)
 
     if (-not (Test-Path -LiteralPath $ScopeDir)) {
@@ -147,7 +147,7 @@ function Remove-StaleCraftWorkspaceLinks {
     }
 }
 
-Remove-StaleCraftWorkspaceLinks -ScopeDir "$RootDir\node_modules\@mortise"
+Remove-StaleMortiseWorkspaceLinks -ScopeDir "$RootDir\node_modules\@mortise"
 
 # 3. Download Bun binary for Windows (cached by version marker file)
 # Use baseline build - works on all x64 CPUs (no AVX2 requirement)

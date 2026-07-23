@@ -25,7 +25,7 @@
  *   MORTISE_MESSAGING_NODE_BIN   — Node binary used to spawn the WhatsApp worker (default: node)
  */
 
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { readFileSync, existsSync, writeFileSync } from 'node:fs'
 import { version as packageVersion } from '../package.json'
 import { enableDebug } from '@mortise/shared/utils/debug'
@@ -39,8 +39,13 @@ import {
 import { validateSession, createWebuiHandler, nodeHttpAdapter } from '@mortise/server-core/webui'
 import type { WebuiHandler } from '@mortise/server-core/webui'
 import { getCredentialManager } from '@mortise/shared/credentials'
-import { CONFIG_DIR, getWorkspaceByNameOrId, getWorkspaces } from '@mortise/shared/config'
-import { errorMessage, writeRuntimeLog } from '@mortise/shared/utils'
+import {
+  CONFIG_DIR,
+  getWorkspaceByNameOrId,
+  getWorkspaces,
+} from '@mortise/shared/config'
+import { MORTISE_AGENT_DIR } from '@mortise/shared/config/paths'
+import { errorMessage, flushRuntimeLogsSync, writeRuntimeLog } from '@mortise/shared/utils'
 import { createMessagingBootstrap, type MessagingBootstrapHandle } from '@mortise/messaging-gateway'
 import {
   AutomationIngressTokenRegistry,
@@ -59,7 +64,7 @@ if (process.argv.includes('--generate-token')) {
 }
 import type { WsRpcTlsOptions } from '@mortise/server-core/transport'
 import { registerCoreRpcHandlers, cleanupClientFileWatches } from '@mortise/server-core/handlers/rpc'
-import { SessionManager, setSessionPlatform, setSessionRuntimeHooks } from '@mortise/server-core/sessions'
+import { SessionManager, setSessionPlatform, setSessionRuntimeHooks, type SessionBackendFactory } from '@mortise/server-core/sessions'
 import { initModelRefreshService, setFetcherPlatform } from '@mortise/server-core/model-fetchers'
 import { setSearchPlatform, setImageProcessor } from '@mortise/server-core/services'
 import type { HandlerDeps } from '@mortise/server-core/handlers'
@@ -69,8 +74,12 @@ process.env.MORTISE_PROCESS_ROLE ??= 'server'
 process.env.MORTISE_BACKEND_KIND ??= 'headless'
 process.env.MORTISE_PRODUCT_VERSION ??= process.env.MORTISE_VERSION ?? packageVersion
 process.env.MORTISE_BUILD_ID ??= `${process.env.MORTISE_IS_PACKAGED === 'true' ? 'packaged' : 'source'}:${process.env.MORTISE_PRODUCT_VERSION}`
+process.env.PI_CODING_AGENT_DIR = MORTISE_AGENT_DIR
 writeRuntimeLog('info', { scope: 'process', event: 'started', data: { argv0: process.argv0 } })
-process.once('exit', code => writeRuntimeLog('info', { scope: 'process', event: 'finished', data: { exitCode: code } }))
+process.once('exit', code => {
+  writeRuntimeLog('info', { scope: 'process', event: 'finished', data: { exitCode: code } })
+  flushRuntimeLogsSync()
+})
 
 // Prevent unhandled rejections from crashing the server.
 // SDK subprocess abort can reject promises that propagate up unhandled;
@@ -204,6 +213,24 @@ const waNodeBin = process.env.MORTISE_MESSAGING_NODE_BIN ?? 'node'
 // publisher after bootstrapServer resolves.
 let messagingHandle: MessagingBootstrapHandle | null = null
 
+let uiValidationSessionBackend: SessionBackendFactory | undefined
+const uiValidationProfileDir = process.env.MORTISE_UI_PROFILE_DIR
+if (
+  process.env.MORTISE_UI_VALIDATION_BUILD === '1'
+  && process.env.MORTISE_UI_TEST_HOST === '1'
+  && process.env.MORTISE_PROCESS_ROLE === 'workspace-server'
+  && (process.env.MORTISE_UI_PROFILE_MODE === 'fixture' || process.env.MORTISE_UI_PROFILE_MODE === 'isolated')
+  && process.env.MORTISE_UI_RUN_ID
+  && uiValidationProfileDir
+  && process.env.MORTISE_CONFIG_DIR
+  && process.env.PI_CODING_AGENT_DIR
+  && resolve(process.env.MORTISE_CONFIG_DIR) === resolve(uiValidationProfileDir, 'mortise-config')
+  && resolve(process.env.PI_CODING_AGENT_DIR) === resolve(uiValidationProfileDir, 'mortise-config', 'agent')
+) {
+  const { installSessionValidationBackend } = await import('@mortise/shared/ui-validation/session-validation-backend')
+  uiValidationSessionBackend = installSessionValidationBackend()
+}
+
 const instance = await (async () => {
   try {
     return await bootstrapServer<SessionManager, HandlerDeps>({
@@ -245,7 +272,9 @@ const instance = await (async () => {
           oauthIdToken: oauth?.idToken,
         }
       }),
-      createSessionManager: () => new SessionManager(),
+      createSessionManager: () => new SessionManager(uiValidationSessionBackend
+        ? { createSessionBackend: uiValidationSessionBackend }
+        : {}),
       bindRpcServer: (sm, server) => sm.setRpcServer(server),
       createHandlerDeps: ({ sessionManager, platform }) => {
         messagingHandle = createMessagingBootstrap({
@@ -279,6 +308,58 @@ const instance = await (async () => {
       initializeSessionManager: async (sessionManager) => {
         await sessionManager.initialize()
       },
+      initializeRuntime: async ({ sessionManager, server }) => {
+        automationWorkspaceDispatcher = {
+          async execute(workspaceId, command, context) {
+            const workspace = getWorkspaceByNameOrId(workspaceId)
+            if (!workspace) {
+              return { schemaVersion: 1, status: 'invalid', error: { code: 'workspace_not_found', message: 'Workspace not found', retryable: false } }
+            }
+            if (command.operation === 'emit-event' && command.event.mortisesessionid) {
+              const session = await sessionManager.getSession(command.event.mortisesessionid)
+              if (!session || session.workspaceId !== workspace.id) {
+                return {
+                  schemaVersion: 1,
+                  operationId: command.operationId,
+                  status: 'invalid',
+                  error: { code: 'invalid_event_session', message: 'Event Session does not belong to the ingress workspace', retryable: false },
+                }
+              }
+            }
+            return executeAutomationWorkspaceOperationV1({
+              workspaceId: workspace.id,
+              workspaceRootPath: workspace.rootPath,
+              writerId: `${process.env.MORTISE_BUILD_ID}:${process.pid}`,
+              eventSourceKind: context.eventSourceKind,
+              host: sessionManager.getAutomationHost(workspace.id) ?? undefined,
+            }, command)
+          },
+        }
+        registerAutomationWorkspaceRpcHandlers(server, {
+          dispatcher: automationWorkspaceDispatcher,
+          tokens: automationIngressTokens,
+        })
+        for (const workspace of getWorkspaces()) {
+          if (!workspace.remoteServer) automationIngressTokens.ensure(workspace.id)
+        }
+
+        const handle = messagingHandle
+        if (handle) {
+          handle.setPublisher(server.push.bind(server))
+          await handle.initializeWorkspaces(
+            getWorkspaces().filter(workspace => !workspace.remoteServer).map(workspace => workspace.id),
+          )
+        }
+
+        if (webuiHandler) {
+          const { getHealthCheck } = await import('@mortise/server-core/handlers/rpc/server')
+          const depsLike = { sessionManager } as any
+          healthCheckFn = () => getHealthCheck(depsLike)
+        }
+      },
+      cleanupRuntime: async () => {
+        await messagingHandle?.dispose()
+      },
       cleanupSessionManager: async (sessionManager) => {
         try {
           await sessionManager.flushAllSessions()
@@ -293,66 +374,6 @@ const instance = await (async () => {
     process.exit(1)
   }
 })()
-
-automationWorkspaceDispatcher = {
-  async execute(workspaceId, command, context) {
-    const workspace = getWorkspaceByNameOrId(workspaceId)
-    if (!workspace) {
-      return { schemaVersion: 1, status: 'invalid', error: { code: 'workspace_not_found', message: 'Workspace not found', retryable: false } }
-    }
-    if (command.operation === 'emit-event' && command.event.mortisesessionid) {
-      const session = await instance.sessionManager.getSession(command.event.mortisesessionid)
-      if (!session || session.workspaceId !== workspace.id) {
-        return {
-          schemaVersion: 1,
-          operationId: command.operationId,
-          status: 'invalid',
-          error: { code: 'invalid_event_session', message: 'Event Session does not belong to the ingress workspace', retryable: false },
-        }
-      }
-    }
-    return executeAutomationWorkspaceOperationV1({
-      workspaceId: workspace.id,
-      workspaceRootPath: workspace.rootPath,
-      writerId: `${process.env.MORTISE_BUILD_ID}:${process.pid}`,
-      eventSourceKind: context.eventSourceKind,
-      host: instance.sessionManager.getAutomationHost(workspace.id) ?? undefined,
-    }, command)
-  },
-}
-registerAutomationWorkspaceRpcHandlers(instance.wsServer, {
-  dispatcher: automationWorkspaceDispatcher,
-  tokens: automationIngressTokens,
-})
-for (const workspace of getWorkspaces()) {
-  if (!workspace.remoteServer) automationIngressTokens.ensure(workspace.id)
-}
-
-// ---------------------------------------------------------------------------
-// Messaging post-bootstrap: bind the WS publisher and initialize local
-// workspaces. Remote-owned workspaces are skipped because their messaging
-// runs on the remote server.
-// ---------------------------------------------------------------------------
-if (messagingHandle !== null) {
-  const handle: MessagingBootstrapHandle = messagingHandle
-  handle.setPublisher(instance.wsServer.push.bind(instance.wsServer))
-  try {
-    const localWorkspaceIds = getWorkspaces()
-      .filter((ws) => !ws.remoteServer)
-      .map((ws) => ws.id)
-    await handle.initializeWorkspaces(localWorkspaceIds)
-  } catch (error) {
-    console.error('[messaging] Workspace initialization failed:', error)
-  }
-}
-
-// Wire up the lazy health check now that the session manager is ready
-if (webuiHandler) {
-  const { getHealthCheck } = await import('@mortise/server-core/handlers/rpc/server')
-  const depsLike = { sessionManager: instance.sessionManager } as any
-  healthCheckFn = () => getHealthCheck(depsLike)
-
-}
 
 // Start HTTP health endpoint if MORTISE_HEALTH_PORT is set
 const healthPort = parseInt(process.env.MORTISE_HEALTH_PORT ?? '0', 10)

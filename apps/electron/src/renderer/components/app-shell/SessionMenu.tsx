@@ -13,7 +13,7 @@ export interface SessionMenuProps {
   hasRemoteWorkspaces?: boolean
   onRename: () => void
   onMarkUnread: () => void
-  onOpenInNewWindow: () => void
+  onOpenInNewWindow?: () => void
   onSendToWorkspace?: () => void
   onDelete: () => void
 }
@@ -41,7 +41,7 @@ export function SessionMenu({ item, hasRemoteWorkspaces, onRename, onMarkUnread,
       <MenuItem onClick={actions.refreshTitle}><RefreshCw className="h-3.5 w-3.5" /><span className="flex-1">{t('sessionMenu.regenerateTitle')}</span></MenuItem>
       <Separator />
       <MenuItem onClick={actions.openInNewPanel}><Columns2 className="h-3.5 w-3.5" /><span className="flex-1">{t('sessionMenu.openInNewPanel')}</span></MenuItem>
-      <MenuItem onClick={onOpenInNewWindow}><AppWindow className="h-3.5 w-3.5" /><span className="flex-1">{t('sessionMenu.openInNewWindow')}</span></MenuItem>
+      {onOpenInNewWindow && <MenuItem onClick={onOpenInNewWindow}><AppWindow className="h-3.5 w-3.5" /><span className="flex-1">{t('sessionMenu.openInNewWindow')}</span></MenuItem>}
       <MenuItem onClick={actions.showInFinder}><FolderOpen className="h-3.5 w-3.5" /><span className="flex-1">{t('sessionMenu.showInFileManager', { fileManager: getFileManagerName() })}</span></MenuItem>
       <MenuItem onClick={actions.copyPath}><Copy className="h-3.5 w-3.5" /><span className="flex-1">{t('sessionMenu.copyPath')}</span></MenuItem>
       <Separator />

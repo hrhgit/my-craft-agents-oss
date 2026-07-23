@@ -1,0 +1,206 @@
+# Pi Session Sidecar Cleanup Manifest - 2026-07-23
+
+Status: `PENDING CONFIRMATION`
+
+This manifest covers only Mortise-owned `.mortise` sidecar directories nested under the independent Pi Session root. It does not delete or migrate Pi JSONL sessions, Pi extensions, extension data, settings, credentials, models, skills, caches, or any project-level `.pi` directory.
+
+- Scan time: `2026-07-23T12:26:44.9508880+08:00`
+- Sessions root: `C:\Users\32858\.pi\agent\sessions`
+- Candidate directories: 196
+- Total bytes: 8049438
+- Ordered path-list SHA-256: `b8623a0d30e62ee46173efb71d4a1ca0767e18cb395269113bc3d295e115fa34`
+- Reparse points: 0
+
+Deletion is authorized only after explicit confirmation of this exact manifest. Before deletion, every path must still resolve beneath the Sessions root, have leaf name `.mortise`, and contain no reparse points. Changed or missing entries must be skipped and re-inventoried.
+
+| Path | Files | Bytes | Last write |
+|---|---:|---:|---|
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784528584777-tatuudn6t--\.mortise` | 0 | 0 | 2026-07-20T14:23:04.7817429+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784528585073-rpz5vlir3r--\.mortise` | 0 | 0 | 2026-07-20T14:23:05.0821613+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784528585263-3g8h2shprxq--\.mortise` | 0 | 0 | 2026-07-20T14:23:05.2751988+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784533401176-f4f7zdp1tw--\.mortise` | 0 | 0 | 2026-07-20T15:43:21.1808026+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784533401336-m79b5ru0xg--\.mortise` | 0 | 0 | 2026-07-20T15:43:21.3413336+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784533401429-zbvz28fv0ot--\.mortise` | 0 | 0 | 2026-07-20T15:43:21.4347798+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784544388066-hpaftdbpwna--\.mortise` | 0 | 0 | 2026-07-20T18:46:28.0775913+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784544388358-4u7i36h236x--\.mortise` | 0 | 0 | 2026-07-20T18:46:28.3767457+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784544388545-1ovo915gwoy--\.mortise` | 0 | 0 | 2026-07-20T18:46:28.5530323+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784544464256-qtojrs8gifh--\.mortise` | 0 | 0 | 2026-07-20T18:47:44.2629059+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784544464499-xdzzbp3ward--\.mortise` | 0 | 0 | 2026-07-20T18:47:44.5065027+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784544464685-9x5n5dx00j4--\.mortise` | 0 | 0 | 2026-07-20T18:47:44.6936500+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784560990360-fnwv6xcnska--\.mortise` | 0 | 0 | 2026-07-20T23:23:10.3638264+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784560990617-sltpp4w7v7--\.mortise` | 0 | 0 | 2026-07-20T23:23:10.6253815+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784560990755-vcd81v2y95n--\.mortise` | 0 | 0 | 2026-07-20T23:23:10.7563206+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784561037977-k7539hp93mk--\.mortise` | 0 | 0 | 2026-07-20T23:23:58.0092235+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784561038259-1ntmv2thnua--\.mortise` | 0 | 0 | 2026-07-20T23:23:58.2659372+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784561038417-bttdrevdxow--\.mortise` | 0 | 0 | 2026-07-20T23:23:58.4237963+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784561045415-ccia8bnqw2q--\.mortise` | 0 | 0 | 2026-07-20T23:24:05.4238201+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784561045705-s8yl2hlnik--\.mortise` | 0 | 0 | 2026-07-20T23:24:05.7140245+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784561045858-ub6u94nfsup--\.mortise` | 0 | 0 | 2026-07-20T23:24:05.8620153+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784561093022-ankj8be1qa5--\.mortise` | 0 | 0 | 2026-07-20T23:24:53.0268666+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784561093276-bz37siw7xx8--\.mortise` | 0 | 0 | 2026-07-20T23:24:53.2866415+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784561093400-be96jpbhwz--\.mortise` | 0 | 0 | 2026-07-20T23:24:53.4040357+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784561158829-4wv553illq9--\.mortise` | 0 | 0 | 2026-07-20T23:25:58.8472899+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784561159053-r7dguizjsve--\.mortise` | 0 | 0 | 2026-07-20T23:25:59.0572514+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784561159169-jwfqq85xf3b--\.mortise` | 0 | 0 | 2026-07-20T23:25:59.1723206+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784562572156-yjpvczb2a2--\.mortise` | 0 | 0 | 2026-07-20T23:49:32.1619582+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784562572393-eklz8tywwoh--\.mortise` | 0 | 0 | 2026-07-20T23:49:32.4000145+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784562572522-cmxbopxco0h--\.mortise` | 0 | 0 | 2026-07-20T23:49:32.5280210+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784563088855-gso8wmro1mh--\.mortise` | 0 | 0 | 2026-07-20T23:58:08.8606897+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784563089158-vrywmyrgl4--\.mortise` | 0 | 0 | 2026-07-20T23:58:09.1664322+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784563089284-cot81vms2lh--\.mortise` | 0 | 0 | 2026-07-20T23:58:09.2914333+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784571992227-kw2lugwtuqh--\.mortise` | 0 | 0 | 2026-07-21T02:26:32.2468268+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784571992553-htg6siruuwj--\.mortise` | 0 | 0 | 2026-07-21T02:26:32.5612479+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784571992732-bhndz3alrf--\.mortise` | 0 | 0 | 2026-07-21T02:26:32.7419560+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784573317280-cy2jk8qpeiw--\.mortise` | 0 | 0 | 2026-07-21T02:48:37.3571283+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784573318038-s6tltz7mpga--\.mortise` | 0 | 0 | 2026-07-21T02:48:38.0473545+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784573318289-vwju669cgm--\.mortise` | 0 | 0 | 2026-07-21T02:48:38.2957512+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784574565847-6ucyre2ncq5--\.mortise` | 0 | 0 | 2026-07-21T03:09:25.8646335+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784574566104-ovswx18fzwr--\.mortise` | 0 | 0 | 2026-07-21T03:09:26.1089166+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784574566248-rh0wmi22ju--\.mortise` | 0 | 0 | 2026-07-21T03:09:26.2552473+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784574905016-daz079nq27e--\.mortise` | 0 | 0 | 2026-07-21T03:15:05.0185043+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784574905141-wrkdt1b086--\.mortise` | 0 | 0 | 2026-07-21T03:15:05.1438399+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784574905214-6400306hkdr--\.mortise` | 0 | 0 | 2026-07-21T03:15:05.2170970+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784579850707-morh6gwbn5--\.mortise` | 0 | 0 | 2026-07-21T04:37:30.7137199+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784579850911-s14yd6hubc--\.mortise` | 0 | 0 | 2026-07-21T04:37:30.9186867+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784579851025-mbk0u8mtzu--\.mortise` | 0 | 0 | 2026-07-21T04:37:31.0307999+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784579919483-c4hmu0h1s3q--\.mortise` | 0 | 0 | 2026-07-21T04:38:39.4884773+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784579919655-737qhgelloi--\.mortise` | 0 | 0 | 2026-07-21T04:38:39.6601474+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784579919761-v4664mq3pji--\.mortise` | 0 | 0 | 2026-07-21T04:38:39.7661774+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784580173763-6sustvsw1z9--\.mortise` | 0 | 0 | 2026-07-21T04:42:53.7682355+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784580173946-mny63vc5j9j--\.mortise` | 0 | 0 | 2026-07-21T04:42:53.9510605+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784580174047-ljd9i8cl7ds--\.mortise` | 0 | 0 | 2026-07-21T04:42:54.0536191+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784583314334-8j34u9urbs6--\.mortise` | 0 | 0 | 2026-07-21T05:35:14.3385385+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784583314556-8xf1gn2qnpm--\.mortise` | 0 | 0 | 2026-07-21T05:35:14.5608934+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784583314659-ow8fxe30ig--\.mortise` | 0 | 0 | 2026-07-21T05:35:14.6642697+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784586330222-f6wrdkuv7j--\.mortise` | 0 | 0 | 2026-07-21T06:25:30.2287386+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784586330513-wipva8k0jca--\.mortise` | 0 | 0 | 2026-07-21T06:25:30.5304714+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784586330731-76i44zd10i7--\.mortise` | 0 | 0 | 2026-07-21T06:25:30.7356625+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784593489102-gojqg9hep14--\.mortise` | 0 | 0 | 2026-07-21T08:24:49.1091685+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784593489362-9h16snxili6--\.mortise` | 0 | 0 | 2026-07-21T08:24:49.3706832+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784593489499-p4j3ccp31v--\.mortise` | 0 | 0 | 2026-07-21T08:24:49.5077329+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784593678367-vo0bruur8nr--\.mortise` | 0 | 0 | 2026-07-21T08:27:58.3730768+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784593678664-935iox5pao--\.mortise` | 0 | 0 | 2026-07-21T08:27:58.6699329+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784593678788-ew7gebn2dmw--\.mortise` | 0 | 0 | 2026-07-21T08:27:58.7944333+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784593809788-6guzkt1wqv5--\.mortise` | 0 | 0 | 2026-07-21T08:30:09.7918958+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784593809977-ewlhove8p5u--\.mortise` | 0 | 0 | 2026-07-21T08:30:09.9807948+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784593810096-7wslz9dv1hr--\.mortise` | 0 | 0 | 2026-07-21T08:30:10.1005393+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784594382925-t4o8c815bv--\.mortise` | 0 | 0 | 2026-07-21T08:39:42.9279804+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784594383075-ib87n7mg5hn--\.mortise` | 0 | 0 | 2026-07-21T08:39:43.0785596+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784594383171-ia1n3v85okg--\.mortise` | 0 | 0 | 2026-07-21T08:39:43.1754790+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784608758175-x0arkcj2xr9--\.mortise` | 0 | 0 | 2026-07-21T12:39:18.1822191+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784608758496-c9qrr26xov--\.mortise` | 0 | 0 | 2026-07-21T12:39:18.4981451+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784608758684-en98vt2jnl--\.mortise` | 0 | 0 | 2026-07-21T12:39:18.6848882+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784611846958-l4g11ajaud--\.mortise` | 0 | 0 | 2026-07-21T13:30:47.0104210+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784611847402-0mu5kwbv03lf--\.mortise` | 0 | 0 | 2026-07-21T13:30:47.4057609+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784611847659-1lfma572jtd--\.mortise` | 0 | 0 | 2026-07-21T13:30:47.6642055+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784615635252-b6wk01cbo2s--\.mortise` | 0 | 0 | 2026-07-21T14:33:55.2630288+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784615635554-ezy9xhnwc5i--\.mortise` | 0 | 0 | 2026-07-21T14:33:55.5619785+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784615635695-wxq53e9mibl--\.mortise` | 0 | 0 | 2026-07-21T14:33:55.7014152+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784623707318-e46olbco9ug--\.mortise` | 0 | 0 | 2026-07-21T16:48:27.3534563+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784623707594-ofv0izipxoq--\.mortise` | 0 | 0 | 2026-07-21T16:48:27.5993551+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784623707740-aruvcbknaln--\.mortise` | 0 | 0 | 2026-07-21T16:48:27.7446984+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784624638705-5llfd23zqq3--\.mortise` | 0 | 0 | 2026-07-21T17:03:58.7106924+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784624638840-pp1ojtyt52s--\.mortise` | 0 | 0 | 2026-07-21T17:03:58.8437392+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784624638924-8rr28ebovut--\.mortise` | 0 | 0 | 2026-07-21T17:03:58.9283760+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784651244554-xqdxhxz5fir--\.mortise` | 0 | 0 | 2026-07-22T00:27:24.5589278+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784651244828-2p44ndy59yo--\.mortise` | 0 | 0 | 2026-07-22T00:27:24.8320382+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784651244965-3qvcg1fm6zj--\.mortise` | 0 | 0 | 2026-07-22T00:27:24.9732092+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784662489661-yfckru73ko--\.mortise` | 0 | 0 | 2026-07-22T03:34:49.6657702+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784662489790-wo2od3kecxl--\.mortise` | 0 | 0 | 2026-07-22T03:34:49.7948440+08:00 |
+| `C:\Users\…477 tokens truncated…08:00` | undefined | undefined | undefined |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784691305004-1yfl47qvofph--\.mortise` | 0 | 0 | 2026-07-22T11:35:05.0101915+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784693763879-0f3304pd0onu--\.mortise` | 0 | 0 | 2026-07-22T12:16:03.8861158+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784693764054-vbmaoahd4pn--\.mortise` | 0 | 0 | 2026-07-22T12:16:04.0574895+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784693764147-m2zqxp32dyh--\.mortise` | 0 | 0 | 2026-07-22T12:16:04.1517562+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784693792382-fvvni3sm8x--\.mortise` | 0 | 0 | 2026-07-22T12:16:32.3867802+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784693792588-uzrjaifolit--\.mortise` | 0 | 0 | 2026-07-22T12:16:32.5928019+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784693792706-b7kinin1zk--\.mortise` | 0 | 0 | 2026-07-22T12:16:32.7092597+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784696407243-zycb55e16ii--\.mortise` | 0 | 0 | 2026-07-22T13:00:07.2721524+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784696407726-bv0nuimxije--\.mortise` | 0 | 0 | 2026-07-22T13:00:07.7377312+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784696408012-sn0cno70v8o--\.mortise` | 0 | 0 | 2026-07-22T13:00:08.0341763+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784696497406-9vk93pex7pq--\.mortise` | 0 | 0 | 2026-07-22T13:01:37.4119448+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784696497689-d7hujqx01z6--\.mortise` | 0 | 0 | 2026-07-22T13:01:37.6941965+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784696497846-0403jc49ox53--\.mortise` | 0 | 0 | 2026-07-22T13:01:37.8501915+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784699351639-y7xlex9d4m--\.mortise` | 0 | 0 | 2026-07-22T13:49:11.6451325+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784699351837-9kngb3fqrf--\.mortise` | 0 | 0 | 2026-07-22T13:49:11.8410942+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784699351952-dgctrkbioug--\.mortise` | 0 | 0 | 2026-07-22T13:49:11.9586673+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784699430806-inyjhchpee--\.mortise` | 0 | 0 | 2026-07-22T13:50:30.8211799+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784699431181-d3bnqxaew34--\.mortise` | 0 | 0 | 2026-07-22T13:50:31.1881403+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784699431329-4wpgtt5liab--\.mortise` | 0 | 0 | 2026-07-22T13:50:31.3358525+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784707956011-x4avbtrroe--\.mortise` | 0 | 0 | 2026-07-22T16:12:36.0102287+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784707956348-qwbehaarnuk--\.mortise` | 0 | 0 | 2026-07-22T16:12:36.3494262+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784707956528-ao6198xqdg--\.mortise` | 0 | 0 | 2026-07-22T16:12:36.5275818+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784709997255-ga0v3vnpipm--\.mortise` | 0 | 0 | 2026-07-22T16:46:37.2581360+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784709997534-zv926eyykk8--\.mortise` | 0 | 0 | 2026-07-22T16:46:37.5371841+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784709997657-1gjji65z3fv--\.mortise` | 0 | 0 | 2026-07-22T16:46:37.6598993+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784710505688-vd8vxj9zdgl--\.mortise` | 0 | 0 | 2026-07-22T16:55:05.6960036+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784710506092-cet205et5dd--\.mortise` | 0 | 0 | 2026-07-22T16:55:06.1002743+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784710506253-vqy6aup5pk--\.mortise` | 0 | 0 | 2026-07-22T16:55:06.2595416+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784710672261-uuvqhnppsl--\.mortise` | 0 | 0 | 2026-07-22T16:57:52.2766382+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784710672491-8dx1l2ee6ug--\.mortise` | 0 | 0 | 2026-07-22T16:57:52.4966868+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784710672619-xcpw4l73j0o--\.mortise` | 0 | 0 | 2026-07-22T16:57:52.6248047+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784711473715-u1kvjr5krz--\.mortise` | 0 | 0 | 2026-07-22T17:11:13.7194313+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784711473898-0s9easetqkkb--\.mortise` | 0 | 0 | 2026-07-22T17:11:13.9074850+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784711474125-1qge8u59czd--\.mortise` | 0 | 0 | 2026-07-22T17:11:14.1350091+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784713414644-0mkiw0uqybyf--\.mortise` | 0 | 0 | 2026-07-22T17:43:34.6715972+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784713414934-43q7m8ekib--\.mortise` | 0 | 0 | 2026-07-22T17:43:34.9411467+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784713415079-kkiuq3nl16c--\.mortise` | 0 | 0 | 2026-07-22T17:43:35.0860797+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784713602944-1z4refn3sn--\.mortise` | 0 | 0 | 2026-07-22T17:46:42.9491604+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784713603127-7erm1ohm1kj--\.mortise` | 0 | 0 | 2026-07-22T17:46:43.1320910+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784713603232-itsd0nuk8t--\.mortise` | 0 | 0 | 2026-07-22T17:46:43.2375811+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784716311117-6rrnvam4cll--\.mortise` | 0 | 0 | 2026-07-22T18:31:51.1213196+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784716311374-hwx9ut1r8h--\.mortise` | 0 | 0 | 2026-07-22T18:31:51.3758666+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784716311481-kvh2v9si2db--\.mortise` | 0 | 0 | 2026-07-22T18:31:51.4836250+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784716396678-w4ui8dtlv4i--\.mortise` | 0 | 0 | 2026-07-22T18:33:16.6827815+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784716396867-hyn2x9ek446--\.mortise` | 0 | 0 | 2026-07-22T18:33:16.8718000+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784716396971-f58msdtsqhw--\.mortise` | 0 | 0 | 2026-07-22T18:33:16.9755910+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784716579276-4ske3dx6e48--\.mortise` | 0 | 0 | 2026-07-22T18:36:19.2817724+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784716579484-e92kqxb734b--\.mortise` | 0 | 0 | 2026-07-22T18:36:19.4898806+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784716579594-0dks0q4c9ed--\.mortise` | 0 | 0 | 2026-07-22T18:36:19.5996742+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784739870430-5x2k0jlhy96--\.mortise` | 0 | 0 | 2026-07-23T01:04:30.4350663+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784739870459-10rhxs5d4oc--\.mortise` | 0 | 0 | 2026-07-23T01:04:30.4647551+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784739870483-20t690eu803--\.mortise` | 0 | 0 | 2026-07-23T01:04:30.4871556+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784740009555-pexlwdyho--\.mortise` | 0 | 0 | 2026-07-23T01:06:49.5619805+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784740009804-yu56lm89a7--\.mortise` | 0 | 0 | 2026-07-23T01:06:49.8091329+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784740009896-qgwdx6lc5ao--\.mortise` | 0 | 0 | 2026-07-23T01:06:49.9006894+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784740342786-5vczhjpqmx6--\.mortise` | 0 | 0 | 2026-07-23T01:12:22.7905182+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784740342972-xq04mbsofaq--\.mortise` | 0 | 0 | 2026-07-23T01:12:22.9763462+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784740343059-yl36miz56hd--\.mortise` | 0 | 0 | 2026-07-23T01:12:23.0633764+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784740610096-ty9xgh2rxwi--\.mortise` | 0 | 0 | 2026-07-23T01:16:50.1019987+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784740610429-brl71n1vl2m--\.mortise` | 0 | 0 | 2026-07-23T01:16:50.4327786+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784740610566-wyk7op7924--\.mortise` | 0 | 0 | 2026-07-23T01:16:50.5783486+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784740616523-kkmlqqimd2--\.mortise` | 0 | 0 | 2026-07-23T01:16:56.5218485+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784740616700-ydgei381s5--\.mortise` | 0 | 0 | 2026-07-23T01:16:56.6997499+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-pending-plan-test-1784740616864-lzq7nlzganm--\.mortise` | 0 | 0 | 2026-07-23T01:16:56.8638992+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-session-validation-692yvk-workspace--\.mortise` | 2 | 45 | 2026-07-22T23:49:07.7627051+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-session-validation-aemzvh-workspace--\.mortise` | 2 | 45 | 2026-07-23T01:56:06.5935883+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-session-validation-afb6jk-workspace--\.mortise` | 2 | 46 | 2026-07-22T17:31:26.7907017+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-session-validation-cb60gi-workspace--\.mortise` | 2 | 45 | 2026-07-22T23:42:27.7544064+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-session-validation-cvjing-workspace--\.mortise` | 1 | 19 | 2026-07-22T16:05:36.0089543+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-session-validation-d6kbr6-workspace--\.mortise` | 2 | 45 | 2026-07-23T04:22:36.2065794+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-session-validation-e3njb1-workspace--\.mortise` | 2 | 45 | 2026-07-23T04:16:56.9444696+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-session-validation-enuyl8-workspace--\.mortise` | 3 | 64 | 2026-07-22T17:32:48.3170437+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-session-validation-iwjslp-workspace--\.mortise` | 1 | 19 | 2026-07-22T16:05:50.2270775+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-session-validation-jdypnd-workspace--\.mortise` | 2 | 45 | 2026-07-22T17:39:58.4590000+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-session-validation-kx6nfe-workspace--\.mortise` | 2 | 45 | 2026-07-22T17:44:08.4054457+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-session-validation-myo65i-workspace--\.mortise` | 2 | 46 | 2026-07-22T16:38:02.0268040+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-session-validation-no53qb-workspace--\.mortise` | 2 | 45 | 2026-07-23T04:25:47.3049322+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-session-validation-ocovdg-workspace--\.mortise` | 2 | 45 | 2026-07-23T02:27:17.8700585+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-session-validation-ovmi5s-workspace--\.mortise` | 2 | 45 | 2026-07-22T17:36:02.3717621+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-session-validation-uxa13v-workspace--\.mortise` | 2 | 45 | 2026-07-22T17:46:03.6670750+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-session-validation-vty5i2-workspace--\.mortise` | 2 | 45 | 2026-07-22T17:40:53.1572169+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-session-validation-xcdctx-workspace--\.mortise` | 1 | 19 | 2026-07-22T16:10:36.3095334+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-session-validation-xiespx-workspace--\.mortise` | 1 | 19 | 2026-07-22T16:14:45.1396907+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-session-validation-yiemcb-workspace--\.mortise` | 2 | 45 | 2026-07-22T17:40:40.1292936+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-session-validation-z5dueq-workspace--\.mortise` | 2 | 45 | 2026-07-23T01:54:31.1523294+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-session-validation-zumpiw-workspace--\.mortise` | 2 | 46 | 2026-07-22T16:42:54.2520413+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-sm-oauth-refresh-6twlfl--\.mortise` | 1 | 107 | 2026-07-20T14:23:33.2335991+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-sm-oauth-refresh-urhl8y--\.mortise` | 1 | 442 | 2026-07-20T14:23:32.9970237+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-sm-oauth-refresh-x51j4f--\.mortise` | 1 | 442 | 2026-07-20T14:23:01.1266079+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--C--users-32858-appdata-local-temp-sm-oauth-refresh-y2k8ll--\.mortise` | 1 | 448 | 2026-07-20T14:23:01.4962173+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--E--_workSpace-_Agents-craft-agent--\.mortise` | 22 | 5087464 | 2026-07-20T14:22:57.6161159+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--E--_workspace-_agents-craft-agent-packages-server-core--\.mortise` | 1 | 749 | 2026-07-21T01:49:40.5228569+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--E--_workSpace-_Agents-pi--\.mortise` | 108 | 1848611 | 2026-07-19T19:08:12.7523411+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--E--_workSpace-_chat--\.mortise` | 13 | 1076180 | 2026-07-19T18:48:37.2454343+08:00 |
+| `C:\Users\32858\.pi\agent\sessions\--E--tmp-pi-native-transcript-test--\.mortise` | 1 | 34087 | 2026-07-20T14:22:54.4469414+08:00 |
+

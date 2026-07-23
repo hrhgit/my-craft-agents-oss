@@ -27,12 +27,15 @@ describe("SettingsManager", () => {
 
 	it("round-trips ordered model defaults without duplicating the legacy slot", async () => {
 		const settingsPath = join(agentDir, "settings.json");
-		writeFileSync(settingsPath, JSON.stringify({
-			defaultProvider: "anthropic",
-			defaultModel: "claude-sonnet",
-			defaultThinkingLevel: "medium",
-			theme: "dark",
-		}));
+		writeFileSync(
+			settingsPath,
+			JSON.stringify({
+				defaultProvider: "anthropic",
+				defaultModel: "claude-sonnet",
+				defaultThinkingLevel: "medium",
+				theme: "dark",
+			}),
+		);
 
 		const manager = SettingsManager.create(projectDir, agentDir);
 		manager.setModelDefaultSlot(2, {
@@ -54,7 +57,11 @@ describe("SettingsManager", () => {
 		manager.setModelDefaultSlot(3, { provider: "google", model: "gemini", thinkingLevel: "low" });
 		manager.removeModelDefaultSlot(2);
 		await manager.flush();
-		expect(manager.getModelDefaultSlot(2)).toMatchObject({ provider: "google", model: "gemini", thinkingLevel: "low" });
+		expect(manager.getModelDefaultSlot(2)).toMatchObject({
+			provider: "google",
+			model: "gemini",
+			thinkingLevel: "low",
+		});
 
 		manager.setModelDefaultSlot(3, { provider: "openai", model: "gpt-5.1", thinkingLevel: "medium" });
 		manager.setModelDefaultSlot(4, { provider: "openai", model: "gpt-5.2", thinkingLevel: "high" });

@@ -65,8 +65,7 @@ function optionalString(value: unknown, field: string, maxLength: number): strin
 function parseTransferPayload(input: unknown): RemoteSessionTransferPayload {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('input must be a transfer summary object')
   const value = input as Record<string, unknown>
-  // Retired organization fields remain accepted as legacy input, then discarded.
-  const allowed = new Set(['sourceSessionId', 'name', 'sessionStatus', 'labels', 'permissionMode', 'summary'])
+  const allowed = new Set(['sourceSessionId', 'name', 'permissionMode', 'summary'])
   if (Object.keys(value).some(key => !allowed.has(key))) throw new Error('input contains unsupported transfer fields')
   const sourceSessionId = optionalString(value.sourceSessionId, 'sourceSessionId', 200)
   const summary = optionalString(value.summary, 'summary', TRANSFER_SUMMARY_MAX_LENGTH)

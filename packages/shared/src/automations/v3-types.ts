@@ -1,5 +1,3 @@
-import type { AutomationCondition } from './types.ts'
-
 export type AutomationEventSourceV3 = 'mortise' | 'agent' | 'extension' | 'external'
 export type AutomationRunStateV1 = 'queued' | 'running' | 'succeeded' | 'partial' | 'failed' | 'cancelled' | 'skipped'
 export type AutomationActionStateV1 = 'queued' | 'running' | 'succeeded' | 'failed' | 'blocked' | 'cancelled' | 'skipped'
@@ -78,6 +76,31 @@ export interface WebhookActionV3 {
 }
 
 export type AutomationActionV3 = PromptActionV3 | WebhookActionV3
+
+export interface TimeCondition {
+  condition: 'time'
+  after?: string
+  before?: string
+  weekday?: string[]
+  timezone?: string
+}
+
+export interface StateCondition {
+  condition: 'state'
+  field: string
+  value?: unknown
+  from?: unknown
+  to?: unknown
+  contains?: string
+  not_value?: unknown
+}
+
+export interface LogicalCondition {
+  condition: 'and' | 'or' | 'not'
+  conditions: AutomationCondition[]
+}
+
+export type AutomationCondition = TimeCondition | StateCondition | LogicalCondition
 
 export interface AutomationDefinitionV3 {
   id: string
@@ -183,18 +206,6 @@ export interface AutomationExecutionContextV1 {
   run: AutomationRunV1
   event?: TrustedAutomationEventV1
   signal?: AbortSignal
-}
-
-export interface AutomationMigrationDiagnosticV1 {
-  automationId?: string
-  code: string
-  message: string
-}
-
-export interface AutomationMigrationResultV1 {
-  document: AutomationsDocumentV3
-  aliases: Record<string, string>
-  diagnostics: AutomationMigrationDiagnosticV1[]
 }
 
 export type AutomationCapabilityStatusV1 =

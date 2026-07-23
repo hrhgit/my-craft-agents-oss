@@ -1,8 +1,7 @@
 /**
  * Renderer tests — covers the three response modes.
  *
- *   - `streaming`: legacy behaviour, each text_complete finalises its own
- *     message; backwards-compatibility target.
+ *   - `streaming`: each text_complete finalises its own message.
  *   - `progress`: new default; single evolving message per run, intermediate
  *     text dropped, tool status reflected in-place.
  *   - `final_only`: silent until `complete`; single send with accumulated
@@ -15,12 +14,12 @@ import { describe, expect, it, beforeEach } from 'bun:test'
 import { Renderer, type SessionEvent } from '../renderer'
 import type { PiProjectionEventV1 } from '@mortise/shared/protocol'
 import {
-  normalizeBindingConfig,
+  createBindingConfig,
   type AdapterCapabilities,
   type ChannelBinding,
   type PlatformAdapter,
   type SentMessage,
-  type RawBindingConfig,
+  type BindingConfig,
   type ResponseMode,
 } from '../types'
 
@@ -91,7 +90,7 @@ function makeAdapter(
 // Fixture helpers
 // ---------------------------------------------------------------------------
 
-function makeBinding(overrides: RawBindingConfig = {}): ChannelBinding {
+function makeBinding(overrides: Partial<BindingConfig> = {}): ChannelBinding {
   return {
     id: 'bind-1',
     workspaceId: 'ws-1',
@@ -100,7 +99,7 @@ function makeBinding(overrides: RawBindingConfig = {}): ChannelBinding {
     channelId: 'chan-1',
     enabled: true,
     createdAt: Date.now(),
-    config: normalizeBindingConfig('telegram', overrides),
+    config: createBindingConfig('telegram', overrides),
   }
 }
 
@@ -129,8 +128,7 @@ const ev = {
     text,
     isIntermediate: false,
   }),
-  // text_complete without an explicit isIntermediate flag — simulates
-  // backends that don't set the field (older events or non-Claude agents).
+  // Internal event shape without an explicit intermediate marker.
   completeText: (text: string): SessionEvent => ({
     type: 'text_complete',
     sessionId: 's',
@@ -417,28 +415,28 @@ describe('Renderer — final_only mode', () => {
     expect(sends[0]!.text).toBe('The real answer.')
   })
 
-  it('treats text_complete without isIntermediate as final (backwards compat)', async () => {
+  it('treats text_complete without isIntermediate as final', async () => {
     const adapter = makeAdapter()
     const binding = makeBinding({ responseMode: 'final_only' as ResponseMode })
-    await play(renderer, binding, adapter, [ev.completeText('legacy-shape-text'), ev.complete()])
+    await play(renderer, binding, adapter, [ev.completeText('answer'), ev.complete()])
 
     const sends = adapter.calls.filter((c) => c.kind === 'sendText')
     expect(sends.length).toBe(1)
-    expect(sends[0]!.text).toBe('legacy-shape-text')
+    expect(sends[0]!.text).toBe('answer')
   })
 })
 
 // ---------------------------------------------------------------------------
-// streaming mode (legacy — regression guard)
+// streaming mode
 // ---------------------------------------------------------------------------
 
-describe('Renderer — streaming mode (legacy)', () => {
+describe('Renderer — streaming mode', () => {
   let renderer: Renderer
   beforeEach(() => {
     renderer = new Renderer()
   })
 
-  it('each text_complete finalises its own message (legacy behaviour)', async () => {
+  it('each text_complete finalises its own message', async () => {
     const adapter = makeAdapter()
     const binding = makeBinding({ responseMode: 'streaming' as ResponseMode })
     await play(renderer, binding, adapter, [
@@ -454,45 +452,6 @@ describe('Renderer — streaming mode (legacy)', () => {
     expect(sends.length).toBe(2)
     expect(sends[0]!.text).toBe('first')
     expect(sends[1]!.text).toBe('second')
-  })
-})
-
-// ---------------------------------------------------------------------------
-// Legacy config coercion (no responseMode field on BindingConfig)
-// ---------------------------------------------------------------------------
-
-describe('Renderer — legacy config coercion', () => {
-  it('streamResponses=true with no responseMode → streaming behaviour', async () => {
-    const renderer = new Renderer()
-    const adapter = makeAdapter()
-    // Pass legacy `streamResponses` through the RawBindingConfig boundary;
-    // normalizeBindingConfig converts it to responseMode='streaming'.
-    const binding = makeBinding({ streamResponses: true })
-
-    await play(renderer, binding, adapter, [ev.completeText('hi'), ev.complete()])
-
-    const sends = adapter.calls.filter((c) => c.kind === 'sendText')
-    expect(sends.length).toBe(1)
-    expect(sends[0]!.text).toBe('hi')
-  })
-
-  it('streamResponses=false with no responseMode → final_only behaviour', async () => {
-    const renderer = new Renderer()
-    const adapter = makeAdapter()
-    const binding = makeBinding({ streamResponses: false })
-
-    await play(renderer, binding, adapter, [
-      ev.toolStart('Read'),
-      ev.toolResult(),
-      ev.final('done'),
-      ev.complete(),
-    ])
-
-    const sends = adapter.calls.filter((c) => c.kind === 'sendText')
-    const edits = adapter.calls.filter((c) => c.kind === 'editMessage')
-    expect(edits.length).toBe(0)
-    expect(sends.length).toBe(1)
-    expect(sends[0]!.text).toBe('done')
   })
 })
 

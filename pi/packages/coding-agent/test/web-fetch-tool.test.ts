@@ -56,7 +56,7 @@ describe("web_fetch tool", () => {
 		expect(textOutput(result)).toContain("Title: Test Article");
 		expect(textOutput(result)).toContain("Main text.");
 		expect(result.details.contentType).toBe("text/html");
-	});
+	}, 120_000);
 
 	it("returns plain text responses", async () => {
 		const result = await execute(

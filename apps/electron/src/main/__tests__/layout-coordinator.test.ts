@@ -49,12 +49,68 @@ function tab(id: string, groupId = 'group:main'): ContentTab {
 }
 
 describe('LayoutCoordinator', () => {
-  it('atomically persists versioned layouts per workspace', () => {
+  it('coalesces hot-path mutations into one asynchronous latest-snapshot write', async () => {
+    const storagePath = pathForTest()
+    const writes: string[] = []
+    const coordinator = new LayoutCoordinator({
+      storagePath,
+      persistSnapshot: async (_path, contents) => { writes.push(contents) },
+    })
+    let latest = coordinator.getSnapshot('ws-a')
+    for (let index = 0; index < 100; index += 1) {
+      latest = coordinator.saveSnapshot({
+        ...latest,
+        geometry: { index },
+      }, latest.revision)
+    }
+
+    expect(writes).toHaveLength(0)
+    expect(coordinator.getPersistenceState()).toMatchObject({
+      pendingRevisions: 100,
+      writing: true,
+      failed: false,
+      highWaterRevisions: 100,
+    })
+
+    await coordinator.flush()
+    expect(writes).toHaveLength(1)
+    expect(JSON.parse(writes[0]!).layouts['ws-a'].geometry).toEqual({ index: 99 })
+    expect(coordinator.getPersistenceState()).toMatchObject({
+      pendingRevisions: 0,
+      writing: false,
+      failed: false,
+    })
+  })
+
+  it('surfaces async persistence failure and retries the latest state after another mutation', async () => {
+    let fail = true
+    const writes: string[] = []
+    const coordinator = new LayoutCoordinator({
+      storagePath: pathForTest(),
+      persistSnapshot: async (_path, contents) => {
+        if (fail) throw new Error('layout disk unavailable')
+        writes.push(contents)
+      },
+    })
+    const initial = coordinator.getSnapshot('ws-a')
+    const first = coordinator.saveSnapshot({ ...initial, geometry: { index: 1 } }, initial.revision)
+    await expect(coordinator.flush()).rejects.toThrow('layout disk unavailable')
+    expect(coordinator.getPersistenceState().failed).toBe(true)
+
+    fail = false
+    coordinator.saveSnapshot({ ...first, geometry: { index: 2 } }, first.revision)
+    await coordinator.flush()
+    expect(JSON.parse(writes.at(-1)!).layouts['ws-a'].geometry).toEqual({ index: 2 })
+    expect(coordinator.getPersistenceState()).toMatchObject({ pendingRevisions: 0, failed: false })
+  })
+
+  it('atomically persists versioned layouts per workspace', async () => {
     const storagePath = pathForTest()
     const coordinator = new LayoutCoordinator({ storagePath })
     const next = createDefaultAppLayout({ serverId: 'local', workspaceId: 'ws-a', sessionId: 's1' })
     const saved = coordinator.saveSnapshot(next, coordinator.getSnapshot('ws-a').revision)
     expect(saved.revision).toBeGreaterThan(next.revision)
+    await coordinator.flush()
     expect(JSON.parse(readFileSync(storagePath, 'utf8')).layouts['ws-a'].tabs['content:main'].ref.sessionId).toBe('s1')
   })
 
@@ -72,7 +128,7 @@ describe('LayoutCoordinator', () => {
     expect(() => coordinator.saveSnapshot(blocked)).toThrow('Unauthorized content route')
   })
 
-  it('redocks detached groups when the app restarts', () => {
+  it('redocks detached groups when the app restarts', async () => {
     const storagePath = pathForTest()
     const coordinator = new LayoutCoordinator({ storagePath })
     coordinator.saveSnapshot(openContentTab(
@@ -82,19 +138,21 @@ describe('LayoutCoordinator', () => {
     ))
     coordinator.detachGroup('ws-a', 'group:right', 'aux-1')
     expect(coordinator.getSnapshot('ws-a').windows['aux-1']).toBeDefined()
+    await coordinator.flush()
 
     const restarted = new LayoutCoordinator({ storagePath })
     expect(restarted.getSnapshot('ws-a').windows['aux-1']).toBeUndefined()
     expect(restarted.getSnapshot('ws-a').groups['group:right'].windowId).toBe('primary')
   })
 
-  it('persists a detached tab and redocks it into its source group after restart', () => {
+  it('persists a detached tab and redocks it into its source group after restart', async () => {
     const storagePath = pathForTest()
     const coordinator = new LayoutCoordinator({ storagePath })
     const layout = createDefaultAppLayout({ serverId: 'local', workspaceId: 'ws-a', sessionId: 's1' })
     coordinator.saveSnapshot(layout)
     coordinator.detachTab('ws-a', 'content:main', 'aux-tab')
     expect(coordinator.getSnapshot('ws-a').windows['aux-tab'].sourceTabIndex).toBe(0)
+    await coordinator.flush()
 
     const restarted = new LayoutCoordinator({ storagePath })
     expect(restarted.getSnapshot('ws-a').windows['aux-tab']).toBeUndefined()
@@ -127,11 +185,13 @@ describe('LayoutCoordinator', () => {
     expect(coordinator.getSnapshot('valid').tabs['content:main'].ref.sessionId).toBe('kept')
   })
 
-  it('rebinds stale persisted server routes and window geometry to the requested server', () => {
+  it('rebinds stale persisted server routes and window geometry to the requested server', async () => {
     const storagePath = pathForTest()
     const layout = createDefaultAppLayout({ serverId: 'https://old.example', workspaceId: 'ws-a' })
     layout.geometry = { config: { serverId: 'https://old.example' } }
-    new LayoutCoordinator({ storagePath }).saveSnapshot(layout)
+    const initial = new LayoutCoordinator({ storagePath })
+    initial.saveSnapshot(layout)
+    await initial.flush()
 
     const coordinator = new LayoutCoordinator({
       storagePath,
@@ -142,6 +202,7 @@ describe('LayoutCoordinator', () => {
     expect(rebound.tabs['content:main'].ref.serverId).toBe('https://new.example')
     expect((rebound.geometry as any).config.serverId).toBe('https://new.example')
     expect(rebound.revision).toBeGreaterThan(layout.revision)
+    await coordinator.flush()
     expect(JSON.parse(readFileSync(storagePath, 'utf8')).layouts['ws-a'].tabs['content:main'].ref.serverId)
       .toBe('https://new.example')
 
@@ -316,7 +377,7 @@ describe('LayoutCoordinator', () => {
     ])
   })
 
-  it('preserves the latest primary geometry when an auxiliary tab redocks and survives the next save', () => {
+  it('preserves the latest primary geometry when an auxiliary tab redocks and survives the next save', async () => {
     const storagePath = pathForTest()
     const coordinator = new LayoutCoordinator({ storagePath })
     let layout = createDefaultAppLayout({ serverId: 'local', workspaceId: 'ws-a' })
@@ -345,6 +406,7 @@ describe('LayoutCoordinator', () => {
     expect(redocked.groups['group:main'].tabIds).toEqual(['content:main', 'files'])
     expect(redocked.geometry).toEqual({ tabs: ['content:main'] })
     expect(redocked.windows.primary.geometry).toEqual({ tabs: ['content:main'] })
+    await coordinator.flush()
 
     const restarted = new LayoutCoordinator({ storagePath })
     const restored = restarted.getSnapshot('ws-a')
@@ -356,6 +418,7 @@ describe('LayoutCoordinator', () => {
     const savedAgain = restarted.saveWindowSnapshot('primary', rebuiltView, restored.revision)
     expect(savedAgain.groups['group:main'].tabIds).toEqual(['content:main', 'files'])
     expect(savedAgain.tabs.files.ref.kind).toBe('file')
+    await restarted.flush()
 
     const restartedAgain = new LayoutCoordinator({ storagePath })
     expect(restartedAgain.getSnapshot('ws-a').tabs.files).toBeDefined()

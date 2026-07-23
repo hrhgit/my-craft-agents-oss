@@ -8,6 +8,7 @@ function toolNames(tools: Array<{ name: string }>): string[] {
 }
 
 describe("regression #5109: exclude tools", () => {
+	const shellToolName = process.platform === "win32" ? "pwsh" : "bash";
 	const extensionFactories: ExtensionFactory[] = [
 		(pi) => {
 			pi.on("session_start", () => {
@@ -48,9 +49,11 @@ describe("regression #5109: exclude tools", () => {
 			const allToolNames = toolNames(harness.session.getAllTools());
 			expect(allToolNames).not.toContain("read");
 			expect(allToolNames).not.toContain("ask_question");
-			expect(allToolNames).toContain("bash");
+			expect(allToolNames).toContain(shellToolName);
 			expect(allToolNames).toContain("dynamic_tool");
-			expect(harness.session.getActiveToolNames().sort()).toEqual(["bash", "dynamic_tool", "edit", "write"]);
+			expect(harness.session.getActiveToolNames().sort()).toEqual(
+				[shellToolName, "dynamic_tool", "edit", "write"].sort(),
+			);
 			expect(harness.session.systemPrompt).not.toContain("- read:");
 			expect(harness.session.systemPrompt).not.toContain("ask_question");
 			expect(harness.session.systemPrompt).toContain("- dynamic_tool: Run dynamic test behavior");
@@ -61,17 +64,17 @@ describe("regression #5109: exclude tools", () => {
 
 	it("lets excluded tools override the allowlist", async () => {
 		const harness = await createHarness({
-			allowedToolNames: ["read", "bash", "ask_question"],
+			allowedToolNames: ["read", shellToolName, "ask_question"],
 			excludedToolNames: ["read", "ask_question"],
-			initialActiveToolNames: ["read", "bash", "ask_question"],
+			initialActiveToolNames: ["read", shellToolName, "ask_question"],
 			extensionFactories,
 		});
 		try {
 			await harness.session.bindExtensions({});
 
-			expect(toolNames(harness.session.getAllTools())).toEqual(["bash"]);
-			expect(harness.session.getActiveToolNames()).toEqual(["bash"]);
-			expect(harness.session.systemPrompt).toContain("- bash:");
+			expect(toolNames(harness.session.getAllTools())).toEqual([shellToolName]);
+			expect(harness.session.getActiveToolNames()).toEqual([shellToolName]);
+			expect(harness.session.systemPrompt).toContain(`- ${shellToolName}:`);
 			expect(harness.session.systemPrompt).not.toContain("- read:");
 			expect(harness.session.systemPrompt).not.toContain("ask_question");
 		} finally {

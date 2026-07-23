@@ -1,7 +1,7 @@
 /**
  * PiProviderFormDialog
  *
- * Add/Edit dialog for a single Pi global provider (~/.pi/agent/models.json).
+ * Add/Edit dialog for a single Pi global provider (~/.mortise/agent/models.json).
  * Core fields (per "核心字段先跑通" scope, excluding thinkingLevelMap 3-state
  * and cost):
  *   - key (only when adding; lowercase slug)

@@ -214,8 +214,8 @@ function parseFrontmatter<T extends Record<string, unknown>>(
 }
 
 function basenameEnvPath(path: string): string {
-	const normalized = path.replace(/\/+$/, "");
-	const slashIndex = normalized.lastIndexOf("/");
+	const normalized = path.replace(/[\\/]+$/, "");
+	const slashIndex = Math.max(normalized.lastIndexOf("/"), normalized.lastIndexOf("\\"));
 	return slashIndex === -1 ? normalized : normalized.slice(slashIndex + 1);
 }
 

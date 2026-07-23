@@ -366,14 +366,6 @@ export const REMOTE_ELIGIBLE_CHANNELS = new Set<string>([
 
   // automations — workspace automations
   RPC_CHANNELS.automations.COMMAND,
-  RPC_CHANNELS.automations.GET,
-  RPC_CHANNELS.automations.TEST,
-  RPC_CHANNELS.automations.SET_ENABLED,
-  RPC_CHANNELS.automations.DUPLICATE,
-  RPC_CHANNELS.automations.DELETE,
-  RPC_CHANNELS.automations.GET_HISTORY,
-  RPC_CHANNELS.automations.GET_LAST_EXECUTED,
-  RPC_CHANNELS.automations.REPLAY,
   RPC_CHANNELS.automations.CHANGED,
 
   // git — workspace filesystem
@@ -428,7 +420,7 @@ export const REMOTE_ELIGIBLE_CHANNELS = new Set<string>([
 
   // extensions — pi 扩展事件桥接（workspace 范围广播 + 会话级回复）
   RPC_CHANNELS.extensions.EVENT,
-  RPC_CHANNELS.extensions.REMOTEUI_RESPONSE,
+  RPC_CHANNELS.extensions.INTERACTION_RESPONSE,
   RPC_CHANNELS.extensions.COMMAND_INVOKE,
   RPC_CHANNELS.extensions.GET_COMMANDS,
 ])

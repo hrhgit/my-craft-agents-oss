@@ -72,7 +72,6 @@ export {
   isPlanModeStateV1,
   parsePlanArtifactMessageDetails,
   parsePlanModeStateMessageDetails,
-  createLegacyPlanArtifact,
 } from './plan-artifact.ts';
 
 // Message persistence mappers

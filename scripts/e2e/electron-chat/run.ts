@@ -19,7 +19,6 @@ interface Snapshot {
 interface EvidenceResult { bundleDir: string; artifacts?: Array<{ path?: string }> }
 
 const sourceMortiseConfigDir = requiredDirectory('MORTISE_E2E_SOURCE_PROFILE')
-const sourcePiAgentDir = requiredDirectory('MORTISE_E2E_SOURCE_PI_PROFILE')
 const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\..+$/, '').replace('T', '-')
 const resultPath = resolve(process.env.MORTISE_E2E_RESULT_PATH
   ?? join(DEFAULT_MORTISE_UI_RUN_ROOT, `electron-chat-${stamp}.json`))
@@ -33,7 +32,6 @@ const manifest = await startMortiseUiRun({
   surface: 'electron',
   profileMode: 'clone',
   sourceMortiseConfigDir,
-  sourcePiAgentDir,
   waitMs: 300_000,
   extraEnv: {
     PI_HOST_HOOKS_MODULE: providerHookPath,

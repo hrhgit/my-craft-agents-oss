@@ -53,7 +53,7 @@ export interface PreBindingAccessInput {
  *
  * Rules:
  *  - Bot senders are always rejected (silent-drop expected upstream).
- *  - When the platform's `accessMode` is missing or `'open'`, allow.
+ *  - When the platform's `accessMode` is `'open'`, allow.
  *  - When `'owner-only'`, allow iff the sender is on `owners`.
  */
 export function evaluatePreBindingAccess(
@@ -87,9 +87,7 @@ export interface BindingAccessInput {
  *  4. Binding `accessMode === 'inherit'` → defer to workspace policy:
  *     `'open'` allows; `'owner-only'` requires sender on `owners`.
  *
- * Note: a `'open'` workspace + `'inherit'` binding is the legacy/migration
- * path. It deliberately allows traffic so existing prod workspaces don't
- * silently break the day this code ships.
+ * An explicitly `'open'` workspace also opens bindings in `'inherit'` mode.
  */
 export function evaluateBindingAccess(input: BindingAccessInput): AccessDecision {
   const { msg, workspaceConfig, binding } = input
@@ -114,15 +112,15 @@ export function evaluateBindingAccess(input: BindingAccessInput): AccessDecision
 }
 
 /**
- * Read the workspace's platform-level access mode, defaulting to `'open'`
- * for back-compat with configs that predate this field.
+ * Read the workspace's platform-level access mode. An absent Telegram
+ * configuration uses the current secure default.
  */
 export function readPlatformAccessMode(
   config: MessagingConfig,
   platform: PlatformType,
 ): PlatformAccessMode {
   if (platform !== 'telegram') return 'open'
-  return config.platforms.telegram?.accessMode ?? 'open'
+  return config.platforms.telegram?.accessMode ?? 'owner-only'
 }
 
 /** Read the platform's owners list (empty when not configured). */

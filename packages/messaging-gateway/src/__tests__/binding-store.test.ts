@@ -6,12 +6,13 @@
  *   - one-channel-one-session invariant (second bind evicts first)
  *   - unbind and unbindSession counts
  *   - change listener fires on mutation
- *   - persistence across instances via file on disk
+ *   - persistence across instances via SQLite
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { MultiWriterStore, type JsonValue } from '@mortise/shared/storage'
 import { BindingStore } from '../binding-store'
 
 let dir: string
@@ -23,6 +24,26 @@ beforeEach(() => {
 afterEach(() => {
   rmSync(dir, { recursive: true, force: true })
 })
+
+function seedBindings(value: JsonValue): void {
+  const store = MultiWriterStore.openSync({
+    databasePath: join(dir, 'state.sqlite'),
+    writerId: 'binding-test',
+    writerVersion: 1,
+  })
+  try {
+    const result = store.mutateRecord({
+      namespace: 'messaging',
+      key: 'bindings',
+      value,
+      expectedVersion: null,
+      operationId: 'seed-bindings',
+    })
+    expect(result.status).toBe('applied')
+  } finally {
+    store.close()
+  }
+}
 
 describe('BindingStore', () => {
   it('binds and finds a channel', () => {
@@ -112,7 +133,7 @@ describe('BindingStore', () => {
     expect(calls).toBe(2)
   })
 
-  it('persists across instances via bindings.json', () => {
+  it('persists across instances via SQLite', () => {
     const a = new BindingStore(dir)
     a.bind('ws1', 'sess', 'telegram', 'c1', 'name')
 
@@ -121,14 +142,32 @@ describe('BindingStore', () => {
     expect(hit?.channelName).toBe('name')
   })
 
-  it('recovers from corrupt bindings.json as an empty store', () => {
-    writeFileSync(join(dir, 'bindings.json'), 'not-json')
+  it('ignores legacy bindings JSON and leaves it untouched', () => {
+    const legacyPath = join(dir, 'bindings.json')
+    writeFileSync(legacyPath, 'not-json')
     const store = new BindingStore(dir)
     expect(store.getAll()).toEqual([])
-    // Subsequent write should succeed
+
     store.bind('ws1', 'sess', 'telegram', 'c1')
-    const raw = readFileSync(join(dir, 'bindings.json'), 'utf-8')
-    expect(JSON.parse(raw)).toHaveLength(1)
+    expect(existsSync(join(dir, 'state.sqlite'))).toBe(true)
+    expect(readFileSync(legacyPath, 'utf-8')).toBe('not-json')
+    expect(existsSync(join(dir, 'bindings.json.sync'))).toBe(false)
+  })
+
+  it('rejects persisted bindings outside the current config schema', () => {
+    seedBindings([{
+      id: 'old-binding',
+      workspaceId: 'ws1',
+      sessionId: 'sess-old',
+      platform: 'telegram',
+      channelId: 'dm-chat',
+      enabled: true,
+      createdAt: 1,
+      config: {},
+    }])
+
+    const store = new BindingStore(dir)
+    expect(store.getAll()).toEqual([])
   })
 })
 
@@ -200,27 +239,5 @@ describe('BindingStore — threadId (Telegram supergroup topics)', () => {
     expect(store.findByChannel('telegram', '-1001', 5)).toBeUndefined()
     expect(store.findByChannel('telegram', '-1001', 7)?.sessionId).toBe('sess-B')
     expect(store.unbind('telegram', '-1001', 5)).toBe(false)
-  })
-
-  it('legacy bindings without threadId continue to match DM lookups', () => {
-    // Pre-topics-feature data on disk: no threadId field.
-    writeFileSync(
-      join(dir, 'bindings.json'),
-      JSON.stringify([
-        {
-          id: 'legacy-1',
-          workspaceId: 'ws1',
-          sessionId: 'sess-old',
-          platform: 'telegram',
-          channelId: 'dm-chat',
-          enabled: true,
-          createdAt: 1,
-          config: {},
-        },
-      ]),
-    )
-    const store = new BindingStore(dir)
-    expect(store.findByChannel('telegram', 'dm-chat')?.sessionId).toBe('sess-old')
-    expect(store.findByChannel('telegram', 'dm-chat', 5)).toBeUndefined()
   })
 })

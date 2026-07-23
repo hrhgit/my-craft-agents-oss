@@ -52,7 +52,7 @@ const DANGEROUS_COMMANDS = new Set([
  * const permManager = new PermissionManager({
  *   workspaceId: workspace.id,
  *   sessionId: session.id,
- *   workingDirectory: session.workingDirectory,
+ *   workspaceRootPath: workspace.rootPath,
  *   plansFolderPath: getSessionPlansPath(workspace, session.id),
  * });
  *
@@ -76,7 +76,7 @@ export class PermissionManager {
     // Build permissions context for loading custom permissions
     // PermissionsContext expects workspaceRootPath (absolute path to workspace)
     this.permissionsContext = {
-      workspaceRootPath: config.workingDirectory ?? '',
+      workspaceRootPath: config.workspaceRootPath,
     };
   }
 
@@ -295,14 +295,6 @@ export class PermissionManager {
   // ============================================================
   // Context Management
   // ============================================================
-
-  /**
-   * Update the working directory (used for permission context).
-   */
-  updateWorkingDirectory(path: string): void {
-    this.config.workingDirectory = path;
-    this.permissionsContext.workspaceRootPath = path;
-  }
 
   /**
    * Update the plans folder path.

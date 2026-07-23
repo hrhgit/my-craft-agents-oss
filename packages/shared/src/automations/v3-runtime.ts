@@ -159,7 +159,7 @@ export class AutomationV3Runtime {
   }
 
   private claimEventRuns(event: TrustedAutomationEventV1): AutomationRunV1[] {
-    const document = this.store.initializeOrMigrate().document
+    const document = this.store.initialize()
     const runs: AutomationRunV1[] = []
     for (const definition of document.definitions) {
       if (!definition.enabled) continue
@@ -194,7 +194,7 @@ export class AutomationV3Runtime {
     trigger: TimeTriggerV3,
     occurrence: ScheduledOccurrenceV1,
   ): AutomationRunV1 {
-    const revision = this.store.initializeOrMigrate().document.revision
+    const revision = this.store.initialize().revision
     if (occurrence.skipReason) {
       const reason = occurrence.skipReason === 'expired' ? 'expired' : 'misfire-skip'
       const run = initialRun(this.workspaceId, definition, revision, trigger, occurrence.occurrenceKey, { state: 'skipped', reason, scheduledAt: occurrence.scheduledAt })
@@ -210,7 +210,7 @@ export class AutomationV3Runtime {
   }
 
   acceptManual(automationId: string, operationId: string, triggerId?: string): { run: AutomationRunV1; duplicate: boolean } {
-    const document = this.store.initializeOrMigrate().document
+    const document = this.store.initialize()
     const definition = document.definitions.find(item => item.id === automationId)
     if (!definition) throw new Error(`Automation not found: ${automationId}`)
     const trigger = triggerId

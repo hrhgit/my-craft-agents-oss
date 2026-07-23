@@ -10,6 +10,7 @@ import {
   CircleAlert,
   ExternalLink,
   Info,
+  RotateCcw,
   X,
 } from "lucide-react"
 import { motion, AnimatePresence } from "motion/react"
@@ -45,7 +46,6 @@ import { useTheme } from "@/hooks/useTheme"
 import type { Session, Message, FileAttachment, StoredAttachment, PermissionRequest, LoadedSkill } from "../../../shared/types"
 import type { PermissionMode } from "@mortise/shared/agent/modes"
 import type { ThinkingLevel } from "@mortise/shared/agent/thinking-levels"
-import type { MidStreamSendIntent } from '@mortise/shared/protocol'
 import {
   TurnCard,
   UserMessageBubble,
@@ -60,7 +60,6 @@ import {
   type Turn,
 } from "@mortise/ui"
 import { ChatInputZone, type StructuredInputState, type StructuredResponse, type PermissionResponse, type AdminApprovalResponse } from "./input"
-import { ExtensionWidgetZone } from "@/components/extensions/ExtensionWidgetZone"
 import { ExtensionContributionZone, ExtensionReplaceZone } from "@/components/extensions/ExtensionContributionZone"
 import { ExtensionArtifactContributionProvider } from "@/components/extensions/ExtensionArtifactContributionProvider"
 import type { RichTextInputHandle } from "@/components/ui/rich-text-input"
@@ -75,8 +74,26 @@ import { resolveBranchNewPanelOption } from "./branching"
 import { handleErrorMessageAction } from "./error-message-actions"
 import { piProjectionAtomFamily } from "@/atoms/pi-projection"
 import { selectPendingPiPermission, selectPiProcessingStatusMessage, selectPiRuntimeState } from "./pi-timeline-model"
-import { buildPiTurnOverlay, buildPiTurns, getPiTurnSearchText } from "./pi-turn-model"
+import { buildPiTurnOverlay, buildPiTurns } from "./pi-turn-model"
+import {
+  ChatSearchMatchPager,
+  type ChatSearchPageSnapshot,
+  findNormalizedChatSearchRanges,
+  getChatSearchMatchIdentity,
+  getChatSearchOccurrenceInTarget,
+  getChatSearchTurnId,
+  getChatSearchWindow,
+  IncrementalChatSearchIndex,
+  planNextChatSearchNavigation,
+  preserveChatSearchMatchIndex,
+} from "./chat-search-model"
 import { useWorkspaceElectronApi } from "@/context/WorkspaceElectronApiContext"
+import {
+  parseUnacceptedSessionFailure,
+  snapshotComposerSubmission,
+  type ComposerSubmissionAttempt,
+  type UnacceptedSessionFailure,
+} from './input/composer-submission'
 
 // ============================================================================
 // CSS Custom Highlight API helper
@@ -125,14 +142,21 @@ function isStackedActivityTool(activity: ActivityItem): boolean {
 }
 
 function getTurnKey(turn: Turn): string {
-  if (turn.type === 'user') return `user-${turn.message.id}`
-  if (turn.type === 'system') return `system-${turn.message.id}`
-  return `turn-${turn.turnId}-${turn.timestamp}`
+  return getChatSearchTurnId(turn)
+}
+
+function scrollSearchTargetIntoView(element: HTMLElement): void {
+  const rect = element.getBoundingClientRect()
+  const buffer = 128
+  if (rect.top < buffer || rect.bottom > window.innerHeight - buffer) {
+    element.scrollIntoView({ behavior: 'instant', block: 'center' })
+  }
 }
 
 interface ChatDisplayProps {
   session: Session | null
-  onSendMessage: (message: string, attachments?: FileAttachment[], skillSlugs?: string[], midStreamSendIntent?: MidStreamSendIntent) => void
+  onSendMessage: (attempt: ComposerSubmissionAttempt) => Promise<boolean>
+  onRetrySettlement?: () => Promise<void>
   onOpenFile: (path: string) => void
   onOpenUrl: (url: string) => void
   // Model selection
@@ -180,12 +204,9 @@ interface ChatDisplayProps {
   skills?: LoadedSkill[]
   /** Workspace ID for loading skill icons */
   workspaceId?: string
-  // Working directory (per session)
-  /** Current working directory for this session */
-  workingDirectory?: string
-  /** Callback when working directory changes */
-  onWorkingDirectoryChange?: (path: string) => void
-  /** Session folder path (for "Reset to Session Root" option) */
+  /** Canonical workspace root for file and skill resolution. */
+  workspaceRoot?: string
+  /** Session storage folder shown by the session information surface. */
   sessionFolderPath?: string
   // Lazy loading
   /** When true, messages are still loading - show spinner in messages area */
@@ -205,7 +226,7 @@ interface ChatDisplayProps {
   /** Whether search mode is active (prevents focus stealing to chat input) */
   isSearchModeActive?: boolean
   /** Callback when match info changes - for immediate UI updates */
-  onMatchInfoChange?: (info: { count: number; index: number; isHighlighting: boolean; sessionId: string | null }) => void
+  onMatchInfoChange?: (info: { count: number; index: number; hasMore: boolean; isHighlighting: boolean; sessionId: string | null }) => void
   // Compact mode (for EditPopover embedding and auto-compact / WebUI mobile)
   /** Enable compact mode - hides non-essential UI elements for popover embedding */
   compactMode?: boolean
@@ -223,6 +244,11 @@ interface ChatDisplayProps {
   providerUnavailable?: boolean
 }
 
+interface FailedComposerSubmission extends UnacceptedSessionFailure {
+  attempt: ComposerSubmissionAttempt
+  followUps: PendingFollowUpAnnotation[]
+}
+
 import {
   formatFollowUpSection,
   normalizeFollowUpsMarkdown,
@@ -237,6 +263,7 @@ export interface ChatDisplayHandle {
   goToNextMatch: () => void
   goToPrevMatch: () => void
   matchCount: number
+  hasMoreMatches: boolean
   currentMatchIndex: number
   isHighlighting: boolean
 }
@@ -436,6 +463,7 @@ function ScrollOnMount({
 export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>(function ChatDisplay({
   session,
   onSendMessage,
+  onRetrySettlement,
   onOpenFile,
   onOpenUrl,
   currentModel,
@@ -459,9 +487,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
   // Skills (for @mentions)
   skills,
   workspaceId,
-  // Working directory
-  workingDirectory,
-  onWorkingDirectoryChange,
+  workspaceRoot,
   sessionFolderPath,
   // Lazy loading
   messagesLoading = false,
@@ -546,6 +572,10 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
   const internalTextareaRef = React.useRef<RichTextInputHandle>(null)
   const textareaRef = externalTextareaRef || internalTextareaRef
   const [sendMessageKey, setSendMessageKey] = useState<'enter' | 'cmd-enter'>('enter')
+  const [submissionFailure, setSubmissionFailure] = useState<FailedComposerSubmission | null>(null)
+  const [settlementRetrying, setSettlementRetrying] = useState(false)
+  useEffect(() => setSubmissionFailure(null), [session?.id])
+  useEffect(() => setSettlementRetrying(false), [session?.id, session?.pendingFailure])
   const [openAnnotationRequest, setOpenAnnotationRequest] = React.useState<{
     messageId: string
     annotationId: string
@@ -602,22 +632,26 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
   // Current match index for navigation (internal state, exposed via ref)
   const [currentMatchIndex, setCurrentMatchIndex] = useState(0)
   const turnRefs = React.useRef<Map<string, HTMLDivElement>>(new Map())
+  const highlightInstanceId = React.useId().replace(/[^a-zA-Z0-9_-]/g, '')
+  const passiveHighlightName = `search-passive-${highlightInstanceId}`
+  const activeHighlightName = `search-active-${highlightInstanceId}`
   // Inject ::highlight() styles at runtime to avoid LightningCSS build warnings
   // (the optimizer doesn't recognize ::highlight as a valid pseudo-element yet)
   React.useEffect(() => {
-    const id = 'search-highlight-styles'
-    if (document.getElementById(id)) return
     const style = document.createElement('style')
-    style.id = id
+    style.id = `search-highlight-styles-${highlightInstanceId}`
     style.textContent = `
-      ::highlight(search-passive) { background-color: rgb(253 224 71 / 0.3); color: inherit; }
-      ::highlight(search-active) { background-color: rgb(253 224 71); color: rgb(0 0 0 / 0.9); }
+      ::highlight(${passiveHighlightName}) { background-color: rgb(253 224 71 / 0.3); color: inherit; }
+      ::highlight(${activeHighlightName}) { background-color: rgb(253 224 71); color: rgb(0 0 0 / 0.9); }
     `
     document.head.appendChild(style)
-  }, [])
+    return () => style.remove()
+  }, [activeHighlightName, highlightInstanceId, passiveHighlightName])
   // Flag to control when scrolling to matches should happen
   // Only scroll when: session changes with search active, or user clicks navigation
   const shouldScrollToMatchRef = React.useRef(false)
+  const activeSearchTargetElementRef = React.useRef<HTMLElement | null>(null)
+  const [searchTargetRevision, setSearchTargetRevision] = useState(0)
   const prevSessionIdForScrollRef = React.useRef<string | null>(null)
 
   // Use the external search query from props
@@ -670,75 +704,102 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
     setCurrentMatchIndex(0)
   }, [session?.id, searchQuery, isSearchActive])
 
-  // Helper to count occurrences of a substring
-  const countOccurrences = useCallback((text: string, query: string): number => {
-    const lowerText = text.toLowerCase()
-    const lowerQuery = query.toLowerCase()
-    let count = 0
-    let pos = 0
-    while ((pos = lowerText.indexOf(lowerQuery, pos)) !== -1) {
-      count++
-      pos += lowerQuery.length
+  const chatSearchIndex = useMemo(() => new IncrementalChatSearchIndex(), [session?.id])
+  const chatSearchPager = useMemo(() => new ChatSearchMatchPager(), [session?.id])
+  const [searchResults, setSearchResults] = useState<ChatSearchPageSnapshot>({
+    query: '',
+    matches: [],
+    hasMore: false,
+  })
+  const [isSearchLoading, setIsSearchLoading] = useState(false)
+  const searchLoadingRef = React.useRef(false)
+  const searchLifecycleRef = React.useRef(0)
+  const searchResultsRef = React.useRef(searchResults)
+  const currentMatchIndexRef = React.useRef(currentMatchIndex)
+  searchResultsRef.current = searchResults
+  currentMatchIndexRef.current = currentMatchIndex
+
+  useEffect(() => {
+    const lifecycle = ++searchLifecycleRef.current
+    const abortController = new AbortController()
+    if (!isSearchActive) {
+      chatSearchIndex.clear()
+      chatSearchPager.clear()
+      setSearchResults({ query: '', matches: [], hasMore: false })
+      searchLoadingRef.current = false
+      setIsSearchLoading(false)
+      return () => abortController.abort()
     }
-    return count
+
+    const previousResults = searchResultsRef.current
+    const sameQuery = previousResults.query === searchQuery
+    const previousLoadedCount = sameQuery ? previousResults.matches.length : 0
+    searchLoadingRef.current = true
+    setIsSearchLoading(true)
+
+    void (async () => {
+      const reconciled = await chatSearchIndex.reconcileAsync(allTurns, {
+        signal: abortController.signal,
+      })
+      if (!reconciled || abortController.signal.aborted || lifecycle !== searchLifecycleRef.current) return
+
+      // Querying is also scheduled outside the effect's initial task so a large
+      // candidate sort cannot extend the paint/layout critical section.
+      await new Promise<void>(resolve => setTimeout(resolve, 0))
+      if (abortController.signal.aborted || lifecycle !== searchLifecycleRef.current) return
+
+      let nextResults = chatSearchPager.reset(chatSearchIndex.index, searchQuery)
+      while (nextResults.hasMore && nextResults.matches.length < previousLoadedCount) {
+        await new Promise<void>(resolve => setTimeout(resolve, 0))
+        if (abortController.signal.aborted || lifecycle !== searchLifecycleRef.current) return
+        nextResults = chatSearchPager.loadNext(chatSearchIndex.index)
+      }
+
+      const latestResults = searchResultsRef.current
+      const latestActiveMatch = latestResults.query === searchQuery
+        ? latestResults.matches[currentMatchIndexRef.current]
+        : undefined
+      const latestActiveKey = latestActiveMatch
+        ? getChatSearchMatchIdentity(latestActiveMatch)
+        : null
+      setSearchResults(nextResults)
+      setCurrentMatchIndex(previous => preserveChatSearchMatchIndex(nextResults.matches, latestActiveKey, previous))
+      searchLoadingRef.current = false
+      setIsSearchLoading(false)
+    })().catch(error => {
+      if (abortController.signal.aborted || lifecycle !== searchLifecycleRef.current) return
+      console.error('[ChatDisplay] Failed to update the Session search index:', error)
+      searchLoadingRef.current = false
+      setIsSearchLoading(false)
+    })
+
+    return () => abortController.abort()
+  }, [allTurns, chatSearchIndex, chatSearchPager, isSearchActive, searchQuery])
+
+  const validMatches = searchResults.query === searchQuery ? searchResults.matches : []
+  const matchingTurnIds = useMemo(() => new Set(validMatches.map(match => match.turnId)), [validMatches])
+  const activeSearchMatch = validMatches[currentMatchIndex]
+  const activeSearchMatchIdentity = activeSearchMatch
+    ? getChatSearchMatchIdentity(activeSearchMatch)
+    : null
+  const activeSearchTargetIdentityRef = React.useRef<string | null>(null)
+  if (activeSearchTargetIdentityRef.current !== activeSearchMatchIdentity) {
+    activeSearchTargetIdentityRef.current = activeSearchMatchIdentity
+    activeSearchTargetElementRef.current = null
+  }
+  const handleSearchTargetReady = useCallback((element: HTMLElement | null) => {
+    if (activeSearchTargetElementRef.current !== element) {
+      setSearchTargetRevision(revision => revision + 1)
+    }
+    activeSearchTargetElementRef.current = element
+    if (!element || !shouldScrollToMatchRef.current) return
+    scrollSearchTargetIntoView(element)
+    shouldScrollToMatchRef.current = false
   }, [])
 
-  // Find ALL individual match occurrences (not just turns)
-  // Returns array with unique matchId for each occurrence
-  const matchingOccurrences = useMemo(() => {
-    if (!searchQuery.trim()) return []
-    const query = searchQuery.toLowerCase()
-    const matches: { matchId: string; turnId: string; turnIndex: number; matchIndexInTurn: number }[] = []
-
-    for (let turnIndex = 0; turnIndex < allTurns.length; turnIndex++) {
-      const turn = allTurns[turnIndex]
-      if (!turn) continue
-      const turnId = getTurnKey(turn)
-      const textContent = getPiTurnSearchText(turn)
-
-      // Count occurrences in this turn's text content
-      const occurrenceCount = countOccurrences(textContent, query)
-      for (let i = 0; i < occurrenceCount; i++) {
-        matches.push({
-          matchId: `${turnId}-match-${i}`,
-          turnId,
-          turnIndex,
-          matchIndexInTurn: i,
-        })
-      }
-    }
-    return matches
-  }, [allTurns, searchQuery, countOccurrences])
-
-  // Auto-expand pagination when search is active to show all matching turns
-  // This ensures match count is stable and all matches are highlightable from the start
   useEffect(() => {
-    if (!isSearchActive || matchingOccurrences.length === 0) return
-
-    // Find the earliest matching turn index (reduce to avoid RangeError on large arrays)
-    const earliestMatchTurnIndex = matchingOccurrences.reduce(
-      (min, m) => m.turnIndex < min ? m.turnIndex : min,
-      matchingOccurrences[0]!.turnIndex
-    )
-    const totalTurns = allTurns.length
-
-    // Calculate how many turns we need to show to include all matches
-    // totalTurns - visibleTurnCount = startIndex, so we need visibleTurnCount = totalTurns - earliestMatchTurnIndex + buffer
-    const requiredVisibleCount = totalTurns - earliestMatchTurnIndex + 5 // +5 buffer for context
-
-    if (requiredVisibleCount > visibleTurnCount) {
-      setVisibleTurnCount(requiredVisibleCount)
-    }
-  }, [allTurns.length, isSearchActive, matchingOccurrences, visibleTurnCount])
-
-  // Extract unique turn IDs that have matches (for highlighting)
-  const matchingTurnIds = useMemo(() => {
-    const uniqueTurnIds = new Set(matchingOccurrences.map(m => m.turnId))
-    return Array.from(uniqueTurnIds)
-  }, [matchingOccurrences])
-
-  // With CSS Custom Highlight API, navigation is driven by logical matches — no DOM verification needed.
-  const validMatches = matchingOccurrences
+    setCurrentMatchIndex(previous => Math.min(previous, Math.max(0, validMatches.length - 1)))
+  }, [validMatches.length])
 
   // Auto-scroll to match ONLY when there's exactly one match
   // Multiple matches: user navigates with chevrons to avoid jarring scroll
@@ -755,188 +816,147 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
 
     if (validMatches.length > 0 && currentMatchIndex < validMatches.length) {
       const matchData = validMatches[currentMatchIndex]
-      const { turnId, turnIndex } = matchData
-      const totalTurns = totalTurnCountRef.current
+      const { turnId } = matchData
+      const matchedTurn = allTurns[matchData.turnOrder]
+      const expectsTurnCardTarget = matchedTurn?.type === 'assistant'
+        && matchData.target.type !== 'attachment'
+      const targetElement = activeSearchTargetElementRef.current
 
-      // Check if the match is outside the visible range
-      const currentStartIndex = Math.max(0, totalTurns - visibleTurnCount)
-      if (turnIndex < currentStartIndex) {
-        const newVisibleCount = totalTurns - turnIndex + 5
-        setVisibleTurnCount(newVisibleCount)
+      if (targetElement) {
+        scrollSearchTargetIntoView(targetElement)
+        shouldScrollToMatchRef.current = false
         return
       }
 
       // Scroll the turn into view
       const turnEl = turnRefs.current.get(turnId)
       if (turnEl) {
-        const rect = turnEl.getBoundingClientRect()
-        const buffer = 128
-        const isVisible = rect.top >= buffer && rect.bottom <= window.innerHeight - buffer
-        if (!isVisible) {
-          turnEl.scrollIntoView({ behavior: 'instant', block: 'center' })
-        }
+        scrollSearchTargetIntoView(turnEl)
       }
-      shouldScrollToMatchRef.current = false
+      // TurnCard may still be expanding a tool group. Its ready callback owns
+      // final exact-target scrolling; other Turn kinds settle at the wrapper.
+      if (!expectsTurnCardTarget) shouldScrollToMatchRef.current = false
     }
-  }, [validMatches, currentMatchIndex, session?.id, visibleTurnCount])
+  }, [allTurns, validMatches, currentMatchIndex, session?.id])
 
-  // ---------------------------------------------------------------------------
-  // CSS Custom Highlight API — non-destructive text highlighting
-  // Creates browser-native highlight ranges over matching text without
-  // modifying the DOM tree. Safe with React re-renders and streaming.
-  // Uses cross-node matching: concatenates text across node boundaries
-  // to find matches that span multiple DOM nodes (e.g. Shiki-split tokens).
-  // ---------------------------------------------------------------------------
-
-  const MAX_HIGHLIGHT_RANGES = 5000
-  // Store computed ranges so the active-match effect can restyle without re-walking the DOM
-  const highlightRangesRef = React.useRef<Range[]>([])
-
-  // Effect 1: Walk DOM and collect highlight ranges when search/session/pagination changes
+  // Highlight only the active turn. Search windowing keeps this DOM walk bounded,
+  // while the logical index remains authoritative for navigation and match counts.
   useEffect(() => {
     const cssHighlights = getCSSHighlights()
-    highlightRangesRef.current = []
-
-    // Clear previous highlights
     try {
-      cssHighlights?.delete('search-passive')
-      cssHighlights?.delete('search-active')
+      cssHighlights?.delete(passiveHighlightName)
+      cssHighlights?.delete(activeHighlightName)
     } catch { /* API unavailable — no-op */ }
 
-    if (!searchQuery.trim() || !isSearchActive || !cssHighlights) return
-
-    const query = searchQuery.toLowerCase()
-    const matchingTurnIdSet = new Set(matchingTurnIds)
-    if (matchingTurnIdSet.size === 0) return
+    const activeMatch = validMatches[currentMatchIndex]
+    if (!activeMatch || !searchQuery.trim() || !isSearchActive || !cssHighlights) return
+    const activeOccurrenceInTarget = getChatSearchOccurrenceInTarget(validMatches, currentMatchIndex)
 
     const rafId = requestAnimationFrame(() => {
-      const allRanges: Range[] = []
-
-      turnRefs.current.forEach((container, turnKey) => {
-        if (allRanges.length >= MAX_HIGHLIGHT_RANGES) return
-        if (!matchingTurnIdSet.has(turnKey)) return
-
-        // For assistant turns, narrow search to response content root
-        const searchRoot = container.querySelector('[data-search-root="response"]') || container
-
-        // Collect ALL eligible text nodes (no query filter — needed for cross-node matching)
-        const walker = document.createTreeWalker(
-          searchRoot,
-          NodeFilter.SHOW_TEXT,
-          {
-            acceptNode: (node) => {
-              const parent = node.parentElement
-              if (!parent) return NodeFilter.FILTER_REJECT
-              const tag = parent.tagName.toLowerCase()
-              if (tag === 'script' || tag === 'style') return NodeFilter.FILTER_REJECT
-              if (parent.closest('[data-search-exclude="true"]')) return NodeFilter.FILTER_REJECT
-              return NodeFilter.FILTER_ACCEPT
-            },
+      const container = activeSearchTargetElementRef.current ?? turnRefs.current.get(activeMatch.turnId)
+      if (!container) return
+      const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, {
+        acceptNode: (node) => {
+          const parent = node.parentElement
+          if (!parent) return NodeFilter.FILTER_REJECT
+          const tag = parent.tagName.toLowerCase()
+          if (tag === 'script' || tag === 'style' || parent.closest('[data-search-exclude="true"]')) {
+            return NodeFilter.FILTER_REJECT
           }
-        )
-
-        // Build concatenated string with node offset mapping for cross-node matching
-        const textNodes: Text[] = []
-        let currentNode: Node | null
-        while ((currentNode = walker.nextNode())) {
-          textNodes.push(currentNode as Text)
-        }
-        if (textNodes.length === 0) return
-
-        const nodeOffsets: { node: Text; start: number; end: number }[] = []
-        let totalLength = 0
-        for (const node of textNodes) {
-          const text = node.textContent || ''
-          nodeOffsets.push({ node, start: totalLength, end: totalLength + text.length })
-          totalLength += text.length
-        }
-        const concatenated = textNodes.map(n => n.textContent || '').join('')
-        const lowerConcatenated = concatenated.toLowerCase()
-
-        // Find all matches in the concatenated string
-        let searchPos = 0
-        while (searchPos < lowerConcatenated.length && allRanges.length < MAX_HIGHLIGHT_RANGES) {
-          const idx = lowerConcatenated.indexOf(query, searchPos)
-          if (idx === -1) break
-          const matchEnd = idx + query.length
-
-          // Create a Range spanning the match (may cross node boundaries)
-          try {
-            const range = new Range()
-            let startSet = false
-
-            for (const offset of nodeOffsets) {
-              if (offset.end <= idx) continue
-              if (offset.start >= matchEnd) break
-
-              if (!startSet) {
-                range.setStart(offset.node, idx - offset.start)
-                startSet = true
-              }
-              range.setEnd(offset.node, Math.min(offset.end - offset.start, matchEnd - offset.start))
-            }
-
-            if (startSet) {
-              allRanges.push(range)
-            }
-          } catch {
-            // Range creation can fail if node was removed during walk
-          }
-
-          searchPos = matchEnd
-        }
+          return NodeFilter.FILTER_ACCEPT
+        },
       })
-
-      // Store ranges for the active-match effect to use
-      highlightRangesRef.current = allRanges
-
-      if (allRanges.length === 0 && matchingTurnIdSet.size > 0) {
-        console.warn('[search-highlight] 0 ranges from', matchingTurnIdSet.size, 'matching turns — possible turn ID mismatch')
+      const textNodes: Text[] = []
+      let currentNode: Node | null
+      while ((currentNode = walker.nextNode())) textNodes.push(currentNode as Text)
+      const nodeOffsets: { node: Text; start: number; end: number }[] = []
+      let totalLength = 0
+      for (const node of textNodes) {
+        const text = node.textContent || ''
+        nodeOffsets.push({ node, start: totalLength, end: totalLength + text.length })
+        totalLength += text.length
       }
-
-      if (allRanges.length === 0) return
+      const searchableText = textNodes.map(node => node.textContent || '').join('')
+      const neighborhoodStart = Math.max(0, activeOccurrenceInTarget - 10)
+      const neighborhoodEnd = activeOccurrenceInTarget + 10
+      const rangedOccurrences: Array<{ occurrence: number; range: Range }> = []
+      for (const match of findNormalizedChatSearchRanges(searchableText, searchQuery, {
+        occurrenceStart: neighborhoodStart,
+        occurrenceEnd: neighborhoodEnd,
+      })) {
+        const range = new Range()
+        let hasStart = false
+        for (const offset of nodeOffsets) {
+          if (offset.end <= match.start) continue
+          if (offset.start >= match.end) break
+          if (!hasStart) {
+            range.setStart(offset.node, match.start - offset.start)
+            hasStart = true
+          }
+          range.setEnd(offset.node, Math.min(offset.end - offset.start, match.end - offset.start))
+        }
+        if (hasStart) rangedOccurrences.push({ occurrence: match.occurrence, range })
+      }
 
       try {
-        // Apply all ranges as passive initially — the active-match effect will restyle
-        cssHighlights.set('search-passive', new Highlight(...allRanges))
-      } catch {
-        // Highlight API call failed — degrade gracefully
-      }
+        const activeRange = rangedOccurrences.find(entry => entry.occurrence === activeOccurrenceInTarget)?.range
+        const passiveRanges = rangedOccurrences
+          .filter(entry => entry.occurrence !== activeOccurrenceInTarget)
+          .map(entry => entry.range)
+        if (passiveRanges.length > 0) cssHighlights.set(passiveHighlightName, new Highlight(...passiveRanges))
+        if (activeRange) cssHighlights.set(activeHighlightName, new Highlight(activeRange))
+      } catch { /* Highlight API call failed — ring highlighting remains. */ }
     })
 
-    return () => cancelAnimationFrame(rafId)
-  }, [searchQuery, isSearchActive, matchingTurnIds, session?.id, visibleTurnCount])
+    return () => {
+      cancelAnimationFrame(rafId)
+      try {
+        cssHighlights.delete(passiveHighlightName)
+        cssHighlights.delete(activeHighlightName)
+      } catch { /* API unavailable — no-op */ }
+    }
+  }, [activeHighlightName, currentMatchIndex, isSearchActive, passiveHighlightName, searchQuery, searchTargetRevision, session?.id, validMatches])
 
-  // Effect 2: Update active/passive highlight split when navigation index changes
-  // Lightweight — just reshuffles existing Range objects between two Highlight instances
-  useEffect(() => {
-    const cssHighlights = getCSSHighlights()
-    const allRanges = highlightRangesRef.current
-    if (!cssHighlights || allRanges.length === 0) return
-
+  const loadNextMatchPage = useCallback(async () => {
+    const currentResults = searchResultsRef.current
+    if (searchLoadingRef.current || !currentResults.hasMore || currentResults.query !== searchQuery) return
+    const lifecycle = searchLifecycleRef.current
+    const boundaryIndex = currentResults.matches.length - 1
+    searchLoadingRef.current = true
+    setIsSearchLoading(true)
     try {
-      const activeRange = allRanges[currentMatchIndex]
-      if (activeRange) {
-        const passiveRanges = allRanges.filter((_, i) => i !== currentMatchIndex)
-        cssHighlights.set('search-passive', new Highlight(...passiveRanges))
-        cssHighlights.set('search-active', new Highlight(activeRange))
-      } else {
-        cssHighlights.set('search-passive', new Highlight(...allRanges))
-        cssHighlights.delete('search-active')
+      await new Promise<void>(resolve => setTimeout(resolve, 0))
+      if (lifecycle !== searchLifecycleRef.current) return
+      const nextResults = chatSearchPager.loadNext(chatSearchIndex.index)
+      setSearchResults(nextResults)
+      setCurrentMatchIndex(previous => {
+        if (previous !== boundaryIndex || nextResults.matches.length <= currentResults.matches.length) return previous
+        shouldScrollToMatchRef.current = true
+        return previous + 1
+      })
+    } catch (error) {
+      console.error('[ChatDisplay] Failed to load the next Session search page:', error)
+    } finally {
+      if (lifecycle === searchLifecycleRef.current) {
+        searchLoadingRef.current = false
+        setIsSearchLoading(false)
       }
-    } catch { /* graceful degradation */ }
-  }, [currentMatchIndex])
+    }
+  }, [chatSearchIndex, chatSearchPager, searchQuery])
 
-  // Navigate to next match (no looping - stops at last match)
+  // Navigate to next match (no looping; crossing a cursor boundary loads one page).
   const goToNextMatch = useCallback(() => {
     if (validMatches.length === 0) return
-    setCurrentMatchIndex(prev => {
-      // Don't loop - stop at last match
-      if (prev >= validMatches.length - 1) return prev
-      shouldScrollToMatchRef.current = true
-      return prev + 1
-    })
-  }, [validMatches])
+    const current = currentMatchIndexRef.current
+    const next = planNextChatSearchNavigation(current, validMatches.length, searchResults.hasMore)
+    if (next.loadNextPage) {
+      void loadNextMatchPage()
+      return
+    }
+    if (next.index === current) return
+    shouldScrollToMatchRef.current = true
+    setCurrentMatchIndex(next.index)
+  }, [loadNextMatchPage, searchResults.hasMore, validMatches.length])
 
   // Navigate to previous match (no looping - stops at first match)
   const goToPrevMatch = useCallback(() => {
@@ -949,27 +969,28 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
     })
   }, [validMatches])
 
-  // With CSS Highlight API, highlighting is instant — no settling phase
-  const isHighlighting = false
+  const isHighlighting = isSearchLoading
 
   // Expose navigation via imperative handle (for session list navigation controls)
   React.useImperativeHandle(ref, () => ({
     goToNextMatch,
     goToPrevMatch,
     matchCount: validMatches.length,
+    hasMoreMatches: searchResults.hasMore,
     currentMatchIndex,
     isHighlighting,
-  }), [goToNextMatch, goToPrevMatch, validMatches.length, currentMatchIndex])
+  }), [goToNextMatch, goToPrevMatch, validMatches.length, searchResults.hasMore, currentMatchIndex, isHighlighting])
 
   // Notify parent when match info (count, index, highlighting state) changes
   useEffect(() => {
     onMatchInfoChange?.({
       count: validMatches.length,
       index: currentMatchIndex,
+      hasMore: searchResults.hasMore,
       isHighlighting,
       sessionId: session?.id ?? null,
     })
-  }, [validMatches.length, currentMatchIndex, isHighlighting, session?.id, onMatchInfoChange])
+  }, [validMatches.length, currentMatchIndex, searchResults.hasMore, isHighlighting, session?.id, onMatchInfoChange])
 
   // ============================================================================
   // Overlay State Management
@@ -1241,55 +1262,88 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
 
   // Handle message submission from InputContainer
   // Backend handles interruption and queueing if currently processing
-  const handleSubmit = (message: string, attachments?: FileAttachment[], skillSlugs?: string[], midStreamSendIntent?: MidStreamSendIntent) => {
-    const hasBaseMessage = message.trim().length > 0
+  const markFollowUpsSent = useCallback(async (followUps: PendingFollowUpAnnotation[]) => {
+    if (!session || followUps.length === 0) return
+    const sentAt = Date.now()
+    await Promise.all(followUps.map((followUp) => {
+      const currentMeta = followUp.meta ?? {}
+      const currentFollowUpMeta = asRecord(currentMeta.followUp) ?? {}
+
+      return electronApi.sessionCommand(session.id, {
+        type: 'updateAnnotation',
+        messageId: followUp.messageId,
+        annotationId: followUp.annotationId,
+        patch: {
+          meta: {
+            ...currentMeta,
+            followUp: {
+              ...currentFollowUpMeta,
+              text: followUp.note,
+              lastSentAt: sentAt,
+              lastSentText: followUp.note,
+            },
+          },
+        },
+      })
+    }))
+  }, [electronApi, session])
+
+  const deliverSubmission = useCallback(async (
+    attempt: ComposerSubmissionAttempt,
+    followUps: PendingFollowUpAnnotation[],
+  ): Promise<boolean> => {
+    try {
+      const accepted = await onSendMessage(attempt)
+      if (!accepted) return false
+      setSubmissionFailure(current => current?.attempt.attemptId === attempt.attemptId ? null : current)
+      void markFollowUpsSent(followUps).catch(error => {
+        console.error('[ChatDisplay] Failed to mark follow-up annotations as sent:', error)
+      })
+      return true
+    } catch (error) {
+      const failure = parseUnacceptedSessionFailure(error)
+      if (failure) {
+        setSubmissionFailure({
+          ...failure,
+          attempt,
+          followUps: followUps.map(followUp => ({
+            ...followUp,
+            meta: followUp.meta ? { ...followUp.meta } : undefined,
+          })),
+        })
+      }
+      return false
+    }
+  }, [markFollowUpsSent, onSendMessage])
+
+  const handleSubmit = async (attempt: ComposerSubmissionAttempt): Promise<boolean> => {
+    const hasBaseMessage = attempt.message.trim().length > 0
     const followUpSection = formatFollowUpSection(pendingFollowUpAnnotations, {
       includeTopSeparator: hasBaseMessage,
     })
     const messageWithFollowUps = followUpSection.length > 0
-      ? (hasBaseMessage ? `${message}\n\n${followUpSection}` : followUpSection)
-      : message
+      ? (hasBaseMessage ? `${attempt.message}\n\n${followUpSection}` : followUpSection)
+      : attempt.message
     const normalizedMessage = normalizeFollowUpsMarkdown(messageWithFollowUps)
+    const outboundAttempt = snapshotComposerSubmission({
+      ...attempt,
+      message: normalizedMessage,
+    })
+    const followUps = pendingFollowUpAnnotations.map(followUp => ({
+      ...followUp,
+      meta: followUp.meta ? { ...followUp.meta } : undefined,
+    }))
 
     // Force stick-to-bottom when user sends a message
     isStickToBottomRef.current = true
-    onSendMessage(normalizedMessage, attachments, skillSlugs, midStreamSendIntent)
-
-    // Persist sent marker on follow-up annotations so TurnCard can distinguish
-    // sent vs pending follow-ups. If user edits a follow-up later, TurnCard
-    // clears these markers and the annotation becomes pending again.
-    if (session && pendingFollowUpAnnotations.length > 0) {
-      const sentAt = Date.now()
-      void Promise.all(pendingFollowUpAnnotations.map((followUp) => {
-        const currentMeta = followUp.meta ?? {}
-        const currentFollowUpMeta = asRecord(currentMeta.followUp) ?? {}
-
-        return electronApi.sessionCommand(session.id, {
-          type: 'updateAnnotation',
-          messageId: followUp.messageId,
-          annotationId: followUp.annotationId,
-          patch: {
-            meta: {
-              ...currentMeta,
-              followUp: {
-                ...currentFollowUpMeta,
-                text: followUp.note,
-                lastSentAt: sentAt,
-                lastSentText: followUp.note,
-              },
-            },
-          },
-        })
-      })).catch((error) => {
-        console.error('[ChatDisplay] Failed to mark follow-up annotations as sent:', error)
-      })
-    }
+    const completion = deliverSubmission(outboundAttempt, followUps)
 
     // Immediately scroll to bottom after sending - use requestAnimationFrame
     // to ensure the DOM has updated with the new message
     requestAnimationFrame(() => {
       messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
     })
+    return completion
   }
 
   const handleSaveAndSendFollowUp = useCallback((_target: {
@@ -1318,7 +1372,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
   // Handle stop request from InputContainer
   // silent=true when redirecting (sending new message), silent=false when user clicks Stop button
   const handleStop = (silent = false) => {
-    if (!session || !effectiveIsProcessing) return
+    if (!session || !effectiveIsProcessing || session.pendingFailure) return
 
     electronApi.cancelProcessing(session.id, silent).catch(error => {
       console.error('[ChatDisplay] Failed to cancel processing:', error)
@@ -1385,9 +1439,12 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
   totalTurnCountRef.current = allTurns.length
 
   // Reverse pagination: only render last N turns for fast initial render
-  const startIndex = Math.max(0, allTurns.length - visibleTurnCount)
-  const turns = allTurns.slice(startIndex)
-  const hasMoreAbove = startIndex > 0
+  const defaultStartIndex = Math.max(0, allTurns.length - visibleTurnCount)
+  const renderedSearchMatch = isSearchActive ? activeSearchMatch : undefined
+  const searchWindow = getChatSearchWindow(allTurns, renderedSearchMatch)
+  const startIndex = renderedSearchMatch ? searchWindow.startIndex : defaultStartIndex
+  const turns = renderedSearchMatch ? searchWindow.turns : allTurns.slice(defaultStartIndex)
+  const hasMoreAbove = !renderedSearchMatch && startIndex > 0
 
   const assistantTurnIndexByMessageId = useMemo(() => {
     const map = new Map<string, number>()
@@ -1605,8 +1662,15 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                   {turns.map((turn, index) => {
                     // Compute turn key and check if it's a search match
                     const turnKey = getTurnKey(turn)
-                    const isCurrentMatch = isSearchActive && matchingTurnIds[currentMatchIndex] === turnKey
-                    const isAnyMatch = isSearchActive && matchingTurnIds.includes(turnKey)
+                    const isCurrentMatch = isSearchActive && validMatches[currentMatchIndex]?.turnId === turnKey
+                    const isAnyMatch = isSearchActive && matchingTurnIds.has(turnKey)
+                    const activeTarget = isCurrentMatch ? activeSearchMatch?.target : undefined
+                    const turnSearchTarget = activeTarget && (
+                      activeTarget.type === 'turn'
+                      || activeTarget.type === 'message'
+                      || activeTarget.type === 'tool-call'
+                      || activeTarget.type === 'tool-result'
+                    ) ? { type: activeTarget.type, id: activeTarget.id } : undefined
 
                     // User turns - render with MemoizedMessageBubble
                     // Extra padding creates visual separation from AI responses
@@ -1659,7 +1723,10 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                             onRetry={turn.message.role === 'error' ? () => {
                               const lastUserTurn = allTurns.slice(0, startIndex + index).findLast(candidate => candidate.type === 'user')
                               if (lastUserTurn?.type === 'user') {
-                                onSendMessage(lastUserTurn.message.content)
+                                void deliverSubmission(snapshotComposerSubmission({
+                                  composerText: lastUserTurn.message.content,
+                                  message: lastUserTurn.message.content,
+                                }), [])
                               }
                             } : undefined}
                           />
@@ -1742,6 +1809,8 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                         onExpandedChange={handleTurnExpandedChange}
                         expandedActivityGroups={autoExpandedActivityGroups}
                         onExpandedActivityGroupsChange={handleActivityGroupsExpandedChange}
+                        activeSearchTarget={turnSearchTarget}
+                        onSearchTargetReady={turnSearchTarget ? handleSearchTargetReady : undefined}
                         todos={turn.todos}
                         onOpenFile={onOpenFile}
                         onOpenUrl={onOpenUrl}
@@ -1762,7 +1831,6 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                                 provider: session.provider,
                                 model: session.model,
                                 permissionMode: session.permissionMode,
-                                workingDirectory: session.workingDirectory,
                               }
                             )
                             navigate(routes.view.allSessions(child.id), { newPanel: resolveBranchNewPanelOption(options) })
@@ -1919,7 +1987,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                   </motion.div>
                 </AnimatePresence>
                 {/* Processing Indicator - always visible while processing */}
-                {effectiveIsProcessing && (() => {
+                {effectiveIsProcessing && !session.pendingFailure && (() => {
                   // Find the last user message timestamp for accurate elapsed time
                   const lastUserTurn = [...allTurns].reverse().find(turn => turn.type === 'user')
                   return (
@@ -1948,6 +2016,63 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
 
           <div className={cn(CHAT_LAYOUT.maxWidth, 'mx-auto flex w-full min-w-0 flex-col gap-1 px-3 @xs/panel:px-4')}>
             <ExtensionContributionZone sessionId={session.id} surface="composer.status" />
+            {session.pendingFailure && (
+              <div
+                role="alert"
+                data-mortise-semantic-id={`conversation.${session.id}.settlement-failed`}
+                data-mortise-settlement-outcome={session.pendingFailure.data.outcome}
+                className="flex min-w-0 items-center gap-2 border-l-2 border-amber-500 px-2 py-1.5 text-xs text-foreground"
+              >
+                <CircleAlert className="size-3.5 shrink-0 text-amber-600" aria-hidden="true" />
+                <span className="min-w-0 flex-1 truncate">
+                  {t('chat.sessionSettlementFailed', 'The response was received, but final session saving is still pending.')}
+                </span>
+                <button
+                  type="button"
+                  disabled={settlementRetrying || !onRetrySettlement}
+                  data-mortise-semantic-id={`conversation.${session.id}.settlement-failed.retry`}
+                  className="inline-flex shrink-0 items-center gap-1 rounded-[6px] px-2 py-1 font-medium text-foreground hover:bg-foreground/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                  onClick={() => {
+                    if (!onRetrySettlement || settlementRetrying) return
+                    setSettlementRetrying(true)
+                    void onRetrySettlement()
+                      .catch((error: unknown) => console.error('[ChatDisplay] Failed to retry Session settlement:', error))
+                      .finally(() => setSettlementRetrying(false))
+                  }}
+                >
+                  <RotateCcw className={cn('size-3.5', settlementRetrying && 'animate-spin')} aria-hidden="true" />
+                  {t('common.retry')}
+                </button>
+              </div>
+            )}
+            {submissionFailure && (
+              <div
+                role="alert"
+                data-mortise-semantic-id={`composer.${session.id}.submission-failed`}
+                data-mortise-submission-attempt-id={submissionFailure.attempt.attemptId}
+                data-mortise-submission-outcome={submissionFailure.outcome}
+                data-mortise-submission-retryable={String(submissionFailure.retryable)}
+                className="flex min-w-0 items-center gap-2 border-l-2 border-destructive px-2 py-1.5 text-xs text-destructive"
+              >
+                <CircleAlert className="size-3.5 shrink-0" aria-hidden="true" />
+                <span className="min-w-0 flex-1 truncate">
+                  {t('chat.sessionPersistenceFailed', 'The message was not accepted because it could not be saved.')}
+                </span>
+                {submissionFailure.retryable && (
+                  <button
+                    type="button"
+                    data-mortise-semantic-id={`composer.${session.id}.submission-failed.retry`}
+                    className="inline-flex shrink-0 items-center gap-1 rounded-[6px] px-2 py-1 font-medium text-foreground hover:bg-foreground/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    onClick={() => {
+                      void deliverSubmission(submissionFailure.attempt, submissionFailure.followUps)
+                    }}
+                  >
+                    <RotateCcw className="size-3.5" aria-hidden="true" />
+                    {t('common.retry')}
+                  </button>
+                )}
+              </div>
+            )}
             <ExtensionContributionZone sessionId={session.id} surface="composer.toolbar" />
             <ExtensionContributionZone sessionId={session.id} surface="composer.above" />
           </div>
@@ -1966,8 +2091,8 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
             onInsertMessage={onInputChange}
             inputProps={{
               placeholder,
-              disabled: isInputDisabled || session.readOnly,
-              isProcessing: effectiveIsProcessing,
+              disabled: isInputDisabled || session.readOnly || !!session.pendingFailure,
+              isProcessing: effectiveIsProcessing && !session.pendingFailure,
               onAnimatedHeightChange: handleAnimatedHeightChange,
               onSubmit: handleSubmit,
               onStop: handleStop,
@@ -1986,8 +2111,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
               onAttachmentsChange,
               skills,
               workspaceId,
-              workingDirectory,
-              onWorkingDirectoryChange,
+              workspaceRoot,
               disableSend: disableSend || providerUnavailable,
               providerUnavailable,
               isEmptySession: allTurns.length === 0,
@@ -2004,7 +2128,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
             }}
           />
           </ExtensionReplaceZone>
-          <ExtensionWidgetZone className={cn(CHAT_LAYOUT.maxWidth, 'mx-auto')} sessionId={session.id} />
+          <ExtensionContributionZone surface="composer.below" className={cn(CHAT_LAYOUT.maxWidth, 'mx-auto')} sessionId={session.id} />
           </div>
         </div>
       ) : null}

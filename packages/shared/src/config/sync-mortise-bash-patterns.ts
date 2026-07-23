@@ -22,16 +22,16 @@ function isMortisePattern(entry: AllowedBashEntry): boolean {
 
 function syncMortisePatterns(config: PermissionsConfig): PermissionsConfig {
   const patterns = config.allowedBashPatterns ?? []
-  const firstCraftIndex = patterns.findIndex(isMortisePattern)
+  const firstMortiseIndex = patterns.findIndex(isMortisePattern)
 
-  const withoutCraft = patterns.filter(entry => !isMortisePattern(entry))
+  const withoutMortise = patterns.filter(entry => !isMortisePattern(entry))
   const generated = getMortiseReadOnlyBashPatterns()
 
-  const insertAt = firstCraftIndex >= 0 ? firstCraftIndex : withoutCraft.length
+  const insertAt = firstMortiseIndex >= 0 ? firstMortiseIndex : withoutMortise.length
   const nextAllowedBashPatterns = [
-    ...withoutCraft.slice(0, insertAt),
+    ...withoutMortise.slice(0, insertAt),
     ...generated,
-    ...withoutCraft.slice(insertAt),
+    ...withoutMortise.slice(insertAt),
   ]
 
   return {

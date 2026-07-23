@@ -22,7 +22,7 @@ collaborates_with: [browser-runtime, file-workbench, native-desktop]
 validation:
   - { id: universal-layout-regression, kind: unit, command: "bun test apps/electron/src/renderer/components/app-shell apps/electron/src/shared/__tests__/app-layout.test.ts", description: "Run universal layout and app-shell regressions.", triggers: [owned-change], required: true, evidence: "Bun test exit status and output." }
   - { id: universal-layout-physical, kind: physical, command: "bun run test:ui-validation:electron", description: "Exercise docking and layout behavior through the shared Developer Kit host.", triggers: [ui-change, layout-change, release], required: false, evidence: "Developer Kit run output and retained UI evidence." }
-scope_digest: 906913b2d927e8d175a2a9f982c7b9f0079c0e1b
+scope_digest: 28a7510518b21881135161d948d1f8ab5686357d
 ---
 
 ## Purpose
@@ -53,8 +53,21 @@ Run unified dock, navigation, workspace sidebar, geometry, detach, and layout se
 Persisted layouts can reference removed content; native views can occlude drag targets and floating surfaces.
 
 ## Semantic history
+- 2026-07-23: Made current-Session chat search host-yielding and cursor-paged: initial/divergent indexes publish atomically after asynchronous chunking, deterministic identity/content snapshots protect the sealed prefix while streaming reindexes only mutable tails, navigation preserves active match identity across lazy pages, and exact semantic-target highlighting stays hard-bounded with the mounted neighborhood.
+- 2026-07-23: Unified dock layout durability behind one scope-bound asynchronous coordinator that keeps model-change hot paths serialization-free, coalesces the latest model at idle, and flushes at interaction-end, workspace-transition, window-close, and scope-dispose boundaries.
+- 2026-07-22: Added a dedicated settlement recovery status that disables composer submission without presenting Stop semantics and invokes only the payload-free Session settlement command.
+- 2026-07-22: Made existing-Session composer submission completion-bearing and attempt-scoped so pre-accept persistence failures retain exact retry payloads, restore only untouched cleared drafts, expose typed terminal state, and defer follow-up sent markers until acceptance.
+- 2026-07-22: Remount FlexLayout when the coordinated model identity is replaced so same-profile restart cannot retain an old layout host that pushes restored workspace content below the viewport.
+- 2026-07-22: Added an explicit non-Session semantic scope for draft composers while preserving Session-scoped composer identities and avoiding workspace-derived identity guesses.
+- 2026-07-22: Applied the immutable platform capability contract to shared renderer layout actions: WebUI keeps browser-tab fallbacks while native BrowserPane tools, workspace auxiliary windows, dock detach controls, and persisted native browser content are omitted or safely degraded.
+- 2026-07-21: Replaced mixed RemoteUI shell state with versioned interaction-only routing and mounted canonical composer-below contributions directly in the conversation layout.
+- 2026-07-21: Removed renderer-side scrubbing of retired Session organization fields; canonical transfer validation now rejects them at ingress.
+- 2026-07-21: Removed the global collapsed-session-group migration and deprecated skill icon wrapper APIs; current scoped persistence and the canonical entity icon API are now the only renderer paths.
+- 2026-07-21: Made final-message tracking assistant-only and required canonical messaging access fields in renderer state.
+- 2026-07-21: Removed per-session working-directory state and mutation controls from the shell and composer; workspace root is the sole resolution path.
+- 2026-07-21: Replaced full-history chat search expansion and global highlight scanning with a shared segment index and a bounded active-match neighborhood; per-panel highlights now have isolated identities and deterministic cleanup.
+- 2026-07-21: Coalesced window geometry persistence so drag and resize model changes update memory immediately but serialize and write only at idle or explicit workspace/window flush boundaries.
 - 2026-07-21: Updated projection-owned processing and completion consumers to keep retrying Pi attempts active until `agent_settled`, while retaining legacy `agent_end` snapshot compatibility.
 - 2026-07-21: Added local skill discovery with default-all individual selection and explicit confirmed batch import into the bound workspace.
 - 2026-07-20: Removed the retired Sources navigator, detail type, and navigation-registry state from the current layout contract.
 - 2026-07-20: Made initial draft-route focus one-shot and kept programmatic first-message navigation on the draft until send succeeds.
-- 2026-07-18: Advanced workspace-scoped universal dock and layout validation.

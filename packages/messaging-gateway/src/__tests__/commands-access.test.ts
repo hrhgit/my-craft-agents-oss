@@ -165,7 +165,7 @@ function buildCommands(args: {
       platforms: {
         telegram: {
           enabled: true,
-          ...(args.ownerOnly ? { accessMode: 'owner-only' as const } : {}),
+          accessMode: args.ownerOnly ? 'owner-only' : 'open',
           ...(args.owners ? { owners: args.owners } : {}),
         },
       },
@@ -380,7 +380,7 @@ describe('Commands.handle (unbound text path) — free-form gate', () => {
     expect(adapter.sent.length).toBe(0)
   })
 
-  it('open workspace lets free-form non-owner text through (legacy / migration)', async () => {
+  it('explicitly open workspace lets free-form non-owner text through', async () => {
     const { commands } = buildCommands({ ownerOnly: false, owners: [] })
     const adapter = makeAdapter()
     await commands.handle(adapter, buildMsg({ text: 'hi', senderId: 'stranger' }))

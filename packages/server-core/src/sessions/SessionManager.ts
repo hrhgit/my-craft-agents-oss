@@ -1,22 +1,23 @@
 import type { EventSink, RpcServer } from '@mortise/server-core/transport'
 import { CLIENT_BROWSER_INVOKE } from '@mortise/server-core/transport'
-import type { ISessionManager, IBrowserPaneManager, ExecutePromptAutomationInput, CreateAndSendFirstTurnInput } from '@mortise/server-core/handlers'
+import type { ISessionManager, IBrowserPaneManager, CreateAndSendFirstTurnInput } from '@mortise/server-core/handlers'
 import { RemoteBrowserPaneManager } from './RemoteBrowserPaneManager'
 import { validateFilePath, getWorkspaceAllowedDirs } from '@mortise/server-core/handlers'
 import { createExtensionEventForwarder } from '../handlers/pi-extension-bridge'
 import { createScopedLogger, CONSOLE_LOGGER, type PlatformServices, type Logger } from '@mortise/server-core/runtime'
 import { basename, dirname, isAbsolute, join, relative } from 'path'
 import { existsSync } from 'fs'
-import { readFile, writeFile, mkdir, rename, rm } from 'fs/promises'
+import { readFile, writeFile, mkdir, rename, rm, lstat, open } from 'fs/promises'
 import { randomUUID } from 'node:crypto'
 import { setPermissionMode, hydratePreviousPermissionMode, getPermissionModeDiagnostics, type PermissionMode, unregisterSessionScopedToolCallbacks, mergeSessionScopedToolCallbacks, AbortReason, type BrowserPaneFns, generateConversationSummary } from '@mortise/shared/agent'
-import type { AgentEvent, PlanModeStateV1 } from '@mortise/core/types'
+import type { AgentEvent, PlanArtifactV1, PlanModeStateV1 } from '@mortise/core/types'
 import {
   resolveSessionProvider,
   createBackendFromProvider,
   resolveBackendContext,
   createBackendFromResolvedContext,
   type AgentBackend,
+  type CoreBackendConfig,
   type BackendHostRuntimeContext,
   type HostRuntimeErrorProjection,
   type PostInitResult,
@@ -26,7 +27,6 @@ import {
 } from '@mortise/shared/agent/backend'
 import { alternateMidStreamBehavior, readPiGlobalProviders, readPiGlobalSettings, getDefaultThinkingLevel, getMidStreamBehavior, resetManagedAnthropicAuthEnvVars, getPersistedUiLanguage, resolveTitleLanguageName, type PiExtensionReloadActiveSession, type PiExtensionReloadResult } from '@mortise/shared/config'
 import { PrivilegedExecutionBroker, SessionShareTransferService } from '@mortise/server-core/services'
-import { isValidWorkingDirectory } from '../utils/path-validation'
 import { InitGate } from '@mortise/server-core/domain'
 import { i18n } from '@mortise/shared/i18n'
 import {
@@ -64,7 +64,7 @@ import {
   findPiSessionProjectionById,
   appendPiBranchMessagesViaSessionManager,
   appendStoredMessagesViaPiSessionManager,
-  writeCraftSessionOverlay,
+  writeMortiseSessionOverlayAsync,
   projectTreeSessionProjectionAsStoredSession,
   serializeSession,
   validateBundle,
@@ -74,13 +74,14 @@ import {
   type StoredSession,
   type StoredMessage,
   type SessionHeader,
-  pickCraftSessionMetadata,
+  pickMortiseSessionMetadata,
   parsePlanCustomMessage,
+  RemovedSessionFieldError,
 } from '@mortise/shared/sessions'
 import { ConfigWatcher, type ConfigWatcherCallbacks } from '@mortise/shared/config'
 import { getLastApiError } from '@mortise/shared/interceptor'
 import { restoreFiles } from '@mortise/shared/utils/bundle-files'
-import { type Session, type SessionEvent, type FileAttachment, type SendMessageOptions, type UnreadSummary, type PiProjectionEventV1, type PiProjectionSnapshotV1, RPC_CHANNELS, generateMessageId } from '@mortise/shared/protocol'
+import { type Session, type SessionEvent, type FileAttachment, type SendMessageOptions, type UnreadSummary, type PiProjectionEventV1, type PiProjectionSnapshotV1, type ExtensionInteractionResponseV1, RPC_CHANNELS, SESSION_SETTLEMENT_ERROR_CODE, generateMessageId } from '@mortise/shared/protocol'
 import {
   ConversationProjector,
   resolvePiBranchTarget,
@@ -95,7 +96,7 @@ import { loadAllSkills } from '@mortise/shared/skills'
 import { getToolIconsDir } from '@mortise/shared/config'
 import { getDefaultSummarizationModel } from '@mortise/shared/config/models'
 import { getCredentialManager } from '@mortise/shared/credentials'
-import { type ThinkingLevel, DEFAULT_THINKING_LEVEL, normalizeThinkingLevel } from '@mortise/shared/agent/thinking-levels'
+import { type ThinkingLevel, DEFAULT_THINKING_LEVEL, isValidThinkingLevel, normalizeThinkingLevel } from '@mortise/shared/agent/thinking-levels'
 import {
   AutomationWorkspaceHostV3,
   type AutomationActionExecutionResultV1,
@@ -113,6 +114,198 @@ export { sanitizeForTitle }
 
 // Module-level platform ref — set once during init via setSessionPlatform()
 let _platform: PlatformServices | null = null
+
+export class SessionProjectionPersistenceError extends Error {
+  readonly code = 'SESSION_PROJECTION_PERSISTENCE_FAILED' as const
+  readonly retryable = true
+  readonly sessionId: string
+  readonly cause: unknown
+  readonly data: { sessionId: string; retryable: true }
+
+  constructor(sessionId: string, cause: unknown) {
+    super(`Failed to persist Session projection ${sessionId}: ${cause instanceof Error ? cause.message : String(cause)}`)
+    this.name = 'SessionProjectionPersistenceError'
+    this.sessionId = sessionId
+    this.cause = cause
+    this.data = { sessionId, retryable: true }
+  }
+}
+
+async function syncDirectoryBestEffort(path: string): Promise<void> {
+  let handle: Awaited<ReturnType<typeof open>> | undefined
+  try {
+    handle = await open(path, 'r')
+    await handle.sync()
+  } catch {
+    // Directory fsync is unavailable on some platforms and filesystems.
+  } finally {
+    await handle?.close().catch(() => undefined)
+  }
+}
+
+export function selectPiProjectionReplaceStrategy(
+  platform: NodeJS.Platform,
+  targetIsRegularFile: boolean,
+): 'direct' | 'displace-existing' {
+  return platform === 'win32' && targetIsRegularFile ? 'displace-existing' : 'direct'
+}
+
+async function writePiProjectionSnapshotAtomically(target: string, contents: string): Promise<void> {
+  const temporary = `${target}.${process.pid}.${randomUUID()}.tmp`
+  const displaced = `${target}.${process.pid}.${randomUUID()}.replaced`
+  let preserveDisplaced = false
+
+  try {
+    const handle = await open(temporary, 'wx', 0o600)
+    try {
+      await handle.writeFile(contents, 'utf8')
+      await handle.sync()
+    } finally {
+      await handle.close()
+    }
+
+    const existing = await lstat(target).catch(() => undefined)
+    const replaceByDisplacement = async (): Promise<void> => {
+      // Bun/Node rename-over-existing can fail with EPERM on Windows. Keep the
+      // previous durable file recoverable until the prepared replacement has
+      // been committed under the canonical name.
+      await rename(target, displaced)
+      preserveDisplaced = true
+      try {
+        await rename(temporary, target)
+      } catch (commitError) {
+        try {
+          await rename(displaced, target)
+          preserveDisplaced = false
+        } catch (restoreError) {
+          throw new AggregateError(
+            [commitError, restoreError],
+            `Failed to commit or restore atomic file replacement for ${target}`,
+          )
+        }
+        throw commitError
+      }
+      preserveDisplaced = false
+      await rm(displaced, { force: true }).catch(() => undefined)
+    }
+
+    if (selectPiProjectionReplaceStrategy(process.platform, existing?.isFile() === true) === 'displace-existing') {
+      // On Windows the rename-over-existing promise can remain pending rather
+      // than rejecting, so choose the recoverable replacement path up front.
+      await replaceByDisplacement()
+    } else {
+      try {
+        await rename(temporary, target)
+      } catch (replaceError) {
+        const existingAfterFailure = await lstat(target).catch(() => undefined)
+        if (!existingAfterFailure?.isFile()) throw replaceError
+        await replaceByDisplacement()
+      }
+    }
+
+    await syncDirectoryBestEffort(dirname(target))
+  } finally {
+    await rm(temporary, { force: true }).catch(() => undefined)
+    if (!preserveDisplaced) await rm(displaced, { force: true }).catch(() => undefined)
+  }
+}
+
+export class SessionPublicationDurabilityError extends Error {
+  readonly code = 'SESSION_PUBLICATION_DURABILITY_FAILED' as const
+  readonly retryable: boolean
+  readonly terminal = true
+  readonly outcome = 'unpublished' as const
+  readonly sessionId: string
+  readonly stage: 'metadata' | 'projection'
+  readonly cause: unknown
+  readonly data: {
+    sessionId: string
+    stage: 'metadata' | 'projection'
+    retryable: boolean
+    terminal: true
+    outcome: 'unpublished'
+  }
+
+  constructor(sessionId: string, stage: 'metadata' | 'projection', cause: unknown) {
+    super(`Failed to publish Session ${sessionId} during ${stage} durability: ${cause instanceof Error ? cause.message : String(cause)}`)
+    this.name = 'SessionPublicationDurabilityError'
+    this.retryable = (cause as { retryable?: unknown } | null)?.retryable !== false
+    this.sessionId = sessionId
+    this.stage = stage
+    this.cause = cause
+    this.data = {
+      sessionId,
+      stage,
+      retryable: this.retryable,
+      terminal: true,
+      outcome: 'unpublished',
+    }
+  }
+}
+
+export class SessionSendDurabilityError extends Error {
+  readonly code = 'SESSION_PERSISTENCE_FAILED' as const
+  readonly retryable = true
+  readonly terminal = true
+  readonly outcome = 'unaccepted' as const
+  readonly sessionId: string
+  readonly messageId: string
+  readonly cause: unknown
+  readonly data: {
+    sessionId: string
+    messageId: string
+    stage: 'canonical-user-message'
+    retryable: true
+    terminal: true
+    outcome: 'unaccepted'
+  }
+
+  constructor(sessionId: string, messageId: string, cause: unknown) {
+    super(`Pi did not durably persist user message ${messageId} for Session ${sessionId}: ${cause instanceof Error ? cause.message : String(cause)}`)
+    this.name = 'SessionSendDurabilityError'
+    this.sessionId = sessionId
+    this.messageId = messageId
+    this.cause = cause
+    this.data = {
+      sessionId,
+      messageId,
+      stage: 'canonical-user-message',
+      retryable: true,
+      terminal: true,
+      outcome: 'unaccepted',
+    }
+  }
+}
+
+export class SessionSettlementDurabilityError extends Error {
+  readonly code = 'SESSION_SETTLEMENT_FAILED' as const
+  readonly retryable = true
+  readonly terminal = false
+  readonly outcome = 'accepted-pending-settlement' as const
+  readonly sessionId: string
+  readonly cause: unknown
+  readonly data: {
+    sessionId: string
+    stage: 'turn-settlement'
+    retryable: true
+    terminal: false
+    outcome: 'accepted-pending-settlement'
+  }
+
+  constructor(sessionId: string, cause: unknown) {
+    super(`Session ${sessionId} accepted the user message but could not durably settle the turn: ${cause instanceof Error ? cause.message : String(cause)}`)
+    this.name = 'SessionSettlementDurabilityError'
+    this.sessionId = sessionId
+    this.cause = cause
+    this.data = {
+      sessionId,
+      stage: 'turn-settlement',
+      retryable: true,
+      terminal: false,
+      outcome: 'accepted-pending-settlement',
+    }
+  }
+}
 
 // Scoped logger — upgraded from console fallback when setSessionPlatform() is called.
 // Named `sessionLog` so all ~30 existing call sites remain unchanged.
@@ -480,6 +673,20 @@ async function resolveToolDisplayMeta(
 /** Agent type - unified backend interface for all providers */
 type AgentInstance = AgentBackend
 
+export type SessionBackendFactory = (
+  args: {
+    context: Parameters<typeof createBackendFromResolvedContext>[0]['context']
+    coreConfig: CoreBackendConfig
+    provisional: boolean
+    createDefaultBackend: () => AgentBackend
+  },
+) => AgentBackend
+
+export interface SessionManagerOptions {
+  resolveWorkspaceByNameOrId?: (nameOrId: string) => Workspace | null
+  createSessionBackend?: SessionBackendFactory
+}
+
 interface ManagedSession {
   id: string
   workspace: Workspace
@@ -505,6 +712,8 @@ interface ManagedSession {
   previousPermissionMode?: PermissionMode
   /** Session-authoritative state published by the Pi Plan Mode extension. */
   planModeState?: PlanModeStateV1
+  /** Durable Accept & Compact handoff state. */
+  pendingPlanExecution?: SessionHeader['pendingPlanExecution']
   // SDK session ID for conversation continuity
   sdkSessionId?: string
   // Token usage for display
@@ -527,11 +736,8 @@ interface ManagedSession {
    * Set to false when user views the session (and not processing).
    */
   hasUnread?: boolean
-  // Compatibility DTO field. Under complete-unification semantics this always
-  // equals workspace.rootPath; callers must not use it for ownership/bucket routing.
-  workingDirectory?: string
   // SDK cwd for session storage - set once at creation, never changes.
-  // Ensures SDK can find session transcripts regardless of workingDirectory changes.
+  // Ensures SDK can find session transcripts across provider resume/fork flows.
   sdkCwd?: string
   // Shared viewer URL (if shared via viewer)
   sharedUrl?: string
@@ -541,12 +747,12 @@ interface ManagedSession {
   model?: string
   // Pi provider slug selected for this session.
   provider?: string
-  // Thinking level for this session ('off', 'think', 'max')
+  // Thinking level for this session.
   thinkingLevel?: ThinkingLevel
   // System prompt preset for mini agents ('default' | 'mini')
   systemPromptPreset?: 'default' | 'mini' | string
   // Role/type of the last message (for badge display without loading messages)
-  lastMessageRole?: 'user' | 'assistant' | 'plan' | 'tool' | 'error'
+  lastMessageRole?: 'user' | 'assistant' | 'tool' | 'error'
   // ID of the last final (non-intermediate) assistant message - pre-computed for unread detection
   lastFinalMessageId?: string
   // Turn baseline: last final assistant message ID at turn start (runtime-only, not persisted)
@@ -579,6 +785,14 @@ interface ManagedSession {
   }>
   // Runtime-only marker for the queued message currently being replayed.
   replayingQueuedMessageId?: string
+  // A terminal backend event has arrived, but host metadata/projection is not
+  // durable yet. New sends must retry this boundary before entering a new turn.
+  pendingSettlementReason?: 'complete' | 'interrupted' | 'error' | 'timeout'
+  settlementPromise?: Promise<void>
+  // Pi reported compaction complete, but the pending-plan sidecar has not yet
+  // crossed its durable write boundary. Settlement retries this without
+  // re-entering the Pi turn.
+  pendingCompactionCompletion?: boolean
   // Map of shellId -> command for killing background shells
   backgroundShellCommands: Map<string, string>
   // Map of taskId -> output info for background task results
@@ -601,6 +815,7 @@ interface ManagedSession {
   // the first assistant message. Runtime-only; never serialized.
   publicationState?: 'provisional' | 'publishing' | 'abandoning'
   publicationPromise?: Promise<boolean>
+  beforePublish?: (session: Session) => Promise<void> | void
   abandonPromise?: Promise<void>
   branchFromMessageId?: string
   // Branch context strategy:
@@ -661,15 +876,8 @@ export function createManagedSession(
     Object.entries(s).filter(([, v]) => v !== undefined)
   ) as Partial<ManagedSession>
 
-  if ('thinkingLevel' in sourceFields) {
-    // TODO: Remove legacy 'think' normalization after old persisted session
-    // headers have realistically aged out across upgrades.
-    const normalizedThinkingLevel = normalizeThinkingLevel(sourceFields.thinkingLevel)
-    if (normalizedThinkingLevel) {
-      sourceFields.thinkingLevel = normalizedThinkingLevel
-    } else {
-      delete sourceFields.thinkingLevel
-    }
+  if ('thinkingLevel' in sourceFields && !isValidThinkingLevel(sourceFields.thinkingLevel)) {
+    delete sourceFields.thinkingLevel
   }
 
   const managed = {
@@ -705,10 +913,39 @@ export function createManagedSession(
     managed.branchSeedApplied = !!managed.sdkSessionId
   }
 
-  managed.workingDirectory = workspace.rootPath
   managed.sdkCwd = managed.sdkCwd ?? workspace.rootPath
 
   return managed
+}
+
+export type SubmittedPlanMessage = Message & { planPath: string }
+
+export function createSubmittedPlanMessage(
+  sessionId: string,
+  planPath: string,
+  content: string,
+  timestamp: number,
+): SubmittedPlanMessage {
+  const artifactId = `plan-${randomUUID()}`
+  const artifact: PlanArtifactV1 = {
+    schemaVersion: 1,
+    kind: 'plan',
+    artifactId,
+    revision: 1,
+    state: 'ready',
+    review: { status: 'not_requested' },
+    checklist: [],
+    createdAt: timestamp,
+    finalizedAt: timestamp,
+  }
+  return {
+    id: `plan-message-${sessionId}-${randomUUID()}`,
+    role: 'assistant',
+    content,
+    timestamp,
+    artifact,
+    planPath,
+  }
 }
 
 function remapBranchedMessageIdentities(
@@ -824,12 +1061,6 @@ function syncPiProjectionComputedMetadata(
       continue
     }
 
-    if (entity.kind === 'plan_artifact' || entity.kind === 'plan_artifact_update') {
-      messageKeys.add(`plan:${entity.entityId}`)
-      updateLastRole(entity.lastSeq, 'plan')
-      continue
-    }
-
     if (entity.kind === 'runtime_error') {
       messageKeys.add(`error:${entity.entityId}`)
       updateLastRole(entity.lastSeq, 'error')
@@ -877,7 +1108,7 @@ const DEFAULT_TOKEN_USAGE = {
 
 /**
  * Convert a ManagedSession to a renderer-side Session object.
- * Uses pickCraftSessionMetadata() for Mortise-owned persistent fields so new
+ * Uses pickMortiseSessionMetadata() for Mortise-owned persistent fields so new
  * fields propagate automatically.
  */
 function managedToSession(
@@ -887,7 +1118,7 @@ function managedToSession(
 ): Session {
   const includeSessionFolderPath = options.includeSessionFolderPath ?? true
   return {
-    ...pickCraftSessionMetadata(m),
+    ...pickMortiseSessionMetadata(m),
     // Mortise metadata uses mortiseId, while ManagedSession runtime state uses id.
     // Renderer Session DTO still exposes id, so map it explicitly here.
     id: m.id,
@@ -902,6 +1133,21 @@ function managedToSession(
     workspaceName: m.workspace.name,
     messages: [],
     isProcessing: m.isProcessing,
+    ...(m.pendingSettlementReason || m.settlementPromise
+      ? {
+          pendingFailure: {
+            code: SESSION_SETTLEMENT_ERROR_CODE,
+            message: `Session ${m.id} has an accepted turn pending host settlement`,
+            data: {
+              sessionId: m.id,
+              stage: 'turn-settlement' as const,
+              retryable: true as const,
+              terminal: false as const,
+              outcome: 'accepted-pending-settlement' as const,
+            },
+          },
+        }
+      : {}),
     ...(includeSessionFolderPath
       ? { sessionFolderPath: getSessionStoragePath(m.workspace.rootPath, m.id) }
       : {}),
@@ -911,12 +1157,17 @@ function managedToSession(
 }
 
 export class SessionManager implements ISessionManager {
+  /** Canonical resolver; tests may inject an isolated workspace without mutating global config. */
+  private readonly resolveWorkspaceByNameOrId: (nameOrId: string) => Workspace | null
+  /** Session backend construction boundary; production uses the canonical shared factory. */
+  private readonly createSessionBackend: SessionBackendFactory
   private sessions: Map<string, ManagedSession> = new Map()
   private extensionReloadPromise: Promise<PiExtensionReloadResult> | null = null
   private piProjectionBySession = new Map<string, ConversationProjector>()
   private piProjectionRetiredRuntimeIds = new Map<string, Set<string>>()
   private piProjectionWrites = new Map<string, Promise<void>>()
   private piProjectionPendingSnapshots = new Map<string, PiProjectionSnapshotV1>()
+  private piProjectionWriteErrors = new Map<string, unknown>()
   private capabilityPrompt?: (request: import('@mortise/shared/protocol').CapabilityRequestV1) => Promise<boolean>
   private readonly capabilityRouter = new CapabilityRouter({
     requireDeclarations: true,
@@ -1053,7 +1304,7 @@ export class SessionManager implements ISessionManager {
 
   /**
    * Optional binder installed by the messaging-gateway bootstrap. When set,
-   * `executePromptAutomation` calls it after creating a session whose matcher
+   * `executeNewAutomationSession` calls it after creating a session whose matcher
    * declared `telegramTopic`, so the new session is bound to a Telegram forum
    * topic in the workspace's paired supergroup. Best-effort — failures must
    * not block the session.
@@ -1063,6 +1314,11 @@ export class SessionManager implements ISessionManager {
     sessionId: string
     topicName: string
   }) => Promise<void>
+
+  constructor(options: SessionManagerOptions = {}) {
+    this.resolveWorkspaceByNameOrId = options.resolveWorkspaceByNameOrId ?? getWorkspaceByNameOrId
+    this.createSessionBackend = options.createSessionBackend ?? (args => args.createDefaultBackend())
+  }
 
   /**
    * Centralized setter for session processing state.
@@ -1317,8 +1573,8 @@ export class SessionManager implements ISessionManager {
   /**
    * Set up ConfigWatcher for a workspace to broadcast live updates
    * for workspace configuration changes.
-   * Called eagerly at boot for all workspaces (automations/scheduler) and
-   * on client connect (GET_WORKSPACE / SWITCH_WORKSPACE).
+   * Called eagerly at boot and on client connect
+   * (GET_WORKSPACE / SWITCH_WORKSPACE).
    * Idempotent — returns immediately if already watching.
    * workspaceId must be the global config ID (what the renderer knows).
    */
@@ -1331,11 +1587,6 @@ export class SessionManager implements ISessionManager {
     sessionLog.info(`Setting up ConfigWatcher for workspace: ${workspaceId} (${workspaceRootPath})`)
 
     const callbacks: ConfigWatcherCallbacks = {
-      onAutomationsConfigChange: () => {
-        sessionLog.info(`Automations config changed in ${workspaceId}`)
-        this.automationHosts.get(workspaceRootPath)?.refresh()
-        this.broadcastAutomationsChanged(workspaceId)
-      },
       onProvidersChange: () => {
         sessionLog.info(`Pi providers changed in ${workspaceId}`)
         this.broadcastProvidersChanged()
@@ -1517,7 +1768,7 @@ export class SessionManager implements ISessionManager {
       sessionLog.info(`Reinitializing auth for provider: ${slug}`)
 
       // Pi is the only runtime provider. Credential routing is handled natively
-      // by PiAgent via ~/.pi/agent/auth.json — no env-var injection needed here.
+      // by PiAgent via ~/.mortise/agent/auth.json — no env-var injection needed here.
       // This method now only clears stale Claude-specific env vars (above).
 
     } catch (error) {
@@ -1720,9 +1971,6 @@ export class SessionManager implements ISessionManager {
             managed.lastFinalMessageId = payload.messageId
           }
         }
-        if (applied.kind === 'plan_artifact' || applied.kind === 'plan_artifact_update') {
-          managed.lastMessageRole = 'plan'
-        }
         if (applied.kind === 'runtime_error') managed.lastMessageRole = 'error'
         if (!managed.publicationState) {
           this.eventSink?.(
@@ -1785,18 +2033,32 @@ export class SessionManager implements ISessionManager {
     this.piProjectionPendingSnapshots.set(managed.id, snapshot)
     if (this.piProjectionWrites.has(managed.id)) return
 
-    const write = (async () => {
+    const writeOperation = (async () => {
       while (true) {
         const latest = this.piProjectionPendingSnapshots.get(managed.id)
         if (!latest) break
         this.piProjectionPendingSnapshots.delete(managed.id)
-        const target = this.getPiProjectionSnapshotPath(managed)
-        await mkdir(dirname(target), { recursive: true })
-        const temporary = `${target}.${randomUUID()}.tmp`
-        await writeFile(temporary, JSON.stringify(latest), 'utf8')
-        await rename(temporary, target)
+        try {
+          const target = this.getPiProjectionSnapshotPath(managed)
+          await mkdir(dirname(target), { recursive: true })
+          await writePiProjectionSnapshotAtomically(target, JSON.stringify(latest))
+        } catch (error) {
+          const persistenceError = error instanceof SessionProjectionPersistenceError
+            ? error
+            : new SessionProjectionPersistenceError(managed.id, error)
+          // Preserve the failed snapshot for a later retry unless a newer
+          // snapshot is already pending.
+          if (!this.piProjectionPendingSnapshots.has(managed.id)) {
+            this.piProjectionPendingSnapshots.set(managed.id, latest)
+          }
+          throw persistenceError
+        }
       }
-    })().catch((error) => {
+    })()
+    const write = writeOperation.then(() => {
+      this.piProjectionWriteErrors.delete(managed.id)
+    }, (error) => {
+      this.piProjectionWriteErrors.set(managed.id, error)
       sessionLog.warn(`Failed to persist Pi projection snapshot for ${managed.id}: ${error instanceof Error ? error.message : error}`)
     }).finally(() => {
       if (this.piProjectionWrites.get(managed.id) === write) this.piProjectionWrites.delete(managed.id)
@@ -1809,10 +2071,16 @@ export class SessionManager implements ISessionManager {
       const write = this.piProjectionWrites.get(managed.id)
       if (write) {
         await write
+        const error = this.piProjectionWriteErrors.get(managed.id)
+        if (error) throw error
         continue
       }
       const pending = this.piProjectionPendingSnapshots.get(managed.id)
-      if (!pending) return
+      if (!pending) {
+        const error = this.piProjectionWriteErrors.get(managed.id)
+        if (error) throw error
+        return
+      }
       this.persistPiProjection(managed, pending)
     }
   }
@@ -1859,9 +2127,7 @@ export class SessionManager implements ISessionManager {
           // Create managed session from metadata only (messages lazy-loaded on demand)
           // This dramatically reduces memory usage at startup - messages are loaded
           // when getSession() is called for a specific session
-          const managed = createManagedSession(meta, workspace, {
-            workingDirectory: workspaceRootPath,
-          })
+          const managed = createManagedSession(meta, workspace)
 
           // Clear persisted overrides that point to a provider removed outside this process.
           if (managed.provider) {
@@ -1948,32 +2214,26 @@ export class SessionManager implements ISessionManager {
   // Build the StoredSession snapshot and hand it to the persistence queue.
   // Caller must ensure `managed.messagesLoaded` is true.
   private enqueuePersist(managed: ManagedSession): void {
-    try {
-      // Filter out transient status messages (progress indicators like "Compacting...")
-      // Error messages are now persisted with rich fields for diagnostics
-      const persistableMessages = managed.messages.filter(m =>
-        m.role !== 'status'
-      )
+    // Filter out transient status messages (progress indicators like "Compacting...")
+    // Error messages are now persisted with rich fields for diagnostics.
+    const persistableMessages = managed.messages.filter(m => m.role !== 'status')
 
-      const storedSession: StoredSession = {
-        ...pickCraftSessionMetadata(managed),
-        mortiseId: managed.id,
-        workspaceRootPath: managed.workspace.rootPath,
-        createdAt: managed.createdAt ?? Date.now(),
-        lastUsedAt: Date.now(),
-        messageCount: managed.messageCount,
-        preview: managed.preview,
-        lastMessageRole: managed.lastMessageRole,
-        lastFinalMessageId: managed.lastFinalMessageId,
-        messages: persistableMessages.map(messageToStored),
-        tokenUsage: managed.tokenUsage ?? DEFAULT_TOKEN_USAGE,
-      } as StoredSession
+    const storedSession: StoredSession = {
+      ...pickMortiseSessionMetadata(managed),
+      mortiseId: managed.id,
+      workspaceRootPath: managed.workspace.rootPath,
+      createdAt: managed.createdAt ?? Date.now(),
+      lastUsedAt: Date.now(),
+      messageCount: managed.messageCount,
+      preview: managed.preview,
+      lastMessageRole: managed.lastMessageRole,
+      lastFinalMessageId: managed.lastFinalMessageId,
+      messages: persistableMessages.map(messageToStored),
+      tokenUsage: managed.tokenUsage ?? DEFAULT_TOKEN_USAGE,
+    } as StoredSession
 
-      // Queue for async persistence with debouncing
-      sessionPersistenceQueue.enqueue(storedSession)
-    } catch (error) {
-      sessionLog.error(`Failed to queue session ${managed.id} for persistence:`, error)
-    }
+    // Queue for async persistence with debouncing.
+    sessionPersistenceQueue.enqueue(storedSession)
   }
 
   // Flush a specific session immediately (call on session close/switch).
@@ -2007,16 +2267,16 @@ export class SessionManager implements ISessionManager {
   }
 
   getWorkspaceAutomationSummary(workspaceId: string): { automationCount: number; schedulerRunning: boolean } {
-    const workspace = getWorkspaceByNameOrId(workspaceId)
+    const workspace = this.resolveWorkspaceByNameOrId(workspaceId)
     if (!workspace) return { automationCount: 0, schedulerRunning: false }
 
     const host = this.automationHosts.get(workspace.rootPath)
     if (!host) return { automationCount: 0, schedulerRunning: false }
-    return { automationCount: host.store.initializeOrMigrate().document.definitions.length, schedulerRunning: !host.isReadOnly() }
+    return { automationCount: host.store.initialize().definitions.length, schedulerRunning: !host.isReadOnly() }
   }
 
   getAutomationHost(workspaceId: string): AutomationWorkspaceHostV3 | null {
-    const workspace = getWorkspaceByNameOrId(workspaceId)
+    const workspace = this.resolveWorkspaceByNameOrId(workspaceId)
     return workspace ? this.automationHosts.get(workspace.rootPath) ?? null : null
   }
 
@@ -2216,7 +2476,7 @@ export class SessionManager implements ISessionManager {
     if ((input.attachments?.length || input.storedAttachments?.length) && !input.attachmentStagingId) {
       throw new Error('First-turn attachments require a dedicated staging identity')
     }
-    const workspace = getWorkspaceByNameOrId(input.workspaceId)
+    const workspace = this.resolveWorkspaceByNameOrId(input.workspaceId)
     if (!workspace) throw new Error(`Workspace ${input.workspaceId} not found`)
     if (input.attachmentStagingId) this.validateFirstTurnAttachmentStagingId(input.attachmentStagingId)
 
@@ -2228,6 +2488,7 @@ export class SessionManager implements ISessionManager {
         throw new Error(`Provisional session ${provisional.id} was not created`)
       }
       await prepareProvisional?.(managed)
+      managed.beforePublish = input.beforePublish
     } catch (error) {
       const managed = provisional ? this.sessions.get(provisional.id) : undefined
       if (managed?.publicationState) {
@@ -2340,7 +2601,7 @@ export class SessionManager implements ISessionManager {
     if (!stagingId) return { attachments, storedAttachments }
     this.validateFirstTurnAttachmentStagingId(stagingId)
 
-    const workspace = this.sessions.get(session.id)?.workspace ?? getWorkspaceByNameOrId(session.workspaceId)
+    const workspace = this.sessions.get(session.id)?.workspace ?? this.resolveWorkspaceByNameOrId(session.workspaceId)
     if (!workspace) throw new Error(`Workspace ${session.workspaceId} not found`)
 
     const stagingSessionPath = getSessionStoragePath(workspace.rootPath, stagingId)
@@ -2411,7 +2672,7 @@ export class SessionManager implements ISessionManager {
   }
 
   async discardFirstTurnAttachmentStaging(workspaceId: string, stagingId: string): Promise<void> {
-    const workspace = getWorkspaceByNameOrId(workspaceId)
+    const workspace = this.resolveWorkspaceByNameOrId(workspaceId)
     if (!workspace) throw new Error(`Workspace ${workspaceId} not found`)
     await this.cleanupFirstTurnAttachmentStaging(workspace.rootPath, stagingId)
   }
@@ -2431,7 +2692,10 @@ export class SessionManager implements ISessionManager {
     options: import('@mortise/shared/protocol').CreateSessionOptions | undefined,
     provisionalFirstTurn: boolean,
   ): Promise<Session> {
-    const workspace = getWorkspaceByNameOrId(workspaceId)
+    if (options && Object.prototype.hasOwnProperty.call(options, 'workingDirectory')) {
+      throw new RemovedSessionFieldError('workingDirectory')
+    }
+    const workspace = this.resolveWorkspaceByNameOrId(workspaceId)
     if (!workspace) {
       throw new Error(`Workspace ${workspaceId} not found`)
     }
@@ -2481,10 +2745,8 @@ export class SessionManager implements ISessionManager {
       sessionProvider,
       managedModel: resolvedModelOption,
     })
-    const targetProviderType = targetBackendContext.providerConfig?.baseUrl ? 'pi_compat' : 'pi'
+    const targetProviderType = targetBackendContext.providerConfig?.baseUrl ? 'pi_custom' : 'pi'
     const targetPiAuthProvider = targetBackendContext.providerKey
-
-    const resolvedWorkingDir = workspaceRootPath
 
     // Validate branch request up-front so branch metadata is only set for valid branches.
     // This prevents creating sessions that claim to be branched but don't have copied history.
@@ -2540,7 +2802,7 @@ export class SessionManager implements ISessionManager {
         sessionProvider: sourceManaged?.provider || sourceSession.provider,
         managedModel: sourceManaged?.model || sourceSession.model,
       })
-      const sourceProviderType = sourceBackendContext.providerConfig?.baseUrl ? 'pi_compat' : 'pi'
+      const sourceProviderType = sourceBackendContext.providerConfig?.baseUrl ? 'pi_custom' : 'pi'
       const sourcePiAuthProvider = sourceBackendContext.providerKey
 
       const providerMismatch = sourceBackendContext.provider !== targetBackendContext.provider
@@ -2622,13 +2884,11 @@ export class SessionManager implements ISessionManager {
           createdAt: now,
           lastUsedAt: now,
           permissionMode: defaultPermissionMode,
-          workingDirectory: resolvedWorkingDir,
-          sdkCwd: resolvedWorkingDir,
+          sdkCwd: workspaceRootPath,
         }
       : await createStoredSession(workspaceRootPath, {
           name: options?.name,
           permissionMode: defaultPermissionMode,
-          workingDirectory: resolvedWorkingDir,
           hidden: options?.hidden,
         })
 
@@ -2659,10 +2919,9 @@ export class SessionManager implements ISessionManager {
         const branchSessionFile = getSessionFilePath(
           workspaceRootPath,
           storedSession.mortiseId,
-          workspaceRootPath,
           storedSession.createdAt,
         )
-        const importedIdMap = appendPiBranchMessagesViaSessionManager(
+        const importedIdMap = await appendPiBranchMessagesViaSessionManager(
           branchSessionFile,
           dirname(branchSessionFile),
           workspaceRootPath,
@@ -2708,7 +2967,6 @@ export class SessionManager implements ISessionManager {
 
     const managed = createManagedSession(storedSession, workspace, {
       permissionMode: defaultPermissionMode,
-      workingDirectory: resolvedWorkingDir,
       model: resolvedModel,
       provider: sessionProvider,
       thinkingLevel: defaultThinkingLevel,
@@ -2907,7 +3165,7 @@ export class SessionManager implements ISessionManager {
       try {
         refreshed = await managed.agent.updateRuntimeConfig({
           model: backendContext.resolvedModel,
-          providerType: providerConfig?.baseUrl ? 'pi_compat' : 'pi',
+          providerType: providerConfig?.baseUrl ? 'pi_custom' : 'pi',
           authType: backendContext.authType,
           runtime: providerConfig ? {
             baseUrl: normalizeProviderRuntimeBaseUrl(providerConfig),
@@ -3051,7 +3309,6 @@ export class SessionManager implements ISessionManager {
         branchFromMessageId: managed.branchContextStrategy === 'sdk-fork' ? managed.branchFromMessageId : undefined,
         createdAt: managed.lastMessageAt,
         lastUsedAt: managed.lastMessageAt,
-        workingDirectory: managed.workspace.rootPath,
         sdkCwd: managed.sdkCwd ?? managed.workspace.rootPath,
         model: managed.model,
         provider: managed.provider,
@@ -3185,10 +3442,7 @@ export class SessionManager implements ISessionManager {
       // Construct backend via factory
       // ============================================================
 
-      managed.agent = createBackendFromResolvedContext({
-        context: backendContext,
-        hostRuntime: buildBackendHostRuntimeContext(),
-        coreConfig: {
+      const backendCoreConfig: CoreBackendConfig = {
         workspace: managed.workspace,
         miniModel,
         thinkingLevel: managed.thinkingLevel,
@@ -3257,7 +3511,16 @@ export class SessionManager implements ISessionManager {
         onHostCapabilityDeclaration,
         onHostCapabilityCancel,
         onHostCapabilityRuntimeReleased,
-        },
+      }
+      managed.agent = this.createSessionBackend({
+        context: backendContext,
+        coreConfig: backendCoreConfig,
+        provisional: managed.publicationState === 'provisional',
+        createDefaultBackend: () => createBackendFromResolvedContext({
+          context: backendContext,
+          hostRuntime: buildBackendHostRuntimeContext(),
+          coreConfig: backendCoreConfig,
+        }),
       }) as AgentInstance
 
       sessionLog.info(`Created ${provider} agent for session ${managed.id} (model: ${backendContext.resolvedModel})${managed.sdkSessionId ? ' (resuming)' : ''}`)
@@ -3425,8 +3688,8 @@ export class SessionManager implements ISessionManager {
       }
 
       // Wire up plan review as Host control flow. The plan artifact itself is
-      // projected by Pi; this compatibility event is only for external
-      // messaging consumers and never enters the Mortise transcript.
+      // projected by Pi; this event is only for external messaging consumers
+      // and never enters the Mortise transcript.
       managed.agent.onPlanSubmitted = async (planPath) => {
         sessionLog.info(`Plan submitted for session ${managed.id}:`, planPath)
         let planContent = ''
@@ -3436,14 +3699,13 @@ export class SessionManager implements ISessionManager {
           sessionLog.error(`Failed to read plan file:`, error)
         }
 
-        const planMessage = {
-          id: `plan-${managed.id}-${Date.now()}`,
-          role: 'plan' as const,
-          content: planContent,
-          timestamp: this.monotonic(),
+        const planMessage = createSubmittedPlanMessage(
+          managed.id,
           planPath,
-        }
-        managed.lastMessageRole = 'plan'
+          planContent,
+          this.monotonic(),
+        )
+        managed.lastMessageRole = 'assistant'
         this.sendEvent({
           type: 'plan_submitted',
           sessionId: managed.id,
@@ -3494,7 +3756,6 @@ export class SessionManager implements ISessionManager {
           permissionMode: request.permissionMode,
           thinkingLevel: request.thinkingLevel,
           name: request.name,
-          workingDirectory: managed.workspace.rootPath,
           attachments: request.attachments,
         })
 
@@ -3522,7 +3783,6 @@ export class SessionManager implements ISessionManager {
             name: session.name ?? session.id,
             permissionMode: session.permissionMode ?? 'ask',
             createdAt: session.createdAt ?? 0,
-            workingDirectory: session.workingDirectory,
             provider: session.provider,
             model: session.model,
             isActive: session.agent != null,
@@ -3727,6 +3987,13 @@ export class SessionManager implements ISessionManager {
     const managed = this.sessions.get(sessionId)
     if (managed) {
       await setStoredPendingPlanExecution(managed.workspace.rootPath, sessionId, target, draftInputSnapshot)
+      const normalizedTarget = typeof target === 'string' ? { planPath: target } : target
+      managed.pendingPlanExecution = {
+        ...normalizedTarget,
+        draftInputSnapshot,
+        awaitingCompaction: true,
+        executionDispatched: false,
+      }
       sessionLog.info('Session pending plan execution set', { sessionId, target })
     }
   }
@@ -3740,6 +4007,10 @@ export class SessionManager implements ISessionManager {
     const managed = this.sessions.get(sessionId)
     if (managed) {
       await markStoredCompactionComplete(managed.workspace.rootPath, sessionId)
+      if (managed.pendingPlanExecution) {
+        managed.pendingPlanExecution.awaitingCompaction = false
+      }
+      managed.pendingCompactionCompletion = false
       sessionLog.info(`Session ${sessionId}: compaction marked complete for pending plan`)
     }
   }
@@ -3896,13 +4167,16 @@ export class SessionManager implements ISessionManager {
    * Mark a session as read by setting lastReadMessageId and clearing hasUnread.
    * Called when user navigates to a session (and it's not processing).
    */
-  async markSessionRead(sessionId: string): Promise<void> {
+  async markSessionRead(
+    sessionId: string,
+    options: { allowWhileSettling?: boolean } = {},
+  ): Promise<void> {
     const managed = this.sessions.get(sessionId)
     if (!managed) return
 
     // Only mark as read if not currently processing
     // (user is viewing but we want to wait for processing to complete)
-    if (managed.isProcessing) return
+    if (managed.isProcessing && !options.allowWhileSettling) return
 
     let needsPersist = false
     const updates: { lastReadMessageId?: string; hasUnread?: boolean } = {}
@@ -4085,42 +4359,6 @@ export class SessionManager implements ISessionManager {
       // Signal async operation end
       managed.isAsyncOperationOngoing = false
       this.sendEvent({ type: 'async_operation', sessionId, isOngoing: false }, managed.workspace.id)
-    }
-  }
-
-  /**
-   * Compatibility handler for the legacy "change working directory" command.
-   *
-   * cwd is now workspace identity. To work from another folder, the caller must
-   * switch to or create a workspace rooted at that folder.
-   */
-  updateWorkingDirectory(sessionId: string, path: string): void {
-    const managed = this.sessions.get(sessionId)
-    if (managed) {
-      if (path === managed.workspace.rootPath) {
-        managed.workingDirectory = managed.workspace.rootPath
-        managed.sdkCwd = managed.sdkCwd ?? managed.workspace.rootPath
-        this.sendEvent({ type: 'working_directory_changed', sessionId, workingDirectory: managed.workspace.rootPath }, managed.workspace.id)
-        return
-      }
-
-      const validation = isValidWorkingDirectory(path)
-      if (!validation.valid) {
-        sessionLog.warn(`Session ${sessionId}: rejected working directory "${path}" — ${validation.reason}`)
-        this.sendEvent({
-          type: 'working_directory_error',
-          sessionId,
-          error: validation.reason!,
-        }, managed.workspace.id)
-        return
-      }
-
-      sessionLog.warn(`Session ${sessionId}: rejected working directory change to "${path}" because cwd is workspace identity`)
-      this.sendEvent({
-        type: 'working_directory_error',
-        sessionId,
-        error: 'Working directory is the workspace root. Create or switch to a workspace rooted at this folder instead.',
-      }, managed.workspace.id)
     }
   }
 
@@ -4383,14 +4621,26 @@ export class SessionManager implements ISessionManager {
         if (this.sessions.get(managed.id) !== managed || managed.publicationState !== 'publishing') return false
         if (!managed.messagesLoaded) managed.messagesLoaded = true
         this.enqueuePersist(managed)
-        await this.flushSession(managed.id)
+        try {
+          await this.flushSession(managed.id)
+        } catch (error) {
+          throw new SessionPublicationDurabilityError(managed.id, 'metadata', error)
+        }
         if (this.sessions.get(managed.id) !== managed || managed.publicationState !== 'publishing') return false
 
         const snapshot = this.piProjectionBySession.get(managed.id)?.createSnapshot()
         if (snapshot) {
           this.enqueuePiProjectionPersist(managed, snapshot)
-          await this.flushPiProjectionWrites(managed)
+          try {
+            await this.flushPiProjectionWrites(managed)
+          } catch (error) {
+            throw new SessionPublicationDurabilityError(managed.id, 'projection', error)
+          }
         }
+        if (this.sessions.get(managed.id) !== managed || managed.publicationState !== 'publishing') return false
+
+        await managed.beforePublish?.(managedToSession(managed, { messages: managed.messages }))
+        managed.beforePublish = undefined
         if (this.sessions.get(managed.id) !== managed || managed.publicationState !== 'publishing') return false
 
         managed.publicationState = undefined
@@ -4432,9 +4682,14 @@ export class SessionManager implements ISessionManager {
         }
       }
       managed.isProcessing = false
+      managed.beforePublish = undefined
       managed.processingGeneration++
       await this.disposeManagedAgentRuntime(managed, `provisional session abandoned: ${reason}`)
-      await this.flushPiProjectionWrites(managed)
+      // Abandonment is destructive cleanup, not a persistence retry. Wait for
+      // an in-flight projection writer so it cannot recreate files after
+      // deletion, but discard failed/pending snapshots instead of letting the
+      // original disk failure prevent provisional cleanup.
+      await this.piProjectionWrites.get(managed.id)
       await sessionPersistenceQueue.cancel(managed.id, { preventFutureEnqueue: true })
 
       this.sessions.delete(managed.id)
@@ -4443,6 +4698,7 @@ export class SessionManager implements ISessionManager {
       this.piProjectionRetiredRuntimeIds.delete(managed.id)
       this.piProjectionWrites.delete(managed.id)
       this.piProjectionPendingSnapshots.delete(managed.id)
+      this.piProjectionWriteErrors.delete(managed.id)
       await deleteStoredSession(managed.workspace.rootPath, managed.id)
       sessionLog.info(`Abandoned unpublished provisional session ${managed.id}: ${reason}`)
     })()
@@ -4509,6 +4765,7 @@ export class SessionManager implements ISessionManager {
     this.piProjectionRetiredRuntimeIds.delete(sessionId)
     this.piProjectionWrites.delete(sessionId)
     this.piProjectionPendingSnapshots.delete(sessionId)
+    this.piProjectionWriteErrors.delete(sessionId)
 
     // Delete from disk too
     await deleteStoredSession(workspaceRootPath, sessionId)
@@ -4530,10 +4787,10 @@ export class SessionManager implements ISessionManager {
     existingMessageId?: string,
     _isAuthRetry?: boolean,
     /**
-     * Internal hook fired after the user message identity and any Mortise-owned
-     * attachment/badge overlay have been durably accepted, but before model
-     * streaming begins. The RPC handler uses this to send a synchronous ack;
-     * pre-acceptance errors still reject the outer promise.
+     * Internal hook fired only after Pi confirms its canonical user entry is
+     * durable (or after first-assistant publication for a provisional Session).
+     * The RPC handler uses this to send a synchronous ack; pre-acceptance errors
+     * still reject the outer promise.
      */
     onAck?: (messageId: string) => void,
     /**
@@ -4552,6 +4809,14 @@ export class SessionManager implements ISessionManager {
     const managed = this.sessions.get(sessionId)
     if (!managed) {
       throw new Error(`Session ${sessionId} not found`)
+    }
+
+    // A backend turn may already be terminal while its Mortise metadata or Pi
+    // projection is still pending durability. Recover that accepted turn first;
+    // treating this as an ordinary mid-stream send would queue or resend work
+    // before the previous turn is safely settled.
+    if (managed.pendingSettlementReason || managed.settlementPromise) {
+      await this.retryPendingSettlement(sessionId)
     }
 
     const attachmentSizes = storedAttachments?.length
@@ -4692,6 +4957,9 @@ export class SessionManager implements ISessionManager {
     // needed to reconcile optimistic queue/attachment state.
     const messageId = existingMessageId ?? options?.optimisticMessageId ?? generateMessageId()
     const awaitsFirstAssistantPublication = managed.publicationState === 'provisional'
+    const awaitsCanonicalUserPersistence = !existingMessageId
+      && !awaitsFirstAssistantPublication
+      && Boolean(onAck)
     let acknowledged = false
     const acknowledge = () => {
       if (existingMessageId || acknowledged) return
@@ -4722,8 +4990,6 @@ export class SessionManager implements ISessionManager {
     this.persistSession(managed)
     await this.flushSession(managed.id)
     if (!existingMessageId) {
-      if (!awaitsFirstAssistantPublication) acknowledge()
-
       // If this is the first user message and no title exists, set one immediately
       // AI generation will enhance it later, but we always have a title from the start
       // Automation sessions (triggeredBy set) already have a title and skip AI generation entirely
@@ -4891,6 +5157,7 @@ export class SessionManager implements ISessionManager {
               model: managed.model,
             },
           })
+          if (awaitsCanonicalUserPersistence) acknowledge()
         }
 
         // Fallback: Capture SDK session ID if the onSdkSessionIdUpdate callback didn't fire.
@@ -4913,12 +5180,19 @@ export class SessionManager implements ISessionManager {
         // Handle complete event - SDK always sends this (even after interrupt)
         // This is the central place where processing ends
         if (event.type === 'complete') {
+          if (awaitsCanonicalUserPersistence && !acknowledged) {
+            throw new SessionSendDurabilityError(
+              sessionId,
+              messageId,
+              new Error('Pi completed the turn before confirming the canonical user message write'),
+            )
+          }
           // Pi can acknowledge an abort by yielding its terminal event. The
           // host stop request is authoritative for settlement in that race.
           if (managed.stopRequested) {
             sendSpan.mark('chat.complete.after_stop')
             sendSpan.end()
-            this.onProcessingStopped(sessionId, 'interrupted')
+            await this.onProcessingStopped(sessionId, 'interrupted')
             return
           }
           // Defensive fallback: Pi should emit pi_user_message_persisted after
@@ -4970,7 +5244,7 @@ export class SessionManager implements ISessionManager {
 
           sendSpan.mark('chat.complete')
           sendSpan.end()
-          this.onProcessingStopped(sessionId, 'complete')
+          await this.onProcessingStopped(sessionId, 'complete')
           return  // Exit function, skip finally block (onProcessingStopped handles cleanup)
         }
 
@@ -4984,13 +5258,20 @@ export class SessionManager implements ISessionManager {
       if (awaitsFirstAssistantPublication && managed.publicationState) {
         throw new Error('First turn ended before Pi persisted an assistant message')
       }
+      if (awaitsCanonicalUserPersistence && !acknowledged) {
+        throw new SessionSendDurabilityError(
+          sessionId,
+          messageId,
+          new Error('Pi ended the chat stream before confirming the canonical user message write'),
+        )
+      }
       if (!managed.isProcessing) {
         sessionLog.info('Chat loop exited after explicit handoff/stop')
         sendSpan.mark('chat.exit.already_stopped')
         sendSpan.end()
       } else if (managed.stopRequested) {
         sessionLog.info('Chat loop completed after stop request - events drained successfully')
-        this.onProcessingStopped(sessionId, 'interrupted')
+        await this.onProcessingStopped(sessionId, 'interrupted')
       } else {
         sessionLog.info('Chat loop exited unexpectedly')
       }
@@ -5003,6 +5284,18 @@ export class SessionManager implements ISessionManager {
           managed,
           error instanceof Error ? error.message : String(error),
         )
+        throw error
+      }
+
+
+      // Settlement happens after the canonical user message has been accepted.
+      // Keep it out of generic chat error projection/cleanup: that path would
+      // re-enter settlement and incorrectly describe the accepted message as a
+      // failed send.
+      if (error instanceof SessionSettlementDurabilityError) {
+        sendSpan.mark('chat.settlement_pending')
+        sendSpan.setMetadata('error', error.message)
+        sendSpan.end()
         throw error
       }
 
@@ -5026,7 +5319,7 @@ export class SessionManager implements ISessionManager {
         // by setting isProcessing = false directly. All other abort reasons route
         // through onProcessingStopped for queue draining.
         if (reason === AbortReason.UserStop || reason === AbortReason.Redirect || reason === undefined) {
-          this.onProcessingStopped(sessionId, 'interrupted')
+          await this.onProcessingStopped(sessionId, 'interrupted')
         }
       } else {
         sessionLog.error('Error in chat:', error)
@@ -5057,17 +5350,27 @@ export class SessionManager implements ISessionManager {
           retryable: true,
         })
         // Handle error via centralized handler
-        this.onProcessingStopped(sessionId, 'error')
+        await this.onProcessingStopped(sessionId, 'error')
+      }
+      if (awaitsCanonicalUserPersistence && !acknowledged) {
+        throw error instanceof SessionSendDurabilityError
+          ? error
+          : new SessionSendDurabilityError(sessionId, messageId, error)
       }
     } finally {
       // Only handle cleanup for unexpected exits (loop break without complete event)
       // Normal completion returns early after calling onProcessingStopped
       // Errors are handled in catch block
-      if (managed.isProcessing && managed.processingGeneration === myGeneration) {
+      if (
+        managed.isProcessing
+        && managed.processingGeneration === myGeneration
+        && !managed.pendingSettlementReason
+        && !managed.settlementPromise
+      ) {
         sessionLog.info('Finally block cleanup - unexpected exit')
         sendSpan.mark('chat.unexpected_exit')
         sendSpan.end()
-        this.onProcessingStopped(sessionId, 'interrupted')
+        await this.onProcessingStopped(sessionId, 'interrupted')
       }
     }
   }
@@ -5122,7 +5425,9 @@ export class SessionManager implements ISessionManager {
     setTimeout(() => {
       if (managed.stopRequested && managed.isProcessing) {
         sessionLog.warn('Generator did not complete after stop request, forcing cleanup')
-        this.onProcessingStopped(sessionId, 'timeout')
+        void this.onProcessingStopped(sessionId, 'timeout').catch(error => {
+          sessionLog.error(`Failed to settle timed-out session ${sessionId}:`, error)
+        })
       }
     }, 5000)
 
@@ -5196,7 +5501,7 @@ export class SessionManager implements ISessionManager {
           code: failureErrorCode,
           retryable: true,
         })
-        this.onProcessingStopped(sessionId, 'error')
+        await this.onProcessingStopped(sessionId, 'error')
       }
     })
 
@@ -5217,15 +5522,47 @@ export class SessionManager implements ISessionManager {
     const managed = this.sessions.get(sessionId)
     if (!managed) return
 
+    if (managed.settlementPromise) {
+      return managed.settlementPromise
+    }
+
+    managed.pendingSettlementReason ??= reason
+    // Defer execution until after the shared promise is installed. Otherwise a
+    // second synchronous caller can enter before settleProcessing reaches its
+    // first await and start a duplicate settlement.
+    const settlement = Promise.resolve().then(
+      () => this.settleProcessing(managed, managed.pendingSettlementReason!),
+    ).catch(error => {
+      throw error instanceof SessionSettlementDurabilityError
+        ? error
+        : new SessionSettlementDurabilityError(sessionId, error)
+    })
+    managed.settlementPromise = settlement
+    try {
+      await settlement
+    } finally {
+      if (managed.settlementPromise === settlement) {
+        managed.settlementPromise = undefined
+      }
+    }
+  }
+
+  /** Retry an accepted turn whose host-owned durability boundary is pending. */
+  async retryPendingSettlement(sessionId: string): Promise<void> {
+    const managed = this.sessions.get(sessionId)
+    if (!managed?.pendingSettlementReason && !managed?.settlementPromise) return
+    await this.onProcessingStopped(sessionId, managed.pendingSettlementReason ?? 'error')
+  }
+
+  private async settleProcessing(
+    managed: ManagedSession,
+    reason: 'complete' | 'interrupted' | 'error' | 'timeout',
+  ): Promise<void> {
+    const sessionId = managed.id
+
     sessionLog.info(`Processing stopped for session ${sessionId}: ${reason}`)
 
-    // 1. Cleanup state
-    this.setProcessing(managed, false)
-    managed.replayingQueuedMessageId = undefined
-    managed.stopRequested = false  // Reset for next turn
-
     const turnStartFinalMessageId = managed.turnStartFinalMessageId
-    managed.turnStartFinalMessageId = undefined
 
     // Clear agent control overlay between turns. The session keeps browser
     // ownership (boundSessionId) — only the visual overlay is removed.
@@ -5247,7 +5584,7 @@ export class SessionManager implements ISessionManager {
     if (reason === 'complete' && didReceiveNewFinalMessage) {
       if (isViewing) {
         // User is watching - mark as read immediately
-        await this.markSessionRead(sessionId)
+        await this.markSessionRead(sessionId, { allowWhileSettling: true })
       } else {
         // User is not watching - mark as unread for NEW badge
         if (!managed.hasUnread) {
@@ -5261,17 +5598,41 @@ export class SessionManager implements ISessionManager {
     // 3. Apply deferred external metadata updates captured while processing.
     if (managed.pendingExternalMetadata) {
       const pendingHeader = managed.pendingExternalMetadata
-      managed.pendingExternalMetadata = undefined
       sessionLog.info(`Applying deferred external metadata for session ${sessionId} after processing stop`)
       await this.applyExternalSessionMetadata(managed, pendingHeader)
     }
 
     if (managed.pendingProviderRuntimeRestart) {
-      managed.pendingProviderRuntimeRestart = false
       await this.disposeManagedAgentRuntime(managed, 'deferred provider registry reload')
     }
 
-    // 4. Check queue and process or complete
+    // A compaction info event can arrive before Pi's terminal event. If its
+    // sidecar write failed, retry it as part of the accepted turn settlement;
+    // retryPendingSettlement will re-enter here without rerunning agent.chat.
+    if (managed.pendingCompactionCompletion) {
+      await this.markCompactionComplete(sessionId)
+    }
+
+    // 4. Commit the settled state before exposing next-turn readiness. Pi's
+    // agent_settled event is the logical completion boundary; Mortise must not
+    // emit complete or begin replay while its metadata/projection writes are
+    // still pending.
+    this.persistSession(managed)
+    await this.flushSession(managed.id)
+    await this.flushPiProjectionWrites(managed)
+
+    // Only now expose next-turn readiness. Until both stores are durable the
+    // accepted turn remains processing, so queue replay and fresh sends cannot
+    // overtake settlement.
+    this.setProcessing(managed, false)
+    managed.replayingQueuedMessageId = undefined
+    managed.stopRequested = false
+    managed.turnStartFinalMessageId = undefined
+    managed.pendingExternalMetadata = undefined
+    managed.pendingProviderRuntimeRestart = false
+    managed.pendingSettlementReason = undefined
+
+    // 5. Check queue and process or complete
     if (managed.messageQueue.length > 0) {
       // Has queued messages - process next
       this.processNextQueuedMessage(sessionId)
@@ -5281,7 +5642,6 @@ export class SessionManager implements ISessionManager {
       // On the next turn, getOrCreateForSession() will re-bind it.
       const doneBpm = this.getBrowserPaneManagerForSession(sessionId)
       if (doneBpm) {
-        await doneBpm.clearVisualsForSession(sessionId)
         doneBpm.unbindAllForSession(sessionId)
       }
 
@@ -5294,8 +5654,6 @@ export class SessionManager implements ISessionManager {
       }, managed.workspace.id)
     }
 
-    // 6. Always persist
-    this.persistSession(managed)
   }
 
   /**
@@ -5347,7 +5705,7 @@ export class SessionManager implements ISessionManager {
           retryable: true,
         })
         // Call onProcessingStopped to handle cleanup and check for more queued messages
-        this.onProcessingStopped(sessionId, 'error')
+        await this.onProcessingStopped(sessionId, 'error')
       })
     })
   }
@@ -5502,27 +5860,21 @@ export class SessionManager implements ISessionManager {
     }
   }
 
-  /**
-   * 回复 pi 扩展发起的 remoteui:request。
-   * payload=null 表示用户取消，reason 通常为 "cancelled"。
-   * 仅 Pi 后端支持；非 Pi 后端或会话已销毁时返回 false。
-   */
-  sendRemoteUIResponse(
+  respondToExtensionInteraction(
     sessionId: string,
     requestId: string,
-    payload: unknown | null,
-    reason?: 'cancelled' | 'no_remote' | 'disconnected',
+    response: ExtensionInteractionResponseV1,
   ): boolean {
     const managed = this.sessions.get(sessionId)
     if (managed?.agent) {
-      if (typeof managed.agent.sendRemoteUIResponse !== 'function') {
-        sessionLog.warn(`Cannot respond to remoteui - agent does not support sendRemoteUIResponse for session ${sessionId}`)
+      if (typeof managed.agent.respondToExtensionInteraction !== 'function') {
+        sessionLog.warn(`Cannot respond to extension interaction for session ${sessionId}: backend does not support it`)
         return false
       }
-      sessionLog.info(`RemoteUI response for ${requestId}: cancelled=${payload === null}`)
-      return managed.agent.sendRemoteUIResponse(requestId, payload, reason)
+      sessionLog.info(`Extension interaction response for ${requestId}: outcome=${response.status}`)
+      return managed.agent.respondToExtensionInteraction(requestId, response)
     } else {
-      sessionLog.warn(`Cannot respond to remoteui - no agent for session ${sessionId}`)
+      sessionLog.warn(`Cannot respond to extension interaction - no agent for session ${sessionId}`)
       return false
     }
   }
@@ -6099,8 +6451,15 @@ export class SessionManager implements ISessionManager {
           // This is done here (backend) rather than in the renderer so it's
           // not affected by CMD+R during compaction. The frontend reload
           // recovery will see awaitingCompaction=false and trigger execution.
-          void markStoredCompactionComplete(managed.workspace.rootPath, sessionId)
-          sessionLog.info(`Session ${sessionId}: compaction complete, marked pending plan ready`)
+          managed.pendingCompactionCompletion = true
+          try {
+            await this.markCompactionComplete(sessionId)
+          } catch (error) {
+            // Keep consuming Pi events so its terminal event remains the turn
+            // boundary. settleProcessing retries this durable write and turns
+            // a persistent failure into a typed settlement failure.
+            sessionLog.warn(`Session ${sessionId}: compaction completion persistence pending settlement retry`, error)
+          }
 
           // Emit usage_update so the context count badge refreshes immediately
           // after compaction, without waiting for the next message
@@ -6304,8 +6663,6 @@ export class SessionManager implements ISessionManager {
         managed.wasInterrupted = true
         break
 
-      // Note: working_directory_changed is user-initiated only (via updateWorkingDirectory),
-      // the agent no longer has a change_working_directory tool
     }
   }
 
@@ -6392,26 +6749,6 @@ export class SessionManager implements ISessionManager {
     return { sessionId: result.session.id }
   }
 
-  /** Compatibility entry point for V2 prompt actions. */
-  async executePromptAutomation(
-    input: ExecutePromptAutomationInput,
-  ): Promise<{ sessionId: string }> {
-    const resolved = input.mentions
-      ? this.resolveAutomationMentions(input.workspaceRootPath, input.mentions)
-      : undefined
-    return this.executeNewAutomationSession({
-      workspaceId: input.workspaceId,
-      prompt: input.prompt,
-      permissionMode: input.permissionMode,
-      provider: input.provider,
-      model: input.model,
-      thinkingLevel: input.thinkingLevel,
-      automationName: input.automationName,
-      telegramTopic: input.telegramTopic,
-      skillSlugs: resolved?.skillSlugs,
-    })
-  }
-
   /** Execute the Session-owned portion of a canonical V3 prompt action. */
   async executeAutomationPromptAction(
     action: PromptActionV3,
@@ -6482,7 +6819,7 @@ export class SessionManager implements ISessionManager {
       return this.automationActionError('blocked', 'thinking_level_invalid', `Thinking level "${target.thinkingLevel}" is not supported`)
     }
 
-    const workspace = getWorkspaceByNameOrId(context.workspaceId)
+    const workspace = this.resolveWorkspaceByNameOrId(context.workspaceId)
     if (!workspace) {
       return this.automationActionError('blocked', 'workspace_not_found', `Workspace ${context.workspaceId} was not found`)
     }
@@ -6500,7 +6837,6 @@ export class SessionManager implements ISessionManager {
           workspaceRootPath: workspace.rootPath,
           createdAt: Date.now(),
           lastUsedAt: Date.now(),
-          workingDirectory: workspace.rootPath,
           sdkCwd: workspace.rootPath,
           model: target.model,
           provider: target.provider,
@@ -6678,7 +7014,6 @@ export class SessionManager implements ISessionManager {
           workspaceRootPath,
           createdAt: Date.now(),
           lastUsedAt: Date.now(),
-          workingDirectory: workspaceRootPath,
           sdkCwd: managed.sdkCwd ?? workspaceRootPath,
           model: managed.model,
           provider: managed.provider,
@@ -6760,7 +7095,7 @@ export class SessionManager implements ISessionManager {
       throw new Error('Invalid session bundle')
     }
 
-    const workspace = getWorkspaceByNameOrId(workspaceId)
+    const workspace = this.resolveWorkspaceByNameOrId(workspaceId)
     if (!workspace) {
       throw new Error(`Workspace ${workspaceId} not found`)
     }
@@ -6770,13 +7105,10 @@ export class SessionManager implements ISessionManager {
     const warnings: string[] = []
     const workspaceRootPath = workspace.rootPath
 
-    // Determine session ID
-    // 兼容旧 bundle：重构前 header 只有 id（无 mortiseId），validateBundle 接受两者。
-    // move 模式优先使用 mortiseId，缺失时回退到 id（旧 bundle，类型上不存在，用 cast 访问）。
+    // Determine session ID from the canonical bundle header.
     const header = bundle.session.header
-    const legacyId = (header as { id?: string }).id
     const sessionId = mode === 'move'
-      ? (header.mortiseId ?? legacyId)
+      ? header.mortiseId
       : generateSessionId(workspaceRootPath)
 
     // Check for ID collision on move
@@ -6788,15 +7120,14 @@ export class SessionManager implements ISessionManager {
     const sessionDir = ensureSessionDir(workspaceRootPath, sessionId)
 
     // Build the stored session from bundle data.
-    // 用 pickCraftSessionMetadata(header) 作为基底，让 Mortise metadata 字段自动透传
+    // 用 pickMortiseSessionMetadata(header) 作为基底，让 Mortise metadata 字段自动透传
     //（避免新增字段时手工同步遗漏，如 hasUnread/pendingPlanExecution）。
     // 然后显式覆盖需要重写的字段。
     const storedSession = {
-      ...(pickCraftSessionMetadata(header) as Partial<SessionHeader>),
+      ...(pickMortiseSessionMetadata(header) as Partial<SessionHeader>),
       // 显式覆盖：目标工作区的身份与路径
       mortiseId: sessionId,
       workspaceRootPath,
-      workingDirectory: workspaceRootPath,
       // Always regenerate sdkCwd for the target workspace.
       // sdkCwd is the working directory the SDK runs in (where it stores
       // transcript files under ~/.claude/projects/{cwd-hash}/ etc.), NOT the
@@ -6828,7 +7159,7 @@ export class SessionManager implements ISessionManager {
       // If found and the session has an sdkSessionId, preserve it for API-level resume.
       // If not, clear SDK state and fall back to transferred session summary.
       const sourceProviderType = header.provider
-        ? (readPiGlobalProviders()[header.provider]?.baseUrl ? 'pi_compat' : 'pi')
+        ? (readPiGlobalProviders()[header.provider]?.baseUrl ? 'pi_custom' : 'pi')
         : undefined
       const compatibleConnection = sourceProviderType
         ? this.findCompatibleProvider(sourceProviderType)
@@ -6848,7 +7179,6 @@ export class SessionManager implements ISessionManager {
       }
       // Clear thinking level so the session inherits the global default.
       storedSession.thinkingLevel = undefined
-      storedSession.workingDirectory = workspaceRootPath
     }
 
     // Check Pi provider compatibility for move mode (fork already cleared above)
@@ -6865,15 +7195,14 @@ export class SessionManager implements ISessionManager {
       sessionLog.info('[import] No Pi provider in bundle — will use default')
     }
 
-    storedSession.workingDirectory = workspaceRootPath
     storedSession.sdkCwd = storedSession.sdkCwd ?? workspaceRootPath
 
     // Create/update the Pi session header + Mortise metadata first, then import
     // canonical transcript entries through Pi's public SessionManager API.
-    const sessionFile = getSessionFilePath(workspaceRootPath, sessionId, workspaceRootPath, storedSession.createdAt)
+    const sessionFile = getSessionFilePath(workspaceRootPath, sessionId, storedSession.createdAt)
     sessionLog.info(`[import] Creating Pi canonical session: ${sessionFile} (provider=${storedSession.provider ?? 'default'}, messages=${storedSession.messages.length})`)
     await saveStoredSession(storedSession)
-    const importedIdMap = appendStoredMessagesViaPiSessionManager(
+    const importedIdMap = await appendStoredMessagesViaPiSessionManager(
       sessionFile,
       dirname(sessionFile),
       workspaceRootPath,
@@ -6891,7 +7220,7 @@ export class SessionManager implements ISessionManager {
     // Write all bundle files (attachments, plans, data, downloads, etc.)
     // Uses restoreFiles() for path traversal, size, and base64 validation.
     restoreFiles(sessionDir, bundle.files)
-    writeCraftSessionOverlay(sessionFile, overlaySession)
+    await writeMortiseSessionOverlayAsync(sessionFile, overlaySession)
 
     // Register in-memory — pass session metadata without messages to avoid
     // StoredMessage[] vs Message[] type mismatch, then convert messages separately
@@ -6899,7 +7228,6 @@ export class SessionManager implements ISessionManager {
     const { messages: bundleMessages, ...sessionMeta } = reloadedStoredSession
     const managed = createManagedSession(sessionMeta, workspace, {
       messagesLoaded: true,
-      workingDirectory: workspaceRootPath,
     })
     managed.messages = bundleMessages.map(storedToMessage)
 
@@ -6926,10 +7254,10 @@ export class SessionManager implements ISessionManager {
     const defaultSlug = readPiGlobalSettings().defaultProvider
     if (defaultSlug) {
       const provider = readPiGlobalProviders()[defaultSlug]
-      if (provider && (provider.baseUrl ? 'pi_compat' : 'pi') === providerType) return defaultSlug
+      if (provider && (provider.baseUrl ? 'pi_custom' : 'pi') === providerType) return defaultSlug
     }
     // Fall back: any connection with matching provider type
-    const match = Object.entries(readPiGlobalProviders()).find(([, provider]) => (provider.baseUrl ? 'pi_compat' : 'pi') === providerType)
+    const match = Object.entries(readPiGlobalProviders()).find(([, provider]) => (provider.baseUrl ? 'pi_custom' : 'pi') === providerType)
     return match?.[0] ?? null
   }
 
@@ -6943,9 +7271,14 @@ export class SessionManager implements ISessionManager {
     if (this.providerRuntimeReloadTimer) clearTimeout(this.providerRuntimeReloadTimer)
     this.providerRuntimeReloadTimer = undefined
 
-    // Dispose all live backend runtimes before dropping the session map so Pi
-    // subprocesses, MCP pool clients, and session HTTP pool servers cannot leak.
-    for (const managed of this.sessions.values()) {
+    // Unpublished first turns are terminal drafts during shutdown. Route them
+    // through the same abandonment transaction used by runtime failures so a
+    // persistent projection error cannot prevent their storage cleanup.
+    for (const managed of [...this.sessions.values()]) {
+      if (managed.publicationState) {
+        await this.abandonProvisionalSession(managed, 'application shutdown')
+        continue
+      }
       try {
         await this.disposeManagedAgentRuntime(managed, 'app quit')
       } catch (error) {
@@ -6953,17 +7286,13 @@ export class SessionManager implements ISessionManager {
       }
     }
     await Promise.all([...this.sessions.values()].map(managed => this.flushPiProjectionWrites(managed)))
-    await Promise.all(
-      [...this.sessions.values()]
-        .filter(managed => managed.publicationState)
-        .map(managed => deleteStoredSession(managed.workspace.rootPath, managed.id)),
-    )
     this.sessions.clear()
     this.automationSessionMetadata.clear()
     this.piProjectionBySession.clear()
     this.piProjectionRetiredRuntimeIds.clear()
     this.piProjectionWrites.clear()
     this.piProjectionPendingSnapshots.clear()
+    this.piProjectionWriteErrors.clear()
 
     // Stop all ConfigWatchers (file system watchers)
     for (const [path, watcher] of this.configWatchers) {

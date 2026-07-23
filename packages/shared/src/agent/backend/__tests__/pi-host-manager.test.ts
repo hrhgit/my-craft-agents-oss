@@ -9,6 +9,9 @@ import type {
 } from '@mortise/pi-coding-agent';
 import { PiHostManager, PiHostProtocolError, type PiHostAcquireOptions } from '../pi-host-manager.ts';
 
+const MORTISE_AGENT_DIR = 'C:/Users/test/.mortise/agent';
+const MORTISE_PROJECT_DIR = '.mortise';
+
 function capabilities(protocolVersion = 3): RpcCapabilities {
   return {
     protocolVersion,
@@ -16,7 +19,6 @@ function capabilities(protocolVersion = 3): RpcCapabilities {
     commands: ['get_capabilities', 'open_runtime'],
     features: {
       hostHooksModule: true,
-      legacyFetchInterceptorModule: true,
       toolExecutionMetadata: true,
       hostToolResults: 'content',
       extensionCommandResult: true,
@@ -28,7 +30,6 @@ function capabilities(protocolVersion = 3): RpcCapabilities {
     },
     hostHooks: {
       moduleEnv: 'PI_HOST_HOOKS_MODULE',
-      legacyModuleEnv: 'PI_FETCH_INTERCEPTOR_MODULE',
       exports: [],
     },
   };
@@ -84,7 +85,7 @@ describe('PiHostManager process-level sharing', () => {
       key: 'default',
       client: {},
       runtime: {
-        runtimeId: 'runtime-a', cwd: 'E:/project', extensionTarget: 'mortise',
+        runtimeId: 'runtime-a', cwd: 'E:/project', agentDir: MORTISE_AGENT_DIR, projectConfigDir: MORTISE_PROJECT_DIR, extensionTarget: 'mortise',
         extensionPaths: ['E:/extensions/browser.js', 'E:/extensions/messaging.js'],
       },
     };
@@ -93,6 +94,7 @@ describe('PiHostManager process-level sharing', () => {
     const second = await manager.acquire(options);
     expect(fake.openRuntime).toHaveBeenCalledTimes(1);
     expect(fake.openRuntime).toHaveBeenCalledWith(expect.objectContaining({
+      projectConfigDir: MORTISE_PROJECT_DIR,
       extensionPaths: ['E:/extensions/browser.js', 'E:/extensions/messaging.js'],
     }));
 
@@ -105,14 +107,14 @@ describe('PiHostManager process-level sharing', () => {
     expect(fake.stop).toHaveBeenCalledTimes(1);
   });
 
-  it('rejects an RPC v2 host so callers can use the legacy fallback', async () => {
+  it('rejects an RPC v2 host as an explicit compatibility failure', async () => {
     const fake = createFakeClient(2);
     const manager = new PiHostManager({ createClient: () => fake.client });
 
     await expect(manager.acquire({
       key: 'legacy',
       client: {},
-      runtime: { runtimeId: 'runtime-a', cwd: 'E:/project', extensionTarget: 'mortise' },
+      runtime: { runtimeId: 'runtime-a', cwd: 'E:/project', agentDir: MORTISE_AGENT_DIR, projectConfigDir: MORTISE_PROJECT_DIR, extensionTarget: 'mortise' },
     })).rejects.toBeInstanceOf(PiHostProtocolError);
     expect(fake.openRuntime).not.toHaveBeenCalled();
     expect(fake.stop).toHaveBeenCalledTimes(1);
@@ -131,7 +133,7 @@ describe('PiHostManager process-level sharing', () => {
     const lease = await manager.acquire({
       key: 'startup-events',
       client: {},
-      runtime: { runtimeId: 'runtime-a', cwd: 'E:/project', extensionTarget: 'mortise' },
+      runtime: { runtimeId: 'runtime-a', cwd: 'E:/project', agentDir: MORTISE_AGENT_DIR, projectConfigDir: MORTISE_PROJECT_DIR, extensionTarget: 'mortise' },
     });
 
     expect(lease.startupEvents).toEqual([startupEvent]);
@@ -149,7 +151,7 @@ describe('PiHostManager process-level sharing', () => {
     const options: PiHostAcquireOptions = {
       key: 'recoverable',
       client: {},
-      runtime: { runtimeId: 'runtime-a', cwd: 'E:/project', extensionTarget: 'mortise' },
+      runtime: { runtimeId: 'runtime-a', cwd: 'E:/project', agentDir: MORTISE_AGENT_DIR, projectConfigDir: MORTISE_PROJECT_DIR, extensionTarget: 'mortise' },
     };
 
     const firstLease = await manager.acquire(options);
@@ -174,7 +176,7 @@ describe('PiHostManager process-level sharing', () => {
     const options: PiHostAcquireOptions = {
       key: 'config-generation',
       client: {},
-      runtime: { runtimeId: 'runtime-a', cwd: 'E:/project', extensionTarget: 'mortise' },
+      runtime: { runtimeId: 'runtime-a', cwd: 'E:/project', agentDir: MORTISE_AGENT_DIR, projectConfigDir: MORTISE_PROJECT_DIR, extensionTarget: 'mortise' },
     };
 
     const oldLease = await manager.acquire(options);
@@ -194,6 +196,40 @@ describe('PiHostManager process-level sharing', () => {
     await manager.dispose();
   });
 
+  it('pins Electron-like callers to the Mortise Agent root at the GlobalHost boundary', async () => {
+    const fake = createFakeClient();
+    const createClient = mock((_options: RpcClientOptions) => fake.client);
+    const manager = new PiHostManager({ createClient });
+
+    const lease = await manager.acquire({
+      key: 'electron-without-agent-env',
+      client: {
+        envMode: 'replace',
+        env: { PATH: 'C:/Windows/System32' },
+        globalHost: { enabled: false, agentDir: 'C:/Users/test/.pi/agent' },
+      },
+      runtime: {
+        runtimeId: 'runtime-a',
+        cwd: 'E:/project',
+        agentDir: MORTISE_AGENT_DIR,
+        projectConfigDir: MORTISE_PROJECT_DIR,
+        extensionTarget: 'mortise',
+      },
+    });
+
+    const clientOptions = createClient.mock.calls[0]?.[0] as RpcClientOptions;
+    expect(clientOptions.env?.PI_CODING_AGENT_DIR).toBe(MORTISE_AGENT_DIR);
+    expect(clientOptions.env?.PI_CODING_AGENT_PROJECT_DIR).toBe(MORTISE_PROJECT_DIR);
+    expect(clientOptions.globalHost).toMatchObject({
+      enabled: true,
+      agentDir: MORTISE_AGENT_DIR,
+    });
+    expect(clientOptions.globalHost?.instanceId).toBeTruthy();
+
+    await lease.release();
+    await manager.dispose();
+  });
+
   it('stops a shared host whose startup times out', async () => {
     const fake = createFakeClient();
     fake.client.start = mock(() => new Promise<void>(() => {}));
@@ -205,7 +241,7 @@ describe('PiHostManager process-level sharing', () => {
     await expect(manager.acquire({
       key: 'stuck',
       client: {},
-      runtime: { runtimeId: 'runtime-a', cwd: 'E:/project', extensionTarget: 'mortise' },
+      runtime: { runtimeId: 'runtime-a', cwd: 'E:/project', agentDir: MORTISE_AGENT_DIR, projectConfigDir: MORTISE_PROJECT_DIR, extensionTarget: 'mortise' },
     })).rejects.toThrow('startup timed out');
     expect(fake.stop).toHaveBeenCalledTimes(1);
   });

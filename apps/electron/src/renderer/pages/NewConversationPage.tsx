@@ -2,12 +2,14 @@ import * as React from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import {
+  AlertCircle,
   Check,
   ChevronDown,
   Cloud,
   CloudOff,
   Folder,
   Loader2,
+  RotateCcw,
 } from 'lucide-react'
 import { InputContainer } from '@/components/app-shell/input/InputContainer'
 import { PanelHeader } from '@/components/app-shell/PanelHeader'
@@ -37,6 +39,65 @@ import type { CreateAndSendFirstTurnResult } from '@mortise/shared/protocol'
 
 export interface NewConversationPageProps {
   draftId: string
+}
+
+export interface FirstTurnPublicationAttempt {
+  message: string
+  attachments: FileAttachment[]
+  skillSlugs?: string[]
+  options: NewConversationDraftOptions
+}
+
+export interface UnpublishedPublicationFailure {
+  retryable: boolean
+  terminal: true
+  outcome: 'unpublished'
+  stage?: 'metadata' | 'projection'
+}
+
+interface FirstTurnPublicationFailure extends UnpublishedPublicationFailure {
+  attempt: FirstTurnPublicationAttempt
+}
+
+export function snapshotFirstTurnPublicationAttempt(
+  message: string,
+  attachments: FileAttachment[] | undefined,
+  skillSlugs: string[] | undefined,
+  options: NewConversationDraftOptions,
+): FirstTurnPublicationAttempt {
+  return {
+    message,
+    attachments: (attachments ?? []).map(attachment => ({ ...attachment })),
+    ...(skillSlugs?.length ? { skillSlugs: [...skillSlugs] } : {}),
+    options: { ...options },
+  }
+}
+
+export function parseUnpublishedPublicationFailure(error: unknown): UnpublishedPublicationFailure | null {
+  if (!error || typeof error !== 'object') return null
+  const candidate = error as { code?: unknown; data?: unknown }
+  if (candidate.code !== 'SESSION_PUBLICATION_DURABILITY_FAILED') return null
+  if (!candidate.data || typeof candidate.data !== 'object') return null
+  const data = candidate.data as {
+    retryable?: unknown
+    terminal?: unknown
+    outcome?: unknown
+    stage?: unknown
+  }
+  if (
+    typeof data.retryable !== 'boolean'
+    || data.terminal !== true
+    || data.outcome !== 'unpublished'
+    || (data.stage !== undefined && data.stage !== 'metadata' && data.stage !== 'projection')
+  ) {
+    return null
+  }
+  return {
+    retryable: data.retryable,
+    terminal: true,
+    outcome: 'unpublished',
+    ...(data.stage ? { stage: data.stage } : {}),
+  }
 }
 
 export async function runFirstTurnDraftSubmission(
@@ -69,9 +130,6 @@ function normalizeDraftOptions(
     permissionMode: typeof candidate.permissionMode === 'string'
       ? parsePermissionMode(candidate.permissionMode) ?? defaults.permissionMode
       : defaults.permissionMode,
-    workingDirectory: typeof candidate.workingDirectory === 'string'
-      ? candidate.workingDirectory
-      : defaults.workingDirectory,
   }
 }
 
@@ -180,8 +238,7 @@ const NewConversationPage = React.memo(function NewConversationPage({ draftId }:
     model: piGlobalSettings.defaultModel,
     thinkingLevel: normalizeThinkingLevel(piGlobalSettings.defaultThinkingLevel) ?? DEFAULT_THINKING_LEVEL,
     permissionMode: 'allow-all',
-    workingDirectory: workspace?.rootPath,
-  }), [piGlobalSettings.defaultModel, piGlobalSettings.defaultProvider, piGlobalSettings.defaultThinkingLevel, workspace?.rootPath])
+  }), [piGlobalSettings.defaultModel, piGlobalSettings.defaultProvider, piGlobalSettings.defaultThinkingLevel])
   const [options, setOptions] = React.useState<NewConversationDraftOptions>(() => normalizeDraftOptions(
     storage.get(storage.KEYS.newConversationOptions, defaultOptions, optionsScope),
     defaultOptions,
@@ -189,6 +246,7 @@ const NewConversationPage = React.memo(function NewConversationPage({ draftId }:
   const [inputValue, setInputValue] = React.useState(() => coerceInputText(getDraft(draftStorageKey)))
   const [attachmentsValue, setAttachmentsValue] = React.useState<FileAttachment[]>([])
   const [submitting, setSubmitting] = React.useState(false)
+  const [publicationFailure, setPublicationFailure] = React.useState<FirstTurnPublicationFailure | null>(null)
   const [composerRevision, setComposerRevision] = React.useState(0)
   const submitInFlight = React.useRef(false)
   const persistedOptionsScope = React.useRef(optionsScope)
@@ -220,32 +278,27 @@ const NewConversationPage = React.memo(function NewConversationPage({ draftId }:
       setOptions(current => ({
         ...current,
         permissionMode: settings.permissionMode ?? current.permissionMode,
-        workingDirectory: settings.workingDirectory ?? workspace?.rootPath ?? current.workingDirectory,
       }))
     })
     return () => { cancelled = true }
-  }, [hadStoredOptions, workspace?.rootPath, workspaceId])
+  }, [hadStoredOptions, workspaceId])
 
   const handleInputChange = React.useCallback((value: string) => {
     if (submitInFlight.current && value === '') return
+    setPublicationFailure(null)
     setInputValue(value)
     onInputChange(draftStorageKey, value)
   }, [draftStorageKey, onInputChange])
 
   const handleAttachmentsChange = React.useCallback((attachments: FileAttachment[]) => {
     if (submitInFlight.current && attachments.length === 0) return
+    setPublicationFailure(null)
     setAttachmentsValue(attachments)
     onAttachmentsChange(draftStorageKey, attachments)
   }, [draftStorageKey, onAttachmentsChange])
 
-  const handleSubmit = React.useCallback((
-    message: string,
-    attachments?: FileAttachment[],
-    skillSlugs?: string[],
-  ) => {
+  const submitFirstTurnAttempt = React.useCallback((attempt: FirstTurnPublicationAttempt) => {
     if (!workspaceId || submitInFlight.current) return
-    const attachmentSnapshot = attachments ?? []
-    const inputSnapshot = inputValue
     submitInFlight.current = true
     setSubmitting(true)
     // FreeFormInput clears its local value after invoking onSubmit. Remount it
@@ -256,12 +309,13 @@ const NewConversationPage = React.memo(function NewConversationPage({ draftId }:
         await runFirstTurnDraftSubmission(
           () => onCreateAndSendFirstTurn({
             workspaceId,
-            message,
-            attachments: attachmentSnapshot.length > 0 ? attachmentSnapshot : undefined,
-            createOptions: options,
-            sendOptions: skillSlugs?.length ? { skillSlugs } : undefined,
+            message: attempt.message,
+            attachments: attempt.attachments.length > 0 ? attempt.attachments : undefined,
+            createOptions: attempt.options,
+            sendOptions: attempt.skillSlugs?.length ? { skillSlugs: attempt.skillSlugs } : undefined,
           }),
           ({ session }) => {
+            setPublicationFailure(null)
             setInputValue('')
             setAttachmentsValue([])
             onInputChange(draftStorageKey, '')
@@ -269,22 +323,36 @@ const NewConversationPage = React.memo(function NewConversationPage({ draftId }:
             navigate(routes.view.allSessions(session.id))
           },
           () => {
-            setInputValue(inputSnapshot)
-            setAttachmentsValue(attachmentSnapshot)
-            onInputChange(draftStorageKey, inputSnapshot)
-            onAttachmentsChange(draftStorageKey, attachmentSnapshot)
+            setInputValue(attempt.message)
+            setAttachmentsValue(attempt.attachments)
+            onInputChange(draftStorageKey, attempt.message)
+            onAttachmentsChange(draftStorageKey, attempt.attachments)
             setComposerRevision(current => current + 1)
           },
         )
       } catch (error) {
         console.error('[NewConversationPage] Failed to publish first turn:', error)
+        const failure = parseUnpublishedPublicationFailure(error)
+        if (failure) {
+          setPublicationFailure({ ...failure, attempt })
+        }
         toast.error(t('toast.failedToCreateSession', 'Failed to create session'))
       } finally {
         submitInFlight.current = false
         setSubmitting(false)
       }
     })()
-  }, [draftStorageKey, inputValue, onAttachmentsChange, onCreateAndSendFirstTurn, onInputChange, options, t, workspaceId])
+  }, [draftStorageKey, onAttachmentsChange, onCreateAndSendFirstTurn, onInputChange, t, workspaceId])
+
+  const handleSubmit = React.useCallback(async (attempt: import('@/components/app-shell/input/composer-submission').ComposerSubmissionAttempt) => {
+    submitFirstTurnAttempt(snapshotFirstTurnPublicationAttempt(
+      attempt.message,
+      attempt.attachments,
+      attempt.skillSlugs,
+      options,
+    ))
+    return true
+  }, [options, submitFirstTurnAttempt])
 
   if (!workspace) return null
   const providerUnavailable = !!options.provider && !piProviders.some(entry => entry.key === options.provider)
@@ -303,8 +371,36 @@ const NewConversationPage = React.memo(function NewConversationPage({ draftId }:
         <div className="mb-1.5 px-1">
           <WorkspaceDraftSwitcher />
         </div>
+        {publicationFailure && (
+          <div
+            role="alert"
+            data-mortise-semantic-id="workspace.empty-conversation.publication-failed"
+            data-mortise-publication-outcome={publicationFailure.outcome}
+            data-mortise-publication-retryable={String(publicationFailure.retryable)}
+            data-mortise-publication-stage={publicationFailure.stage}
+            className="mb-2 flex min-w-0 items-center gap-2 border-l-2 border-destructive px-2 py-1.5 text-xs text-destructive"
+          >
+            <AlertCircle className="size-3.5 shrink-0" aria-hidden="true" />
+            <span className="min-w-0 flex-1 truncate">
+              {t('chat.sessionPublicationFailed', 'The response could not be saved, so no session was created.')}
+            </span>
+            {publicationFailure.retryable && (
+              <button
+                type="button"
+                data-mortise-semantic-id="workspace.empty-conversation.publication-failed.retry"
+                disabled={submitting}
+                className="inline-flex shrink-0 items-center gap-1 rounded-[6px] px-2 py-1 font-medium text-foreground hover:bg-foreground/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
+                onClick={() => submitFirstTurnAttempt(publicationFailure.attempt)}
+              >
+                <RotateCcw className="size-3.5" aria-hidden="true" />
+                {t('common.retry')}
+              </button>
+            )}
+          </div>
+        )}
         <InputContainer
           key={`${draftStorageKey}:${composerRevision}`}
+          semanticScopeId={`draft:${workspaceId}:${draftId}`}
           disabled={submitting}
           isProcessing={false}
           onSubmit={handleSubmit}
@@ -328,7 +424,7 @@ const NewConversationPage = React.memo(function NewConversationPage({ draftId }:
           onAttachmentsChange={handleAttachmentsChange}
           skills={skills}
           workspaceId={workspaceId}
-          workingDirectory={options.workingDirectory ?? workspace.rootPath}
+          workspaceRoot={workspace.rootPath}
           isEmptySession
           compactMode={!!isCompactMode}
           enableCompactModelPicker={!!isCompactMode}

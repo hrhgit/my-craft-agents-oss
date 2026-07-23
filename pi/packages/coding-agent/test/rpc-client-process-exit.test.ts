@@ -56,7 +56,7 @@ setInterval(() => {}, 1000);
 		await client.stop();
 	});
 
-	test("passes hostHooksModule to the child environment with legacy alias", async () => {
+	test("passes hostHooksModule only through the canonical child environment variable", async () => {
 		const dir = mkdtempSync(join(tmpdir(), "pi-rpc-client-env-"));
 		tempDirs.push(dir);
 		const capturePath = join(dir, "env.txt");
@@ -68,7 +68,6 @@ writeFileSync(
 	process.env.CAPTURE_PATH,
 	JSON.stringify({
 		hostHooks: process.env.PI_HOST_HOOKS_MODULE ?? "",
-		legacy: process.env.PI_FETCH_INTERCEPTOR_MODULE ?? "",
 	}),
 );
 process.stdin.resume();
@@ -83,7 +82,6 @@ setInterval(() => {}, 1000);
 		await waitForFile(capturePath);
 		expect(JSON.parse(readFileSync(capturePath, "utf-8"))).toEqual({
 			hostHooks: interceptorPath,
-			legacy: interceptorPath,
 		});
 		await client.stop();
 	});

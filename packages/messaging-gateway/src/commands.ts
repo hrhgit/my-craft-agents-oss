@@ -11,6 +11,8 @@
  */
 
 import type { ISessionManager } from '@mortise/server-core/handlers'
+import type { FileAttachment } from '@mortise/shared/protocol'
+import { readFileAttachment } from '@mortise/shared/utils'
 import {
   evaluatePreBindingAccess,
   executeRejection,
@@ -121,6 +123,7 @@ export class Commands {
   private readonly log: MessagingLogger
   private readonly access: AccessControlDeps
   private readonly recentRejectReplies = new Map<string, number>()
+  private readonly pendingNewDrafts = new Map<string, { name?: string; creating: boolean }>()
 
   constructor(
     private readonly sessionManager: ISessionManager,
@@ -173,17 +176,22 @@ export class Commands {
     } else if (cmd === '/help') {
       await this.handleHelp(adapter, msg)
     } else {
-      // Sender passed the access gate (owner or open workspace) and typed
-      // free-form text into a chat with no binding. Show the help prompt.
-      await adapter.sendText(
-        msg.channelId,
-        'No session bound to this chat.\n\n' +
-        '/new [name] — start a new session\n' +
-        '/bind — connect to an existing session\n' +
-        '/pair <code> — redeem a pairing code from the app\n' +
-        '/help — show all commands',
-        replyOpts,
-      )
+      const draft = this.pendingNewDrafts.get(this.draftKey(msg))
+      if (draft) {
+        await this.handlePendingFirstTurn(adapter, msg, draft)
+      } else {
+        // Sender passed the access gate (owner or open workspace) and typed
+        // free-form text into a chat with no binding. Show the help prompt.
+        await adapter.sendText(
+          msg.channelId,
+          'No session bound to this chat.\n\n' +
+            '/new [name] — start a new session\n' +
+            '/bind — connect to an existing session\n' +
+            '/pair <code> — redeem a pairing code from the app\n' +
+            '/help — show all commands',
+          replyOpts,
+        )
+      }
     }
   }
 
@@ -275,43 +283,96 @@ export class Commands {
   private async handleNew(adapter: PlatformAdapter, msg: IncomingMessage): Promise<void> {
     const name = parseCommand(msg.text).args || undefined
     const replyOpts = msg.threadId !== undefined ? { threadId: msg.threadId } : {}
+    const key = this.draftKey(msg)
+    // /new starts an ephemeral channel draft. It deliberately does not call
+    // createSession or write a binding until the first assistant-backed turn
+    // has crossed the Session publication boundary.
+    this.bindingStore.unbind(adapter.platform, msg.channelId, msg.threadId)
+    this.pendingNewDrafts.set(key, { name, creating: false })
+    await adapter.sendText(
+      msg.channelId,
+      name
+        ? `New session "${name}" is ready for its first message.`
+        : 'New session is ready for its first message.',
+      replyOpts,
+    )
+  }
 
+  private draftKey(msg: IncomingMessage): string {
+    return `${msg.platform}:${msg.channelId}:${msg.threadId ?? ''}`
+  }
+
+  private resolveFirstTurnAttachments(msg: IncomingMessage): FileAttachment[] | undefined {
+    if (!msg.attachments?.length) return undefined
+    const attachments = msg.attachments.flatMap(attachment => {
+      if (!attachment.localPath) return []
+      const resolved = readFileAttachment(attachment.localPath) as FileAttachment | null
+      if (!resolved) return []
+      if (attachment.fileName) resolved.name = attachment.fileName
+      return [resolved]
+    })
+    return attachments.length > 0 ? attachments : undefined
+  }
+
+  private async handlePendingFirstTurn(
+    adapter: PlatformAdapter,
+    msg: IncomingMessage,
+    draft: { name?: string; creating: boolean },
+  ): Promise<void> {
+    const key = this.draftKey(msg)
+    const replyOpts = msg.threadId !== undefined ? { threadId: msg.threadId } : {}
+    if (draft.creating) {
+      await adapter.sendText(msg.channelId, 'The first message is already being processed.', replyOpts)
+      return
+    }
+    if (!msg.text.trim() && !msg.attachments?.length) {
+      await adapter.sendText(msg.channelId, 'The first message cannot be empty.', replyOpts)
+      return
+    }
+
+    draft.creating = true
     try {
-      const session = await this.sessionManager.createSession(this.workspaceId, { name })
-
-      this.bindingStore.bind(
-        this.workspaceId,
-        session.id,
-        adapter.platform,
-        msg.channelId,
-        msg.senderName,
-        undefined,
-        msg.threadId,
-      )
-
-      const displayName = session.name || session.id
-      await adapter.sendText(
-        msg.channelId,
-        `Created "${displayName}" — you're connected. Just type to start.`,
-        replyOpts,
-      )
-      this.log.info('session created and bound from chat', {
+      const result = await this.sessionManager.createAndSendFirstTurn({
+        workspaceId: this.workspaceId,
+        message: msg.text,
+        createOptions: draft.name ? { name: draft.name } : undefined,
+        attachments: this.resolveFirstTurnAttachments(msg),
+        // The messaging binding is installed before SessionManager emits any
+        // public event, so the first assistant projection cannot be missed.
+        beforePublish: (session) => {
+          this.bindingStore.bind(
+            this.workspaceId,
+            session.id,
+            adapter.platform,
+            msg.channelId,
+            msg.senderName,
+            undefined,
+            msg.threadId,
+          )
+        },
+      })
+      this.pendingNewDrafts.delete(key)
+      this.log.info('session created and bound from chat first turn', {
         event: 'session_created_from_chat',
         workspaceId: this.workspaceId,
-        sessionId: session.id,
+        sessionId: result.session.id,
         platform: adapter.platform,
         channelId: msg.channelId,
         threadId: msg.threadId,
       })
     } catch (err) {
+      draft.creating = false
       const errorMsg = err instanceof Error ? err.message : 'Unknown error'
-      this.log.error('failed to create session from chat', {
+      this.log.error('failed to publish first chat turn', {
         event: 'session_create_failed',
         workspaceId: this.workspaceId,
         platform: adapter.platform,
         channelId: msg.channelId,
         error: err,
       })
+      // A failed publication must not leave a binding to a rolled-back
+      // Session. Keep the draft so the user can retry with the next message.
+      this.bindingStore.unbind(adapter.platform, msg.channelId, msg.threadId)
       await adapter.sendText(msg.channelId, `Failed to create session: ${errorMsg}`, replyOpts)
     }
   }

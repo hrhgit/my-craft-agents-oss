@@ -73,7 +73,7 @@ export function ReauthScreen({ onLogin }: ReauthScreenProps) {
                 ) : (
                   <>
                     <RefreshCw className="mr-2 size-4" />
-                    {t("onboarding.reauth.loginWithCraft")}
+                    {t("onboarding.reauth.loginWithMortise")}
                   </>
                 )}
               </Button>

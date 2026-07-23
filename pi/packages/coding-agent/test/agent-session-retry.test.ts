@@ -320,7 +320,11 @@ describe("AgentSession retry", () => {
 	it("stops auto retry when network manager suppresses replay", async () => {
 		const created = createSession({ failCount: 99, maxRetries: 3 });
 		let prepareRetryCalls = 0;
-		const networkManager: Pick<NetworkManager, "prepareRetry" | "annotateAssistantFailure" | "applySettings"> = {
+		const networkManager: Pick<
+			NetworkManager,
+			"initialize" | "prepareRetry" | "annotateAssistantFailure" | "applySettings"
+		> = {
+			initialize: async () => {},
 			prepareRetry: async () => {
 				prepareRetryCalls++;
 				return {

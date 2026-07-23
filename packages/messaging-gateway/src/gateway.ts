@@ -55,8 +55,7 @@ export interface GatewayOptions {
   /**
    * Reads the workspace's MessagingConfig. Called per-message so config
    * edits (toggling accessMode, adding owners) take effect without restart.
-   * Optional — when omitted, the gateway falls back to a permissive
-   * "everything is open" config (useful for legacy callers and unit tests).
+   * Optional — when omitted, the gateway uses an unconfigured workspace.
    */
   getWorkspaceConfig?: () => MessagingConfig
   /**
@@ -124,20 +123,11 @@ interface PendingCompactAccept {
 
 const COMPACT_ACCEPT_TTL_MS = 10 * 60 * 1000
 
-const LEGACY_TRANSCRIPT_EVENT_TYPES = new Set([
-  'text_delta',
-  'text_complete',
-  'tool_start',
-  'tool_result',
-  'complete',
-  'error',
-  'typed_error',
-  'interrupted',
+const HOST_INTERACTION_EVENT_TYPES = new Set([
+  'permission_request',
+  'credential_request',
+  'plan_submitted',
 ])
-
-function isLegacyTranscriptEvent(type: string): boolean {
-  return LEGACY_TRANSCRIPT_EVENT_TYPES.has(type)
-}
 
 export class MessagingGateway {
   private readonly sessionManager: ISessionManager
@@ -369,17 +359,11 @@ export class MessagingGateway {
       void this.finishPendingCompactAccept(event.sessionId)
     }
 
-    // Drop stale permission prompts for this session. The agent halts while
-    // a permission is pending, so any non-permission_request event implies
-    // the prior prompt was resolved (from the desktop, an MCP allow-list,
-    // remember-window auto-approval, etc.). Without this sweep the inline
-    // keyboard stays live in Telegram and users keep tapping stale buttons,
-    // which is the visible side of #726.
+    // Conversation output and lifecycle are exclusively projected from Pi.
+    // The Host session channel remains only for interactive prompts that are
+    // not transcript projections.
+    if (!HOST_INTERACTION_EVENT_TYPES.has(event.type)) return
     this.sweepStalePermissions(event)
-
-    // Transcript semantics are projection-only. Legacy transcript events may
-    // still close stale Host prompts above, but never reach the chat renderer.
-    if (isLegacyTranscriptEvent(event.type)) return
 
     const bindings = this.bindingStore.findBySession(event.sessionId)
     if (bindings.length === 0) return

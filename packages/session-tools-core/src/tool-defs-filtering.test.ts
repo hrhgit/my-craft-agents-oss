@@ -7,6 +7,7 @@ import {
   getSessionSafeAllowedToolNames,
   getSessionSafeBlockedToolNames,
   getToolDefsAsJsonSchema,
+  isSessionToolName,
   normalizeSessionToolName,
 } from './tool-defs.ts';
 
@@ -61,19 +62,20 @@ describe('session tool filtering helpers', () => {
     expect(blocked.has('spawn_session')).toBe(true);
   });
 
-  it('safe-mode helpers still support prefixed protocol adapters', () => {
-    const allowedPrefixed = getSessionSafeAllowedToolNames({ prefix: 'mcp__session__' });
-    const blockedPrefixed = getSessionSafeBlockedToolNames({ prefix: 'mcp__session__' });
-
-    expect(allowedPrefixed.has('mcp__session__send_developer_feedback')).toBe(true);
-    expect(allowedPrefixed.has('mcp__session__script_sandbox')).toBe(true);
-    expect(blockedPrefixed.has('mcp__session__spawn_session')).toBe(true);
+  it('accepts only exact canonical session tool names', () => {
+    expect(normalizeSessionToolName('config_validate')).toBe('config_validate');
+    expect(normalizeSessionToolName('mcp__session__config_validate')).toBeNull();
+    expect(normalizeSessionToolName('session__config_validate')).toBeNull();
+    expect(normalizeSessionToolName('mcp__linear__config_validate')).toBeNull();
+    expect(isSessionToolName('mcp__session__config_validate')).toBe(false);
+    expect(isSessionToolName('session__config_validate')).toBe(false);
   });
 
-  it('normalizes canonical names and persisted legacy aliases', () => {
-    expect(normalizeSessionToolName('config_validate')).toBe('config_validate');
-    expect(normalizeSessionToolName('mcp__session__config_validate')).toBe('config_validate');
-    expect(normalizeSessionToolName('session__config_validate')).toBe('config_validate');
-    expect(normalizeSessionToolName('mcp__linear__config_validate')).toBeNull();
+  it('emits canonical names without a compatibility namespace', () => {
+    const names = getToolDefsAsJsonSchema().map(def => def.name);
+
+    expect(names).toContain('config_validate');
+    expect(names.some(name => name.startsWith('mcp__session__'))).toBe(false);
+    expect(names.some(name => name.startsWith('session__'))).toBe(false);
   });
 });

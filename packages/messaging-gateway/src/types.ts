@@ -234,7 +234,7 @@ export interface PlatformAdapter {
 /**
  * How agent output is rendered to the chat.
  *
- * - `streaming` — legacy behaviour: live edits during the final turn, and
+ * - `streaming` — live edits during the final turn, and
  *   every intermediate `text_complete` starts a fresh message. Produces
  *   multiple messages per agent run. Kept for parity with in-app UI.
  * - `progress` — one evolving message per run. Posts a "💭 thinking…"
@@ -251,31 +251,12 @@ export type ResponseMode = 'streaming' | 'progress' | 'final_only'
  *
  * - `inherit`     — defer to the platform's owners list (default for new bindings).
  * - `allow-list`  — only senders in `allowedSenderIds` may route to the bound session.
- * - `open`        — anyone in an accepted chat may route. Used as the migration
- *                   default for bindings created before access control existed,
- *                   and for explicitly-public bindings (e.g. support bots).
+ * - `open`        — anyone in an accepted chat may route. Used for explicitly
+ *                   public bindings (e.g. support bots).
  */
 export type BindingAccessMode = 'inherit' | 'allow-list' | 'open'
 
-/**
- * Persisted/输入边界接受的原始形状，包含 legacy 字段。
- * 从磁盘加载或用户输入时使用此类型。normalizeBindingConfig 会将其转换为 canonical BindingConfig。
- */
-export type RawBindingConfig = {
-  responseMode?: ResponseMode
-  /** @deprecated legacy only — 由 normalizeBindingConfig 转换为 responseMode */
-  streamResponses?: boolean
-  showToolActivity?: boolean
-  approvalChannel?: 'chat' | 'app'
-  editIntervalMs?: number
-  accessMode?: BindingAccessMode
-  allowedSenderIds?: string[]
-}
-
-/**
- * Runtime canonical 形状，无 legacy 字段。
- * 所有 runtime 代码（renderer、processor、UI）只使用此类型。
- */
+/** Current persisted and runtime binding configuration. */
 export interface BindingConfig {
   /** How outbound agent output is rendered. Default: 'progress' */
   responseMode: ResponseMode
@@ -287,10 +268,7 @@ export interface BindingConfig {
   editIntervalMs: number
   /**
    * Per-binding access mode. Governs Router.route() admission for this
-   * binding only. Defaults vary by migration vs. fresh creation:
-   *  - Fresh bindings (created after access control shipped): `'inherit'`.
-   *  - Migrated bindings (legacy data with no field set): `'open'` so prod
-   *    behaviour is unchanged until the owner explicitly locks down.
+   * binding only. New bindings default to `'inherit'`.
    */
   accessMode: BindingAccessMode
   /**
@@ -317,35 +295,16 @@ export function getDefaultBindingConfig(platform: PlatformType): BindingConfig {
   }
 }
 
-export function normalizeBindingConfig(
+export function createBindingConfig(
   platform: PlatformType,
-  config?: RawBindingConfig,
+  config: Partial<BindingConfig> = {},
 ): BindingConfig {
   const base = getDefaultBindingConfig(platform)
-  const resolvedResponseMode: ResponseMode =
-    config?.responseMode ??
-    (config?.streamResponses === false ? 'final_only' : config?.streamResponses === true ? 'streaming' : base.responseMode)
-
-  // Migration rule: if a persisted config predates access control (no
-  // `accessMode` field), treat the binding as `'open'` so prod behaviour
-  // doesn't change silently. Owners explicitly lock down via Settings.
-  const accessMode: BindingAccessMode =
-    config?.accessMode ?? (config !== undefined ? 'open' : base.accessMode)
-
-  const allowedSenderIds = Array.isArray(config?.allowedSenderIds)
-    ? [...config!.allowedSenderIds]
-    : []
-
-  // Strip legacy streamResponses so it never enters the runtime BindingConfig
-  const { streamResponses: _legacyStreamResponses, ...rest } = config ?? {}
-
   return {
     ...base,
-    ...rest,
-    responseMode: resolvedResponseMode,
-    approvalChannel: platform === 'whatsapp' ? 'app' : (config?.approvalChannel ?? base.approvalChannel),
-    accessMode,
-    allowedSenderIds,
+    ...config,
+    approvalChannel: platform === 'whatsapp' ? 'app' : (config.approvalChannel ?? base.approvalChannel),
+    allowedSenderIds: [...(config.allowedSenderIds ?? base.allowedSenderIds)],
   }
 }
 
@@ -399,10 +358,7 @@ export interface TelegramSupergroupConfig {
  *                   platform's `owners` list. Bindings whose `accessMode`
  *                   is `'inherit'` use the same list as their allow-list.
  *
- * Defaults vary by migration vs. fresh setup:
- *  - Fresh workspaces pairing the bot for the first time → `'owner-only'`.
- *  - Existing workspaces that predate access control → `'open'` so the
- *    Settings UI can show a "Lock down" banner without breaking traffic.
+ * New Telegram configurations default to `'owner-only'`.
  */
 export type PlatformAccessMode = 'open' | 'owner-only'
 
@@ -458,12 +414,8 @@ export interface PendingSender {
   lastAttemptAt: number
   /** Total attempts since this sender first appeared in the pending list. */
   attemptCount: number
-  /**
-   * Why the sender was rejected. Optional for back-compat with persisted
-   * entries written by an earlier build that lacked the field; missing
-   * `reason` is treated as `'not-owner'` (the safer default).
-   */
-  reason?: PendingRejectReason
+  /** Why the sender was rejected. */
+  reason: PendingRejectReason
   /**
    * Binding the reject was scoped to. Only present when
    * `reason === 'not-on-binding-allowlist'`. Lets the operator's "Allow"
@@ -486,11 +438,9 @@ export interface MessagingConfig {
        */
       supergroup?: TelegramSupergroupConfig
       /**
-       * Workspace-level access policy. Missing field = `'open'` for back-
-       * compat with workspaces that predate access control. Fresh setups
-       * land on `'owner-only'` automatically (registry sets it on first pair).
+       * Workspace-level access policy.
        */
-      accessMode?: PlatformAccessMode
+      accessMode: PlatformAccessMode
       /**
        * Telegram user ids permitted to drive the bot at workspace level.
        * Gates `/new`, `/bind`, `/unbind`, `/status`, `/stop` and serves as

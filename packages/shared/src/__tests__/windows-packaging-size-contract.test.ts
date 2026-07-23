@@ -23,6 +23,13 @@ describe('Windows packaging size contract', () => {
     ]);
 
     const buildSource = readFileSync(join(repoRoot, 'scripts/build/common.ts'), 'utf-8');
-    expect(buildSource).toContain("config.platform === 'win32' && process.env.MORTISE_PI_BINARY_RUNTIME !== '0'");
+    expect(buildSource).toContain('stagePiBinaryRuntime(config, runtimeRoot)');
+    expect(buildSource).not.toContain('stagePiRuntime(config, runtimeRoot)');
+    expect(buildSource).not.toContain('MORTISE_PI_BINARY_RUNTIME');
+
+    const assetValidationSource = readFileSync(join(repoRoot, 'apps/electron/scripts/validate-assets.ts'), 'utf-8');
+    expect(assetValidationSource).toContain('Electron production staging requires the compiled Pi runtime');
+    expect(assetValidationSource).toContain('Electron production staging contains a legacy Pi runtime candidate');
+    expect(assetValidationSource).not.toContain('Pi CLI bundle smoke test');
   });
 });

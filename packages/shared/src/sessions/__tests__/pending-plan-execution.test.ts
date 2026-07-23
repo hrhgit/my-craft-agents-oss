@@ -23,7 +23,10 @@ function makeStoredSession(workspaceRootPath: string): StoredSession {
     workspaceRootPath,
     createdAt: 1000,
     lastUsedAt: 1000,
-    messages: [],
+    messages: [
+      { id: 'session-1-u1', type: 'user', content: 'plan this', timestamp: 1000 },
+      { id: 'session-1-a1', type: 'assistant', content: 'ready', timestamp: 1001 },
+    ],
     tokenUsage: {
       inputTokens: 0,
       outputTokens: 0,

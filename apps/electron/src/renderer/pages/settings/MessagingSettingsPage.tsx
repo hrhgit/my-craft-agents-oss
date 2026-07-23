@@ -208,7 +208,7 @@ function PlatformRow({ platform, workspaceId }: { platform: Platform; workspaceI
   // dropdown can decide whether to show "Unlock", and TelegramAccessSection
   // receives it as a controlled prop. Symmetric with `supergroup` state.
   const [telegramAccessMode, setTelegramAccessMode] =
-    React.useState<PlatformAccessMode>('open')
+    React.useState<PlatformAccessMode>('owner-only')
 
   const refreshSupergroup = React.useCallback(async () => {
     if (platform !== 'telegram') return
@@ -226,7 +226,7 @@ function PlatformRow({ platform, workspaceId }: { platform: Platform; workspaceI
       const mode = await window.electronAPI.getMessagingPlatformAccessMode('telegram')
       setTelegramAccessMode(mode as PlatformAccessMode)
     } catch {
-      // silent — default 'open' covers fresh / disconnected state
+      setTelegramAccessMode('owner-only')
     }
   }, [platform])
 
@@ -493,8 +493,8 @@ interface TelegramBindingsBodyProps {
 
 function bindingToAccess(binding: MessagingBinding): BindingAccess {
   return {
-    mode: binding.accessMode ?? 'open',
-    allowedSenderIds: binding.allowedSenderIds ?? [],
+    mode: binding.accessMode,
+    allowedSenderIds: binding.allowedSenderIds,
   }
 }
 

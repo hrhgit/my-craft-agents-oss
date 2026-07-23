@@ -48,7 +48,7 @@ export function BatchAutomationMenu() {
     return selectedAutomations.length > 0 && selectedAutomations.every(a => a.enabled)
   }, [selectedAutomations])
 
-  // Batch toggle — sequential IPC to avoid read-modify-write race on automations.json
+  // Batch toggle stays sequential so each CAS revision is based on the previous update.
   const handleBatchToggle = useCallback(async () => {
     if (!activeWorkspaceId) return
     const targetEnabled = !allEnabled
@@ -64,7 +64,7 @@ export function BatchAutomationMenu() {
     )
   }, [activeWorkspaceId, selectedAutomations, allEnabled, clearMultiSelect, t])
 
-  // Batch delete — sequential IPC in reverse matcherIndex order so earlier indices stay valid
+  // Batch delete uses revisioned canonical identities.
   const handleBatchDelete = useCallback(async () => {
     if (!activeWorkspaceId) return
     const count = selectedIds.size

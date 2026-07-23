@@ -3,7 +3,7 @@
  *
  * A lightweight TUI chat client that spawns the agent in RPC mode.
  * Demonstrates how to build a custom UI on top of the RPC protocol,
- * including handling extension UI requests (select, confirm, input, editor).
+ * including handling versioned extension interactions and contributions.
  *
  * Usage: npx tsx examples/rpc-extension-ui.ts
  *
@@ -43,16 +43,30 @@ interface ExtensionUIRequest {
 	type: "extension_ui_request";
 	id: string;
 	method: string;
-	title?: string;
-	options?: string[];
+	extensionId: string;
+	runtimeId?: string;
+	sessionId?: string;
+	clientId?: string;
+	request?: {
+		schemaVersion: 1;
+		title?: string;
+		fields: Array<{
+			id: string;
+			kind: "choice" | "confirm" | "text";
+			label: string;
+			options?: Array<{ id: string; label: string }>;
+			placeholder?: string;
+			defaultValue?: string;
+			multiline?: boolean;
+		}>;
+	};
+	operation?: "upsert" | "remove" | "reset" | "snapshot";
+	contribution?: { id: string; content: { type: string; text?: string } };
+	contributionId?: string;
 	message?: string;
-	placeholder?: string;
-	prefill?: string;
 	notifyType?: "info" | "warning" | "error";
 	statusKey?: string;
 	statusText?: string;
-	widgetKey?: string;
-	widgetLines?: string[];
 	text?: string;
 }
 
@@ -376,49 +390,51 @@ async function main() {
 
 	function handleExtensionUI(req: ExtensionUIRequest): void {
 		const { id, method } = req;
+		const respond = (interaction: Record<string, unknown>) =>
+			send({
+				type: "extension_ui_response",
+				id,
+				extensionId: req.extensionId,
+				runtimeId: req.runtimeId,
+				sessionId: req.sessionId,
+				clientId: req.clientId,
+				interaction: { schemaVersion: 1, ...interaction },
+			});
 
 		switch (method) {
-			// Dialog methods: replace prompt with interactive component
-			case "select": {
-				showSelectDialog(req.title ?? "Select", req.options ?? [], (value) => {
-					if (value !== undefined) {
-						send({ type: "extension_ui_response", id, value });
-					} else {
-						send({ type: "extension_ui_response", id, cancelled: true });
-					}
-				});
-				break;
-			}
-
-			case "confirm": {
-				const title = req.message ? `${req.title}: ${req.message}` : (req.title ?? "Confirm");
-				showSelectDialog(title, ["Yes", "No"], (value) => {
-					send({ type: "extension_ui_response", id, confirmed: value === "Yes" });
-				});
-				break;
-			}
-
-			case "input": {
-				const title = req.placeholder ? `${req.title} (${req.placeholder})` : (req.title ?? "Input");
-				showInputDialog(title, undefined, (value) => {
-					if (value !== undefined) {
-						send({ type: "extension_ui_response", id, value });
-					} else {
-						send({ type: "extension_ui_response", id, cancelled: true });
-					}
-				});
-				break;
-			}
-
-			case "editor": {
-				const prefill = req.prefill?.replace(/\n/g, " ");
-				showInputDialog(req.title ?? "Editor", prefill, (value) => {
-					if (value !== undefined) {
-						send({ type: "extension_ui_response", id, value });
-					} else {
-						send({ type: "extension_ui_response", id, cancelled: true });
-					}
-				});
+			case "interact": {
+				const field = req.request?.fields[0];
+				if (!field) return;
+				if (field.kind === "choice") {
+					const options = field.options ?? [];
+					showSelectDialog(
+						req.request?.title ?? field.label,
+						options.map((option) => option.label),
+						(value) => {
+							if (value === undefined) return respond({ status: "cancelled", reason: "user" });
+							const selected = options.find((option) => option.label === value);
+							respond({
+								status: "submitted",
+								answers: [
+									{ fieldId: field.id, kind: "choice", selectedOptionIds: selected ? [selected.id] : [] },
+								],
+							});
+						},
+					);
+				} else if (field.kind === "confirm") {
+					showSelectDialog(req.request?.title ?? field.label, ["Yes", "No"], (value) => {
+						if (value === undefined) return respond({ status: "cancelled", reason: "user" });
+						respond({
+							status: "submitted",
+							answers: [{ fieldId: field.id, kind: "confirm", value: value === "Yes" }],
+						});
+					});
+				} else {
+					showInputDialog(req.request?.title ?? field.label, field.defaultValue, (value) => {
+						if (value === undefined) return respond({ status: "cancelled", reason: "user" });
+						respond({ status: "submitted", answers: [{ fieldId: field.id, kind: "text", value }] });
+					});
+				}
 				break;
 			}
 
@@ -438,13 +454,10 @@ async function main() {
 				tui.requestRender();
 				break;
 
-			case "setWidget": {
-				const lines = req.widgetLines;
-				if (lines && lines.length > 0) {
-					outputLog.append(`${MAGENTA}${BOLD}Notification:${RESET} ${DIM}[widget: ${req.widgetKey}]${RESET}`);
-					for (const wl of lines) {
-						outputLog.append(`  ${DIM}${wl}${RESET}`);
-					}
+			case "contribution": {
+				if (req.operation === "upsert" && req.contribution?.content.type === "text") {
+					outputLog.append(`${MAGENTA}${BOLD}Contribution:${RESET} ${DIM}[${req.contribution.id}]${RESET}`);
+					outputLog.append(`  ${DIM}${req.contribution.content.text ?? ""}${RESET}`);
 					tui.requestRender();
 				}
 				break;

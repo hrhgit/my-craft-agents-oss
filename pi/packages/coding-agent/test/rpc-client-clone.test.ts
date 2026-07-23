@@ -137,7 +137,6 @@ describe("RpcClient Pi shell API methods", () => {
 				commands: ["get_capabilities", "query_llm"],
 				features: {
 					hostHooksModule: true,
-					legacyFetchInterceptorModule: true,
 					toolExecutionMetadata: true,
 					hostToolResults: "content",
 					extensionCommandResult: true,
@@ -146,7 +145,6 @@ describe("RpcClient Pi shell API methods", () => {
 				},
 				hostHooks: {
 					moduleEnv: "PI_HOST_HOOKS_MODULE",
-					legacyModuleEnv: "PI_FETCH_INTERCEPTOR_MODULE",
 					exports: ["fetchInterceptor"],
 				},
 			},
@@ -433,7 +431,12 @@ describe("PiRuntimeHandle", () => {
 		privateClient.send = send;
 		privateClient.getData = <T>(response: unknown): T => (response as { data: T }).data;
 
-		const handle = await client.openRuntime({ runtimeId: "runtime-a", cwd: "E:/project", extensionTarget: "pi", inMemory: true });
+		const handle = await client.openRuntime({
+			runtimeId: "runtime-a",
+			cwd: "E:/project",
+			extensionTarget: "pi",
+			inMemory: true,
+		});
 		await handle.getState();
 
 		expect(handle.runtimeId).toBe("runtime-a");

@@ -40,6 +40,21 @@ function createAssistantMessage(text: string, totalTokens: number, timestamp: nu
 	};
 }
 
+function createHistoricalAssistantWithoutUsage(text: string, timestamp: number): AssistantMessage {
+	return {
+		role: "assistant",
+		content: [
+			{ type: "text", text },
+			{ type: "toolCall", id: "historical-tool", name: "read", arguments: { path: "README.md" } },
+		],
+		api: model.api,
+		provider: model.provider,
+		model: model.id,
+		stopReason: "stop",
+		timestamp,
+	} as AssistantMessage;
+}
+
 function createUserMessage(text: string, timestamp: number) {
 	return {
 		role: "user" as const,
@@ -136,6 +151,46 @@ describe("AgentSession.getSessionStats", () => {
 			expect(stats.contextUsage).toBeDefined();
 			expect(stats.contextUsage?.tokens).toBe(25_000);
 			expect(stats.contextUsage?.percent).toBe((25_000 / model.contextWindow) * 100);
+		} finally {
+			session.dispose();
+		}
+	});
+
+	it("counts historical assistants and tool calls while omitting missing usage telemetry", () => {
+		const { session, sessionManager } = createSession();
+
+		try {
+			sessionManager.appendMessage(createUserMessage("first", 1));
+			sessionManager.appendMessage(createHistoricalAssistantWithoutUsage("historical", 2));
+			sessionManager.appendMessage(createAssistantMessage("measured", 25, 3));
+			syncAgentMessages(session, sessionManager);
+
+			const stats = session.getSessionStats();
+			expect(stats.assistantMessages).toBe(2);
+			expect(stats.toolCalls).toBe(1);
+			expect(stats.tokens.total).toBe(25);
+			expect(stats.cost).toBe(0);
+		} finally {
+			session.dispose();
+		}
+	});
+
+	it("keeps post-compaction context usage unknown when the latest assistant lacks usage", () => {
+		const { session, sessionManager } = createSession();
+
+		try {
+			sessionManager.appendMessage(createUserMessage("first", 1));
+			sessionManager.appendMessage(createAssistantMessage("response1", 195_000, 2));
+			const keptUserId = sessionManager.appendMessage(createUserMessage("second", 3));
+			sessionManager.appendCompaction("summary", keptUserId, 195_000);
+			sessionManager.appendMessage(createHistoricalAssistantWithoutUsage("historical", 4));
+			syncAgentMessages(session, sessionManager);
+
+			expect(session.getContextUsage()).toEqual({
+				tokens: null,
+				contextWindow: model.contextWindow,
+				percent: null,
+			});
 		} finally {
 			session.dispose();
 		}

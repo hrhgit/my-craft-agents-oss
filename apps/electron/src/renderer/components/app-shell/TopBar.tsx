@@ -50,7 +50,7 @@ interface TopBarProps {
   onToggleSidebar: () => void
   onToggleFocusMode: () => void
   onAddSessionPanel: () => void
-  onAddBrowserPanel: () => void
+  onAddBrowserPanel?: () => void
   onTogglePanelLayout: () => void
   isCanvasLayoutFocused: boolean
   isWorkspaceCanvasActive: boolean
@@ -216,9 +216,11 @@ export function TopBar({
         {isWorkspaceCanvasActive && rightExtensionSlot && <div className="titlebar-no-drag flex h-8 max-w-[min(240px,20vw)] min-w-0 items-center">{rightExtensionSlot}</div>}
         {isWorkspaceCanvasActive && (
         <>
-          <div className="min-w-0">
-            <BrowserTabStrip activeSessionId={activeSessionId} maxVisibleBadges={maxVisibleBrowserBadges} />
-          </div>
+          {onAddBrowserPanel && (
+            <div className="min-w-0">
+              <BrowserTabStrip activeSessionId={activeSessionId} maxVisibleBadges={maxVisibleBrowserBadges} />
+            </div>
+          )}
           <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <TopBarButton aria-label={t("menu.addPanelMenu")} className="ml-1 h-[26px] w-[26px] rounded-lg">
@@ -230,10 +232,12 @@ export function TopBar({
               <SquarePenRounded className="h-3.5 w-3.5" />
               {t("session.newSessionInPanel")}
             </StyledDropdownMenuItem>
-            <StyledDropdownMenuItem onClick={onAddBrowserPanel}>
-              <Icons.Globe className="h-3.5 w-3.5" />
-              {t("browser.newWindow")}
-            </StyledDropdownMenuItem>
+            {onAddBrowserPanel && (
+              <StyledDropdownMenuItem onClick={onAddBrowserPanel}>
+                <Icons.Globe className="h-3.5 w-3.5" />
+                {t("browser.newWindow")}
+              </StyledDropdownMenuItem>
+            )}
           </StyledDropdownMenuContent>
           </DropdownMenu>
 

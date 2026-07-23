@@ -12,8 +12,8 @@ export {
 	type ModelInfo,
 	type PiChildSessionInfo,
 	PiRuntimeHandle,
-	RpcClient,
 	type RpcAgentEvent,
+	RpcClient,
 	type RpcClientEvent,
 	type RpcClientEventListener,
 	type RpcClientOptions,
@@ -24,7 +24,6 @@ export {
 export { parseRpcHostUICapabilities, type RpcModeOptions, runRpcMode } from "./rpc/rpc-mode.ts";
 export {
 	PI_HOST_HOOKS_MODULE_ENV,
-	PI_LEGACY_FETCH_INTERCEPTOR_MODULE_ENV,
 	PI_RPC_COMMANDS,
 	PI_RPC_PROTOCOL_VERSION,
 	PI_RPC_UI_CAPABILITIES_ENV,

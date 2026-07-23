@@ -227,7 +227,7 @@ describe("SessionManager custom flat session directory", () => {
 		rmSync(tempDir, { recursive: true, force: true });
 	});
 
-	function createPersistedSession(cwd: string, label: string): string {
+	async function createPersistedSession(cwd: string, label: string): Promise<string> {
 		const session = SessionManager.create(cwd, tempDir);
 		session.appendMessage({ role: "user", content: label, timestamp: Date.now() });
 		session.appendMessage({
@@ -247,6 +247,7 @@ describe("SessionManager custom flat session directory", () => {
 			stopReason: "stop",
 			timestamp: Date.now(),
 		});
+		await session.flush();
 		const sessionFile = session.getSessionFile();
 		if (!sessionFile) {
 			throw new Error("Expected persisted session file");
@@ -255,9 +256,9 @@ describe("SessionManager custom flat session directory", () => {
 	}
 
 	it("scopes current-folder APIs by cwd while listing all flat sessions", async () => {
-		const sessionA = createPersistedSession(projectA, "from A");
+		const sessionA = await createPersistedSession(projectA, "from A");
 		await new Promise((r) => setTimeout(r, 10));
-		const sessionB = createPersistedSession(projectB, "from B");
+		const sessionB = await createPersistedSession(projectB, "from B");
 
 		const currentA = await SessionManager.list(projectA, tempDir);
 		expect(currentA.map((session) => session.path)).toEqual([sessionA]);
@@ -282,7 +283,7 @@ describe("SessionManager session file locking", () => {
 		rmSync(tempDir, { recursive: true, force: true });
 	});
 
-	it("clears stale write locks before first persisted assistant message", () => {
+	it("clears stale write locks before first persisted assistant message", async () => {
 		const session = SessionManager.create(tempDir, tempDir);
 		const sessionFile = session.getSessionFile();
 		if (!sessionFile) {
@@ -311,6 +312,7 @@ describe("SessionManager session file locking", () => {
 			stopReason: "stop",
 			timestamp: Date.now(),
 		});
+		await session.flush();
 
 		const content = readFileSync(sessionFile, "utf-8");
 		expect(content).toContain('"type":"session"');

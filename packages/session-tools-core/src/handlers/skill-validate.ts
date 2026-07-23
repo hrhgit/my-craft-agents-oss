@@ -4,15 +4,10 @@
  * Validates a skill's SKILL.md file for correct format and required fields.
  * Resolves skills from both tiers: project > global.
  *
- * The handler resolves the session's workingDirectory on demand from the
- * persisted session.jsonl header — no construction-time propagation needed.
- * If resolution fails, project-tier skills are silently skipped with a warning.
+ * Project-tier skills always resolve from the canonical workspace root.
  */
 
 import { join } from 'node:path';
-import { createPiSkillResolver } from '@mortise/shared/pi/skill-resolver';
-import { readSessionHeader, sanitizeSessionId, tryGetSessionFilePath } from '@mortise/shared/sessions';
-import { expandPath } from '@mortise/shared/utils';
 import type { SessionToolContext } from '../context.ts';
 import type { ToolResult } from '../types.ts';
 import { errorResponse } from '../response.ts';
@@ -26,23 +21,15 @@ export interface SkillValidateArgs {
   skillSlug: string;
 }
 
-function resolveSessionWorkingDirectory(workspacePath: string, sessionId: string): string | undefined {
-  const sessionFile = tryGetSessionFilePath(workspacePath, sanitizeSessionId(sessionId));
-  if (!sessionFile) return undefined;
-  const workingDirectory = readSessionHeader(sessionFile)?.workingDirectory;
-  return workingDirectory ? expandPath(workingDirectory) : undefined;
-}
-
 /**
  * Resolve the SKILL.md path by checking both tiers (project > global).
  * Returns the first match, or null if not found anywhere.
  */
 function resolveSkillMdPath(
   ctx: SessionToolContext,
-  slug: string,
-  workingDirectory: string | undefined
+  slug: string
 ): { path: string; tier: string } | null {
-  const tiers = createPiSkillResolver(workingDirectory).getSkillPaths();
+  const tiers = getSkillRoots(ctx);
   for (let i = tiers.length - 1; i >= 0; i--) {
     const tier = tiers[i]!;
     const skillPath = join(tier.dir, slug, 'SKILL.md');
@@ -54,14 +41,24 @@ function resolveSkillMdPath(
   return null;
 }
 
+function getSkillRoots(ctx: SessionToolContext): Array<{ dir: string; tier: 'global' | 'project' }> {
+  const roots = ctx.skillPaths?.filter(Boolean);
+  const paths = roots?.length ? roots : (ctx.skillsPath ? [ctx.skillsPath] : []);
+
+  return paths.map((dir, index) => ({
+    dir,
+    tier: index === 0 ? 'global' : 'project',
+  }));
+}
+
 /**
  * Handle the skill_validate tool call.
  *
  * 1. Validate slug format
- * 2. Resolve workingDirectory from ctx or session header (graceful fallback)
+ * 2. Resolve project skills from the workspace root
  * 3. Resolve SKILL.md from both tiers (project > global)
  * 4. Read and validate content (frontmatter + body)
- * 5. Return validation result with warnings if project tier was skipped
+ * 5. Return the validation result
  */
 export async function handleSkillValidate(
   ctx: SessionToolContext,
@@ -75,26 +72,17 @@ export async function handleSkillValidate(
     return errorResponse(formatValidationResult(slugResult));
   }
 
-  // Resolve workingDirectory: ctx first (if factories ever populate it), then session header
-  const workingDirectory = ctx.workingDirectory
-    ?? resolveSessionWorkingDirectory(ctx.workspacePath, ctx.sessionId);
-
   // Resolve SKILL.md from both tiers (project > global)
-  const resolved = resolveSkillMdPath(ctx, skillSlug, workingDirectory);
+  const resolved = resolveSkillMdPath(ctx, skillSlug);
   if (!resolved) {
-    const searchedPaths = createPiSkillResolver(workingDirectory)
-      .getSkillPaths()
+    const searchedPaths = getSkillRoots(ctx)
       .slice()
       .reverse()
       .map((tier) => `  - ${join(tier.dir, skillSlug, 'SKILL.md')} (${tier.tier})`)
       .join('\n');
 
-    const warning = !workingDirectory
-      ? '\n\nNote: Project-level skills (.pi/skills/) were not checked — working directory could not be resolved.'
-      : '';
-
     return errorResponse(
-      `SKILL.md not found for skill "${skillSlug}". Searched:\n${searchedPaths}${warning}\n\nCreate it with YAML frontmatter.`
+      `SKILL.md not found for skill "${skillSlug}". Searched:\n${searchedPaths}\n\nCreate it with YAML frontmatter.`
     );
   }
 
@@ -112,15 +100,8 @@ export async function handleSkillValidate(
   const tierInfo = `Validated from ${resolved.tier} tier: ${resolved.path}`;
   const formatted = formatValidationResult(result);
 
-  // If workingDirectory couldn't be resolved, warn that project tier was skipped
-  const warnings: string[] = [];
-  if (!workingDirectory) {
-    warnings.push('Note: Project-level skills (.pi/skills/) were not checked — working directory could not be resolved.');
-  }
-  const warningText = warnings.length > 0 ? '\n\n' + warnings.join('\n') : '';
-
   return {
-    content: [{ type: 'text', text: `${tierInfo}\n\n${formatted}${warningText}` }],
+    content: [{ type: 'text', text: `${tierInfo}\n\n${formatted}` }],
     isError: !result.valid, // warnings don't make it an error
   };
 }

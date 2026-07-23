@@ -187,8 +187,6 @@ import type {
   BrowserEmbedBounds,
   FileTextWriteResult,
   DeepLinkNavigation,
-  TestAutomationPayload,
-  TestAutomationResult,
   WindowCloseRequest,
   DirectoryListingResult,
   WorkspaceDirectoryListing,
@@ -201,9 +199,12 @@ import type {
   ImportRemoteSessionTransferResult,
   PiProjectionEventV1,
   PiProjectionSnapshotV1,
+  PlatformCapabilitySnapshotV1,
 } from '@mortise/shared/protocol'
 
 export interface ElectronAPI {
+  /** Immutable, versioned capability contract for the active client platform. */
+  readonly platformCapabilities: PlatformCapabilitySnapshotV1
   /** Development-only agent UI validation bridge. Absent in production builds. */
   uiValidation?: import('./ui-validation-state-bridge').UiValidationRendererBridgeApi
   // Session management
@@ -437,7 +438,7 @@ export interface ElectronAPI {
   getPiProviderBaseUrl(provider: string): Promise<string | undefined>
   getPiProviderModels(provider: string): Promise<{ models: Array<{ id: string; name: string; costInput: number; costOutput: number; contextWindow: number; reasoning: boolean }>; totalCount: number }>
 
-  // Pi global config (~/.pi/agent/) — pure Pi + custom provider mode
+  // Pi global config (~/.mortise/agent/) — pure Pi + custom provider mode
   getPiGlobalProviders(): Promise<PiGlobalProviderForDisplay[]>
   getPiGlobalSettings(): Promise<PiGlobalSettings>
   getPiGlobalProvider(key: string): Promise<PiGlobalProvider | null>
@@ -486,7 +487,7 @@ export interface ElectronAPI {
   onDefaultPermissionsChanged(callback: () => void): () => void
 
   // Skills
-  getSkills(workspaceId: string, workingDirectory?: string): Promise<LoadedSkill[]>
+  getSkills(workspaceId: string): Promise<LoadedSkill[]>
   getSkillFiles?(workspaceId: string, skillSlug: string): Promise<SkillFile[]>
   discoverSkills(workspaceId: string): Promise<DiscoveredSkill[]>
   importSkills(workspaceId: string, sourcePaths: string[]): Promise<SkillImportBatchResult>
@@ -556,10 +557,9 @@ export interface ElectronAPI {
   getPiExtensionStates(): Promise<Record<string, boolean>>
   setPiExtensionEnabled(name: string, enabled: boolean): Promise<import('@mortise/shared/config').PiExtensionReloadResult>
 
-  // Pi 扩展事件桥接：监听 extension_* / remoteui_request 事件
+  // Pi extension event bridge for contributions, interactions, and lifecycle events.
   onExtensionEvent(callback: (event: import('@mortise/shared/agent/backend/types').ExtensionBridgeEvent) => void): () => void
-  // 回复 remoteui:request（payload=null 表示取消）
-  sendRemoteUIResponse(sessionId: string, requestId: string, payload: unknown | null, reason?: 'cancelled' | 'no_remote' | 'disconnected'): Promise<boolean>
+  respondToExtensionInteraction(sessionId: string, requestId: string, response: import('@mortise/shared/protocol').ExtensionInteractionResponseV1): Promise<boolean>
   invokeExtensionCommand(sessionId: string, commandId: string, args?: string | Record<string, unknown>, ownerExtensionId?: string): Promise<import('@mortise/core/types').ExtensionCommandResult>
   getExtensionCommands(sessionId: string): Promise<import('@mortise/shared/agent/backend/types').PiExtensionCommand[]>
   /** Preload-authenticated, source-build-only capability. Never true in packaged/production builds. */
@@ -646,19 +646,7 @@ export interface ElectronAPI {
   setMidStreamBehavior(behavior: MidStreamBehavior): Promise<{ success: boolean; error?: string }>
 
   // Automations
-  getAutomations(workspaceId: string): Promise<unknown>
   automationCommand(input: unknown): Promise<unknown>
-
-  // Automation testing (manual trigger)
-  testAutomation(payload: TestAutomationPayload): Promise<TestAutomationResult>
-
-  // Automation state management
-  setAutomationEnabled(workspaceId: string, eventName: string, matcherIndex: number, enabled: boolean): Promise<void>
-  duplicateAutomation(workspaceId: string, eventName: string, matcherIndex: number): Promise<void>
-  deleteAutomation(workspaceId: string, eventName: string, matcherIndex: number): Promise<void>
-  getAutomationHistory(workspaceId: string, automationId: string, limit?: number): Promise<Array<{ id: string; ts: number; ok: boolean; sessionId?: string; prompt?: string; error?: string; webhook?: { method: string; url: string; statusCode: number; durationMs: number; attempts?: number; error?: string; responseBody?: string } }>>
-  getAutomationLastExecuted(workspaceId: string): Promise<Record<string, number>>
-  replayAutomation(workspaceId: string, automationId: string, eventName: string): Promise<{ results: Array<{ type: string; url: string; statusCode: number; success: boolean; error?: string; duration: number }> }>
 
   // Automations change listener
   onAutomationsChanged(callback: (workspaceId: string) => void): () => void
@@ -673,7 +661,16 @@ export interface ElectronAPI {
   // Messaging gateway — workspaceId is taken from the client handshake (ctx.workspaceId)
   getMessagingConfig(): Promise<{
     enabled: boolean
-    platforms: Record<string, { enabled: boolean; accessMode?: MessagingPlatformAccessMode; owners?: MessagingPlatformOwnerInfo[] } | undefined>
+    platforms: {
+      telegram?: {
+        enabled: boolean
+        accessMode: MessagingPlatformAccessMode
+        owners?: MessagingPlatformOwnerInfo[]
+        supergroup?: { chatId: string; title: string; capturedAt: number }
+      }
+      whatsapp?: { enabled: boolean; selfChatMode?: boolean }
+      lark?: { enabled: boolean; domain?: 'lark' | 'feishu' }
+    }
     runtime: Record<string, MessagingPlatformRuntimeInfo | undefined>
   } | null>
   updateMessagingConfig(config: Record<string, unknown>): Promise<void>
@@ -683,7 +680,7 @@ export interface ElectronAPI {
   saveLarkCredentials(creds: { appId: string; appSecret: string; domain: 'lark' | 'feishu' }): Promise<void>
   disconnectMessagingPlatform(platform: string): Promise<void>
   forgetMessagingPlatform(platform: string): Promise<void>
-  getMessagingBindings(): Promise<Array<{ id: string; workspaceId: string; sessionId: string; platform: string; channelId: string; threadId?: number; channelName?: string; enabled: boolean; createdAt: number; accessMode?: MessagingBindingAccessMode; allowedSenderIds?: string[] }>>
+  getMessagingBindings(): Promise<Array<{ id: string; workspaceId: string; sessionId: string; platform: string; channelId: string; threadId?: number; channelName?: string; enabled: boolean; createdAt: number; accessMode: MessagingBindingAccessMode; allowedSenderIds: string[] }>>
   generateMessagingPairingCode(sessionId: string, platform: string): Promise<{ code: string; expiresAt: number; botUsername?: string }>
   /** Telegram supergroup pairing — returns a code typed in the supergroup to capture its chatId. */
   generateMessagingSupergroupCode(platform: string): Promise<{ code: string; expiresAt: number; botUsername?: string }>

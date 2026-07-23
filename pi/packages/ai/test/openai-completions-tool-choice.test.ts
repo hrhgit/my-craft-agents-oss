@@ -397,7 +397,9 @@ describe("openai-completions tool_choice", () => {
 		).result();
 
 		expect(response.stopReason).toBe("error");
-		expect(response.errorMessage).toBe("Provider finish_reason: network_error");
+		expect(response.errorMessage).toBe(
+			"Provider finish_reason: network_error (provider reported a network or upstream transport failure)",
+		);
 	});
 
 	it("ignores null stream chunks from openai-compatible providers", async () => {

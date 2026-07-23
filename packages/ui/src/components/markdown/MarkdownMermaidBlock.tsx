@@ -1,5 +1,4 @@
 import * as React from 'react'
-import { renderMermaidSVG } from 'beautiful-mermaid'
 import { Maximize2 } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import { CodeBlock } from './CodeBlock'
@@ -30,6 +29,10 @@ import { useTranslation } from 'react-i18next'
 // up to at least this height to keep text readable, with horizontal scroll.
 const MIN_READABLE_HEIGHT = 280
 
+export function getMermaidReservedMinHeight(minHeight?: number): number {
+  return minHeight ?? MIN_READABLE_HEIGHT
+}
+
 // Fade zone size for scroll indicators (px)
 const FADE_SIZE = 32
 
@@ -58,31 +61,56 @@ interface MarkdownMermaidBlockProps {
   minHeight?: number
 }
 
+interface MermaidRenderResult {
+  source: string
+  svg: string | null
+  error: Error | null
+}
+
+export function selectCurrentMermaidRender(
+  rendered: MermaidRenderResult | null,
+  code: string,
+): MermaidRenderResult | null {
+  return rendered?.source === code ? rendered : null
+}
+
 export function MarkdownMermaidBlock({ code, className, showExpandButton = true, tapToOpen = true, minHeight }: MarkdownMermaidBlockProps) {
   const { t } = useTranslation()
-  // Render synchronously — no flash between CodeBlock and SVG.
-  // Colors are CSS variable references so the SVG inherits from the app's theme
-  // via CSS cascade. Theme switches apply automatically without re-rendering.
-  const { svg, error } = React.useMemo(() => {
-    try {
-      return {
-        svg: renderMermaidSVG(normalizeMermaidSource(code), {
-          bg: 'var(--background)',
-          fg: 'var(--foreground)',
-          accent: 'var(--accent)',
-          line: 'var(--foreground-30)',
-          muted: 'var(--muted-foreground)',
-          surface: 'var(--foreground-3)',
-          border: 'var(--foreground-20)',
-          transparent: true,
-          interactive: true,
-        }),
-        error: null,
+  const [rendered, setRendered] = React.useState<MermaidRenderResult | null>(null)
+
+  React.useEffect(() => {
+    let active = true
+    void import('beautiful-mermaid').then(({ renderMermaidSVG }) => {
+      if (!active) return
+      try {
+        setRendered({
+          source: code,
+          svg: renderMermaidSVG(normalizeMermaidSource(code), {
+            bg: 'var(--background)',
+            fg: 'var(--foreground)',
+            accent: 'var(--accent)',
+            line: 'var(--foreground-30)',
+            muted: 'var(--muted-foreground)',
+            surface: 'var(--foreground-3)',
+            border: 'var(--foreground-20)',
+            transparent: true,
+            interactive: true,
+          }),
+          error: null,
+        })
+      } catch (error) {
+        setRendered({ source: code, svg: null, error: error instanceof Error ? error : new Error(String(error)) })
       }
-    } catch (err) {
-      return { svg: null, error: err instanceof Error ? err : new Error(String(err)) }
-    }
+    }).catch(error => {
+      if (active) setRendered({ source: code, svg: null, error: error instanceof Error ? error : new Error(String(error)) })
+    })
+    return () => { active = false }
   }, [code])
+
+  const currentRender = selectCurrentMermaidRender(rendered, code)
+  const svg = currentRender?.svg ?? null
+  const error = currentRender?.error ?? null
+  const reservedMinHeight = getMermaidReservedMinHeight(minHeight)
 
   const [isFullscreen, setIsFullscreen] = React.useState(false)
   const { scrollRef, maskImage } = useScrollFade(FADE_SIZE)
@@ -164,6 +192,16 @@ export function MarkdownMermaidBlock({ code, className, showExpandButton = true,
     }
   }, [svg, containerWidth])
 
+  if (!currentRender) {
+    return (
+      <div
+        className={cn('rounded-[6px] bg-muted/20', className)}
+        style={{ minHeight: `${reservedMinHeight}px` }}
+        aria-busy="true"
+      />
+    )
+  }
+
   // On error, fall back to a plain code block showing the mermaid source
   if (error) {
     return <CodeBlock code={code} language="mermaid" mode="full" className={className} />
@@ -175,7 +213,7 @@ export function MarkdownMermaidBlock({ code, className, showExpandButton = true,
   }
 
   const scaledDims = getScaledDimensions()
-  const minHeightStyle = minHeight != null ? { minHeight: `${minHeight}px` } : undefined
+  const minHeightStyle = { minHeight: `${reservedMinHeight}px` }
 
   // Scaling mode: when dimensions are provided OR scale !== 1
   // This is separate from needsScroll — we may scale to fit without scrolling

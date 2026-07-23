@@ -368,7 +368,14 @@ export default function (pi) {
 		const authStorage = AuthStorage.inMemory();
 		authStorage.setRuntimeApiKey("startup-provider", "startup-key");
 		const settingsManager = SettingsManager.create(tempDir, tempDir);
-		settingsManager.setExtensionPaths([{ path: "extensions/startup-provider.ts", activation: "startup" }]);
+		settingsManager.setExtensionPaths([
+			{
+				id: "startup-provider",
+				path: "extensions/startup-provider.ts",
+				targets: ["pi"],
+				activation: "startup",
+			},
+		]);
 
 		const services = await createAgentSessionServices({
 			cwd: tempDir,

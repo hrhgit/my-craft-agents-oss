@@ -44,8 +44,7 @@ import { ConfigWatcherManager, type ConfigWatcherManagerCallbacks } from './core
 import { UsageTracker, type UsageUpdate } from './core/usage-tracker.ts';
 import { PrerequisiteManager } from './core/prerequisite-manager.ts';
 
-// Automation system for agent events
-import type { AgentEvent as AutomationAgentEvent, AgentAutomationInput } from '../automations/types.ts';
+import type { AutomationAgentEvent, AgentAutomationInput } from './backend/types.ts';
 import { getSessionPlansPath, getSessionDataPath, getSessionPath } from '../sessions/storage.ts';
 import { getMiniAgentSystemPrompt } from '../prompts/system.ts';
 import { buildTitlePrompt, buildRegenerateTitlePrompt, validateTitle } from '../utils/title-generator.ts';
@@ -84,7 +83,6 @@ export interface SpawnSessionRequest {
   model?: string;
   permissionMode?: PermissionMode;
   thinkingLevel?: ThinkingLevel;
-  workingDirectory?: string;
   attachments?: Array<{ path: string; name?: string }>;
 }
 
@@ -151,7 +149,7 @@ export abstract class BaseAgent implements AgentBackend {
   // Configuration (protected for subclass access)
   // ============================================================
   protected config: BackendConfig;
-  protected workingDirectory: string;
+  protected workspaceRoot: string;
   protected _sessionId: string;
 
   // ============================================================
@@ -194,8 +192,7 @@ export abstract class BaseAgent implements AgentBackend {
 
   constructor(config: BackendConfig, defaultModel: string, contextWindow?: number) {
     this.config = config;
-    // Use session's workingDirectory if set (user-changeable), fallback to workspace root
-    this.workingDirectory = config.session?.workingDirectory ?? config.workspace.rootPath ?? process.cwd();
+    this.workspaceRoot = config.workspace.rootPath;
     this._sessionId = config.session?.mortiseId || `agent-${Date.now()}`;
     this._model = config.model || defaultModel;
     this._thinkingLevel = normalizeThinkingLevel(config.thinkingLevel) ?? DEFAULT_THINKING_LEVEL;
@@ -205,7 +202,7 @@ export abstract class BaseAgent implements AgentBackend {
     this.permissionManager = new PermissionManager({
       workspaceId: config.workspace.id,
       sessionId: this._sessionId,
-      workingDirectory: this.workingDirectory,
+      workspaceRootPath: this.workspaceRoot,
       plansFolderPath: getSessionPlansPath(config.workspace.rootPath, this._sessionId),
       dataFolderPath: getSessionDataPath(config.workspace.rootPath, this._sessionId),
     });
@@ -397,20 +394,6 @@ export abstract class BaseAgent implements AgentBackend {
    */
   resetPrerequisiteState(): void {
     this.prerequisiteManager.resetReadState();
-  }
-
-  /**
-   * Update the working directory.
-   * Also updates PermissionManager and persists to session config.
-   */
-  updateWorkingDirectory(path: string): void {
-    this.workingDirectory = path;
-    // Persist to session config for storage and consistency across session services.
-    if (this.config.session) {
-      this.config.session.workingDirectory = path;
-    }
-    this.permissionManager.updateWorkingDirectory(path);
-    this.debug(`Working directory updated: ${path}`);
   }
 
   /**
@@ -673,9 +656,8 @@ ${formattedMessages}
     cleanMessage: string;
     missingSkills: string[];
   } {
-    const workspaceRoot = this.config.workspace?.rootPath ?? this.workingDirectory;
-    const projectRoot = this.config.session?.workingDirectory;
-    const skills = loadAllSkills(workspaceRoot, projectRoot);
+    const workspaceRoot = this.workspaceRoot;
+    const skills = loadAllSkills(workspaceRoot, workspaceRoot);
     const skillSlugs = skills.map(s => s.slug);
 
     this.debug(`[extractSkillPaths] Available skills: ${skillSlugs.join(', ')}`);
@@ -706,8 +688,7 @@ ${formattedMessages}
     // becomes "find the bug in [Mentioned skill: Datadog API (slug: datadog-api)]"
     const skillNames = new Map(skills.map(s => [s.slug, s.metadata.name]));
     const withSkills = resolveSkillMentions(message, skillNames);
-    const workDir = this.config.session?.workingDirectory ?? this.workingDirectory;
-    const resolved = resolveFileMentions(withSkills, workDir).trim();
+    const resolved = resolveFileMentions(withSkills, workspaceRoot).trim();
 
     // If user sent only skill mentions with no other text, add a directive
     const cleanMessage = (!resolved && skillPaths.size > 0)

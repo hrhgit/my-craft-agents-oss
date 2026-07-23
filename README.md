@@ -358,8 +358,8 @@ Configuration is stored at `~/.mortise/`:
         └── statuses/        # Status configuration
 ```
 
-Credentials are stored at `~/.pi/agent/auth.json`. Session data (JSONL) is stored at `~/.pi/agent/sessions/`.
-Project skills are stored at `<workspace>/.pi/skills/`; global skills are stored at `~/.pi/agent/skills/`.
+Credentials are stored at `~/.mortise/agent/auth.json`. Session data (JSONL) is stored at `~/.mortise/agent/sessions/`.
+Project skills are stored at `<workspace>/.mortise/skills/`; Mortise global skills are stored at `~/.mortise/agent/skills/`.
 
 Legacy `~/.mortise/credentials.enc` files are not silently imported into `auth.json`; upgrade migration backs up and clears the old path. Re-enter API keys or re-authenticate OAuth connections after upgrading from a pre-unification build.
 
@@ -424,7 +424,7 @@ mortise://action/new-chat                  # Create new session
 | Desktop | [Electron](https://www.electronjs.org/) + React |
 | UI | [shadcn/ui](https://ui.shadcn.com/) + Tailwind CSS v4 |
 | Build | esbuild (main) + Vite (renderer) |
-| Credentials | pi auth.json (~/.pi/agent/auth.json, plaintext JSON, 0600 permissions) |
+| Credentials | Pi auth store (`~/.mortise/agent/auth.json`, plaintext JSON, 0600 permissions) |
 
 ## Troubleshooting
 

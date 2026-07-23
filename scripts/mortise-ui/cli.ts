@@ -11,7 +11,7 @@ import {
   type UiValidationErrorPayload,
   type UiValidationResponseEnvelope,
 } from '@mortise/shared/ui-validation'
-import { MortiseUiStartError, DEFAULT_MORTISE_UI_RUN_ROOT, DEFAULT_MORTISE_UI_START_WAIT_MS, appendRunHistory, getMortiseUiRunStatus, isMortiseUiRunProcessAlive, listMortiseUiRuns, pruneMortiseUiRuns, readRunManifest, recordMortiseUiStartFailure, resolveRunDir, startMortiseUiRun, stopMortiseUiRunDetailed, updateRunManifest } from './controller.ts'
+import { MortiseUiStartError, DEFAULT_MORTISE_UI_RUN_ROOT, DEFAULT_MORTISE_UI_START_WAIT_MS, appendRunHistory, getMortiseUiRunStatus, isMortiseUiRunProcessAlive, listMortiseUiRuns, pruneMortiseUiRuns, readRunManifest, recordMortiseUiStartFailure, resolveRunDir, restartMortiseUiRun, startMortiseUiRun, stopMortiseUiRunDetailed, updateRunManifest } from './controller.ts'
 import { MortiseUiClientError, requestMortiseUiHost } from './client.ts'
 import { MORTISE_UI_PROTOCOL_VERSION, type MortiseUiArtifactManifest, type MortiseUiProfileMode, type MortiseUiRunManifest, type MortiseUiSurface, type MortiseUiWindowMode } from './protocol.ts'
 import { redactValue } from './redaction.ts'
@@ -45,7 +45,7 @@ function output(value: unknown): void { process.stdout.write(`${JSON.stringify(v
 
 function help(): void {
   process.stdout.write('AI workflow additions:\n  mortise-ui capabilities relevant [--run <id-or-label>] [--json]\n  Default responses disclose only information needed for the current decision and point to exact detail commands. Pass --full-observation for raw semantic state, --full-evidence for complete evidence manifests, or use runs inspect for lifecycle internals.\n\n')
-  process.stdout.write(`mortise-ui - AI-facing Mortise UI validation assistant\n\nUsage:\n  mortise-ui fixture schema [--json]\n  mortise-ui start [--label <semantic-label>] [--surface electron|webui] [--adapter-command-json '["bun","..."]'] [--profile fixture|isolated|clone]\n                 [--window-mode foreground|background] [--fixture <fixture.json>] [--extension <directory>]...\n                 [--scenario <id>] [--scenario-params <json>] [--wait-ms <1..600000>] [--no-wait] [--full]\n                 [--source-mortise-profile <path> --source-pi-profile <path>] [--json]\n  mortise-ui runs list [--limit <count> | --all] [--run-root <path>] [--json]\n  mortise-ui runs inspect|resume|history --run <id-or-label> [--run-root <path>] [--json]\n  mortise-ui runs prune [--older-than-hours <hours>] [--keep <count>] [--apply] [--run-root <path>] [--json]\n  mortise-ui resume [--run <id-or-label>] [--run-root <path>] [--json]\n  mortise-ui status [--run <id-or-label>] [--run-root <path>] [--full] [--json]\n  mortise-ui capabilities list [--kind route|scenario|action] [--run <id-or-label>] [--json]\n  mortise-ui capabilities describe --kind route|scenario|action --id <id> [--run <id-or-label>] [--json]\n  mortise-ui open|snapshot|action|wait|assert|windows|screenshot|logs|resize|native|window|browser-key\n                 [--params <json> | --params-file <path>] [--run <id-or-label>] [--json]\n  mortise-ui scenario apply|reset [--id <id>] [--params <json>] [--run <id-or-label>] [--json]\n  mortise-ui clock advance --ms <milliseconds> [--run <id-or-label>] [--json]\n  mortise-ui fault set|clear|status [--params <json>] [--run <id-or-label>] [--json]\n  mortise-ui evidence [--params <json>] [--run <id-or-label>] [--json]\n  mortise-ui request <command> [--params <json>] [--run <id-or-label>] [--json]\n  mortise-ui stop [--run <id-or-label>] [--full] [--json]\n\nSnapshot and action commands include an AI briefing, immediately actionable targets, and contextual next actions. Action automatically observes the settled UI. Runs retain a bounded activity history so another AI context can resume the workflow. All commands emit one V1 JSON response envelope. Host requests accept --timeout-ms <1..600000>.\n`)
+  process.stdout.write(`mortise-ui - AI-facing Mortise UI validation assistant\n\nUsage:\n  mortise-ui fixture schema [--json]\n  mortise-ui start [--label <semantic-label>] [--surface electron|webui] [--adapter-command-json '["bun","..."]'] [--profile fixture|isolated|clone]\n                 [--window-mode foreground|background] [--fixture <fixture.json>] [--extension <directory>]...\n                 [--scenario <id>] [--scenario-params <json>] [--wait-ms <1..600000>] [--no-wait] [--full]\n                 [--source-mortise-profile <path>] [--json]\n  mortise-ui runs list [--limit <count> | --all] [--run-root <path>] [--json]\n  mortise-ui runs inspect|resume|history --run <id-or-label> [--run-root <path>] [--json]\n  mortise-ui runs prune [--older-than-hours <hours>] [--keep <count>] [--apply] [--run-root <path>] [--json]\n  mortise-ui resume [--run <id-or-label>] [--run-root <path>] [--json]\n  mortise-ui status [--run <id-or-label>] [--run-root <path>] [--full] [--json]\n  mortise-ui capabilities list [--kind route|scenario|action] [--run <id-or-label>] [--json]\n  mortise-ui capabilities describe --kind route|scenario|action --id <id> [--run <id-or-label>] [--json]\n  mortise-ui open|snapshot|action|wait|assert|windows|screenshot|logs|resize|native|window|browser-key\n                 [--params <json> | --params-file <path>] [--run <id-or-label>] [--json]\n  mortise-ui scenario apply|reset [--id <id>] [--params <json>] [--run <id-or-label>] [--json]\n  mortise-ui clock advance --ms <milliseconds> [--run <id-or-label>] [--json]\n  mortise-ui fault set|clear|status [--params <json>] [--run <id-or-label>] [--json]\n  mortise-ui evidence [--params <json>] [--run <id-or-label>] [--json]\n  mortise-ui request <command> [--params <json>] [--run <id-or-label>] [--json]\n  mortise-ui stop [--run <id-or-label>] [--full] [--json]\n\nSnapshot and action commands include an AI briefing, immediately actionable targets, and contextual next actions. Action automatically observes the settled UI. Runs retain a bounded activity history so another AI context can resume the workflow. All commands emit one V1 JSON response envelope. Host requests accept --timeout-ms <1..600000>.\n`)
 }
 
 function jsonOption(args: string[], name: string, fallback: Record<string, unknown> = {}): Record<string, unknown> {
@@ -199,7 +199,6 @@ export async function main(argv = process.argv): Promise<number> {
       let manifest = await startMortiseUiRun({
         surface, label, profileMode, windowMode, adapterCommand, runRoot,
         sourceMortiseConfigDir: option(args, '--source-mortise-profile'),
-        sourcePiAgentDir: option(args, '--source-pi-profile'),
         extensionPaths: options(args, '--extension'),
         waitForReady: !has(args, '--no-wait'),
         waitMs,
@@ -275,6 +274,40 @@ export async function main(argv = process.argv): Promise<number> {
       }))
       return 0
     }
+    if (command === 'restart') {
+      const runDir = resolveRunDir(runRoot, option(args, '--run'))
+      const original = readRunManifest(runDir)
+      activeManifest = original
+      const waitMs = Number(option(args, '--wait-ms') ?? DEFAULT_MORTISE_UI_START_WAIT_MS)
+      if (!Number.isSafeInteger(waitMs) || waitMs < 1 || waitMs > UI_VALIDATION_MAX_WAIT_MS) throw new Error(`--wait-ms must be between 1 and ${UI_VALIDATION_MAX_WAIT_MS}`)
+      const restarted = await restartMortiseUiRun(runDir, {
+        label: option(args, '--label'),
+        waitMs,
+        waitForReady: !has(args, '--no-wait'),
+      })
+      activeManifest = restarted
+      appendRunHistory(original.runDir, {
+        at: new Date().toISOString(), command: 'restart', outcome: 'succeeded',
+        revision: original.lastRevision, seq: original.lastResponseSeq,
+        summary: `Profile transferred to fresh run ${restarted.runId}.`,
+      })
+      appendRunHistory(restarted.runDir, {
+        at: new Date().toISOString(), command: 'restart', outcome: 'succeeded',
+        revision: restarted.lastRevision, seq: restarted.lastResponseSeq,
+        summary: `Fresh protocol sequence started from run ${original.runId}.`,
+      })
+      const current = readRunManifest(restarted.runDir)
+      output(localSuccess(localRequestId, current, {
+        run: compactRunIdentity(current),
+        restartedFrom: compactRunIdentity(original),
+        ready: current.status === 'ready',
+        profileReused: current.profileDir === original.profileDir,
+        briefing: createRunBriefing({ manifest: current, processAlive: true }),
+        disclosure: lifecycleDisclosure(runRoot, current),
+        ...(has(args, '--full') ? { manifest: current } : {}),
+      }))
+      return 0
+    }
     if (command === 'stop') {
       const runDir = resolveRunDir(runRoot, option(args, '--run'))
       activeManifest = readRunManifest(runDir)
@@ -301,7 +334,7 @@ export async function main(argv = process.argv): Promise<number> {
       }))
       return 0
     }
-    const directCommands = new Set(['capabilities', 'open', 'scenario', 'snapshot', 'action', 'wait', 'assert', 'evidence', 'clock', 'fault', 'windows', 'screenshot', 'logs', 'resize', 'native', 'window', 'browser-key'])
+    const directCommands = new Set(['capabilities', 'open', 'scenario', 'snapshot', 'action', 'wait', 'assert', 'evidence', 'clock', 'fault', 'session-validation', 'windows', 'screenshot', 'logs', 'resize', 'native', 'window', 'browser-key'])
     if (command === 'request' || directCommands.has(command)) {
       const scenarioOperation = command === 'scenario' ? args[1] : undefined
       if (command === 'scenario' && !['apply', 'reset'].includes(String(scenarioOperation))) {
@@ -311,11 +344,15 @@ export async function main(argv = process.argv): Promise<number> {
       if (command === 'clock' && clockOperation !== 'advance') throw new Error('clock requires advance')
       const faultOperation = command === 'fault' ? args[1] : undefined
       if (command === 'fault' && !['set', 'clear', 'status'].includes(String(faultOperation))) throw new Error('fault requires set, clear, or status')
+      const sessionValidationOperation = command === 'session-validation' ? args[1] : undefined
+      if (command === 'session-validation' && !['arm', 'clear', 'status', 'release-settlement'].includes(String(sessionValidationOperation))) {
+        throw new Error('session-validation requires arm, clear, status, or release-settlement')
+      }
       const capabilitiesOperation = command === 'capabilities' ? (args[1] ?? 'list') : undefined
       if (command === 'capabilities' && !['list', 'relevant', 'describe'].includes(String(capabilitiesOperation))) throw new Error('capabilities requires list, relevant, or describe')
       const methodMap: Record<string, string> = {
         capabilities: 'ui.capabilities', open: 'app.open', scenario: scenarioOperation === 'reset' ? 'scenario.reset' : 'scenario.apply', snapshot: 'ui.snapshot', action: 'ui.action',
-        wait: 'ui.wait', assert: 'ui.assert', evidence: 'evidence.capture', clock: 'clock.advance', fault: `fault.${faultOperation}`,
+        wait: 'ui.wait', assert: 'ui.assert', evidence: 'evidence.capture', clock: 'clock.advance', fault: `fault.${faultOperation}`, 'session-validation': `session-validation.${sessionValidationOperation}`,
         windows: 'ui.windows', screenshot: 'ui.screenshot', logs: 'ui.logs', resize: 'ui.resize', native: 'ui.native', window: 'ui.window', 'browser-key': 'ui.browserKey',
       }
       const hostCommand = command === 'request' ? args[1] : methodMap[command]

@@ -14,7 +14,8 @@ function subprocessIt(name: string, fn: () => void): void {
 }
 
 function setupPiAgentDir() {
-  const piAgentDir = mkdtempSync(join(tmpdir(), 'mortise-pi-agent-'))
+  const configDir = mkdtempSync(join(tmpdir(), 'mortise-agent-config-'))
+  const piAgentDir = join(configDir, 'agent')
   mkdirSync(piAgentDir, { recursive: true })
   return {
     piAgentDir,
@@ -30,11 +31,8 @@ function writeJson(path: string, value: unknown) {
 function runIsolatedPiConfigScript<T>(piAgentDir: string, body: string): T {
   const code = `
     import {
-      migratePiGlobalProviderApiKeysToAuth,
       savePiGlobalProvider,
       readPiGlobalProvidersForDisplay,
-      getPiGlobalProviderKeyForConnection,
-      hasPiGlobalAuthForConnection,
       maskApiKey,
       watchPiGlobalModelsFile,
     } from ${JSON.stringify(PI_GLOBAL_CONFIG_MODULE_PATH)};
@@ -47,7 +45,7 @@ function runIsolatedPiConfigScript<T>(piAgentDir: string, body: string): T {
     env: {
       ...process.env,
       PI_CODING_AGENT_DIR: piAgentDir,
-      MORTISE_CONFIG_DIR: join(piAgentDir, 'mortise-config'),
+      MORTISE_CONFIG_DIR: join(piAgentDir, '..'),
     },
     stdout: 'pipe',
     stderr: 'pipe',
@@ -122,57 +120,6 @@ describe('pi-global-config auth storage', () => {
     expect(output).toEqual({ changed: true })
   })
 
-  subprocessIt('migrates legacy provider apiKey fields into auth.json without overwriting existing auth', () => {
-    const { piAgentDir, modelsPath, authPath } = setupPiAgentDir()
-
-    writeJson(modelsPath, {
-      providers: {
-        legacy: {
-          baseUrl: 'https://legacy.example/v1',
-          api: 'openai-completions',
-          apiKey: 'legacy-key',
-          models: [{ id: 'legacy-model' }],
-        },
-        existing: {
-          baseUrl: 'https://existing.example/v1',
-          api: 'openai-completions',
-          apiKey: 'legacy-should-not-win',
-          models: [{ id: 'existing-model' }],
-        },
-        oauth: {
-          baseUrl: 'https://oauth.example/v1',
-          api: 'openai-completions',
-          apiKey: 'legacy-oauth-should-not-win',
-          models: [{ id: 'oauth-model' }],
-        },
-      },
-    })
-    writeJson(authPath, {
-      existing: { type: 'api_key', key: 'existing-key' },
-      oauth: { type: 'oauth', access: 'oauth-access', refresh: 'oauth-refresh' },
-    })
-
-    const output = runIsolatedPiConfigScript<{
-      result: { migrated: number; removedFromModels: number; changed: boolean }
-      models: { providers: Record<string, Record<string, unknown>> }
-      auth: Record<string, { type: string; key?: string; access?: string }>
-    }>(piAgentDir, `
-      const result = migratePiGlobalProviderApiKeysToAuth();
-      const models = JSON.parse(readFileSync(join(piAgentDir, 'models.json'), 'utf-8'));
-      const auth = JSON.parse(readFileSync(join(piAgentDir, 'auth.json'), 'utf-8'));
-      console.log(JSON.stringify({ result, models, auth }));
-    `)
-
-    expect(output.result).toEqual({ migrated: 1, removedFromModels: 3, changed: true })
-    expect(output.models.providers.legacy!.apiKey).toBeUndefined()
-    expect(output.models.providers.existing!.apiKey).toBeUndefined()
-    expect(output.models.providers.oauth!.apiKey).toBeUndefined()
-    expect(output.auth.legacy).toEqual({ type: 'api_key', key: 'legacy-key' })
-    expect(output.auth.existing).toEqual({ type: 'api_key', key: 'existing-key' })
-    expect(output.auth.oauth!.type).toBe('oauth')
-    expect(output.auth.oauth!.access).toBe('oauth-access')
-  })
-
   subprocessIt('saves provider credentials to auth.json and keeps models.json sanitized', () => {
     const { piAgentDir, modelsPath, authPath } = setupPiAgentDir()
     writeJson(modelsPath, { providers: {} })
@@ -188,9 +135,8 @@ describe('pi-global-config auth storage', () => {
       savePiGlobalProvider('my-provider', {
         baseUrl: 'https://one.example/v1',
         api: 'openai-completions',
-        apiKey: 'initial-short',
         models: [{ id: 'one' }],
-      });
+      }, 'initial-short');
       savePiGlobalProvider('my-provider', {
         baseUrl: 'https://two.example/v1',
         api: 'openai-completions',
@@ -205,6 +151,12 @@ describe('pi-global-config auth storage', () => {
         baseUrl: 'https://api.anthropic.com/v1',
         api: 'anthropic-messages',
         models: [{ id: 'claude-sonnet-4-6' }],
+      });
+      savePiGlobalProvider('embedded-key-provider', {
+        baseUrl: 'https://embedded.example/v1',
+        api: 'openai-completions',
+        apiKey: 'must-not-enter-auth-storage',
+        models: [{ id: 'embedded-model' }],
       });
       const models = JSON.parse(readFileSync(join(piAgentDir, 'models.json'), 'utf-8'));
       const auth = JSON.parse(readFileSync(join(piAgentDir, 'auth.json'), 'utf-8'));
@@ -222,56 +174,12 @@ describe('pi-global-config auth storage', () => {
     expect(output.models.providers['my-provider']!.baseUrl).toBe('https://two.example/v1')
     expect(output.models.providers['root-openai-provider']!.baseUrl).toBe('https://root-openai.example/v1')
     expect(output.models.providers['anthropic-provider']!.baseUrl).toBe('https://api.anthropic.com')
+    expect(output.models.providers['embedded-key-provider']!.apiKey).toBeUndefined()
     expect(output.auth['my-provider']).toEqual({ type: 'api_key', key: 'initial-short' })
+    expect(output.auth['embedded-key-provider']).toBeUndefined()
     expect(output.display.provider.apiKey).toBeUndefined()
     expect(output.display.apiKeyMasked).toBe(MASKED_SHORT_KEY)
     expect(output.shortMask).toBe(MASKED_SHORT_KEY)
     expect(output.longMask).toBe('sk-live...mnop')
-  })
-
-  subprocessIt('resolves Pi auth provider keys without treating pi-api-key as a provider name', () => {
-    const { piAgentDir, modelsPath, authPath } = setupPiAgentDir()
-    writeJson(modelsPath, {
-      providers: {
-        'my-provider': {
-          baseUrl: 'https://my-provider.example/v1',
-          api: 'openai-completions',
-          models: [{ id: 'model' }],
-        },
-      },
-    })
-    writeJson(authPath, {
-      anthropic: { type: 'api_key', key: 'anthropic-key' },
-      'my-provider': { type: 'api_key', key: 'my-provider-key' },
-    })
-
-    const output = runIsolatedPiConfigScript<{
-      genericPiProviderKey: string | undefined
-      genericPiWithoutProviderKey: string | undefined
-      globalCompatProviderKey: string | undefined
-      hasBuiltInAnthropicAuth: boolean
-      hasGlobalCompatAuth: boolean
-      hasBorrowedCustomCompatAuth: boolean
-    }>(piAgentDir, `
-      const genericPi = { slug: 'pi-api-key', providerType: 'pi', piAuthProvider: 'anthropic' };
-      const genericPiWithoutProvider = { slug: 'pi-api-key-2', providerType: 'pi' };
-      const globalCompat = { slug: 'pi-my-provider', providerType: 'pi_compat' };
-      const customCompat = { slug: 'custom-compat', providerType: 'pi_compat', piAuthProvider: 'anthropic' };
-      console.log(JSON.stringify({
-        genericPiProviderKey: getPiGlobalProviderKeyForConnection(genericPi),
-        genericPiWithoutProviderKey: getPiGlobalProviderKeyForConnection(genericPiWithoutProvider),
-        globalCompatProviderKey: getPiGlobalProviderKeyForConnection(globalCompat),
-        hasBuiltInAnthropicAuth: hasPiGlobalAuthForConnection(genericPi),
-        hasGlobalCompatAuth: hasPiGlobalAuthForConnection(globalCompat),
-        hasBorrowedCustomCompatAuth: hasPiGlobalAuthForConnection(customCompat),
-      }));
-    `)
-
-    expect(output.genericPiProviderKey).toBe('anthropic')
-    expect(output.genericPiWithoutProviderKey).toBeUndefined()
-    expect(output.globalCompatProviderKey).toBe('my-provider')
-    expect(output.hasBuiltInAnthropicAuth).toBe(true)
-    expect(output.hasGlobalCompatAuth).toBe(true)
-    expect(output.hasBorrowedCustomCompatAuth).toBe(false)
   })
 })

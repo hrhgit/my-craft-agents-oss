@@ -69,7 +69,7 @@ mortise label auto-rule-validate linear-issue
 <!-- cli:skill:start -->
 ## Skill
 
-Manage project skills stored under `.pi/skills/{slug}/SKILL.md`.
+Manage project skills stored under `.mortise/skills/{slug}/SKILL.md`.
 
 ### Commands
 - `mortise skill list [--workspace-only] [--project-root <path>]`

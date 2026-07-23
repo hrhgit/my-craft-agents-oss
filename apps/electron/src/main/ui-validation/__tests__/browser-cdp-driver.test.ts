@@ -215,6 +215,85 @@ describe('UiValidationBrowserCDP accessibility geometry', () => {
   })
 })
 
+describe('UiValidationBrowserCDP renderer performance', () => {
+  it('returns bounded aggregate renderer metrics without exposing raw evaluation', async () => {
+    class PerformanceFixtureDriver extends UiValidationBrowserCDP {
+      readonly calls: Array<{ method: string; params?: Record<string, unknown> }> = []
+
+      constructor() {
+        super({ getURL: () => 'file:///fixture', getTitle: () => 'Fixture' } as unknown as WebContents)
+      }
+
+      protected override async send(method: string, params?: Record<string, unknown>): Promise<any> {
+        this.calls.push({ method, params })
+        if (method === 'Runtime.getHeapUsage') return { usedSize: 1_024 }
+        if (method === 'Runtime.evaluate') return { result: { value: {
+          elapsedMs: 250,
+          frameIntervalsMs: [16, 17, 51],
+          longTasksMs: [55],
+          domNodeCount: 420,
+          mountedTurnCount: 11,
+          searchTargetCount: 19,
+          highlightRangeCount: 2,
+        } } }
+        if (method === 'Performance.getMetrics') return { metrics: [
+          { name: 'Nodes', value: 430 },
+          { name: 'LayoutCount', value: 4 },
+        ] }
+        return {}
+      }
+    }
+
+    const driver = new PerformanceFixtureDriver()
+    const result = await driver.captureRendererPerformance(250)
+    expect(result).toMatchObject({
+      durationMs: 250,
+      domNodeCount: 420,
+      mountedTurnCount: 11,
+      highlightRangeCount: 2,
+      heap: { usedBefore: 1_024, usedAfter: 1_024, delta: 0 },
+      frames: { count: 3, p95Ms: 51, maxMs: 51, over50Ms: 1 },
+      longTasks: { count: 1, totalMs: 55, maxMs: 55 },
+      cdp: { nodes: 430, layoutCount: 4 },
+    })
+    const evaluation = driver.calls.find(call => call.method === 'Runtime.evaluate')
+    expect(evaluation?.params).toMatchObject({ awaitPromise: true, returnByValue: true })
+    expect(evaluation?.params?.expression).toContain('const durationMs = 250;')
+    expect(evaluation?.params?.expression).toContain('observer.takeRecords()')
+    expect(driver.calls.map(call => call.method)).toEqual([
+      'Performance.enable',
+      'Runtime.getHeapUsage',
+      'Runtime.evaluate',
+      'Runtime.getHeapUsage',
+      'Performance.getMetrics',
+    ])
+  })
+
+  it('bounds direct sampling duration before constructing the fixed renderer script', async () => {
+    class DurationFixtureDriver extends UiValidationBrowserCDP {
+      expression = ''
+
+      constructor() {
+        super({ getURL: () => 'file:///fixture', getTitle: () => 'Fixture' } as unknown as WebContents)
+      }
+
+      protected override async send(method: string, params?: Record<string, unknown>): Promise<any> {
+        if (method === 'Runtime.evaluate') {
+          this.expression = String(params?.expression ?? '')
+          return { result: { value: {} } }
+        }
+        return {}
+      }
+    }
+
+    const driver = new DurationFixtureDriver()
+    const result = await driver.captureRendererPerformance(-10_000)
+
+    expect(result.durationMs).toBe(100)
+    expect(driver.expression).toContain('const durationMs = 100;')
+  })
+})
+
 describe('UiValidationBrowserCDP drag', () => {
   it('uses intercepted CDP drag events without native webContents input', async () => {
     const driver = new DragFixtureDriver()

@@ -14,9 +14,14 @@ import type { BackendHostRuntimeContext } from '../types.ts';
 
 describe('resolveBackendRuntimePaths', () => {
   it('returns only the supported backend runtime path keys', () => {
+    const resourcesPath = join(tmpdir(), `runtime-resolver-shape-${process.pid}`);
+    const binaryPath = join(resourcesPath, 'pi-runtime', process.platform === 'win32' ? 'pi.exe' : 'pi');
+    mkdirSync(dirname(binaryPath), { recursive: true });
+    writeFileSync(binaryPath, 'pi binary');
+
     const paths = resolveBackendRuntimePaths({
       appRootPath: tmpdir(),
-      resourcesPath: tmpdir(),
+      resourcesPath,
       isPackaged: true,
     });
 
@@ -26,6 +31,8 @@ describe('resolveBackendRuntimePaths', () => {
       'piCliPath',
       'sessionServerPath',
     ]);
+
+    rmSync(resourcesPath, { recursive: true, force: true });
   });
 });
 
@@ -96,66 +103,60 @@ describe('resolveRipgrepPath', () => {
 
 describe('resolvePiCliPath', () => {
   const tmpBase = join(tmpdir(), `pi-cli-resolver-test-${Date.now()}`);
+  const originalOverride = process.env.MORTISE_PI_CLI_PATH;
 
   afterEach(() => {
+    if (originalOverride === undefined) delete process.env.MORTISE_PI_CLI_PATH;
+    else process.env.MORTISE_PI_CLI_PATH = originalOverride;
     try { rmSync(tmpBase, { recursive: true, force: true }); } catch {}
   });
 
-  it('prefers a packaged compiled Pi binary', () => {
+  it('selects only the packaged compiled Pi binary', () => {
     const appRoot = join(tmpBase, 'packaged-binary-app');
     const resourcesPath = join(tmpBase, 'packaged-binary-resources');
     const binaryPath = join(resourcesPath, 'pi-runtime', process.platform === 'win32' ? 'pi.exe' : 'pi');
+    const overridePath = join(tmpBase, 'override', process.platform === 'win32' ? 'pi.exe' : 'pi');
+    const legacyCandidates = [
+      join(resourcesPath, 'pi-runtime', 'dist', 'cli.bundle.js'),
+      join(resourcesPath, 'pi-runtime', 'dist', 'cli.full.bundle.js'),
+      join(appRoot, 'resources', 'pi-runtime', 'dist', 'cli.bundle.js'),
+      join(appRoot, 'dist', 'resources', 'pi-runtime', 'node_modules', '@mortise', 'pi-coding-agent', 'dist', 'cli.js'),
+    ];
+
     mkdirSync(dirname(binaryPath), { recursive: true });
     writeFileSync(binaryPath, 'pi binary');
+    mkdirSync(dirname(overridePath), { recursive: true });
+    writeFileSync(overridePath, 'override binary');
+    for (const candidate of legacyCandidates) {
+      mkdirSync(dirname(candidate), { recursive: true });
+      writeFileSync(candidate, '// legacy Pi runtime');
+    }
+    process.env.MORTISE_PI_CLI_PATH = overridePath;
 
     const paths = resolveBackendRuntimePaths({ appRootPath: appRoot, resourcesPath, isPackaged: true });
     expect(paths.piCliPath).toBe(binaryPath);
   });
 
-  it('finds the packaged Pi CLI runtime in external resources', () => {
-    const appRoot = join(tmpBase, 'packaged-app');
-    const resourcesPath = join(tmpBase, 'packaged-resources');
-    const cliPath = join(
-      resourcesPath,
-      'pi-runtime',
-      'dist',
-      'cli.bundle.js',
-    );
-    mkdirSync(dirname(cliPath), { recursive: true });
-    writeFileSync(cliPath, '// pi cli\n');
+  it('fails explicitly when the packaged compiled Pi binary is missing', () => {
+    const appRoot = join(tmpBase, 'missing-binary-app');
+    const resourcesPath = join(tmpBase, 'missing-binary-resources');
+    const expectedBinaryPath = join(resourcesPath, 'pi-runtime', process.platform === 'win32' ? 'pi.exe' : 'pi');
+    const overridePath = join(tmpBase, 'override-only', process.platform === 'win32' ? 'pi.exe' : 'pi');
+    const legacyCliPath = join(resourcesPath, 'pi-runtime', 'dist', 'cli.bundle.js');
 
-    const hostRuntime: BackendHostRuntimeContext = {
-      appRootPath: appRoot,
-      resourcesPath,
-      isPackaged: true,
-    };
-    const paths = resolveBackendRuntimePaths(hostRuntime);
-    expect(paths.piCliPath).toBe(cliPath);
+    for (const candidate of [overridePath, legacyCliPath]) {
+      mkdirSync(dirname(candidate), { recursive: true });
+      writeFileSync(candidate, '// non-canonical runtime');
+    }
+    process.env.MORTISE_PI_CLI_PATH = overridePath;
+
+    expect(() => resolveBackendRuntimePaths({ appRootPath: appRoot, resourcesPath, isPackaged: true }))
+      .toThrow(`Packaged Pi runtime is missing: ${expectedBinaryPath}`);
   });
 
-  it('keeps the legacy packaged Pi CLI node_modules path as a fallback', () => {
-    const appRoot = join(tmpBase, 'packaged-app-legacy');
-    const cliPath = join(
-      appRoot,
-      'dist',
-      'resources',
-      'pi-runtime',
-      'node_modules',
-      '@mortise',
-      'pi-coding-agent',
-      'dist',
-      'cli.js',
-    );
-    mkdirSync(dirname(cliPath), { recursive: true });
-    writeFileSync(cliPath, '// pi cli\n');
-
-    const hostRuntime: BackendHostRuntimeContext = {
-      appRootPath: appRoot,
-      resourcesPath: appRoot,
-      isPackaged: true,
-    };
-    const paths = resolveBackendRuntimePaths(hostRuntime);
-    expect(paths.piCliPath).toBe(cliPath);
+  it('fails explicitly when packaged resourcesPath is unavailable', () => {
+    expect(() => resolveBackendRuntimePaths({ appRootPath: tmpBase, isPackaged: true }))
+      .toThrow('Packaged Pi runtime resolution requires resourcesPath');
   });
 
   it('finds the workspace Pi CLI runtime in development', () => {

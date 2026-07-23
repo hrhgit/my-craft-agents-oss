@@ -136,16 +136,17 @@ describe('PiAgent abort', () => {
 
   it('releases the runtime when the cooperative abort command fails', async () => {
     const agent = createAgent()
-    let stopped = false
+    let released = false
     ;(agent as any)._isProcessing = true
     ;(agent as any).rpcClient = {
+      runtimeId: 'runtime-test',
       abort: async () => { throw new Error('transport closed') },
-      stop: async () => { stopped = true },
     }
+    ;(agent as any).rpcHostLease = { release: async () => { released = true } }
 
     await agent.abort(AbortReason.UserStop)
 
-    expect(stopped).toBe(true)
+    expect(released).toBe(true)
     expect((agent as any).rpcClient).toBeNull()
     agent.destroy()
   })
@@ -153,23 +154,122 @@ describe('PiAgent abort', () => {
   it('releases the runtime before a stalled abort can exhaust the renderer request timeout', async () => {
     jest.useFakeTimers()
     const agent = createAgent()
-    let stopped = false
+    let released = false
     ;(agent as any)._isProcessing = true
     ;(agent as any).rpcClient = {
+      runtimeId: 'runtime-test',
       abort: () => new Promise<void>(() => {}),
-      stop: async () => { stopped = true },
     }
+    ;(agent as any).rpcHostLease = { release: async () => { released = true } }
 
     try {
       const aborting = agent.abort(AbortReason.UserStop)
       await Promise.resolve()
-      expect(stopped).toBe(false)
+      expect(released).toBe(false)
 
       jest.advanceTimersByTime(5_000)
       await aborting
 
-      expect(stopped).toBe(true)
+      expect(released).toBe(true)
       expect((agent as any).rpcClient).toBeNull()
+    } finally {
+      jest.useRealTimers()
+      agent.destroy()
+    }
+  })
+
+  it('settles a suspended turn only after restart disposal releases its runtime', async () => {
+    const agent = createAgent()
+    let releaseRuntime!: () => void
+    const runtimeReleased = new Promise<void>(resolve => { releaseRuntime = resolve })
+    let waiterSettled = false
+    ;(agent as any).eventQueue.reset()
+    ;(agent as any).rpcClient = { runtimeId: 'runtime-replaced' }
+    ;(agent as any).rpcHostLease = { release: () => runtimeReleased }
+    void (agent as any).waitForAgentSettled().then(() => { waiterSettled = true })
+
+    const disposing = agent.disposeForRestart()
+    await Promise.resolve()
+
+    expect((agent as any).rpcClient).toBeNull()
+    expect((agent as any).eventQueue.isComplete).toBe(false)
+    expect(waiterSettled).toBe(false)
+
+    releaseRuntime()
+    await disposing
+
+    expect((agent as any).eventQueue.isComplete).toBe(true)
+    expect(waiterSettled).toBe(true)
+  })
+
+  it('contains synchronous teardown callback failures and still releases the runtime', async () => {
+    const agent = createAgent()
+    let released = false
+    const logged: Array<{ event: string; meta?: Record<string, unknown> }> = []
+    ;(agent as any).coordinationBridge = {
+      releasePending: () => { throw new Error('coordination cleanup failed') },
+      completeTurn: () => {},
+    }
+    ;(agent as any).rpcClient = { runtimeId: 'runtime-cleanup' }
+    ;(agent as any).rpcHostLease = { release: async () => { released = true } }
+    ;(agent as any).unsubscribePiEvent = () => { throw new Error('agent unsubscribe failed') }
+    ;(agent as any).unsubscribePiClientEvent = () => { throw new Error('client unsubscribe failed') }
+    ;(agent as any).writePiRuntimeLog = (_level: string, event: string, meta?: Record<string, unknown>) => {
+      logged.push({ event, meta })
+    }
+
+    await agent.reconnect()
+
+    expect(released).toBe(true)
+    expect((agent as any).rpcClient).toBeNull()
+    expect(logged.map(entry => entry.event)).toEqual([
+      'host.coordination_release_failed',
+      'host.event_unsubscribe_failed',
+      'host.event_unsubscribe_failed',
+    ])
+  })
+
+  it('observes rejected detached cleanup from synchronous replacement APIs', async () => {
+    const agent = createAgent()
+    const logged: Array<{ event: string; reason?: unknown }> = []
+    ;(agent as any).stopRpcClient = async () => { throw new Error('cleanup rejected') }
+    ;(agent as any).writePiRuntimeLog = (_level: string, event: string, meta?: Record<string, unknown>) => {
+      logged.push({ event, reason: meta?.reason })
+    }
+
+    agent.clearHistory()
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(logged).toEqual([
+      { event: 'host.runtime_detached_cleanup_failed', reason: 'history-cleared' },
+    ])
+  })
+
+  it('retires the runtime before a force-abort timeout completes the event stream', async () => {
+    jest.useFakeTimers()
+    const agent = createAgent()
+    let released = false
+    ;(agent as any)._isProcessing = true
+    ;(agent as any).eventQueue.reset()
+    ;(agent as any).rpcClient = {
+      runtimeId: 'runtime-force-abort',
+      abort: () => new Promise<void>(() => {}),
+    }
+    ;(agent as any).rpcHostLease = {
+      release: async () => { released = true },
+    }
+
+    try {
+      agent.forceAbort(AbortReason.Redirect)
+      jest.advanceTimersByTime(5_000)
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+
+      expect(released).toBe(true)
+      expect((agent as any).rpcClient).toBeNull()
+      expect((agent as any).eventQueue.isComplete).toBe(true)
     } finally {
       jest.useRealTimers()
       agent.destroy()

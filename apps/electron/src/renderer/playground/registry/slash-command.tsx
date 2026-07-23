@@ -140,7 +140,7 @@ function SlashCommandDemo() {
           inputValue={inputValue}
           onInputChange={setInputValue}
           sessionId="playground-session"
-          onSubmit={() => {}}
+          onSubmit={async () => true}
           onStop={() => {}}
         />
       </div>

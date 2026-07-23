@@ -25,7 +25,6 @@ describe('resolveElectronResourcePaths', () => {
 
     expect(paths.browserExtensionPath).toBe('C:\\Mortise\\resources\\app\\dist\\resources\\pi-extensions\\browser.js')
     expect(paths.commandDocsPath).toBe('C:\\Mortise\\resources\\app\\dist\\resources\\docs\\mortise-cli.md')
-    expect(paths.piRuntimePath).toBe('C:\\Mortise\\resources\\pi-runtime\\pi.exe')
     expect(paths.messagingWorkerPath).toBe('C:\\Mortise\\resources\\messaging-whatsapp-worker\\worker.cjs')
   })
 

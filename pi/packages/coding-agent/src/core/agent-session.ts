@@ -159,7 +159,13 @@ export type AgentSessionEvent =
 			details?: string;
 	  }
 	| { type: "auto_retry_end"; success: boolean; attempt: number; finalError?: string }
-	| { type: "agent_settled" };
+	| { type: "agent_settled" }
+	| {
+			type: "pi_user_message_persisted";
+			clientMutationId: string;
+			entryId: string;
+			sessionFile: string;
+	  };
 
 /** Listener function for agent session events */
 export type AgentSessionEventListener = (event: AgentSessionEvent) => void;
@@ -666,6 +672,8 @@ export class AgentSession {
 	}
 
 	private async _emitAgentSettled(): Promise<void> {
+		await this.sessionManager.flush();
+		await this._emitPersistedUserMessages();
 		await this._extensionRunner.emit({ type: "agent_settled" });
 		this._emit({ type: "agent_settled" });
 	}
@@ -683,6 +691,27 @@ export class AgentSession {
 
 	// Track last assistant message for auto-compaction check
 	private _lastAssistantMessage: AssistantMessage | undefined = undefined;
+	private _pendingUserPersistence = new Map<string, string>();
+
+	private async _emitPersistedUserMessages(): Promise<void> {
+		for (const [entryId, clientMutationId] of this._pendingUserPersistence) {
+			const persistedEntry = await this.sessionManager.getPersistedEntry(entryId);
+			if (
+				persistedEntry?.type !== "message" ||
+				persistedEntry.message.role !== "user" ||
+				persistedEntry.message.clientMutationId !== clientMutationId
+			) {
+				continue;
+			}
+
+			const sessionFile = this.sessionManager.getSessionFile();
+			if (!sessionFile) {
+				continue;
+			}
+			this._pendingUserPersistence.delete(entryId);
+			this._emit({ type: "pi_user_message_persisted", clientMutationId, entryId, sessionFile });
+		}
+	}
 
 	/** Internal handler for agent events - shared by subscribe and reconnect */
 	private _handleAgentEvent = async (event: AgentEvent): Promise<void> => {
@@ -735,7 +764,12 @@ export class AgentSession {
 				event.message.role === "toolResult"
 			) {
 				// Regular LLM message - persist as SessionMessageEntry
-				this.sessionManager.appendMessage(event.message);
+				const entryId = this.sessionManager.appendMessage(event.message);
+				if (event.message.role === "user" && event.message.clientMutationId) {
+					this._pendingUserPersistence.set(entryId, event.message.clientMutationId);
+				}
+				await this.sessionManager.flush();
+				await this._emitPersistedUserMessages();
 			}
 			// Other message types (bashExecution, compactionSummary, branchSummary) are persisted elsewhere
 
@@ -951,6 +985,7 @@ export class AgentSession {
 		);
 		this._disconnectFromAgent();
 		this._eventListeners = [];
+		this._pendingUserPersistence.clear();
 		cleanupSessionResources(this.sessionId);
 		cleanupReadHistoryStore(this.sessionId);
 	}
@@ -1316,7 +1351,10 @@ export class AgentSession {
 			// extension reloads) keeps the override instead of rebuilding from the
 			// resource loader. `undefined` means "no change"; an empty string is a
 			// valid (empty) prompt.
-			const hostPromptChanged = options?.clearSystemPrompt === true || options?.systemPrompt !== undefined || options?.appendSystemPrompt !== undefined;
+			const hostPromptChanged =
+				options?.clearSystemPrompt === true ||
+				options?.systemPrompt !== undefined ||
+				options?.appendSystemPrompt !== undefined;
 			if (options?.clearSystemPrompt === true) {
 				this._hostSystemPromptOverride = undefined;
 			}
@@ -2184,6 +2222,7 @@ export class AgentSession {
 		// shouldn't trigger compaction for the new model.
 		const sameModel =
 			this.model && assistantMessage.provider === this.model.provider && assistantMessage.model === this.model.id;
+		const assistantUsage = (assistantMessage as { usage?: AssistantMessage["usage"] }).usage;
 
 		// Skip compaction checks if this assistant message is older than the latest
 		// compaction boundary. This prevents a stale pre-compaction usage/error
@@ -2196,7 +2235,11 @@ export class AgentSession {
 		}
 
 		// Case 1: Overflow - LLM returned context overflow error
-		if (sameModel && isContextOverflow(assistantMessage, contextWindow)) {
+		if (
+			sameModel &&
+			(assistantMessage.stopReason === "error" || assistantUsage) &&
+			isContextOverflow(assistantMessage, contextWindow)
+		) {
 			if (this._overflowRecoveryAttempted) {
 				this._emit({
 					type: "compaction_end",
@@ -2241,7 +2284,8 @@ export class AgentSession {
 			}
 			contextTokens = estimate.tokens;
 		} else {
-			contextTokens = calculateContextTokens(assistantMessage.usage);
+			if (!assistantUsage) return false;
+			contextTokens = calculateContextTokens(assistantUsage);
 		}
 		if (shouldCompact(contextTokens, contextWindow, settings)) {
 			return await this._runAutoCompaction("threshold", false);
@@ -3608,11 +3652,14 @@ export class AgentSession {
 			if (message.role === "assistant") {
 				const assistantMsg = message as AssistantMessage;
 				toolCalls += assistantMsg.content.filter((c) => c.type === "toolCall").length;
-				totalInput += assistantMsg.usage.input;
-				totalOutput += assistantMsg.usage.output;
-				totalCacheRead += assistantMsg.usage.cacheRead;
-				totalCacheWrite += assistantMsg.usage.cacheWrite;
-				totalCost += assistantMsg.usage.cost.total;
+				const usage = (assistantMsg as { usage?: AssistantMessage["usage"] }).usage;
+				if (usage) {
+					totalInput += usage.input;
+					totalOutput += usage.output;
+					totalCacheRead += usage.cacheRead;
+					totalCacheWrite += usage.cacheWrite;
+					totalCost += usage.cost.total;
+				}
 			}
 		}
 
@@ -3658,7 +3705,9 @@ export class AgentSession {
 				if (entry.type === "message" && entry.message.role === "assistant") {
 					const assistant = entry.message;
 					if (assistant.stopReason !== "aborted" && assistant.stopReason !== "error") {
-						const contextTokens = calculateContextTokens(assistant.usage);
+						const usage = (assistant as { usage?: AssistantMessage["usage"] }).usage;
+						if (!usage) break;
+						const contextTokens = calculateContextTokens(usage);
 						if (contextTokens > 0) {
 							hasPostCompactionUsage = true;
 						}

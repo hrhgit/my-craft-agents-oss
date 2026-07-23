@@ -3,6 +3,7 @@ import { CliRpcClient } from './client.ts'
 import {
   serializeEnvelope,
   deserializeEnvelope,
+  WsRpcServer,
 } from '@mortise/server-core/transport'
 import type { MessageEnvelope } from '@mortise/shared/protocol'
 
@@ -64,7 +65,6 @@ function createMockServer(opts?: {
         }
 
         if (envelope.type === 'request') {
-          // Default: echo args back as result
           const response: MessageEnvelope = {
             id: envelope.id,
             type: 'response',
@@ -87,66 +87,6 @@ function createMockServer(opts?: {
   const port = server.port!
   return {
     url: `${protocol}://127.0.0.1:${port}`,
-    port,
-    close: () => server.stop(true),
-    lastMessage: () => lastMsg,
-    sendToAll: (envelope: MessageEnvelope) => {
-      const data = serializeEnvelope(envelope)
-      for (const ws of clients) ws.send(data)
-    },
-  }
-}
-
-function createErrorServer(): MockServer {
-  let lastMsg: MessageEnvelope | null = null
-  const clients = new Set<any>()
-
-  const server = Bun.serve({
-    port: 0,
-    fetch(req, server) {
-      if (server.upgrade(req)) return undefined
-      return new Response('Not found', { status: 404 })
-    },
-    websocket: {
-      message(ws, message) {
-        const raw = typeof message === 'string' ? message : new TextDecoder().decode(message)
-        const envelope = deserializeEnvelope(raw)
-        lastMsg = envelope
-
-        if (envelope.type === 'handshake') {
-          const ack: MessageEnvelope = {
-            id: crypto.randomUUID(),
-            type: 'handshake_ack',
-            clientId: 'test-client-err',
-            protocolVersion: '1.0',
-          }
-          ws.send(serializeEnvelope(ack))
-          return
-        }
-
-        if (envelope.type === 'request') {
-          // Respond with error
-          const response: MessageEnvelope = {
-            id: envelope.id,
-            type: 'response',
-            channel: envelope.channel,
-            error: { code: 'HANDLER_ERROR', message: 'test error' },
-          }
-          ws.send(serializeEnvelope(response))
-        }
-      },
-      open(ws) {
-        clients.add(ws)
-      },
-      close(ws) {
-        clients.delete(ws)
-      },
-    },
-  })
-
-  const port = server.port!
-  return {
-    url: `ws://127.0.0.1:${port}`,
     port,
     close: () => server.stop(true),
     lastMessage: () => lastMsg,
@@ -223,11 +163,26 @@ describe('CliRpcClient', () => {
   })
 
   it('invoke rejects on server error', async () => {
-    server = createErrorServer()
-    const client = new CliRpcClient(server.url)
-    await client.connect()
-    await expect(client.invoke('system:versions')).rejects.toThrow('test error')
-    client.destroy()
+    const rpc = new WsRpcServer({ host: '127.0.0.1', port: 0 })
+    rpc.handle('system:versions', () => { throw new Error('test error') })
+    await rpc.listen()
+    const client = new CliRpcClient(`ws://127.0.0.1:${rpc.port}`)
+
+    try {
+      await client.connect()
+      let caught: unknown
+      try {
+        await client.invoke('system:versions')
+      } catch (error) {
+        caught = error
+      }
+      expect(caught).toBeInstanceOf(Error)
+      expect((caught as Error).message).toBe('test error')
+      expect((caught as { code?: string }).code).toBe('HANDLER_ERROR')
+    } finally {
+      client.destroy()
+      await rpc.close()
+    }
   })
 
   it('invoke rejects on timeout', async () => {

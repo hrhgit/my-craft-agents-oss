@@ -93,17 +93,19 @@ export class CliRpcClient {
           clearTimeout(timer)
           this._clientId = envelope.clientId ?? null
           this._connected = true
-          // Switch to normal message handler
-          this.ws!.onmessage = (e) => {
-            this.onMessage(typeof e.data === 'string' ? e.data : String(e.data))
-          }
           resolve(this._clientId!)
-        } else if (envelope.type === 'error') {
+          return
+        }
+
+        if (!this._connected && envelope.type === 'error') {
           clearTimeout(timer)
           const err = new Error(envelope.error?.message ?? 'Connection rejected')
           ;(err as any).code = envelope.error?.code
           reject(err)
+          return
         }
+
+        if (this._connected) this.onMessage(envelope)
       }
 
       this.ws.onerror = () => {
@@ -193,14 +195,7 @@ export class CliRpcClient {
   // Internal message routing
   // -------------------------------------------------------------------------
 
-  private onMessage(raw: string): void {
-    let envelope: MessageEnvelope
-    try {
-      envelope = deserializeEnvelope(raw)
-    } catch {
-      return
-    }
-
+  private onMessage(envelope: MessageEnvelope): void {
     switch (envelope.type) {
       case 'response': {
         const req = this.pending.get(envelope.id)

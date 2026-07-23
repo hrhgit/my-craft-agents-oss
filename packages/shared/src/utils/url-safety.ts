@@ -20,6 +20,7 @@ export type UrlClassification =
  * URL gets clicked, so it should explain *why* not just *what*.
  */
 const DANGEROUS_SCHEMES: ReadonlyMap<string, string> = new Map([
+  ['mortiseagents:', 'The former Mortise Agents deep-link scheme has been removed. Use mortise: links.'],
   ['javascript:', 'JavaScript URLs can execute arbitrary code in the renderer (XSS vector).'],
   ['data:', 'data: URLs can embed executable content and bypass scheme restrictions.'],
   ['vbscript:', 'VBScript URLs are a legacy script-execution vector.'],

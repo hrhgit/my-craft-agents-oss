@@ -461,7 +461,7 @@ describe("createBranchedSession", () => {
 		expect(entries.map((e) => e.id)).toEqual([id1, id2, id4, id5]);
 	});
 
-	it("does not duplicate entries when forking from first user message", () => {
+	it("does not duplicate entries when forking from first user message", async () => {
 		const tempDir = join(tmpdir(), `session-fork-dedup-${Date.now()}`);
 		mkdirSync(tempDir, { recursive: true });
 
@@ -472,6 +472,7 @@ describe("createBranchedSession", () => {
 			session.appendMessage(assistantMsg("first answer"));
 			session.appendMessage(userMsg("second question"));
 			session.appendMessage(assistantMsg("second answer"));
+			await session.flush();
 
 			// Fork from the very first user message (no assistant in the branched path)
 			const newFile = session.createBranchedSession(id1);
@@ -486,6 +487,7 @@ describe("createBranchedSession", () => {
 
 			// Now the assistant responds
 			session.appendMessage(assistantMsg("new answer"));
+			await session.flush();
 
 			// File should now exist with exactly one header and no duplicate IDs
 			expect(existsSync(newFile!)).toBe(true);
@@ -505,7 +507,7 @@ describe("createBranchedSession", () => {
 		}
 	});
 
-	it("writes file immediately when forking from a point with assistant messages", () => {
+	it("writes file after flushing when forking from a point with assistant messages", async () => {
 		const tempDir = join(tmpdir(), `session-fork-with-assistant-${Date.now()}`);
 		mkdirSync(tempDir, { recursive: true });
 
@@ -515,12 +517,14 @@ describe("createBranchedSession", () => {
 			const id2 = session.appendMessage(assistantMsg("first answer"));
 			session.appendMessage(userMsg("second question"));
 			session.appendMessage(assistantMsg("second answer"));
+			await session.flush();
 
 			// Fork including the assistant message
 			const newFile = session.createBranchedSession(id2);
 			expect(newFile).toBeDefined();
+			await session.flush();
 
-			// Path includes an assistant, so file should be written immediately
+			// Path includes an assistant, so flush publishes the branch.
 			expect(existsSync(newFile!)).toBe(true);
 			const content = readFileSync(newFile!, "utf-8");
 			const lines = content.trim().split("\n").filter(Boolean);

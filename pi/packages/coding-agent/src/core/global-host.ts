@@ -13,6 +13,7 @@ export interface PiGlobalHostRuntimeOpenOptions {
 	runtimeId?: string;
 	cwd: string;
 	agentDir?: string;
+	projectConfigDir?: string;
 	sessionManager: SessionManager;
 	sessionStartEvent?: SessionStartEvent;
 	deferResourceLoad?: boolean;

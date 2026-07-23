@@ -14,7 +14,7 @@ describe('AutomationV3Runtime', () => {
     const root = mkdtempSync(join(tmpdir(), 'mortise-automations-runtime-'))
     roots.push(root)
     const store = new AutomationV3Store({ workspaceId: 'workspace-one', workspaceRootPath: root })
-    const initial = store.initializeOrMigrate().document
+    const initial = store.initialize()
     const document: AutomationsDocumentV3 = {
       schemaVersion: 3,
       revision: initial.revision,
@@ -60,7 +60,7 @@ describe('AutomationV3Runtime', () => {
     const root = mkdtempSync(join(tmpdir(), 'mortise-automations-runtime-'))
     roots.push(root)
     const store = new AutomationV3Store({ workspaceId: 'workspace-once', workspaceRootPath: root })
-    const initial = store.initializeOrMigrate().document
+    const initial = store.initialize()
     const onceTrigger = {
       id: 'trg_once_skip_123', type: 'time' as const,
       schedule: { kind: 'once' as const, at: '2026-07-20T09:00:00Z', misfire: 'skip' as const },
@@ -90,7 +90,7 @@ describe('AutomationV3Runtime', () => {
       recovery: true, skipReason: 'misfire',
     })
     expect(run).toMatchObject({ state: 'skipped', reason: 'misfire-skip' })
-    expect(store.initializeOrMigrate().document.definitions[0]?.enabled).toBe(true)
+    expect(store.initialize().definitions[0]?.enabled).toBe(true)
     store.close()
   })
 })

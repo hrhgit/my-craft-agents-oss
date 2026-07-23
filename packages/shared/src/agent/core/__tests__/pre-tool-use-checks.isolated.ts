@@ -82,8 +82,8 @@ mock.module('../../../skills/storage.ts', () => ({
 }));
 
 mock.module('../../../config/paths.ts', () => ({
-  PI_SKILLS_DIR: '/Users/test/.pi/agent/skills',
-  PI_PROJECT_SKILLS_DIR: '.pi/skills',
+  MORTISE_SKILLS_DIR: '/Users/test/.mortise/agent/skills',
+  PI_PROJECT_SKILLS_DIR: '.mortise/skills',
 }));
 
 let mockMortiseCliFlag = false;
@@ -322,12 +322,20 @@ describe('runPreToolUseChecks', () => {
     });
   });
 
-  it('accepts persisted legacy spawn_session names', () => {
+  it('intercepts the canonical spawn_session name', () => {
     const result = runPreToolUseChecks(createInput({
-      toolName: 'mcp__session__spawn_session',
-      input: { prompt: 'legacy history' },
+      toolName: 'spawn_session',
+      input: { prompt: 'delegate work' },
     }));
     expect(result.type).toBe('spawn_session_intercept');
+  });
+
+  it('does not intercept retired session-tool prefixes', () => {
+    const result = runPreToolUseChecks(createInput({
+      toolName: 'mcp__session__spawn_session',
+      input: { prompt: 'retired name' },
+    }));
+    expect(result.type).not.toBe('spawn_session_intercept');
   });
 
   // ============================================================
@@ -391,7 +399,7 @@ describe('runPreToolUseChecks', () => {
       const result = runPreToolUseChecks(createInput({
         toolName: 'Skill',
         input: { skill: '../../../../tmp/evil' },
-        workingDirectory: '/repo',
+        workspaceRootPath: '/repo',
       }));
 
       expect(result.type).toBe('allow');
@@ -435,13 +443,13 @@ describe('runPreToolUseChecks', () => {
       mockDetectConfigFileType.mockImplementation(() => ({
         type: 'skill',
         slug: 'commit-helper',
-        displayFile: '.pi/skills/commit-helper/SKILL.md',
+        displayFile: '.mortise/skills/commit-helper/SKILL.md',
       }));
 
       const result = runPreToolUseChecks(createInput({
         toolName: 'Edit',
         input: {
-          file_path: '/test/workspace/.pi/skills/commit-helper/SKILL.md',
+          file_path: '/test/workspace/.mortise/skills/commit-helper/SKILL.md',
           old_string: 'A',
           new_string: 'B',
         },
@@ -450,7 +458,7 @@ describe('runPreToolUseChecks', () => {
       expect(result.type).toBe('block');
       if (result.type === 'block') {
         expect(result.reason).toContain('mortise skill');
-        expect(result.reason).toContain('.pi/skills/commit-helper/SKILL.md');
+        expect(result.reason).toContain('.mortise/skills/commit-helper/SKILL.md');
       }
     });
 

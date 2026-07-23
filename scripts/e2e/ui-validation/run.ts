@@ -141,7 +141,7 @@ try {
   const scenario = await requestMortiseUiHost({
     ...manifest,
     command: 'scenario.apply',
-    params: { name: 'remote-ui-composer' },
+    params: { name: 'extension-interaction-composer' },
   })
   if (!scenario.ok) throw new Error(`Scenario failed: ${scenario.error.message}`)
 
@@ -182,7 +182,7 @@ try {
   const imeScenario = await requestMortiseUiHost({
     ...manifest,
     command: 'scenario.apply',
-    params: { name: 'remote-ui-composer', variant: 'Direct input' },
+    params: { name: 'extension-interaction-composer', variant: 'Direct input' },
   })
   if (!imeScenario.ok) throw new Error(`IME scenario failed: ${imeScenario.error.message}`)
   const imeSnapshotResponse = await requestMortiseUiHost<SnapshotResult>({ ...manifest, command: 'ui.snapshot' })

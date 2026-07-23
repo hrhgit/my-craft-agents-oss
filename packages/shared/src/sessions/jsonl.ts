@@ -6,18 +6,18 @@
 
 import type { SessionHeader, StoredSession } from './types.ts';
 import type { PermissionMode } from '../agent/mode-types.ts';
-import { parsePermissionMode } from '../agent/mode-types.ts';
 import { debug } from '../utils/debug.ts';
 import {
   projectTreeSessionHeaderAsSessionHeader,
   readTreeSessionHeader,
   readTreeSessionAsStoredSession,
-  writeTreeSessionCraftMetadata,
+  writeTreeSessionMortiseMetadata,
 } from './tree-jsonl.ts';
 
 function normalizePermissionMode(value: unknown): PermissionMode | undefined {
-  if (typeof value !== 'string') return undefined;
-  return parsePermissionMode(value) ?? undefined;
+  return value === 'safe' || value === 'ask' || value === 'allow-all'
+    ? value
+    : undefined;
 }
 
 function normalizeHeaderPermissionModes<T extends SessionHeader>(header: T): T {
@@ -84,8 +84,8 @@ export function readSessionJsonl(sessionFile: string): StoredSession | null {
  *
  * Only Pi tree JSONL v3 files are supported.
  */
-export function writeSessionJsonl(sessionFile: string, session: StoredSession): void {
-  if (writeTreeSessionCraftMetadata(sessionFile, session)) {
+export async function writeSessionJsonl(sessionFile: string, session: StoredSession): Promise<void> {
+  if (await writeTreeSessionMortiseMetadata(sessionFile, session)) {
     return;
   }
   throw new Error(`Expected Pi tree JSONL session file: ${sessionFile}`);

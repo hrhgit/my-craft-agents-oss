@@ -33,8 +33,8 @@ Mortise Agent uses **the identical SKILL.md format** as the Claude Code SDK. Thi
 
 When a skill is invoked (e.g., `/commit`):
 
-1. **Project skill checked first** - If `{projectRoot}/.pi/skills/commit/SKILL.md` exists, it's used
-2. **Global Pi skill as fallback** - Otherwise `~/.pi/agent/skills/commit/SKILL.md` is checked
+1. **Project skill checked first** - If `{projectRoot}/.mortise/skills/commit/SKILL.md` exists, it's used
+2. **Global Mortise skill as fallback** - Otherwise `~/.mortise/agent/skills/commit/SKILL.md` is checked
 
 This allows you to:
 - **Override global skills** - Create a project skill with the same slug to replace global behavior
@@ -45,7 +45,7 @@ This allows you to:
 
 Skills are stored as folders:
 ```
-{projectRoot}/.pi/skills/{slug}/
+{projectRoot}/.mortise/skills/{slug}/
 ├── SKILL.md          # Required: Skill definition (same format as Claude Code SDK)
 ├── icon.svg          # Recommended: Skill icon for UI display
 ├── icon.png          # Alternative: PNG icon
@@ -114,7 +114,7 @@ alwaysAllow:
 ### 1. Create the skill directory
 
 ```bash
-mkdir -p {projectRoot}/.pi/skills/my-skill
+mkdir -p {projectRoot}/.mortise/skills/my-skill
 ```
 
 ### 2. Write SKILL.md
@@ -256,7 +256,7 @@ globs: ["src/**/*.ts", "src/**/*.tsx"]
 
 To customize a global skill like `/commit`:
 
-1. Create `{projectRoot}/.pi/skills/commit/SKILL.md`
+1. Create `{projectRoot}/.mortise/skills/commit/SKILL.md`
 2. Write your custom instructions
 3. Add an icon
 4. Run `skill_validate({ skillSlug: "commit" })`

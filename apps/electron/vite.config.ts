@@ -4,6 +4,21 @@ import tailwindcss from '@tailwindcss/vite'
 import { resolve } from 'path'
 import { isUiValidationBuildEnabled, uiValidationProductionBoundaryPlugin } from '../../scripts/build/ui-validation-boundary'
 
+const PURE_UI_BARREL_SUFFIXES = [
+  '/packages/ui/src/index.ts',
+  '/packages/ui/src/components/chat/index.ts',
+  '/packages/ui/src/components/code-viewer/index.ts',
+  '/packages/ui/src/components/markdown/index.ts',
+  '/packages/ui/src/components/overlay/index.ts',
+  '/packages/ui/src/components/ui/index.ts',
+  '/packages/ui/src/context/index.ts',
+] as const
+
+function hasModuleSideEffects(id: string): boolean {
+  const normalized = id.replaceAll('\\', '/')
+  return !PURE_UI_BARREL_SUFFIXES.some(suffix => normalized.endsWith(suffix))
+}
+
 const requestedPort = Number.parseInt(process.env.MORTISE_VITE_PORT ?? process.env.PORT ?? '', 10)
 const electronVitePort = Number.isInteger(requestedPort) && requestedPort > 0 && requestedPort <= 65535
   ? requestedPort
@@ -51,6 +66,9 @@ export default defineConfig(({ command }) => {
     emptyOutDir: true,
     sourcemap: true,  // Source maps generated for debugging. Not uploaded to Sentry (see CLAUDE.md).
     rollupOptions: {
+      treeshake: {
+        moduleSideEffects: hasModuleSideEffects,
+      },
       input: {
         main: resolve(__dirname, 'src/renderer/index.html'),
         playground: resolve(__dirname, 'src/renderer/playground.html'),

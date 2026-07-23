@@ -1,7 +1,8 @@
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fauxAssistantMessage, registerFauxProvider } from "@mortise/pi-ai";
+import { fauxAssistantMessage, getApiProvider as getRootApiProvider, registerFauxProvider } from "@mortise/pi-ai";
+import { registerApiProvider } from "@mortise/pi-ai/api-registry";
 import { afterEach, describe, expect, it } from "vitest";
 import type { AgentSession } from "../../../src/core/agent-session.ts";
 import {
@@ -21,7 +22,7 @@ function getText(message: AgentSession["messages"][number]): string {
 	return typeof message.content === "string"
 		? message.content
 		: message.content
-				.filter((part): part is { type: "text"; text: string } => part.type === "text")
+				.filter((part): part is typeof part & { text: string } => "text" in part && typeof part.text === "string")
 				.map((part) => part.text)
 				.join("");
 }
@@ -42,6 +43,7 @@ describe("regression #2860: replaced session callbacks", () => {
 		const faux = registerFauxProvider({
 			models: [{ id: "faux-1", reasoning: false }],
 		});
+		const fauxApiProvider = getRootApiProvider(faux.api)!;
 		faux.setResponses(responses.map((response) => fauxAssistantMessage(response)));
 
 		const authStorage = AuthStorage.inMemory();
@@ -55,21 +57,6 @@ describe("regression #2860: replaced session callbacks", () => {
 				resourceLoaderOptions: {
 					extensionFactories: [
 						(pi: ExtensionAPI) => {
-							pi.registerProvider(faux.getModel().provider, {
-								baseUrl: faux.getModel().baseUrl,
-								apiKey: "faux-key",
-								api: faux.api,
-								models: faux.models.map((registeredModel) => ({
-									id: registeredModel.id,
-									name: registeredModel.name,
-									api: registeredModel.api,
-									reasoning: registeredModel.reasoning,
-									input: registeredModel.input,
-									cost: registeredModel.cost,
-									contextWindow: registeredModel.contextWindow,
-									maxTokens: registeredModel.maxTokens,
-								})),
-							});
 							extensionFactory(pi);
 						},
 					],
@@ -77,6 +64,13 @@ describe("regression #2860: replaced session callbacks", () => {
 					noPromptTemplates: true,
 					noThemes: true,
 				},
+			});
+			registerApiProvider(fauxApiProvider, `faux-2860:${faux.getModel().provider}`);
+			services.modelRegistry.registerProvider(faux.getModel().provider, {
+				baseUrl: faux.getModel().baseUrl,
+				apiKey: "faux-key",
+				api: faux.api,
+				models: faux.models,
 			});
 			return {
 				...(await createAgentSessionFromServices({

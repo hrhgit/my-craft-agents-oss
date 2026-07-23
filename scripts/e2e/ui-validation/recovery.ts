@@ -12,10 +12,10 @@ interface Snapshot {
 
 const sourceRoot = mkdtempSync(join(tmpdir(), 'mortise-ui-recovery-source-'))
 const sourceMortise = join(sourceRoot, 'mortise')
-const sourcePi = join(sourceRoot, 'pi')
+const sourceAgent = join(sourceMortise, 'agent')
 const sourceWorkspace = join(sourceRoot, 'workspace')
 mkdirSync(sourceMortise, { recursive: true })
-mkdirSync(sourcePi, { recursive: true })
+mkdirSync(sourceAgent, { recursive: true })
 mkdirSync(sourceWorkspace, { recursive: true })
 writeFileSync(join(sourceMortise, 'config.json'), JSON.stringify({
   setupDeferred: true,
@@ -23,11 +23,11 @@ writeFileSync(join(sourceMortise, 'config.json'), JSON.stringify({
   activeSessionId: null,
   workspaces: [{ id: 'recovery-workspace', name: 'Recovery Workspace', rootPath: sourceWorkspace, createdAt: Date.now() }],
 }, null, 2))
-writeFileSync(join(sourcePi, 'settings.json'), JSON.stringify({
+writeFileSync(join(sourceAgent, 'settings.json'), JSON.stringify({
   defaultProvider: 'ui-validation-local',
   defaultModel: 'ui-validation-model',
 }, null, 2))
-writeFileSync(join(sourcePi, 'models.json'), JSON.stringify({
+writeFileSync(join(sourceAgent, 'models.json'), JSON.stringify({
   providers: {
     'ui-validation-local': {
       baseUrl: 'http://127.0.0.1:1/v1',
@@ -46,7 +46,6 @@ try {
     surface: 'electron',
     profileMode: 'clone',
     sourceMortiseConfigDir: sourceMortise,
-    sourcePiAgentDir: sourcePi,
     waitMs: 180_000,
   })
   const initialWindows = await command<WindowInfo[]>('ui.windows')

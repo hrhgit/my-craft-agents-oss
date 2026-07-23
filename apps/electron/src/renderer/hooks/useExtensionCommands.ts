@@ -60,7 +60,7 @@ export interface UseExtensionCommandsReturn {
  * 订阅 `extensions:event` 频道，累积 extension_command_registered 事件，
  * 并提供触发执行入口。
  *
- * 与 useExtensionStatus / ExtensionWidgetZone 共用同一 onExtensionEvent 监听器；
+ * 与其他扩展事件消费者共用同一 onExtensionEvent 监听器；
  * buildClientApi 的 listener 实现支持多订阅者。
  */
 export function useExtensionCommands(sessionId: string | undefined): UseExtensionCommandsReturn {

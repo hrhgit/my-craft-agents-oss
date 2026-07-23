@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, mock } from 'bun:test'
 import { RPC_CHANNELS } from '@mortise/shared/protocol'
-import { buildClientApi, type ChannelMap } from '../build-api'
+import { buildClientApi, toRendererTransportError, type ChannelMap } from '../build-api'
 import { CHUNKED_TRANSFER_THRESHOLD } from '../chunked-payload'
 import type { RpcClient } from '@mortise/server-core/transport'
 import { CHANNEL_MAP } from '../channel-map'
@@ -52,6 +52,39 @@ afterEach(() => {
 })
 
 describe('buildClientApi chunked invokes', () => {
+  it('serializes coded RPC failures for the isolated renderer boundary', async () => {
+    const failure = Object.assign(new Error('Session publication failed'), {
+      name: 'SessionPublicationDurabilityError',
+      code: 'SESSION_PUBLICATION_DURABILITY_FAILED',
+      data: {
+        sessionId: 'session-a',
+        stage: 'metadata',
+        retryable: true,
+        terminal: true,
+        outcome: 'unpublished',
+      },
+    })
+    const client = {
+      invoke: mock(async () => { throw failure }),
+      on: mock(() => () => {}),
+    } as unknown as RpcClient
+    const api = buildClientApi(client, {
+      publish: { type: 'invoke', channel: RPC_CHANNELS.sessions.CREATE_AND_SEND_FIRST_TURN },
+    }) as any
+
+    await expect(api.publish()).rejects.toEqual({
+      name: 'SessionPublicationDurabilityError',
+      message: 'Session publication failed',
+      code: 'SESSION_PUBLICATION_DURABILITY_FAILED',
+      data: failure.data,
+    })
+  })
+
+  it('leaves ordinary non-coded errors unchanged', () => {
+    const failure = new Error('plain failure')
+    expect(toRendererTransportError(failure)).toBe(failure)
+  })
+
   it('marks sendMessage attachments as the chunked argument', () => {
     expect(CHANNEL_MAP.sendMessage).toMatchObject({
       type: 'invoke',

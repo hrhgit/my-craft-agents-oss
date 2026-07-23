@@ -16,12 +16,8 @@ export interface MessagingBindingInfo {
   channelName?: string
   enabled: boolean
   createdAt: number
-  /**
-   * Per-binding access policy. Optional for back-compat with legacy clients
-   * that don't yet display this field. Phase 3 wires the renderer.
-   */
-  accessMode?: 'inherit' | 'allow-list' | 'open'
-  allowedSenderIds?: string[]
+  accessMode: 'inherit' | 'allow-list' | 'open'
+  allowedSenderIds: string[]
 }
 
 /**
@@ -74,9 +70,8 @@ export interface MessagingPendingSenderInfo {
   username?: string
   lastAttemptAt: number
   attemptCount: number
-  /** Why the sender was rejected. Optional for back-compat with persisted
-   *  entries written by an earlier build that lacked the field. */
-  reason?: MessagingPendingRejectReason
+  /** Why the sender was rejected. */
+  reason: MessagingPendingRejectReason
   /** Binding context (only for 'not-on-binding-allowlist' rejects). */
   bindingId?: string
   sessionId?: string
@@ -90,20 +85,16 @@ export type MessagingBindingAccessMode = 'inherit' | 'allow-list' | 'open'
 
 export interface MessagingConfigInfo {
   enabled: boolean
-  /**
-   * Per-platform config. Telegram may carry optional `supergroup`,
-   * `accessMode`, and `owners` fields; other platforms only use `enabled`.
-   */
-  platforms: Record<
-    string,
-    | {
-        enabled: boolean
-        supergroup?: MessagingSupergroupInfo
-        accessMode?: MessagingPlatformAccessMode
-        owners?: MessagingPlatformOwnerInfo[]
-      }
-    | undefined
-  >
+  platforms: {
+    telegram?: {
+      enabled: boolean
+      supergroup?: MessagingSupergroupInfo
+      accessMode: MessagingPlatformAccessMode
+      owners?: MessagingPlatformOwnerInfo[]
+    }
+    whatsapp?: { enabled: boolean; selfChatMode?: boolean }
+    lark?: { enabled: boolean; domain?: 'lark' | 'feishu' }
+  }
   runtime: Record<string, MessagingPlatformRuntimeInfo | undefined>
 }
 

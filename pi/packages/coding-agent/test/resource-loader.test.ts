@@ -12,6 +12,10 @@ import { SettingsManager } from "../src/core/settings-manager.ts";
 import type { Skill } from "../src/core/skills.ts";
 import { createSyntheticSourceInfo } from "../src/core/source-info.ts";
 
+function extensionEntry(id: string, path: string, activation?: "startup" | "beforeFirstRequest") {
+	return { id, path, targets: ["pi" as const], ...(activation ? { activation } : {}) };
+}
+
 describe("DefaultResourceLoader", () => {
 	let tempDir: string;
 	let agentDir: string;
@@ -175,23 +179,24 @@ Project skill`,
 			symlinkSync(sharedExtDir, join(agentDir, "extensions"), "dir");
 			symlinkSync(sharedExtDir, join(cwd, ".pi", "extensions"), "dir");
 
-			const loader = new DefaultResourceLoader({ cwd, agentDir });
+			const settingsManager = SettingsManager.inMemory({
+				extensions: [extensionEntry("shared-extension", join(sharedExtDir, "shared.ts"))],
+			});
+			const loader = new DefaultResourceLoader({ cwd, agentDir, settingsManager });
 			await loader.reload();
 
 			const extensionsResult = loader.getExtensions();
 			expect(extensionsResult.extensions).toHaveLength(1);
 			expect(extensionsResult.errors).toEqual([]);
 
-			// mergePaths processes project paths before user paths, so the project
-			// alias is the canonical survivor.
-			expect(extensionsResult.extensions[0].path).toBe(join(cwd, ".pi", "extensions", "shared.ts"));
+			expect(extensionsResult.extensions[0].path).toBe(join(sharedExtDir, "shared.ts"));
 		});
 
 		it("should defer beforeFirstRequest extensions and skills until request phase", async () => {
 			const settingsManager = SettingsManager.inMemory({
 				extensions: [
-					{ path: "extensions/startup.ts", activation: "startup" },
-					{ path: "extensions/request.ts", activation: "beforeFirstRequest" },
+					extensionEntry("startup-extension", "extensions/startup.ts", "startup"),
+					extensionEntry("request-extension", "extensions/request.ts", "beforeFirstRequest"),
 				],
 			});
 			const extensionsDir = join(agentDir, "extensions");
@@ -278,7 +283,13 @@ Skill body.`,
 }`,
 			);
 
-			const loader = new DefaultResourceLoader({ cwd, agentDir });
+			const settingsManager = SettingsManager.inMemory({
+				extensions: [
+					extensionEntry("project-extension", join(projectExtDir, "project.ts")),
+					extensionEntry("user-extension", join(userExtDir, "user.ts")),
+				],
+			});
+			const loader = new DefaultResourceLoader({ cwd, agentDir, settingsManager });
 			await loader.reload();
 
 			const extensionsResult = loader.getExtensions();
@@ -312,7 +323,6 @@ Skill body.`,
 
 		it("should honor overrides for auto-discovered resources", async () => {
 			const settingsManager = SettingsManager.inMemory();
-			settingsManager.setExtensionPaths(["-extensions/disabled.ts"]);
 			settingsManager.setSkillPaths(["-skills/skip-skill"]);
 			settingsManager.setPromptTemplatePaths(["-prompts/skip.md"]);
 			settingsManager.setThemePaths(["-themes/skip.json"]);
@@ -623,7 +633,13 @@ export default function(pi: ExtensionAPI) {
 }`,
 			);
 
-			const loader = new DefaultResourceLoader({ cwd, agentDir });
+			const settingsManager = SettingsManager.inMemory({
+				extensions: [
+					extensionEntry("duplicate-one", join(ext1Dir, "index.ts")),
+					extensionEntry("duplicate-two", join(ext2Dir, "index.ts")),
+				],
+			});
+			const loader = new DefaultResourceLoader({ cwd, agentDir, settingsManager });
 			await loader.reload();
 
 			const { errors } = loader.getExtensions();
@@ -673,10 +689,14 @@ export default function(pi: ExtensionAPI) {
 }`,
 			);
 
+			const settingsManager = SettingsManager.inMemory({
+				extensions: [extensionEntry("global-extension", join(globalExtDir, "global.ts"))],
+			});
 			const loader = new DefaultResourceLoader({
 				cwd,
 				agentDir,
-				additionalExtensionPaths: [explicitExtPath],
+				settingsManager,
+				additionalExtensionPaths: [extensionEntry("explicit-extension", explicitExtPath)],
 			});
 			await loader.reload();
 

@@ -3,11 +3,11 @@
  *
  * Covers:
  *   - create-or-reuse semantics by topicName
- *   - persistence across instances (load from disk)
+ *   - persistence across instances (load from SQLite)
  *   - concurrent findOrCreate calls share one createTopic invocation (mutex)
  *   - case-sensitivity
  *   - remove() drops the entry
- *   - corrupted file → graceful empty load (no throw)
+ *   - legacy JSON is ignored without destructive cleanup
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
@@ -133,7 +133,7 @@ describe('TopicRegistry — find-or-create', () => {
 })
 
 describe('TopicRegistry — persistence', () => {
-  it('persists entries to disk and restores them on a new instance', async () => {
+  it('persists entries to SQLite and restores them on a new instance', async () => {
     const reg1 = new TopicRegistry(dir)
     await reg1.findOrCreate({
       topicName: 'Persisted',
@@ -141,11 +141,9 @@ describe('TopicRegistry — persistence', () => {
       createTopic: async (n) => ({ threadId: 55, name: n }),
     })
 
-    const file = join(dir, 'topic-registry.json')
-    expect(existsSync(file)).toBe(true)
-    const parsed = JSON.parse(readFileSync(file, 'utf8'))
-    expect(parsed.entries.length).toBe(1)
-    expect(parsed.entries[0].threadId).toBe(55)
+    expect(existsSync(join(dir, 'state.sqlite'))).toBe(true)
+    expect(existsSync(join(dir, 'topic-registry.json'))).toBe(false)
+    expect(existsSync(join(dir, 'topic-registry.json.sync'))).toBe(false)
 
     // Fresh instance — the cached entry must come back without calling createTopic.
     const reg2 = new TopicRegistry(dir)
@@ -162,20 +160,22 @@ describe('TopicRegistry — persistence', () => {
     expect(calls).toBe(0)
   })
 
-  it('survives a corrupted file (graceful empty load, no throw)', async () => {
+  it('ignores legacy JSON and leaves it untouched', async () => {
     const file = join(dir, 'topic-registry.json')
-    writeFileSync(file, '{"version":1,"entries":[{"oops":"bad"}]', 'utf8')
+    const legacy = '{"version":1,"entries":[{"topicName":"Legacy","threadId":7}]}'
+    writeFileSync(file, legacy, 'utf8')
 
     const reg = new TopicRegistry(dir)
     expect(reg.list().length).toBe(0)
 
-    // Should be usable for fresh writes even after a corrupt load.
     const created = await reg.findOrCreate({
       topicName: 'Recovered',
       chatId: '-100',
       createTopic: async (n) => ({ threadId: 9, name: n }),
     })
     expect(created.threadId).toBe(9)
+    expect(readFileSync(file, 'utf8')).toBe(legacy)
+    expect(existsSync(join(dir, 'topic-registry.json.sync'))).toBe(false)
   })
 })
 

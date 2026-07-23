@@ -2,12 +2,17 @@ import { existsSync } from 'fs'
 import { readFile, stat, writeFile } from 'fs/promises'
 import { join } from 'path'
 import {
+  CodedError,
   RPC_CHANNELS,
   type CreateAndSendFirstTurnRequest,
   type FileAttachment,
   type SendMessageOptions,
   type SessionEvent,
   type Session,
+  type ExtensionInteractionResponseV1,
+  type SessionSettlementFailure,
+  isSessionSettlementFailure,
+  validateExtensionInteractionResponseV1,
 } from '@mortise/shared/protocol'
 import type { StoredAttachment } from '@mortise/core/types'
 import { storedToMessage } from '@mortise/core/types'
@@ -21,7 +26,12 @@ import { perf, writeRuntimeLog } from '@mortise/shared/utils'
 import { isValidThinkingLevel, THINKING_LEVEL_IDS } from '@mortise/shared/agent/thinking-levels'
 
 const VALID_THINKING_LEVELS_LIST = THINKING_LEVEL_IDS.map(id => `'${id}'`).join(', ')
-import { pushTyped, type HandlerFn, type RpcServer } from '@mortise/server-core/transport'
+import {
+  CLIENT_SHOW_IN_FOLDER,
+  pushTyped,
+  type HandlerFn,
+  type RpcServer,
+} from '@mortise/server-core/transport'
 import type { HandlerDeps } from '../handler-deps'
 import type { ISessionManager } from '../session-manager-interface'
 import { getWorkspaceOrNull, resolveWorkspaceId } from '../utils'
@@ -200,7 +210,7 @@ export const HANDLED_CHANNELS = [
   RPC_CHANNELS.sessions.KILL_SHELL,
   RPC_CHANNELS.tasks.GET_OUTPUT,
   RPC_CHANNELS.sessions.RESPOND_TO_PERMISSION,
-  RPC_CHANNELS.extensions.REMOTEUI_RESPONSE,
+  RPC_CHANNELS.extensions.INTERACTION_RESPONSE,
   RPC_CHANNELS.extensions.COMMAND_INVOKE,
   RPC_CHANNELS.extensions.GET_COMMANDS,
   RPC_CHANNELS.sessions.COMMAND,
@@ -319,7 +329,6 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
           isProcessing: false,
           readOnly: true,
           messageCount: messages.length,
-          workingDirectory: projectedSession.workingDirectory,
           sessionFolderPath: projection.path ?? projection.sessionDir,
         }
         end()
@@ -364,12 +373,25 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
     const workspaceId = resolveWorkspaceId(ctx.workspaceId, request.workspaceId)!
     const end = perf.start('rpc.createAndSendFirstTurn', { workspaceId })
     try {
-      return await sessionManager.createAndSendFirstTurn({
+      const result = await sessionManager.createAndSendFirstTurn({
         ...request,
         workspaceId,
         callerClientId: ctx.clientId,
         signal: ctx.signal,
       })
+      writeRuntimeLog('info', {
+        scope: 'session',
+        event: 'first_turn.published',
+        meta: { workspaceId, sessionId: result.session.id, callerClientId: ctx.clientId },
+      })
+      return result
+    } catch (error) {
+      writeRuntimeLog('error', {
+        scope: 'session',
+        event: 'first_turn.rejected',
+        meta: { workspaceId, callerClientId: ctx.clientId, error },
+      })
+      throw error
     } finally {
       end()
     }
@@ -393,12 +415,12 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
   // Send a message to a session (with optional file attachments).
   //
   // Behavior:
-  //   - Awaits until the user message is persisted to disk, then returns
+  //   - Awaits until Pi confirms the canonical user message is persisted, then returns
   //     `{ accepted: true, messageId }`. This guarantees the message survives
   //     a mid-stream crash (#616).
   //   - The actual model-streaming work continues in the background; results
   //     flow back via SESSION_EVENT as before.
-  //   - Pre-persist errors (session not found, etc.) reject the RPC so the
+  //   - Pre-persist errors (session not found, Pi write failure, etc.) reject the RPC so the
   //     caller can show a synchronous error.
   //   - Post-persist errors (model API failures, etc.) are routed via the
   //     event stream as today.
@@ -447,7 +469,9 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
             reject(err)
             return
           }
-          // Post-persist error — route via the event stream as today.
+          // Settlement failures happen after the canonical user message is
+          // accepted. Preserve that distinction on the wire so clients retry
+          // only settlement and never submit the message again.
           writeRuntimeLog('error', {
             scope: 'session',
             event: 'send_message.post_accept_error',
@@ -458,14 +482,23 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
               error: err,
             },
           })
+          if (isSessionSettlementFailure(err)) {
+            const failure: SessionSettlementFailure = {
+              code: err.code,
+              message: err.message,
+              data: err.data,
+            }
+            pushTyped(server, RPC_CHANNELS.sessions.EVENT, { to: 'client', clientId: callerClientId }, {
+              type: 'session_failure',
+              sessionId,
+              error: failure,
+            })
+            return
+          }
           pushTyped(server, RPC_CHANNELS.sessions.EVENT, { to: 'client', clientId: callerClientId }, {
             type: 'error',
             sessionId,
             error: err instanceof Error ? err.message : 'Unknown error'
-          } as SessionEvent)
-          pushTyped(server, RPC_CHANNELS.sessions.EVENT, { to: 'client', clientId: callerClientId }, {
-            type: 'complete',
-            sessionId
           } as SessionEvent)
         })
     })
@@ -503,11 +536,11 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
     return sessionManager.respondToPermission(sessionId, requestId, allowed, alwaysAllow)
   })
 
-  // 回复 pi 扩展发起的 remoteui:request（payload=null 表示用户取消）
-  // 由渲染进程 RemoteUIModal 调用，转发到对应会话的 PiAgent.sendRemoteUIResponse
-  server.handle(RPC_CHANNELS.extensions.REMOTEUI_RESPONSE, async (ctx, sessionId: string, requestId: string, payload: unknown | null, reason?: 'cancelled' | 'no_remote' | 'disconnected') => {
+  server.handle(RPC_CHANNELS.extensions.INTERACTION_RESPONSE, async (ctx, sessionId: string, requestId: string, response: ExtensionInteractionResponseV1) => {
     await assertSessionWorkspace(sessionManager, ctx.workspaceId, sessionId)
-    return sessionManager.sendRemoteUIResponse(sessionId, requestId, payload, reason)
+    const error = validateExtensionInteractionResponseV1(response)
+    if (error) throw new TypeError(`Invalid extension interaction response: ${error}`)
+    return sessionManager.respondToExtensionInteraction(sessionId, requestId, response)
   })
 
   // 调用 pi 扩展注册的命令（extension_command_invoke）
@@ -560,14 +593,26 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
           throw new Error(`Invalid thinking level: ${command.level}. Valid values: ${VALID_THINKING_LEVELS_LIST}`)
         }
         return sessionManager.setSessionThinkingLevel(sessionId, command.level)
-      case 'updateWorkingDirectory':
-        return sessionManager.updateWorkingDirectory(sessionId, command.dir)
+      case 'retrySettlement':
+        if (Object.keys(command).length !== 1) {
+          throw new Error('retrySettlement does not accept a message or any other payload')
+        }
+        return sessionManager.retryPendingSettlement(sessionId)
       case 'showInFinder': {
         const sessionPath = resolveSessionDisplayPath(sessionManager, sessionId, resolveWorkspaceRootPath(deps, ctx))
-        if (sessionPath) {
-          deps.platform.showItemInFolder?.(sessionPath)
+        if (!sessionPath) throw new Error(`Session path unavailable: ${sessionId}`)
+        if (server.hasClientCapability(ctx.clientId, CLIENT_SHOW_IN_FOLDER)) {
+          await server.invokeClient(ctx.clientId, CLIENT_SHOW_IN_FOLDER, sessionPath)
+          return
         }
-        return
+        if (deps.platform.showItemInFolder) {
+          await deps.platform.showItemInFolder(sessionPath)
+          return
+        }
+        throw new CodedError(
+          'CAPABILITY_UNAVAILABLE',
+          'Show in Finder is unavailable because neither the requesting client nor this platform implements it',
+        )
       }
       case 'copyPath': {
         // Return the session folder path for copying to clipboard

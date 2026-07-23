@@ -3,10 +3,24 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
-import { discoverAndLoadExtensions } from "../src/core/extensions/loader.ts";
+import { loadExtensions } from "../src/core/extensions/loader.ts";
 import { ExtensionRunner } from "../src/core/extensions/runner.ts";
 import { ModelRegistry } from "../src/core/model-registry.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
+
+async function discoverAndLoadExtensions(_paths: string[], agentDir: string, cwd: string) {
+	const extensionsDir = path.join(agentDir, "extensions");
+	const declaredPaths = fs.existsSync(extensionsDir)
+		? fs.readdirSync(extensionsDir).map((entry) => path.join(extensionsDir, entry))
+		: [];
+	const metadata = new Map(
+		declaredPaths.map((extensionPath, index) => [
+			extensionPath,
+			{ id: `input-test-${index}`, target: "pi" as const, agentDir },
+		]),
+	);
+	return loadExtensions(declaredPaths, cwd, undefined, undefined, metadata);
+}
 
 describe("Input Event", () => {
 	let tempDir: string;

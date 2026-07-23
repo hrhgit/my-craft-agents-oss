@@ -12,7 +12,7 @@ depends_on: [provider-model-runtime]
 collaborates_with: []
 validation:
   - { id: pi-agent-regression, kind: unit, command: "npm --prefix pi test --workspace @mortise/pi-agent-core", description: "Run Pi agent engine regressions.", triggers: [owned-change], required: true, evidence: "Workspace test exit status and output." }
-scope_digest: 5ffc543fb81f2e478604e5f5c46c0a8b6601eb8c
+scope_digest: 8d8a94429d341350a40b555e8c9653e9d1e2feea
 ---
 
 ## Purpose
@@ -45,3 +45,4 @@ Small event-order changes can break RPC clients, retry presentation, or persiste
 ## Semantic history
 - 2026-07-06: Mortise unified its runtime integration around Pi agent semantics.
 - 2026-07-18: Pi history and packages became part of the Mortise monorepo.
+- 2026-07-21: Node harness resource discovery now preserves platform-correct file names and relative paths on Windows while retaining PowerShell as the canonical default shell.

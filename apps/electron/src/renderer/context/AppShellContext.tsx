@@ -20,20 +20,17 @@ import type {
   NewChatActionParams,
   PiGlobalProviderForDisplay,
   PiGlobalSettings,
-  TestAutomationResult,
 } from '../../shared/types'
 import type { SessionOptions, SessionOptionUpdates } from '../hooks/useSessionOptions'
 import type {
   CreateAndSendFirstTurnRequest,
   CreateAndSendFirstTurnResult,
+  ExtensionInteractionBridgeRequestV1,
+  ExtensionInteractionResponseV1,
   MidStreamSendIntent,
 } from '@mortise/shared/protocol'
 import { defaultSessionOptions } from '../hooks/useSessionOptions'
 import { sessionAtomFamily } from '../atoms/sessions'
-import type {
-  RemoteUICancelReason,
-} from '@/components/extensions/RemoteUIModal'
-import type { ExtensionUIRequest, ExtensionUIResponse } from '@/hooks/useRemoteUIRequests'
 import type { WorkspaceSelectHandler } from '@/components/workspace/useWorkspaceNavigation'
 import type { WorkspaceNavigationModel } from '@/components/workspace/useWorkspaceNavigation'
 import type { WorkspaceTransitionState } from '@/lib/workspace-transition'
@@ -64,14 +61,14 @@ export interface AppShellContextType {
   hydrateDraftAttachments: (sessionId: string) => Promise<FileAttachment[]>
   /** All skills for this workspace - provided by AppShell component (for @mentions) */
   skills?: LoadedSkill[]
-  /** Working directory of the active session — needed for project-level skill resolution */
-  activeSessionWorkingDirectory?: string
+  /** Canonical root of the active workspace, used for workspace-scoped resolution. */
+  activeWorkspaceRoot?: string
   /** Enabled permission modes for Shift+Tab cycling */
   enabledModes?: PermissionMode[]
 
   /** Pi extension input currently replacing the composer for its owning session. */
-  remoteUIRequest?: ExtensionUIRequest | null
-  respondRemoteUI?: (payload: ExtensionUIResponse, reason?: RemoteUICancelReason) => void
+  extensionInteraction?: ExtensionInteractionBridgeRequestV1 | null
+  respondToExtensionInteraction?: (response: ExtensionInteractionResponseV1) => void
 
   // Unified session options map
   /** All session-scoped options in one map. Use useSessionOptionsFor() hook for easy access. */
@@ -82,7 +79,7 @@ export interface AppShellContextType {
   onCreateAndSendFirstTurn: (
     input: Omit<CreateAndSendFirstTurnRequest, 'storedAttachments' | 'attachmentStagingId'>,
   ) => Promise<CreateAndSendFirstTurnResult>
-  onSendMessage: (sessionId: string, message: string, attachments?: FileAttachment[], skillSlugs?: string[], badges?: import('@mortise/core').ContentBadge[], midStreamSendIntent?: MidStreamSendIntent) => Promise<boolean>
+  onSendMessage: (sessionId: string, message: string, attachments?: FileAttachment[], skillSlugs?: string[], badges?: import('@mortise/core').ContentBadge[], midStreamSendIntent?: MidStreamSendIntent, submissionAttemptId?: string) => Promise<boolean>
   onRenameSession: (sessionId: string, name: string) => void
   onMarkSessionRead: (sessionId: string) => void
   onMarkSessionUnread: (sessionId: string) => void
@@ -147,7 +144,7 @@ export interface AppShellContextType {
   /** Ref to ChatDisplay for navigation between matches */
   chatDisplayRef?: React.RefObject<ChatDisplayHandle>
   /** Callback when ChatDisplay match info changes (for immediate UI updates) */
-  onChatMatchInfoChange?: (info: { sessionId: string | null; count: number; index: number; isHighlighting: boolean }) => void
+  onChatMatchInfoChange?: (info: { sessionId: string | null; count: number; index: number; hasMore: boolean; isHighlighting: boolean }) => void
 
   // Automation management
   /** Test an automation by ID — executes its actions and returns results */

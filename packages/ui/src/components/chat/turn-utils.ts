@@ -499,39 +499,6 @@ export function groupMessagesByTurn(messages: Message[], options: GroupTurnsOpti
       continue
     }
 
-    // Plan messages are added as activities to be time-sorted with tool calls
-    // This ensures the plan submission appears before the plan content chronologically
-    if (message.role === 'plan') {
-      if (!currentTurn) {
-        // Edge case: plan without preceding activities
-        currentTurn = {
-          type: 'assistant',
-          turnId: message.turnId || message.id,
-          activities: [],
-          response: undefined,
-          intent: undefined,
-          isStreaming: false,
-          isComplete: false,
-          timestamp: message.timestamp,
-        }
-      }
-      // Add plan as an activity so it gets time-sorted with other activities
-      currentTurn.activities.push({
-        id: message.id,
-        type: 'plan' as ActivityType,
-        status: 'completed',
-        content: message.content,
-        messageId: message.id,
-        annotations: message.annotations,
-        displayName: 'Plan',
-        timestamp: message.timestamp,
-      })
-      currentTurn.isStreaming = false
-      currentTurn.isComplete = true
-      flushCurrentTurn()
-      continue
-    }
-
     // Tool messages belong to current assistant turn
     if (message.role === 'tool') {
       // Tool is complete if toolStatus is 'completed' OR toolResult exists (but NOT if backgrounded)

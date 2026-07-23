@@ -8,18 +8,16 @@
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 
-const AUTOMATIONS_CONFIG_FILE = 'automations.json';
 import type { SessionToolContext } from '../context.ts';
 import type { ToolResult } from '../types.ts';
 import { successResponse, errorResponse } from '../response.ts';
 import {
   formatValidationResult,
   validateJsonFileHasFields,
-  mergeResults,
 } from '../validation.ts';
 
 export interface ConfigValidateArgs {
-  target: 'config' | 'preferences' | 'permissions' | 'automations' | 'tool-icons' | 'all';
+  target: 'config' | 'preferences' | 'permissions' | 'tool-icons' | 'all';
 }
 
 /**
@@ -50,9 +48,6 @@ export async function handleConfigValidate(
         case 'permissions':
           result = ctx.validators.validatePermissions(ctx.workspacePath);
           break;
-        case 'automations':
-          result = ctx.validators.validateAutomations(ctx.workspacePath);
-          break;
         case 'tool-icons':
           result = ctx.validators.validateToolIcons();
           break;
@@ -69,16 +64,14 @@ export async function handleConfigValidate(
     }
   }
 
+  if (target === 'config' || target === 'all') {
+    return errorResponse(
+      'SQLite configuration validation is unavailable in this runtime. Use a host that provides the Mortise configuration validator.'
+    );
+  }
+
   // Fallback: basic validation (Codex path)
   switch (target) {
-    case 'config': {
-      const result = validateJsonFileHasFields(
-        join(mortiseAgentRoot, 'config.json'),
-        ['workspaces']
-      );
-      return successResponse(formatValidationResult(result));
-    }
-
     case 'preferences': {
       const result = validateJsonFileHasFields(
         join(mortiseAgentRoot, 'preferences.json'),
@@ -97,15 +90,6 @@ export async function handleConfigValidate(
       return successResponse(formatValidationResult(result));
     }
 
-    case 'automations': {
-      const automationsPath = join(ctx.workspacePath, AUTOMATIONS_CONFIG_FILE);
-      if (ctx.fs.exists(automationsPath)) {
-        const result = validateJsonFileHasFields(automationsPath, []);
-        return successResponse(formatValidationResult(result));
-      }
-      return successResponse(`✓ No ${AUTOMATIONS_CONFIG_FILE} (no automations configured)`);
-    }
-
     case 'tool-icons': {
       const result = validateJsonFileHasFields(
         join(mortiseAgentRoot, 'tool-icons', 'tool-icons.json'),
@@ -114,22 +98,9 @@ export async function handleConfigValidate(
       return successResponse(formatValidationResult(result));
     }
 
-    case 'all': {
-      const configResult = validateJsonFileHasFields(
-        join(mortiseAgentRoot, 'config.json'),
-        ['workspaces']
-      );
-      const prefsResult = validateJsonFileHasFields(
-        join(mortiseAgentRoot, 'preferences.json'),
-        []
-      );
-      const merged = mergeResults(configResult, prefsResult);
-      return successResponse(formatValidationResult(merged));
-    }
-
     default:
       return errorResponse(
-        `Unknown validation target: ${target}. Valid targets: config, preferences, permissions, automations, tool-icons, all`
+        `Unknown validation target: ${target}. Valid targets: config, preferences, permissions, tool-icons, all`
       );
   }
 }

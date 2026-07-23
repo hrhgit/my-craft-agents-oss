@@ -16,7 +16,7 @@ import type { AgentEvent, ExtensionCommandResult } from '@mortise/core/types';
 import type { PiProjectionEventV1, PiProjectionSnapshotV1 } from '../../protocol/pi-projection.ts';
 import type { CapabilityRequestV1, CapabilityResultV1 } from '../../protocol/capabilities.ts';
 import type { ExtensionContributionDeltaV1 } from '../../protocol/extension-contributions.ts';
-import type { ExtensionInteractionBridgeCancelV1, ExtensionInteractionBridgeRequestV1, ExtensionInteractionBridgeSettledV1 } from '../../protocol/extension-interactions.ts';
+import type { ExtensionInteractionBridgeCancelV1, ExtensionInteractionBridgeRequestV1, ExtensionInteractionBridgeSettledV1, ExtensionInteractionResponseV1 } from '../../protocol/extension-interactions.ts';
 import type { ExtensionUIValidationDeltaV1 } from '../../protocol/extension-ui-validation.ts';
 import type { FileAttachment } from '../../utils/files.ts';
 import type { ThinkingLevel } from '../thinking-levels.ts';
@@ -60,7 +60,7 @@ export interface IsolatedAgentRequest {
   signal?: AbortSignal;
 }
 
-export type LlmProviderType = 'pi' | 'pi_compat';
+export type LlmProviderType = 'pi' | 'pi_custom';
 export type LlmAuthType =
   | 'api_key'
   | 'api_key_with_endpoint'
@@ -83,7 +83,22 @@ export interface BackendRuntimeUpdate {
     [key: string]: unknown;
   };
 }
-import type { AgentEvent as AutomationAgentEvent, AgentAutomationInput } from '../../automations/types.ts';
+export type AutomationAgentEvent =
+  | 'PreToolUse'
+  | 'PostToolUse'
+  | 'PostToolUseFailure'
+  | 'UserPromptSubmit'
+  | 'Stop';
+
+export interface AgentAutomationInput {
+  hook_event_name: AutomationAgentEvent;
+  tool_name?: string;
+  tool_input?: unknown;
+  tool_output?: unknown;
+  prompt?: string;
+  source?: string;
+  [key: string]: unknown;
+}
 
 // ============================================================
 // Callback Types
@@ -100,7 +115,6 @@ export type ExtensionBridgeEvent = {
 } & (
   | { type: 'extension_notify'; message: string; notificationType?: 'info' | 'warning' | 'error'; source?: string }
   | { type: 'extension_status'; key?: string; status: string; source?: string }
-  | { type: 'extension_widget'; key: string; content: string[] | undefined; placement?: 'aboveEditor' | 'belowEditor'; source?: string }
   | { type: 'extension_contribution'; delta: ExtensionContributionDeltaV1 }
   | { type: 'extension_ui_validation'; delta: ExtensionUIValidationDeltaV1 }
   | { type: 'extension_contributions_runtime_reset'; workspaceId?: string }
@@ -110,21 +124,6 @@ export type ExtensionBridgeEvent = {
   | { type: 'extension_command_registered'; name: string; description?: string; source: string }
   | { type: 'extension_set_title'; title: string }
   | { type: 'extension_set_editor_text'; text: string }
-  | {
-      type: 'remoteui_request';
-      requestId: string;
-      kind: 'select' | 'confirm' | 'editor';
-      title: string;
-      message?: string;
-      options?: Array<{ title: string; description?: string }>;
-      allowMultiple?: boolean;
-      allowFreeform?: boolean;
-      allowComment?: boolean;
-      prefill?: string;
-      placeholder?: string;
-      timeout?: number;
-      source: string;
-    }
 );
 
 export interface PiExtensionCommand {
@@ -300,7 +299,7 @@ export interface CoreBackendConfig {
 
   /**
    * 扩展事件桥接回调：当 Pi RpcClient 转发扩展事件（remoteui:request、
-   * extension_notify、extension_status、extension_widget、extension_command_registered 等）时调用。
+   * extension notifications, contributions, interactions, and commands）时调用。
    * 由 SessionManager 通过 eventSink 广播到渲染进程。
    */
   onExtensionEvent?: (event: ExtensionBridgeEvent) => void;
@@ -540,9 +539,6 @@ export interface AgentBackend {
   // Session & Workspace State
   // ============================================================
 
-  /** Update the working directory */
-  updateWorkingDirectory(path: string): void;
-
   /** Update the SDK cwd (transcript storage location) */
   updateSdkCwd(path: string): void;
 
@@ -571,12 +567,8 @@ export interface AgentBackend {
    */
   respondToPermission(requestId: string, allowed: boolean, alwaysAllow?: boolean): void;
 
-  /**
-   * 回复 pi 扩展发起的 remoteui:request。
-   * 仅 Pi 后端实现（PiAgent.sendRemoteUIResponse）；其他后端可不实现。
-   * payload=null 表示用户取消。
-   */
-  sendRemoteUIResponse?(requestId: string, payload: unknown | null, reason?: 'cancelled' | 'no_remote' | 'disconnected'): boolean;
+  /** Respond to a current versioned extension interaction. */
+  respondToExtensionInteraction?(requestId: string, response: ExtensionInteractionResponseV1): boolean;
 
   /**
    * 调用 pi 扩展注册的命令（extension_command_invoke）。

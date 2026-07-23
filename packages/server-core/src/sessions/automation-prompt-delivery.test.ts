@@ -103,48 +103,6 @@ describe('V3 automation prompt delivery', () => {
     expect(createAndSendFirstTurn).toHaveBeenCalledTimes(1)
   })
 
-  it('routes the legacy prompt entry point through the first-turn publication transaction', async () => {
-    const manager = new SessionManager()
-    const managed = addSession(manager, 'provisional-automation')
-    managed.publicationState = 'provisional'
-    const order: string[] = []
-    const binder = mock(async () => {
-      order.push('bound')
-    })
-    manager.setAutomationBinder(binder)
-    let capturedInput: Record<string, unknown> | undefined
-
-    ;(manager as unknown as {
-      createAndSendFirstTurn: (
-        input: Record<string, unknown>,
-        prepare?: (session: typeof managed) => void | Promise<void>,
-      ) => Promise<{ session: { id: string }; messageId: string }>
-    }).createAndSendFirstTurn = async (input, prepare) => {
-      capturedInput = input
-      await prepare?.(managed)
-      order.push('published')
-      return { session: { id: managed.id }, messageId: 'message-test' }
-    }
-
-    const result = await manager.executePromptAutomation({
-      workspaceId: 'ws-test',
-      workspaceRootPath: managed.workspace.rootPath,
-      prompt: 'legacy prompt',
-      automationName: 'Legacy automation',
-      telegramTopic: 'Builds',
-    })
-
-    expect(result.sessionId).toBe(managed.id)
-    expect(capturedInput?.message).toBe('legacy prompt')
-    expect(managed.triggeredBy?.automationName).toBe('Legacy automation')
-    expect(order).toEqual(['published', 'bound'])
-    expect(binder).toHaveBeenCalledWith({
-      workspaceId: 'ws-test',
-      sessionId: managed.id,
-      topicName: 'Builds',
-    })
-  })
-
   it('delivers fixed followUp and trusted event steer to their exact Sessions', async () => {
     const manager = new SessionManager()
     addSession(manager, 'fixed-session')

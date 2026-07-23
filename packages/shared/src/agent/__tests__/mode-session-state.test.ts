@@ -5,10 +5,20 @@ import {
   getPermissionModeDiagnostics,
   hydratePreviousPermissionMode,
   initializeModeState,
+  parsePermissionMode,
   setPermissionMode,
 } from '../mode-manager.ts';
 
 describe('mode transition session_state context', () => {
+  it('parses only canonical public mode names', () => {
+    expect(parsePermissionMode('explore')).toBe('safe');
+    expect(parsePermissionMode('ask')).toBe('ask');
+    expect(parsePermissionMode('execute')).toBe('allow-all');
+    expect(parsePermissionMode('safe')).toBeNull();
+    expect(parsePermissionMode('allow-all')).toBeNull();
+    expect(parsePermissionMode('ask-to-edit')).toBeNull();
+  });
+
   it('includes explicit transition metadata after a mode change', () => {
     const sessionId = `mode-transition-${Date.now()}`;
 

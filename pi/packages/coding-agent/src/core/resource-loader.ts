@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, join, resolve, sep } from "node:path";
 import chalk from "chalk";
-import { CONFIG_DIR_NAME } from "../config.ts";
+import { getProjectConfigDir } from "../config.ts";
 import { loadThemeFromPath, type Theme } from "../modes/interactive/theme/theme.ts";
 import type { ResourceDiagnostic } from "./diagnostics.ts";
 
@@ -226,6 +226,8 @@ export function loadProjectContextFiles(options: {
 export interface DefaultResourceLoaderOptions {
 	cwd: string;
 	agentDir: string;
+	/** Project-local config directory name. Defaults to the standalone Pi directory. */
+	projectConfigDir?: string;
 	settingsManager?: SettingsManager;
 	eventBus?: EventBus;
 	additionalExtensionPaths?: ResourcePathEntry[];
@@ -264,6 +266,7 @@ export interface DefaultResourceLoaderOptions {
 export class DefaultResourceLoader implements ResourceLoader {
 	private cwd: string;
 	private agentDir: string;
+	private projectConfigDir: string;
 	private settingsManager: SettingsManager;
 	private eventBus: EventBus;
 	private packageManager: DefaultPackageManager | undefined;
@@ -320,7 +323,9 @@ export class DefaultResourceLoader implements ResourceLoader {
 	constructor(options: DefaultResourceLoaderOptions) {
 		this.cwd = resolvePath(options.cwd);
 		this.agentDir = resolvePath(options.agentDir);
-		this.settingsManager = options.settingsManager ?? SettingsManager.create(this.cwd, this.agentDir);
+		this.projectConfigDir = options.projectConfigDir ?? getProjectConfigDir();
+		this.settingsManager =
+			options.settingsManager ?? SettingsManager.create(this.cwd, this.agentDir, this.projectConfigDir);
 		this.eventBus = options.eventBus ?? createEventBus();
 		this.additionalExtensionPaths = options.additionalExtensionPaths ?? [];
 		this.additionalSkillPaths = options.additionalSkillPaths ?? [];
@@ -673,6 +678,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 			this.packageManager = new DefaultPackageManager({
 				cwd: this.cwd,
 				agentDir: this.agentDir,
+				projectConfigDir: this.projectConfigDir,
 				settingsManager: this.settingsManager,
 				extensionTarget: this.extensionTarget,
 			});
@@ -702,9 +708,9 @@ export class DefaultResourceLoader implements ResourceLoader {
 	private getResourceCacheGeneration(): string {
 		return [
 			fileGeneration(join(this.agentDir, "settings.json")),
-			fileGeneration(join(this.cwd, CONFIG_DIR_NAME, "settings.json")),
+			fileGeneration(join(this.cwd, this.projectConfigDir, "settings.json")),
 			fileGeneration(join(this.agentDir, "package.json")),
-			fileGeneration(join(this.cwd, CONFIG_DIR_NAME, "package.json")),
+			fileGeneration(join(this.cwd, this.projectConfigDir, "package.json")),
 		].join("|");
 	}
 
@@ -823,7 +829,13 @@ export class DefaultResourceLoader implements ResourceLoader {
 			}
 		};
 
-		addStartupExtensions(projectExtensionEntries, join(this.cwd, CONFIG_DIR_NAME), "project", "local", resolvedPaths);
+		addStartupExtensions(
+			projectExtensionEntries,
+			join(this.cwd, this.projectConfigDir),
+			"project",
+			"local",
+			resolvedPaths,
+		);
 		addStartupExtensions(globalExtensionEntries, this.agentDir, "user", "local", resolvedPaths);
 		addStartupExtensions(this.additionalExtensionPaths, this.cwd, "temporary", "cli", cliExtensionPaths);
 
@@ -1018,6 +1030,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 			skillsResult = loadSkills({
 				cwd: this.cwd,
 				agentDir: this.agentDir,
+				projectConfigDir: this.projectConfigDir,
 				skillPaths,
 				includeDefaults: false,
 			});
@@ -1041,6 +1054,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 			const allPrompts = loadPromptTemplates({
 				cwd: this.cwd,
 				agentDir: this.agentDir,
+				projectConfigDir: this.projectConfigDir,
 				promptPaths,
 				includeDefaults: false,
 			});
@@ -1184,10 +1198,10 @@ export class DefaultResourceLoader implements ResourceLoader {
 			join(this.agentDir, "extensions"),
 		];
 		const projectRoots = [
-			join(this.cwd, CONFIG_DIR_NAME, "skills"),
-			join(this.cwd, CONFIG_DIR_NAME, "prompts"),
-			join(this.cwd, CONFIG_DIR_NAME, "themes"),
-			join(this.cwd, CONFIG_DIR_NAME, "extensions"),
+			join(this.cwd, this.projectConfigDir, "skills"),
+			join(this.cwd, this.projectConfigDir, "prompts"),
+			join(this.cwd, this.projectConfigDir, "themes"),
+			join(this.cwd, this.projectConfigDir, "extensions"),
 		];
 
 		for (const root of agentRoots) {
@@ -1240,7 +1254,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 		const themes: Theme[] = [];
 		const diagnostics: ResourceDiagnostic[] = [];
 		if (includeDefaults) {
-			const defaultDirs = [join(this.agentDir, "themes"), join(this.cwd, CONFIG_DIR_NAME, "themes")];
+			const defaultDirs = [join(this.agentDir, "themes"), join(this.cwd, this.projectConfigDir, "themes")];
 
 			for (const dir of defaultDirs) {
 				this.loadThemesFromDir(dir, themes, diagnostics);
@@ -1399,7 +1413,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 	}
 
 	private discoverSystemPromptFile(): string | undefined {
-		const projectPath = join(this.cwd, CONFIG_DIR_NAME, "SYSTEM.md");
+		const projectPath = join(this.cwd, this.projectConfigDir, "SYSTEM.md");
 		if (existsSync(projectPath)) {
 			return projectPath;
 		}
@@ -1413,7 +1427,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 	}
 
 	private discoverAppendSystemPromptFile(): string | undefined {
-		const projectPath = join(this.cwd, CONFIG_DIR_NAME, "APPEND_SYSTEM.md");
+		const projectPath = join(this.cwd, this.projectConfigDir, "APPEND_SYSTEM.md");
 		if (existsSync(projectPath)) {
 			return projectPath;
 		}

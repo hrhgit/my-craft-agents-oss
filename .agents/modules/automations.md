@@ -18,7 +18,7 @@ depends_on: [workspace-state, session-lifecycle]
 collaborates_with: []
 validation:
   - { id: regression, kind: unit, command: "bun test packages/shared/src/automations packages/shared/src/scheduler apps/electron/src/renderer/components/automations", description: "Run automation and scheduler regressions.", triggers: [owned-change], required: true, evidence: "Bun test exit status and output." }
-scope_digest: 2f30d275855d798823a208ce1839484b95e01377
+scope_digest: e6f416642eeeaa162793da5354e1613822281355
 ---
 
 ## Purpose
@@ -49,6 +49,8 @@ Run scheduler edge cases, persistence concurrency, RPC, and management UI tests.
 Clock changes and process downtime affect schedules; concurrent backends must agree on operation identity and version.
 
 ## Semantic history
+- 2026-07-23: Closed the runtime migration window: Mortise Automations never reads `.pi`; historical scheduled-prompt or external-trigger conversion is an explicit offline operation, while V3 remains the sole runtime authority.
+- 2026-07-21: Made the V3 SQLite protocol the only Automations runtime authority; removed the former scheduler, event bus, handlers, JSONL history/retry queue, compatibility RPC adapter, and all V2/prompt-automation migration readers; restart recovery now coalesces `queue-one` backlog before execution and incompatible writers enter read-only mode without initializing storage.
 - 2026-07-20: Removed the obsolete active Data Sources field from the automation runtime options; prompt mentions now describe skills rather than built-in Sources.
 - 2026-07-20: Fenced Automations writes by definitions/ingress/runs/history capability versions and made skipped once misfires durable without disabling unrelated triggers.
 - 2026-07-20: Implemented the V3 core contract with strict schemas, atomic V2 migration, MultiWriterStore-backed definitions/events/runs, CloudEvents idempotency, precise cron/once/interval recovery, and callback-owned action execution.

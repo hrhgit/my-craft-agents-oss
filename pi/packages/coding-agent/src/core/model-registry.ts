@@ -3,6 +3,7 @@
  */
 
 import { registerApiProvider } from "@mortise/pi-ai/api-registry";
+import { getModels, getProviders } from "@mortise/pi-ai/models";
 import { type OAuthProviderInterface, registerOAuthProvider, resetOAuthProviders } from "@mortise/pi-ai/oauth";
 import { resetDefaultApiProviders } from "@mortise/pi-ai/stream";
 import type {
@@ -21,7 +22,6 @@ import { type Static, Type } from "typebox";
 import { Compile } from "typebox/compile";
 import type { TLocalizedValidationError } from "typebox/error";
 import { getAgentDir } from "../config.ts";
-import { warnDeprecation } from "../utils/deprecation.ts";
 import { stripJsonComments } from "../utils/json.ts";
 import { normalizePath } from "../utils/paths.ts";
 import type { AuthStatus, AuthStorage } from "./auth-storage.ts";
@@ -31,7 +31,6 @@ import {
 	getConfigValueEnvVarNames,
 	isCommandConfigValue,
 	isConfigValueConfigured,
-	isLegacyEnvVarNameConfigValue,
 	resolveConfigValueOrThrow,
 	resolveConfigValueUncached,
 	resolveHeadersOrThrow,
@@ -226,77 +225,6 @@ interface ProviderRequestConfig {
 	authHeader?: boolean;
 }
 
-function migrateLegacyRegisterProviderConfigValue(providerName: string, field: string, value: string): string {
-	if (!isLegacyEnvVarNameConfigValue(value)) return value;
-	warnDeprecation(
-		`registerProvider("${providerName}") ${field} value "${value}" is treated as a legacy environment variable reference. This will no longer be detected as an environment variable reference in a future release. Pass "$${value}" instead.`,
-	);
-	return `$${value}`;
-}
-
-function migrateLegacyRegisterProviderHeaders(
-	providerName: string,
-	field: string,
-	headers: Record<string, string> | undefined,
-): Record<string, string> | undefined {
-	if (!headers) return undefined;
-	let migratedHeaders: Record<string, string> | undefined;
-	for (const [key, value] of Object.entries(headers)) {
-		const migratedValue = migrateLegacyRegisterProviderConfigValue(providerName, `${field} header "${key}"`, value);
-		if (migratedValue === value) continue;
-		migratedHeaders ??= { ...headers };
-		migratedHeaders[key] = migratedValue;
-	}
-	return migratedHeaders ?? headers;
-}
-
-function migrateLegacyRegisterProviderConfigValues(
-	providerName: string,
-	config: ProviderConfigInput,
-): ProviderConfigInput {
-	let migratedConfig: ProviderConfigInput | undefined;
-
-	const setMigratedConfigValue = <TKey extends keyof ProviderConfigInput>(
-		key: TKey,
-		value: ProviderConfigInput[TKey],
-	) => {
-		migratedConfig ??= { ...config };
-		migratedConfig[key] = value;
-	};
-
-	if (config.apiKey) {
-		const apiKey = migrateLegacyRegisterProviderConfigValue(providerName, "apiKey", config.apiKey);
-		if (apiKey !== config.apiKey) {
-			setMigratedConfigValue("apiKey", apiKey);
-		}
-	}
-
-	const headers = migrateLegacyRegisterProviderHeaders(providerName, "headers", config.headers);
-	if (headers !== config.headers) {
-		setMigratedConfigValue("headers", headers);
-	}
-
-	if (config.models) {
-		let models: ProviderConfigInput["models"] | undefined;
-		for (let index = 0; index < config.models.length; index++) {
-			const model = config.models[index];
-			const modelHeaders = migrateLegacyRegisterProviderHeaders(
-				providerName,
-				`model "${model.id}" headers`,
-				model.headers,
-			);
-			if (modelHeaders === model.headers) continue;
-			models ??= [...config.models];
-			models[index] = { ...model, headers: modelHeaders };
-		}
-		if (models) {
-			setMigratedConfigValue("models", models);
-		}
-	}
-
-	return migratedConfig ?? config;
-}
-
 export type ResolvedRequestAuth =
 	| {
 			ok: true;
@@ -311,6 +239,7 @@ export type ResolvedRequestAuth =
 /** Result of loading custom models from models.json */
 interface CustomModelsResult {
 	models: Model<Api>[];
+	config?: ModelsConfig;
 	error: string | undefined;
 }
 
@@ -406,15 +335,19 @@ export class ModelRegistry {
 
 	private loadModels(): void {
 		// Load custom models and overrides from models.json
-		const { models: customModels, error } = this.modelsJsonPath
-			? this.loadCustomModels(this.modelsJsonPath)
-			: emptyCustomModelsResult();
+		const {
+			models: customModels,
+			config,
+			error,
+		} = this.modelsJsonPath ? this.loadCustomModels(this.modelsJsonPath) : emptyCustomModelsResult();
 
 		if (error) {
 			this.loadError = error;
 		}
 
-		let combined = this.mergeCustomModels([], customModels);
+		const builtInModels = getProviders().flatMap((provider) => getModels(provider)) as Model<Api>[];
+		let combined = this.mergeCustomModels(builtInModels, customModels);
+		if (config) combined = this.applyModelsConfig(combined, config);
 
 		// Let OAuth providers modify their models (e.g., update baseUrl)
 		for (const oauthProvider of this.authStorage.getOAuthProviders()) {
@@ -425,6 +358,28 @@ export class ModelRegistry {
 		}
 
 		this.models = combined;
+	}
+
+	private applyModelsConfig(models: Model<Api>[], config: ModelsConfig): Model<Api>[] {
+		return models.map((model) => {
+			const providerConfig = config.providers[model.provider];
+			if (!providerConfig) return model;
+
+			const isCustomModel = providerConfig.models?.some((definition) => definition.id === model.id) ?? false;
+			const modelOverride = providerConfig.modelOverrides?.[model.id];
+			const cost = modelOverride?.cost ? { ...model.cost, ...modelOverride.cost } : model.cost;
+			const providerCompat = isCustomModel ? model.compat : mergeCompat(model.compat, providerConfig.compat);
+			const compat = mergeCompat(providerCompat, modelOverride?.compat);
+
+			return {
+				...model,
+				...(!isCustomModel && providerConfig.baseUrl ? { baseUrl: providerConfig.baseUrl } : {}),
+				...(modelOverride ?? {}),
+				cost,
+				compat,
+				headers: undefined,
+			};
+		});
 	}
 
 	/** Merge custom models by provider+id (last custom entry wins on conflicts). */
@@ -474,7 +429,7 @@ export class ModelRegistry {
 				}
 			}
 
-			return { models: this.parseModels(config), error: undefined };
+			return { models: this.parseModels(config), config, error: undefined };
 		} catch (error) {
 			if (error instanceof SyntaxError) {
 				return emptyCustomModelsResult(`Failed to parse models.json: ${error.message}\n\nFile: ${modelsJsonPath}`);
@@ -487,6 +442,8 @@ export class ModelRegistry {
 
 	private validateConfig(config: ModelsConfig): void {
 		for (const [providerName, providerConfig] of Object.entries(config.providers)) {
+			const builtInModels = getModels(providerName);
+			const builtInProvider = builtInModels.length > 0;
 			const hasProviderApi = !!providerConfig.api;
 			const models = providerConfig.models ?? [];
 			const hasModelOverrides =
@@ -501,10 +458,10 @@ export class ModelRegistry {
 				}
 			} else {
 				// Custom models require an explicit endpoint and auth source.
-				if (!providerConfig.baseUrl) {
+				if (!providerConfig.baseUrl && !builtInProvider) {
 					throw new Error(`Provider ${providerName}: "baseUrl" is required when defining custom models.`);
 				}
-				if (!providerConfig.apiKey && !this.authStorage.hasAuth(providerName)) {
+				if (!builtInProvider && !providerConfig.apiKey && !this.authStorage.hasAuth(providerName)) {
 					throw new Error(
 						`Provider ${providerName}: an auth source is required when defining custom models. ` +
 							`Set "apiKey" in models.json or configure credentials in auth.json.`,
@@ -515,7 +472,7 @@ export class ModelRegistry {
 			for (const modelDef of models) {
 				const hasModelApi = !!modelDef.api;
 
-				if (!hasProviderApi && !hasModelApi) {
+				if (!hasProviderApi && !hasModelApi && !builtInProvider) {
 					throw new Error(
 						`Provider ${providerName}, model ${modelDef.id}: no "api" specified. Set at provider or model level.`,
 					);
@@ -535,14 +492,15 @@ export class ModelRegistry {
 		const models: Model<Api>[] = [];
 
 		for (const [providerName, providerConfig] of Object.entries(config.providers)) {
+			const builtInTemplate = getModels(providerName)[0] as Model<Api> | undefined;
 			const modelDefs = providerConfig.models ?? [];
 			if (modelDefs.length === 0) continue; // Override-only, no custom models
 
 			for (const modelDef of modelDefs) {
-				const api = modelDef.api ?? providerConfig.api;
+				const api = modelDef.api ?? providerConfig.api ?? builtInTemplate?.api;
 				if (!api) continue;
 
-				const baseUrl = modelDef.baseUrl ?? providerConfig.baseUrl;
+				const baseUrl = modelDef.baseUrl ?? providerConfig.baseUrl ?? builtInTemplate?.baseUrl;
 				if (!baseUrl) continue;
 
 				const compat = mergeCompat(providerConfig.compat, modelDef.compat);
@@ -753,10 +711,9 @@ export class ModelRegistry {
 	 * If provider has oauth: registers OAuth provider for /login support.
 	 */
 	registerProvider(providerName: string, config: ProviderConfigInput): void {
-		const migratedConfig = migrateLegacyRegisterProviderConfigValues(providerName, config);
-		this.validateProviderConfig(providerName, migratedConfig);
-		this.applyProviderConfig(providerName, migratedConfig);
-		this.upsertRegisteredProvider(providerName, migratedConfig);
+		this.validateProviderConfig(providerName, config);
+		this.applyProviderConfig(providerName, config);
+		this.upsertRegisteredProvider(providerName, config);
 	}
 
 	/**

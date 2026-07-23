@@ -12,13 +12,19 @@ function Popover({
   return <PopoverPrimitive.Root data-slot="popover" {...props} {...state} />
 }
 
-function PopoverTrigger({
-  semanticId,
-  uiInteractions,
-  ...props
-}: React.ComponentProps<typeof PopoverPrimitive.Trigger> & UiValidationPrimitiveProps) {
-  return <PopoverPrimitive.Trigger data-slot="popover-trigger" {...uiValidationAttributes(semanticId, uiInteractions)} {...props} />
-}
+const PopoverTrigger = React.forwardRef<
+  React.ElementRef<typeof PopoverPrimitive.Trigger>,
+  React.ComponentPropsWithoutRef<typeof PopoverPrimitive.Trigger> & UiValidationPrimitiveProps
+>(({ semanticId, uiInteractions, ...props }, ref) => (
+  <PopoverPrimitive.Trigger
+    ref={ref}
+    data-slot="popover-trigger"
+    {...uiValidationAttributes(semanticId, uiInteractions)}
+    {...props}
+  />
+))
+
+PopoverTrigger.displayName = PopoverPrimitive.Trigger.displayName
 
 function PopoverContent({
   className,

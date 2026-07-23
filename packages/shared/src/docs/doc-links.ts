@@ -67,7 +67,7 @@ export const DOCS: Record<DocFeature, DocInfo> = {
     path: '/apps/electron/resources/docs/automations.md',
     title: 'Automations',
     summary:
-      'Automate actions when events occur — run commands on schedules, react to runtime events, or trigger prompts. Configured in automations.json.',
+      'Create versioned time or event triggers with prompt and webhook actions through the host-owned Automations service.',
   },
   messaging: {
     path: '/README.md',

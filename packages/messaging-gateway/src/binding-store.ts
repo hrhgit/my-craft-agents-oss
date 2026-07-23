@@ -7,17 +7,17 @@
  */
 
 import { randomUUID } from 'node:crypto'
-import type { ChannelBinding, MessagingLogger, PlatformType, RawBindingConfig } from './types'
-import { normalizeBindingConfig } from './types'
-import { JsonFileStore, NOOP_LOGGER } from './json-file-store'
+import type { BindingConfig, ChannelBinding, MessagingLogger, PlatformType } from './types'
+import { createBindingConfig } from './types'
+import { NOOP_LOGGER, SqliteRecordStore } from './sqlite-record-store'
 
-export class BindingStore extends JsonFileStore<ChannelBinding[]> {
+export class BindingStore extends SqliteRecordStore<ChannelBinding[]> {
   private bindings: ChannelBinding[] = []
   private changeListener?: () => void
 
-  /** @param storageDir Absolute path to the directory where bindings.json is stored. */
+  /** @param storageDir Absolute path to the messaging state directory. */
   constructor(storageDir: string, logger: MessagingLogger = NOOP_LOGGER) {
-    super(storageDir, 'bindings.json', logger)
+    super(storageDir, 'bindings', logger)
     this.load()
   }
 
@@ -66,7 +66,7 @@ export class BindingStore extends JsonFileStore<ChannelBinding[]> {
     platform: PlatformType,
     channelId: string,
     channelName?: string,
-    config?: RawBindingConfig,
+    config?: Partial<BindingConfig>,
     threadId?: number,
   ): ChannelBinding {
     // One channel → one session: evict any existing binding for the
@@ -86,7 +86,7 @@ export class BindingStore extends JsonFileStore<ChannelBinding[]> {
       channelName,
       enabled: true,
       createdAt: Date.now(),
-      config: normalizeBindingConfig(platform, config),
+      config: createBindingConfig(platform, config),
     }
 
     this.bindings.push(binding)
@@ -115,12 +115,10 @@ export class BindingStore extends JsonFileStore<ChannelBinding[]> {
    * and breaks anything keyed on it (audit logs, deep links, stale UI
    * closures).
    */
-  updateBindingConfig(bindingId: string, patch: RawBindingConfig): ChannelBinding | null {
+  updateBindingConfig(bindingId: string, patch: Partial<BindingConfig>): ChannelBinding | null {
     const binding = this.bindings.find((b) => b.id === bindingId)
     if (!binding) return null
-    // binding.config is canonical BindingConfig (no legacy fields); merging with
-    // the raw patch is safe because normalizeBindingConfig strips legacy keys.
-    binding.config = normalizeBindingConfig(binding.platform, {
+    binding.config = createBindingConfig(binding.platform, {
       ...binding.config,
       ...patch,
     })
@@ -193,34 +191,67 @@ export class BindingStore extends JsonFileStore<ChannelBinding[]> {
   // -------------------------------------------------------------------------
 
   private load(): void {
-    const parsed = this.loadFile()
-    if (Array.isArray(parsed)) {
-      this.bindings = parsed.map(normalizeBinding)
+    const parsed = this.loadRecord()
+    if (Array.isArray(parsed) && parsed.every(isCanonicalBinding)) {
+      this.bindings = parsed
     } else {
       this.bindings = []
+      if (parsed !== null) {
+        this.log.error('rejected bindings outside the current schema', {
+          event: 'binding_schema_rejected',
+          databasePath: this.databasePath,
+          recordKey: this.recordKey,
+        })
+      }
     }
   }
 
   private save(): void {
-    const ok = this.saveFile(this.bindings)
+    const ok = this.saveRecord(this.bindings)
     // 仅在写入成功后触发 listener——否则 UI 会显示重启后消失的幻影 binding。
     if (ok) this.changeListener?.()
   }
 }
 
-// ---------------------------------------------------------------------------
-// Migration helpers
-// ---------------------------------------------------------------------------
+function isCanonicalBinding(value: unknown): value is ChannelBinding {
+  if (!isRecord(value) || !isCanonicalBindingConfig(value.config)) return false
+  return (
+    typeof value.id === 'string' &&
+    typeof value.workspaceId === 'string' &&
+    typeof value.sessionId === 'string' &&
+    (value.platform === 'telegram' || value.platform === 'whatsapp' || value.platform === 'lark') &&
+    typeof value.channelId === 'string' &&
+    (value.threadId === undefined || typeof value.threadId === 'number') &&
+    (value.channelName === undefined || typeof value.channelName === 'string') &&
+    typeof value.enabled === 'boolean' &&
+    typeof value.createdAt === 'number'
+  )
+}
 
-function normalizeBinding(raw: ChannelBinding): ChannelBinding {
-  return {
-    ...raw,
-    // Disk-persisted raw.config may still carry legacy `streamResponses`; cast
-    // through RawBindingConfig so normalizeBindingConfig strips it before the
-    // value reaches runtime code.
-    config: normalizeBindingConfig(
-      raw.platform,
-      (raw.config ?? {}) as unknown as RawBindingConfig,
-    ),
-  }
+function isCanonicalBindingConfig(value: unknown): value is BindingConfig {
+  if (!isRecord(value)) return false
+  const canonicalKeys = new Set([
+    'responseMode',
+    'showToolActivity',
+    'approvalChannel',
+    'editIntervalMs',
+    'accessMode',
+    'allowedSenderIds',
+  ])
+  const keys = Object.keys(value)
+  return (
+    keys.length === canonicalKeys.size &&
+    keys.every((key) => canonicalKeys.has(key)) &&
+    (value.responseMode === 'streaming' || value.responseMode === 'progress' || value.responseMode === 'final_only') &&
+    typeof value.showToolActivity === 'boolean' &&
+    (value.approvalChannel === 'chat' || value.approvalChannel === 'app') &&
+    typeof value.editIntervalMs === 'number' &&
+    (value.accessMode === 'inherit' || value.accessMode === 'allow-list' || value.accessMode === 'open') &&
+    Array.isArray(value.allowedSenderIds) &&
+    value.allowedSenderIds.every((id) => typeof id === 'string')
+  )
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }

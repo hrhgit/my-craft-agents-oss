@@ -61,19 +61,14 @@ export function toCanonicalPermissionMode(mode: PermissionMode): PermissionModeC
 /**
  * Parse user-facing mode names into internal mode keys.
  *
- * Accepts canonical values (explore/ask/execute) and legacy aliases
- * (safe/allow-all, ask-to-edit) for backward compatibility.
+ * Accepts only canonical user-facing values (explore/ask/execute).
  */
 export function parsePermissionMode(mode: string): PermissionMode | null {
   const normalized = mode.trim().toLowerCase();
 
-  if (normalized === 'safe') return 'safe';
   if (normalized === 'ask') return 'ask';
-  if (normalized === 'allow-all') return 'allow-all';
-
   if (normalized === 'explore') return 'safe';
   if (normalized === 'execute') return 'allow-all';
-  if (normalized === 'ask-to-edit' || normalized === 'ask_to_edit' || normalized === 'ask to edit') return 'ask';
 
   return null;
 }

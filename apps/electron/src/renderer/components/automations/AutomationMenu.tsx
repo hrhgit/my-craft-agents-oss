@@ -86,7 +86,7 @@ export function AutomationMenu({
         </MenuItem>
       )}
 
-      {/* Edit automations.json */}
+      {/* Edit through the host-owned automation capability */}
       {onEditJson && (
         <MenuItem onClick={onEditJson}>
           <FileCode className="h-3.5 w-3.5" />

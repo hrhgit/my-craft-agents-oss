@@ -35,7 +35,7 @@ collaborates_with: [conversation-ui]
 validation:
   - { id: shared-ui-regression, kind: unit, command: "bun test packages/ui", description: "Run shared UI regressions.", triggers: [owned-change], required: true, evidence: "Bun test exit status and output." }
   - { id: i18n-contract, kind: contract, command: "bun run lint:i18n:parity && bun run lint:i18n:sorted", description: "Verify locale parity and deterministic sorting.", triggers: [locale-change, contract-change], required: true, evidence: "Lint exit status and diagnostics." }
-scope_digest: 368baadbb8260f8817d51ed089e963cc1517ddc9
+scope_digest: 6388bd61ba6d8323645d678e6d1a16b85beb2270
 ---
 
 ## Purpose
@@ -66,7 +66,10 @@ Run package tests, ESLint rules, type checking, locale parity, and locale orderi
 Primitive changes have a wide visual blast radius; translation drift and focus regressions are easy to miss in unit tests.
 
 ## Semantic history
+- 2026-07-21: Deferred PDF and Mermaid/ELK preview engines until matching content is rendered, with stable busy placeholders and explicit lightweight PDF overlay export.
+- 2026-07-21: Retired legacy RemoteUI locale keys and retained only the current extension interaction submission label across all locales.
+- 2026-07-21: Forwarded refs through the shared Popover trigger so stacked Tooltip and Popover `asChild` primitives preserve focus ownership without React runtime warnings.
+- 2026-07-21: Removed namespaced session-tool parsing in UI cards and retained plan annotations only on canonical assistant artifact responses.
 - 2026-07-21: Added locale-parity strings for discovered-skill selection and confirmed subset-import feedback.
-- 2026-07-12: Consolidated reusable renderer presentation for Electron and WebUI use.
 - 2026-07-14: Added stable semantic identities to UI primitives for validation.
 - 2026-07-20: Removed the Data Sources locale contract and narrowed mention-menu copy to files and skills.

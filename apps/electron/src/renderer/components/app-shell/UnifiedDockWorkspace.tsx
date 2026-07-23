@@ -35,7 +35,13 @@ import {
   resolveNativeViewDockDragTarget,
 } from './native-view-drag-occlusion'
 import {
+  canUseAuxiliaryLayoutWindows,
+  canUseNativeBrowserPanes,
+  isNativeBrowserWorkbenchToolId,
+} from '@/lib/platform-capabilities'
+import {
   createCoordinatedLayoutSaveQueue,
+  createLayoutPersistenceCoordinator,
   recoverCoordinatedLayoutRetryFailure,
   runAuthoritativeLayoutMutation,
   saveCoordinatedWindowLayout,
@@ -128,11 +134,6 @@ interface DragPosition {
   screen: ScreenPoint
 }
 
-interface PendingLayoutSave {
-  handle: ReturnType<typeof setTimeout> | null
-  scope: string
-}
-
 interface UnifiedDockWorkspaceProps {
   activeWorkspaceId: string | null
   workspaceTransition: WorkspaceTransitionState | null
@@ -168,7 +169,16 @@ export function UnifiedDockWorkspace({
   const setDockTabProtections = useSetAtom(dockTabProtectionsAtom)
   const setEmptyPageSessionRequest = useSetAtom(emptyDockPageSessionRequestAtom)
   const acknowledgeDockTabCloseRequest = useSetAtom(acknowledgeDockTabCloseRequestAtom)
-  const workbenchTools = useWorkbenchTools(sessionId, activeWorkspaceId, { syncBrowserRegistry: true })
+  const nativeBrowserPanesAvailable = canUseNativeBrowserPanes()
+  const allWorkbenchTools = useWorkbenchTools(sessionId, activeWorkspaceId, {
+    syncBrowserRegistry: nativeBrowserPanesAvailable,
+  })
+  const workbenchTools = React.useMemo(
+    () => nativeBrowserPanesAvailable
+      ? allWorkbenchTools
+      : allWorkbenchTools.filter(tool => !isNativeBrowserWorkbenchToolId(tool.id)),
+    [allWorkbenchTools, nativeBrowserPanesAvailable],
+  )
   const layoutWindowId = React.useMemo(
     () => new URLSearchParams(window.location.search).get('layoutWindowId') ?? PRIMARY_LAYOUT_WINDOW_ID,
     [],
@@ -206,13 +216,16 @@ export function UnifiedDockWorkspace({
       return fallback
     }
   })
+  const layoutModelIdentity = React.useRef<{ model: Model; key: number }>({ model, key: 0 })
+  if (layoutModelIdentity.current.model !== model) {
+    layoutModelIdentity.current = { model, key: layoutModelIdentity.current.key + 1 }
+  }
   const coordinatorRevision = React.useRef<number | null>(null)
   const coordinatorReady = React.useRef(false)
   const coordinatorScope = JSON.stringify([activeWorkspaceId ?? '', serverId, layoutWindowId])
   const coordinatorScopeRef = React.useRef(coordinatorScope)
   const layoutSaveQueue = React.useRef(createCoordinatedLayoutSaveQueue())
-  const saveTimer = React.useRef<PendingLayoutSave | null>(null)
-  const suppressedModelFingerprint = React.useRef<string | null>(null)
+  const suppressedModel = React.useRef<Model | null>(null)
   const handledCanvasLayoutToggleRequest = React.useRef(canvasLayoutToggleRequest)
   const draggedTab = React.useRef<{ tabId: string; position: DragPosition } | null>(null)
   const nativeViewDragOcclusion = React.useRef<ReturnType<typeof createNativeViewDragOcclusionController> | null>(null)
@@ -221,14 +234,6 @@ export function UnifiedDockWorkspace({
   }
   const detachingTabIds = React.useRef(new Set<string>())
   const [dynamicProtections, setDynamicProtections] = React.useState<Record<string, Partial<DockTabProtection>>>({})
-  const clearPendingLayoutSave = React.useCallback((scope?: string): boolean => {
-    const pending = saveTimer.current
-    if (!pending || (scope !== undefined && pending.scope !== scope)) return false
-    if (pending.handle !== null) clearTimeout(pending.handle)
-    saveTimer.current = null
-    return true
-  }, [])
-
   const applyCoordinatorSnapshot = React.useCallback((snapshot: AppLayout) => {
     if (workspaceLayoutTransitioning) return
     if (snapshot.workspaceId !== (activeWorkspaceId ?? '')) return
@@ -291,7 +296,7 @@ export function UnifiedDockWorkspace({
     if (dockModelFingerprint(model) === nextFingerprint) return
 
     syncingFromAtoms.current = true
-    suppressedModelFingerprint.current = nextFingerprint
+    suppressedModel.current = nextModel
     onCanvasLayoutFocusChange(Boolean(nextModel.getMaximizedTabset()))
     setModel(nextModel)
     queueMicrotask(() => { syncingFromAtoms.current = false })
@@ -302,12 +307,10 @@ export function UnifiedDockWorkspace({
   }, [applyCoordinatorSnapshot])
 
   React.useLayoutEffect(() => {
-    const previousScope = coordinatorScopeRef.current
-    if (previousScope !== coordinatorScope) clearPendingLayoutSave(previousScope)
     coordinatorScopeRef.current = coordinatorScope
     coordinatorRevision.current = null
     coordinatorReady.current = false
-  }, [clearPendingLayoutSave, coordinatorScope])
+  }, [coordinatorScope])
 
   React.useEffect(() => {
     if (layoutReadOnly || workspaceLayoutTransitioning) return
@@ -515,9 +518,12 @@ export function UnifiedDockWorkspace({
     onCanvasLayoutFocusChange(Boolean(model.getMaximizedTabset()))
   }, [model, onCanvasLayoutFocusChange])
 
-  React.useEffect(() => window.electronAPI.browserPane.onHostDockNavigation(command => {
-    handleBrowserHostDockNavigation(model, command, document)
-  }), [model])
+  React.useEffect(() => {
+    if (!canUseNativeBrowserPanes()) return
+    return window.electronAPI.browserPane.onHostDockNavigation(command => {
+      handleBrowserHostDockNavigation(model, command, document)
+    })
+  }, [model])
 
   React.useEffect(() => {
     const root = dockRootRef.current
@@ -594,7 +600,10 @@ export function UnifiedDockWorkspace({
     sessionMetaMap,
   ])
 
-  const persistWindowModel = React.useCallback(async (changedModel: Model): Promise<AppLayout> => {
+  const persistWindowModel = React.useCallback(async (
+    changedModel: Model,
+    geometry: IJsonModel = changedModel.toJson(),
+  ): Promise<AppLayout> => {
     const protections = buildDockTabProtections(changedModel, sessionMetaMap, dynamicProtections)
     const capturedRevision = coordinatorRevision.current ?? 0
     const capturedSnapshot = buildAppLayoutSnapshot(
@@ -604,6 +613,7 @@ export function UnifiedDockWorkspace({
       activeWorkspaceId ?? '',
       capturedRevision,
       protections,
+      geometry,
     )
     const saveScope = coordinatorScope
     return layoutSaveQueue.current.enqueue(async () => {
@@ -627,7 +637,7 @@ export function UnifiedDockWorkspace({
             currentScope: coordinatorScopeRef.current,
             saveScope,
             latest,
-            clearPendingSave: () => { clearPendingLayoutSave(saveScope) },
+            clearPendingSave: () => undefined,
             applyLatest: snapshot => applyCoordinatorSnapshotRef.current(snapshot),
           })
           console.warn('[UnifiedDockWorkspace] Failed to persist coordinated layout:', retryError, firstError)
@@ -639,24 +649,44 @@ export function UnifiedDockWorkspace({
       ) coordinatorRevision.current = saved.revision
       return saved
     })
-  }, [activeWorkspaceId, clearPendingLayoutSave, coordinatorScope, dynamicProtections, serverId, sessionMetaMap])
+  }, [activeWorkspaceId, coordinatorScope, dynamicProtections, serverId, sessionMetaMap])
 
-  const flushLayout = React.useCallback(async (force: boolean) => {
-    const hadPendingSave = clearPendingLayoutSave(coordinatorScope)
-    const saveAvailable = !layoutReadOnly && window.electronAPI.isChannelAvailable('layout:save')
-    if (saveAvailable && (force || hadPendingSave)) await persistWindowModel(model)
+  const persistWindowModelRef = React.useRef({ scope: coordinatorScope, persist: persistWindowModel })
+  React.useLayoutEffect(() => {
+    persistWindowModelRef.current = { scope: coordinatorScope, persist: persistWindowModel }
+  }, [coordinatorScope, persistWindowModel])
+
+  const layoutPersistence = React.useMemo(() => {
+    const persistenceScope = coordinatorScope
+    const initialPersist = persistWindowModel
+    return createLayoutPersistenceCoordinator<Model>({
+      persist: async changedModel => {
+        const geometry = changedModel.toJson()
+        geometryStorage.write(geometry)
+        if (
+          !layoutReadOnly
+          && coordinatorReady.current
+          && window.electronAPI.isChannelAvailable('layout:save')
+        ) {
+          const current = persistWindowModelRef.current
+          await (current.scope === persistenceScope ? current.persist : initialPersist)(changedModel, geometry)
+        }
+      },
+      onError: error => {
+        console.warn('[UnifiedDockWorkspace] Failed to persist coordinated layout:', error)
+      },
+    })
+  }, [coordinatorScope, geometryStorage, layoutReadOnly])
+
+  const flushLayoutBeforeWorkspaceTransition = React.useCallback(async () => {
+    await layoutPersistence.flush('workspace-transition', model)
     await layoutSaveQueue.current.flush()
-  }, [clearPendingLayoutSave, coordinatorScope, layoutReadOnly, model, persistWindowModel])
+  }, [layoutPersistence, model])
 
-  const flushPendingLayout = React.useCallback(
-    () => flushLayout(false),
-    [flushLayout],
-  )
-
-  const flushLayoutBeforeWorkspaceTransition = React.useCallback(
-    () => flushLayout(true),
-    [flushLayout],
-  )
+  const flushLayoutForWindowClose = React.useCallback(async () => {
+    await layoutPersistence.flush('window-close', model)
+    await layoutSaveQueue.current.flush()
+  }, [layoutPersistence, model])
 
   React.useEffect(() => {
     if (layoutReadOnly || !activeWorkspaceId) return
@@ -667,14 +697,30 @@ export function UnifiedDockWorkspace({
   }, [activeWorkspaceId, flushLayoutBeforeWorkspaceTransition, layoutReadOnly])
 
   React.useEffect(() => {
-    const unregister = registerWindowCloseFlusher(flushPendingLayout)
+    const unregister = registerWindowCloseFlusher(flushLayoutForWindowClose)
     return () => {
       unregister()
-      void flushPendingLayout().catch(error => {
+      void layoutPersistence.flush('scope-dispose').catch(error => {
         console.warn('[UnifiedDockWorkspace] Failed to flush coordinated layout:', error)
       })
     }
-  }, [flushPendingLayout])
+  }, [flushLayoutForWindowClose, layoutPersistence])
+
+  React.useEffect(() => {
+    const flushInteraction = () => {
+      queueMicrotask(() => {
+        void layoutPersistence.flush('interaction-end').catch(error => {
+          console.warn('[UnifiedDockWorkspace] Failed to flush layout after interaction:', error)
+        })
+      })
+    }
+    document.addEventListener('pointerup', flushInteraction, true)
+    document.addEventListener('dragend', flushInteraction, true)
+    return () => {
+      document.removeEventListener('pointerup', flushInteraction, true)
+      document.removeEventListener('dragend', flushInteraction, true)
+    }
+  }, [layoutPersistence])
 
   const reconcileRegistryFromModel = React.useCallback((changedModel: Model) => {
     const nodes = getPanelContentNodes(changedModel)
@@ -712,36 +758,19 @@ export function UnifiedDockWorkspace({
       publishDockProtections(changedModel)
       return
     }
-    const fingerprint = dockModelFingerprint(changedModel)
-    if (suppressedModelFingerprint.current === fingerprint) {
-      suppressedModelFingerprint.current = null
+    if (suppressedModel.current === changedModel) {
+      suppressedModel.current = null
       publishDockProtections(changedModel)
       return
     }
-    geometryStorage.write(changedModel.toJson())
+    layoutPersistence.markDirty(changedModel)
     if (!syncingFromAtoms.current) {
       onCanvasLayoutFocusChange(Boolean(changedModel.getMaximizedTabset()))
       reconcileRegistryFromModel(changedModel)
     }
     publishDockProtections(changedModel)
 
-    if (!layoutReadOnly && coordinatorReady.current && window.electronAPI.isChannelAvailable('layout:save')) {
-      clearPendingLayoutSave()
-      const pending: PendingLayoutSave = {
-        scope: coordinatorScope,
-        handle: null,
-      }
-      pending.handle = setTimeout(() => {
-        if (saveTimer.current !== pending) return
-        saveTimer.current = null
-        if (coordinatorScopeRef.current !== pending.scope) return
-        void persistWindowModel(changedModel).catch(() => {
-          // Window-local geometry remains available as a renderer fallback.
-        })
-      }, 120)
-      saveTimer.current = pending
-    }
-  }, [clearPendingLayoutSave, coordinatorScope, geometryStorage, layoutReadOnly, onCanvasLayoutFocusChange, persistWindowModel, publishDockProtections, reconcileRegistryFromModel, workspaceLayoutTransitioning])
+  }, [layoutPersistence, onCanvasLayoutFocusChange, publishDockProtections, reconcileRegistryFromModel, workspaceLayoutTransitioning])
 
   const handleAction = React.useCallback((action: Action) => {
     if (actionEntersCompactDockDetail(model, action)) enterCompactDockDetail()
@@ -777,6 +806,8 @@ export function UnifiedDockWorkspace({
       ||
       workspaceLayoutTransitioning
       ||
+      !canUseAuxiliaryLayoutWindows()
+      ||
       layoutWindowId !== PRIMARY_LAYOUT_WINDOW_ID
       || detachingTabIds.current.has(tabId)
       || !window.electronAPI.isChannelAvailable('layout:detachTab')
@@ -789,8 +820,6 @@ export function UnifiedDockWorkspace({
     detachingTabIds.current.add(tabId)
     try {
       await flushWindowCloseState()
-      clearPendingLayoutSave(coordinatorScope)
-      await persistWindowModel(model)
       await runAuthoritativeLayoutMutation(
         () => window.electronAPI.detachLayoutTab(tabId, point ? detachedWindowBounds(point) : undefined),
         snapshot => applyCoordinatorSnapshotRef.current(snapshot),
@@ -800,14 +829,18 @@ export function UnifiedDockWorkspace({
     } finally {
       detachingTabIds.current.delete(tabId)
     }
-  }, [clearPendingLayoutSave, coordinatorScope, layoutReadOnly, layoutWindowId, model, persistWindowModel, workspaceLayoutTransitioning])
+  }, [layoutReadOnly, layoutWindowId, model, workspaceLayoutTransitioning])
 
   const detachTabset = React.useCallback(async (node: TabSetNode) => {
-    if (layoutReadOnly || workspaceLayoutTransitioning || layoutWindowId !== PRIMARY_LAYOUT_WINDOW_ID) return
+    if (
+      layoutReadOnly
+      || workspaceLayoutTransitioning
+      || !canUseAuxiliaryLayoutWindows()
+      || layoutWindowId !== PRIMARY_LAYOUT_WINDOW_ID
+      || !window.electronAPI.isChannelAvailable('layout:detachGroup')
+    ) return
     try {
       await flushWindowCloseState()
-      clearPendingLayoutSave(coordinatorScope)
-      await persistWindowModel(model)
       await runAuthoritativeLayoutMutation(
         () => window.electronAPI.detachLayoutGroup(node.getId()),
         snapshot => applyCoordinatorSnapshotRef.current(snapshot),
@@ -815,7 +848,7 @@ export function UnifiedDockWorkspace({
     } catch (error) {
       console.warn('[UnifiedDockWorkspace] Failed to detach panel group:', error)
     }
-  }, [clearPendingLayoutSave, coordinatorScope, layoutReadOnly, layoutWindowId, model, persistWindowModel, workspaceLayoutTransitioning])
+  }, [layoutReadOnly, layoutWindowId, workspaceLayoutTransitioning])
 
   React.useEffect(() => {
     const controller = nativeViewDragOcclusion.current
@@ -831,8 +864,13 @@ export function UnifiedDockWorkspace({
         )
       : null
     if (!dragTarget) return
-    nativeViewDragOcclusion.current?.begin(event.nativeEvent)
-    if (dragTarget.kind !== 'tab' || layoutReadOnly || layoutWindowId !== PRIMARY_LAYOUT_WINDOW_ID) return
+    if (canUseNativeBrowserPanes()) nativeViewDragOcclusion.current?.begin(event.nativeEvent)
+    if (
+      dragTarget.kind !== 'tab'
+      || layoutReadOnly
+      || !canUseAuxiliaryLayoutWindows()
+      || layoutWindowId !== PRIMARY_LAYOUT_WINDOW_ID
+    ) return
     const position = readDragPosition(event)
     if (!position) return
     draggedTab.current = { tabId: dragTarget.tabId, position }
@@ -883,6 +921,7 @@ export function UnifiedDockWorkspace({
           sessionId={config.sessionId ?? sessionId}
           serverId={config.serverId || serverId}
           workspaceId={config.workspaceId || activeWorkspaceId || ''}
+          nativeBrowserPanesAvailable={nativeBrowserPanesAvailable}
           onProtectionChange={handleProtectionChange}
           onOpenTool={tool => openToolTab(tool, targetTabsetId)}
         />
@@ -898,7 +937,7 @@ export function UnifiedDockWorkspace({
         focused={node.getId() === focusedPanelId}
       />
     )
-  }, [activeWorkspaceId, focusedPanelId, handleProtectionChange, isLeadingChromeHidden, openToolTab, replaceEmptyPageWithRoute, serverId, sessionId, workbenchTools])
+  }, [activeWorkspaceId, focusedPanelId, handleProtectionChange, isLeadingChromeHidden, nativeBrowserPanesAvailable, openToolTab, replaceEmptyPageWithRoute, serverId, sessionId, workbenchTools])
 
   return (
     <div
@@ -911,6 +950,7 @@ export function UnifiedDockWorkspace({
       onDropCapture={handleDockDropCapture}
     >
       <Layout
+        key={layoutModelIdentity.current.key}
         model={model}
         factory={factory}
         keyMap={{
@@ -937,6 +977,7 @@ export function UnifiedDockWorkspace({
           if (layoutReadOnly) return
           appendSelectedTabDetachControl(node, renderValues, {
             enabled: layoutWindowId === PRIMARY_LAYOUT_WINDOW_ID
+              && canUseAuxiliaryLayoutWindows()
               && window.electronAPI.isChannelAvailable('layout:detachTab'),
             label: t('workbench.detachTab'),
             canDetach: selected => (selected.getConfig() as DockTabConfig).source !== 'content-picker',
@@ -960,6 +1001,7 @@ export function UnifiedDockWorkspace({
           )
           if (
             layoutWindowId !== PRIMARY_LAYOUT_WINDOW_ID
+            || !canUseAuxiliaryLayoutWindows()
             || getTabSetNodes(model).length <= 1
             || !window.electronAPI.isChannelAvailable('layout:detachGroup')
           ) return
@@ -1023,6 +1065,7 @@ function DockedToolPanel({
   sessionId,
   serverId,
   workspaceId,
+  nativeBrowserPanesAvailable,
   onProtectionChange,
   onOpenTool,
 }: {
@@ -1032,11 +1075,12 @@ function DockedToolPanel({
   sessionId?: string | null
   serverId: string
   workspaceId: string
+  nativeBrowserPanesAvailable: boolean
   onProtectionChange: (tabId: string, protection: { dirty: boolean }) => void
   onOpenTool: (tool: WorkbenchTool) => void
 }) {
   const tool = usePersistedWorkbenchTool({ resourceId, sessionId, workspaceId })
-  if (tool) {
+  if (tool && (nativeBrowserPanesAvailable || !isNativeBrowserWorkbenchToolId(tool.id))) {
     return (
       <WorkspaceElectronApiProvider route={{ serverId, workspaceId }}>
         <div data-mortise-semantic-id={`workspace.content.${tool.id}`} className="h-full min-h-0 bg-background">
@@ -1581,6 +1625,7 @@ function buildAppLayoutSnapshot(
   defaultWorkspaceId: string,
   revision: number,
   protections: Record<string, DockTabProtection>,
+  geometry: IJsonModel = model.toJson(),
 ): AppLayout {
   const base = createDefaultAppLayout({ serverId: defaultServerId, workspaceId: defaultWorkspaceId })
   const tabs: Record<string, ContentTab> = {}
@@ -1661,7 +1706,7 @@ function buildAppLayoutSnapshot(
     ...base,
     version: APP_LAYOUT_VERSION,
     revision,
-    geometry: model.toJson(),
+    geometry,
     tabs,
     groups,
     windows: {

@@ -13,7 +13,6 @@
 import { computeNextRuns } from './utils'
 import type { PermissionMode } from '../../../shared/types'
 import type { ThinkingLevel } from '@mortise/shared/agent/thinking-levels'
-import { DEFAULT_WEBHOOK_METHOD } from './constants'
 
 // ============================================================================
 // Automation System Types (mirrored from packages/shared/src/automations/types.ts)
@@ -181,16 +180,14 @@ export function flattenConditions(conditions: AutomationConditionUI[]): { label:
 }
 
 // ============================================================================
-// List Item (flattened from automations.json for display)
+// List Item (projection of a canonical V3 definition)
 // ============================================================================
 
 export interface AutomationListItem {
-  /** Stable 6-char hex ID from automations.json, with fallback to event+index for legacy configs */
+  /** Stable canonical automation identity. */
   id: string
   /** The event this automation listens to */
   event: AutomationTrigger
-  /** Index of this matcher within its event array in automations.json (for write-back) */
-  matcherIndex: number
   /** Display name (user-set or auto-derived) */
   name: string
   /** Human-readable summary */
@@ -354,58 +351,14 @@ export type EventCategory =
   | 'other'
 
 // ============================================================================
-// automations.json Parser
+// Canonical V3 projection
 // ============================================================================
 
-/** Raw automations.json file structure */
-interface AutomationsConfigFile {
-  version: number
-  automations?: Record<string, AutomationsConfigMatcher[]>
-}
-
-type RawAction =
-  | { type: 'prompt'; prompt: string; provider?: string; model?: string; thinkingLevel?: ThinkingLevel }
-  | { type: 'webhook'; url: string; method?: string; headers?: Record<string, string>; bodyFormat?: 'json' | 'form' | 'raw'; body?: unknown; captureResponse?: boolean; auth?: WebhookAction['auth'] }
-
-interface AutomationsConfigMatcher {
-  id?: string
-  name?: string
-  matcher?: string
-  cron?: string
-  timezone?: string
-  permissionMode?: PermissionMode
-  conditions?: AutomationConditionUI[]
-  enabled?: boolean
-  actions?: RawAction[]
-}
-
-/** Derive a human-readable name from task actions and event */
-function deriveAutomationName(event: string, matcher: AutomationsConfigMatcher): string {
-  if (matcher.name) return matcher.name
-  const allActions = matcher.actions ?? []
-  const firstAction = allActions[0]
-  if (!firstAction) return getEventDisplayName(event as AutomationTrigger)
-
-  if (firstAction.type === 'webhook') {
-    const label = `Webhook ${firstAction.method ?? DEFAULT_WEBHOOK_METHOD} ${firstAction.url}`
-    return label.length > 40 ? label.slice(0, 40) + '...' : label
-  }
-
-  // Extract @skill mentions or use first ~40 chars
-  const mentionMatch = firstAction.prompt.match(/@(\S+)/)
-  if (mentionMatch) return `${mentionMatch[1]} prompt`
-  return firstAction.prompt.length > 40
-    ? firstAction.prompt.slice(0, 40) + '...'
-    : firstAction.prompt
-}
-
-/** Derive a summary line from the matcher/cron/event */
-function deriveAutomationSummary(event: string, matcher: AutomationsConfigMatcher): string {
-  if (matcher.cron) {
-    const runs = computeNextRuns(matcher.cron, 1)
+function summarizeCron(cron: string, timezone?: string): string {
+    const runs = computeNextRuns(cron, 1)
     if (runs.length > 0) {
       const next = runs[0]!
-      const tz = matcher.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone
+      const tz = timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone
       const tzCity = tz.split('/').pop()?.replace(/_/g, ' ') ?? tz
       const formatted = next.toLocaleString('en-US', {
         weekday: 'short',
@@ -415,66 +368,8 @@ function deriveAutomationSummary(event: string, matcher: AutomationsConfigMatche
       })
       return `Next run: ${formatted} (${tzCity})`
     }
-    const tz = matcher.timezone ? ` (${matcher.timezone})` : ''
-    return `Cron: ${matcher.cron}${tz}`
-  }
-  if (matcher.matcher) {
-    return `Matches: ${matcher.matcher}`
-  }
-  return `On ${getEventDisplayName(event as AutomationTrigger)}`
-}
-
-/**
- * Parse an automations.json file into a flat list of AutomationListItem[].
- * Each matcher entry under each event becomes one item.
- */
-export function parseAutomationsConfig(json: unknown): AutomationListItem[] {
-  if (!json || typeof json !== 'object') return []
-  const config = json as AutomationsConfigFile
-  const eventMap = config.automations
-  if (!eventMap || typeof eventMap !== 'object') return []
-
-  const allEvents = [...APP_EVENTS, ...AGENT_EVENTS] as string[]
-  const items: AutomationListItem[] = []
-  let index = 0
-
-  for (const [eventName, matchers] of Object.entries(eventMap)) {
-    if (!Array.isArray(matchers)) continue
-    const event = (allEvents.includes(eventName) ? eventName : eventName) as AutomationTrigger
-
-    for (let matcherIdx = 0; matcherIdx < matchers.length; matcherIdx++) {
-      const matcher = matchers[matcherIdx]
-      const rawActions = matcher.actions
-      if (!rawActions || !Array.isArray(rawActions) || rawActions.length === 0) continue
-
-      const actions: AutomationAction[] = rawActions
-        .filter((a): a is AutomationAction => a.type === 'prompt' || a.type === 'webhook')
-      if (actions.length === 0) continue
-
-      const rawTopic = (matcher as { telegramTopic?: unknown }).telegramTopic
-      const telegramTopic =
-        typeof rawTopic === 'string' && rawTopic.trim().length > 0 ? rawTopic.trim() : undefined
-
-      items.push({
-        id: matcher.id ?? `${eventName}-${index}`,
-        event,
-        matcherIndex: matcherIdx,
-        name: deriveAutomationName(eventName, matcher),
-        summary: deriveAutomationSummary(eventName, matcher),
-        enabled: matcher.enabled !== false,
-        matcher: matcher.matcher,
-        cron: matcher.cron,
-        timezone: matcher.timezone,
-        permissionMode: matcher.permissionMode,
-        conditions: matcher.conditions,
-        actions,
-        telegramTopic,
-      })
-      index++
-    }
-  }
-
-  return items
+    const tz = timezone ? ` (${timezone})` : ''
+    return `Cron: ${cron}${tz}`
 }
 
 export function parseAutomationDefinitionsV3(json: unknown): AutomationListItem[] {
@@ -507,11 +402,10 @@ export function parseAutomationDefinitionsV3(json: unknown): AutomationListItem[
     let summary = definition.description?.trim() || `On ${getEventDisplayName(event as AutomationTrigger)}`
     if (schedule?.kind === 'once' && typeof schedule.at === 'string') summary = `Once at ${new Date(schedule.at).toLocaleString()}`
     if (schedule?.kind === 'interval' && typeof schedule.everyMs === 'number') summary = `Every ${Math.round(schedule.everyMs / 1000)} seconds`
-    if (cron) summary = deriveAutomationSummary('SchedulerTick', { cron, timezone, actions: [] })
+    if (cron) summary = summarizeCron(cron, timezone)
     return [{
       id: definition.id,
       event: event as AutomationTrigger,
-      matcherIndex: 0,
       name: definition.name,
       summary,
       enabled: definition.enabled,

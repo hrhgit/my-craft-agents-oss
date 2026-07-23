@@ -18,7 +18,7 @@ export interface CompactSessionMenuProps {
   hasRemoteWorkspaces?: boolean
   onRename: () => void
   onMarkUnread: () => void
-  onOpenInNewWindow: () => void
+  onOpenInNewWindow?: () => void
   onSendToWorkspace?: () => void
   onDelete: () => void
   open?: boolean

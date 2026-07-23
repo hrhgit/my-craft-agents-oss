@@ -29,22 +29,26 @@ describe('cold-session metadata persistence', () => {
   })
 
   async function seedColdSession(sessionId: string, messages: StoredMessage[] = []) {
+    const effectiveMessages = messages.length > 0 ? messages : [
+      { id: `${sessionId}-u1`, type: 'user', content: 'seed', timestamp: Date.now() },
+      { id: `${sessionId}-a1`, type: 'assistant', content: 'seeded', timestamp: Date.now() + 1 },
+    ] as StoredMessage[]
     const stored: StoredSession = {
       mortiseId: sessionId,
       workspaceRootPath: tmpRoot,
       name: 'cold session',
       createdAt: Date.now(),
       lastUsedAt: Date.now(),
-      messages,
+      messages: effectiveMessages,
       tokenUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, contextTokens: 0, costUsd: 0 },
     } as StoredSession
     await saveSession(stored)
     const filePath = getSessionFilePath(tmpRoot, sessionId)
-    const importedIdMap = appendStoredMessagesViaPiSessionManager(
+    const importedIdMap = await appendStoredMessagesViaPiSessionManager(
       filePath,
       dirname(filePath),
       tmpRoot,
-      messages,
+      effectiveMessages,
     )
     const managed = createManagedSession(
       { mortiseId: sessionId, name: stored.name, createdAt: stored.createdAt },
@@ -78,7 +82,7 @@ describe('cold-session metadata persistence', () => {
     const sessionId = 'cold-preserve-msgs'
     const messages = [
       { id: 'm1', type: 'user', content: 'hello', timestamp: Date.now() },
-      { id: 'm2', type: 'user', content: 'world', timestamp: Date.now() },
+      { id: 'm2', type: 'assistant', content: 'world', timestamp: Date.now() + 1 },
     ] as StoredMessage[]
     const imported = await seedColdSession(sessionId, messages)
     const expectedIds = messages.map(message => imported.get(message.id)!)

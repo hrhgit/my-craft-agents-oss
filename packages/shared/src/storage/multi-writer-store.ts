@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import type { MortiseSqliteDatabase } from './sqlite-driver.ts'
-import { openCraftSqliteDatabase, openCraftSqliteDatabaseSync } from './sqlite-driver.ts'
+import { openMortiseSqliteDatabase, openMortiseSqliteDatabaseSync } from './sqlite-driver.ts'
 
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue }
 
@@ -391,7 +391,7 @@ export class MultiWriterStore {
       throw new TypeError('writerVersion must be a positive safe integer')
     }
 
-    const database = await openCraftSqliteDatabase(options.databasePath, {
+    const database = await openMortiseSqliteDatabase(options.databasePath, {
       busyTimeoutMs: options.busyTimeoutMs,
     })
     const store = new MultiWriterStore(
@@ -416,7 +416,7 @@ export class MultiWriterStore {
       throw new TypeError('writerVersion must be a positive safe integer')
     }
 
-    const database = openCraftSqliteDatabaseSync(options.databasePath, {
+    const database = openMortiseSqliteDatabaseSync(options.databasePath, {
       busyTimeoutMs: options.busyTimeoutMs,
     })
     const store = new MultiWriterStore(

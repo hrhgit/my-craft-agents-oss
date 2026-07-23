@@ -386,7 +386,17 @@ describe("DefaultPackageManager git update", () => {
 			mkdirSync(join(cachedDir, "pi-extensions"), { recursive: true });
 			writeFileSync(
 				join(cachedDir, "package.json"),
-				JSON.stringify({ pi: { extensions: ["./pi-extensions"] } }, null, 2),
+				JSON.stringify(
+					{
+						pi: {
+							extensions: [
+								{ id: "session-breakdown", path: "./pi-extensions/session-breakdown.ts", targets: ["pi"] },
+							],
+						},
+					},
+					null,
+					2,
+				),
 			);
 			writeFileSync(extensionFile, "// stale");
 
@@ -433,7 +443,17 @@ describe("DefaultPackageManager git update", () => {
 			mkdirSync(join(cachedDir, "pi-extensions"), { recursive: true });
 			writeFileSync(
 				join(cachedDir, "package.json"),
-				JSON.stringify({ pi: { extensions: ["./pi-extensions"] } }, null, 2),
+				JSON.stringify(
+					{
+						pi: {
+							extensions: [
+								{ id: "session-breakdown", path: "./pi-extensions/session-breakdown.ts", targets: ["pi"] },
+							],
+						},
+					},
+					null,
+					2,
+				),
 			);
 			writeFileSync(extensionFile, "// pinned");
 

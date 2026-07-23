@@ -57,7 +57,7 @@ let failure: unknown
 
 try {
   await mkdir(artifactsDir, { recursive: true })
-  const profile = prepareProfile({ profileDir, mode: 'isolated' })
+  const profile = await prepareProfile({ profileDir, mode: 'isolated' })
   host = spawn(electronExecutable, [
     `--remote-debugging-port=${debugPort}`,
     '--remote-debugging-address=127.0.0.1',
@@ -71,7 +71,7 @@ try {
     env: {
       ...process.env,
       MORTISE_CONFIG_DIR: profile.mortiseConfigDir,
-      PI_CODING_AGENT_DIR: profile.piAgentDir,
+      PI_CODING_AGENT_DIR: profile.mortiseAgentDir,
       MORTISE_UI_RUN_ID: runId,
       MORTISE_UI_SURFACE: 'electron',
       MORTISE_UI_RUN_DIR: runDir,

@@ -4,12 +4,12 @@
  *
  * Surfaces in the Settings UI as "Pending requests" so the operator can
  * promote a sender to the owners list with one click. Persisted to
- * `messaging/pending.json` per workspace.
+ * the workspace messaging SQLite database.
  *
  * Bounds:
  *  - LRU 50 entries per workspace (recency wins on overflow).
  *  - 7-day TTL — entries older than that are dropped on read/write.
- *  - File-backed best-effort. Losing the file is harmless: the next
+ *  - SQLite-backed best-effort. Losing the record is harmless: the next
  *    rejected attempt repopulates it.
  */
 
@@ -19,7 +19,7 @@ import type {
   PendingSender,
   PlatformType,
 } from './types'
-import { JsonFileStore, NOOP_LOGGER } from './json-file-store'
+import { NOOP_LOGGER, SqliteRecordStore } from './sqlite-record-store'
 
 const MAX_ENTRIES = 50
 const TTL_MS = 7 * 24 * 60 * 60 * 1000
@@ -30,8 +30,8 @@ export interface RecordRejectionInput {
   senderName?: string
   senderUsername?: string
   /**
-   * Why the sender was rejected. Defaults to `'not-owner'` for callers
-   * that don't supply it (back-compat with the original signature).
+   * Why the sender was rejected. Internal callers may omit it when the
+   * rejection is the current workspace-owner policy.
    */
   reason?: PendingRejectReason
   /** Binding context for `'not-on-binding-allowlist'` rejects. */
@@ -41,12 +41,12 @@ export interface RecordRejectionInput {
   threadId?: number
 }
 
-export class PendingSendersStore extends JsonFileStore<PendingSender[]> {
+export class PendingSendersStore extends SqliteRecordStore<PendingSender[]> {
   private entries: PendingSender[] = []
   private changeListener?: () => void
 
   constructor(storageDir: string, logger: MessagingLogger = NOOP_LOGGER) {
-    super(storageDir, 'pending.json', logger)
+    super(storageDir, 'pending-senders', logger)
     this.load()
   }
 
@@ -93,7 +93,7 @@ export class PendingSendersStore extends JsonFileStore<PendingSender[]> {
       (e) =>
         e.platform === input.platform &&
         e.userId === input.senderId &&
-        (e.reason ?? 'not-owner') === reason &&
+        e.reason === reason &&
         (e.bindingId ?? null) === (bindingId ?? null),
     )
     let merged: PendingSender
@@ -156,7 +156,7 @@ export class PendingSendersStore extends JsonFileStore<PendingSender[]> {
     const before = this.entries.length
     this.entries = this.entries.filter((e) => {
       if (e.platform !== platform || e.userId !== userId) return true
-      if (opts?.reason !== undefined && (e.reason ?? 'not-owner') !== opts.reason) return true
+      if (opts?.reason !== undefined && e.reason !== opts.reason) return true
       if (opts?.bindingId !== undefined && e.bindingId !== opts.bindingId) return true
       return false
     })
@@ -188,7 +188,7 @@ export class PendingSendersStore extends JsonFileStore<PendingSender[]> {
   }
 
   private load(): void {
-    const parsed = this.loadFile()
+    const parsed = this.loadRecord()
     if (!Array.isArray(parsed)) {
       this.entries = []
       return
@@ -200,7 +200,7 @@ export class PendingSendersStore extends JsonFileStore<PendingSender[]> {
   }
 
   private save(): void {
-    const ok = this.saveFile(this.entries)
+    const ok = this.saveRecord(this.entries)
     if (ok) this.changeListener?.()
   }
 }
@@ -212,6 +212,7 @@ function isPendingSender(value: unknown): value is PendingSender {
     (v.platform === 'telegram' || v.platform === 'whatsapp' || v.platform === 'lark') &&
     typeof v.userId === 'string' &&
     typeof v.lastAttemptAt === 'number' &&
-    typeof v.attemptCount === 'number'
+    typeof v.attemptCount === 'number' &&
+    (v.reason === 'not-owner' || v.reason === 'not-on-binding-allowlist')
   )
 }

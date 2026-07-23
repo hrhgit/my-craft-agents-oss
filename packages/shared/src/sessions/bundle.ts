@@ -20,9 +20,6 @@ import {
   collectDirectoryFiles,
 } from '../utils/bundle-files.ts'
 
-// Re-export BundleFile and MAX_BUNDLE_SIZE_BYTES for backward compatibility
-export { type BundleFile, MAX_BUNDLE_SIZE_BYTES } from '../utils/bundle-files.ts'
-
 /**
  * Directories to skip when collecting session files for export.
  * tmp/ is regenerable; dotfiles are typically internal state.
@@ -116,9 +113,7 @@ export function serializeSession(
     return null
   }
 
-  // Read the session header via readSessionHeader, which correctly handles
-  // both Pi tree JSONL v3 format (extracts the `mortise` extension from the Pi
-  // header) and the legacy Mortise JSONL format (reads the first line directly).
+  // Read the canonical Pi tree JSONL v3 header and its Mortise metadata.
   const header = readSessionHeader(sessionFile)
   if (!header) {
     debug('[bundle] Failed to read session header:', sessionFile)
@@ -151,10 +146,7 @@ export function validateBundle(bundle: unknown): bundle is SessionBundle {
   if (!Array.isArray(session.messages)) return false
 
   const header = session.header as Record<string, unknown>
-  // 接受 mortiseId（新格式）或 id（旧 bundle 格式）
-  if (typeof header.mortiseId !== 'string' && typeof header.id !== 'string') return false
-  if (typeof header.mortiseId === 'string' && !isValidSessionId(header.mortiseId)) return false
-  if (typeof header.id === 'string' && !isValidSessionId(header.id)) return false
+  if (typeof header.mortiseId !== 'string' || !isValidSessionId(header.mortiseId)) return false
   if (typeof header.createdAt !== 'number') return false
 
   if (!Array.isArray(b.files)) return false

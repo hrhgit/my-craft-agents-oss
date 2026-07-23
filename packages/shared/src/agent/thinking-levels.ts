@@ -134,16 +134,15 @@ export function isValidThinkingLevel(value: unknown): value is ThinkingLevel {
 }
 
 /**
- * Normalize a persisted thinking level value, handling legacy values.
- * Maps old values at read boundaries only:
- * - 'think' → 'medium'
- * - 'max' → 'xhigh'
+ * Normalize a thinking level value.
  *
- * @returns The normalized ThinkingLevel, or undefined if the value is invalid
+ * Accepts only current {@link THINKING_LEVEL_IDS}. Retired values such as
+ * `think` and `max` are not migrated or rewritten; they yield `undefined`,
+ * the same result as any other invalid input.
+ *
+ * @returns The validated ThinkingLevel, or undefined if the value is invalid
  */
 export function normalizeThinkingLevel(value: unknown): ThinkingLevel | undefined {
-  if (value === 'think') return 'medium';
-  if (value === 'max') return 'xhigh';
   if (isValidThinkingLevel(value)) return value;
   return undefined;
 }

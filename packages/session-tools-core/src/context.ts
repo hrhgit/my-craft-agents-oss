@@ -72,7 +72,6 @@ export interface ValidatorInterface {
   validateConfig(): import('./types.js').ValidationResult;
   validatePreferences(): import('./types.js').ValidationResult;
   validatePermissions(workspaceRootPath: string): import('./types.js').ValidationResult;
-  validateAutomations(workspaceRootPath: string): import('./types.js').ValidationResult;
   validateToolIcons(): import('./types.js').ValidationResult;
   validateAll(workspaceRootPath: string): import('./types.js').ValidationResult;
   validateSkill(workspaceRootPath: string, skillSlug: string): import('./types.js').ValidationResult;
@@ -108,9 +107,6 @@ export interface SessionToolContext {
 
   /** Path to session's plans folder */
   plansFolderPath: string;
-
-  /** Working directory (project root) for the session, if set */
-  workingDirectory?: string;
 
   // ============================================================
   // Callbacks (transport-agnostic)
@@ -211,7 +207,6 @@ export interface SessionInfo {
   permissionMode: string;
   createdAt: number;
   updatedAt?: number;
-  workingDirectory?: string;
   provider?: string;
   model?: string;
   isActive: boolean;

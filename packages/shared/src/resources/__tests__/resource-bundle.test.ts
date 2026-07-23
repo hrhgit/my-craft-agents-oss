@@ -3,17 +3,19 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { exportResources, importResources, validateResourceBundle } from '../resource-bundle'
-import type { AutomationBundleEntry, ResourceBundle } from '../types'
+import { AutomationV3Store } from '../../automations/v3-store'
+import type { AutomationDefinitionV3 } from '../../automations/v3-types'
+import type { ResourceBundle } from '../types'
 
 function createWorkspace(root: string): string {
   const workspace = join(root, 'workspace')
-  mkdirSync(join(workspace, '.pi', 'skills'), { recursive: true })
+  mkdirSync(join(workspace, '.mortise', 'skills'), { recursive: true })
   writeFileSync(join(workspace, 'config.json'), JSON.stringify({ name: 'Test Workspace' }))
   return workspace
 }
 
 function createSkill(workspace: string, slug: string): void {
-  const directory = join(workspace, '.pi', 'skills', slug)
+  const directory = join(workspace, '.mortise', 'skills', slug)
   mkdirSync(join(directory, 'scripts'), { recursive: true })
   writeFileSync(join(directory, 'SKILL.md'), `---
 name: ${slug}
@@ -26,16 +28,15 @@ Instructions.
 }
 
 function createAutomations(workspace: string): void {
-  writeFileSync(join(workspace, 'automations.json'), JSON.stringify({
-    version: 2,
-    automations: {
-      UserPromptSubmit: [{
-        id: 'auto-1',
-        name: 'Greeting',
-        actions: [{ type: 'prompt', prompt: 'hello' }],
-      }],
-    },
-  }, null, 2))
+  const store = new AutomationV3Store({ workspaceId: 'workspace-test', workspaceRootPath: workspace })
+  const current = store.initialize()
+  const result = store.mutateDocument({
+    operationId: 'operation-create-greeting',
+    expectedRevision: current.revision,
+    document: { ...current, definitions: [automation()] },
+  })
+  expect(result.status).toBe('ok')
+  store.close()
 }
 
 function file(relativePath: string, content: string) {
@@ -47,16 +48,21 @@ function file(relativePath: string, content: string) {
   }
 }
 
-function automation(overrides: Partial<AutomationBundleEntry> = {}): AutomationBundleEntry {
+function automation(overrides: Partial<AutomationDefinitionV3> = {}): AutomationDefinitionV3 {
+  const timestamp = '2026-07-21T00:00:00.000Z'
   return {
-    id: 'auto-1',
+    id: 'automation-greeting-0001',
     name: 'Greeting',
-    event: 'UserPromptSubmit',
-    matcher: {
-      id: 'auto-1',
-      name: 'Greeting',
-      actions: [{ type: 'prompt', prompt: 'hello' }],
-    },
+    enabled: true,
+    triggers: [{ id: 'trigger-greeting-0001', type: 'event', source: 'mortise', eventType: 'UserPromptSubmit' }],
+    actions: [{
+      id: 'action-greeting-0001',
+      type: 'prompt',
+      prompt: 'hello',
+      target: { kind: 'new-session' },
+    }],
+    createdAt: timestamp,
+    updatedAt: timestamp,
     ...overrides,
   }
 }
@@ -80,22 +86,19 @@ describe('resource bundle', () => {
     const { bundle, warnings } = exportResources(workspace, {
       skills: 'all',
       automations: 'all',
-    })
+    }, 'workspace-test')
 
     expect(warnings).toEqual([])
     expect(bundle.sourceWorkspace).toBe('Test Workspace')
     expect(bundle.resources.skills?.[0]?.slug).toBe('review')
     expect(bundle.resources.skills?.[0]?.files.map(entry => entry.relativePath))
       .toEqual(expect.arrayContaining(['SKILL.md', 'scripts/run.ts']))
-    expect(bundle.resources.automations?.[0]).toMatchObject({
-      id: 'auto-1',
-      event: 'UserPromptSubmit',
-    })
+    expect(bundle.resources.automations?.[0]).toMatchObject({ id: 'automation-greeting-0001', name: 'Greeting' })
   })
 
   it('validates the current bundle format', () => {
     const valid: ResourceBundle = {
-      version: 1,
+      version: 2,
       exportedAt: Date.now(),
       resources: {
         skills: [{
@@ -113,7 +116,7 @@ describe('resource bundle', () => {
   it('imports skills and automations', async () => {
     const workspace = createWorkspace(root)
     const bundle: ResourceBundle = {
-      version: 1,
+      version: 2,
       exportedAt: Date.now(),
       resources: {
         skills: [{
@@ -131,16 +134,17 @@ describe('resource bundle', () => {
 
     expect(result.skills.imported).toEqual(['review'])
     expect(result.automations.imported).toEqual(['Greeting'])
-    expect(existsSync(join(workspace, '.pi', 'skills', 'review', 'scripts', 'run.ts'))).toBe(true)
-    const stored = JSON.parse(readFileSync(join(workspace, 'automations.json'), 'utf8'))
-    expect(stored.automations.UserPromptSubmit[0].id).toBe('auto-1')
+    expect(existsSync(join(workspace, '.mortise', 'skills', 'review', 'scripts', 'run.ts'))).toBe(true)
+    const store = new AutomationV3Store({ workspaceId: workspace, workspaceRootPath: workspace })
+    expect(store.getDocument()?.definitions[0]?.id).toBe('automation-greeting-0001')
+    store.close()
   })
 
   it('honors skip and overwrite modes', async () => {
     const workspace = createWorkspace(root)
     createSkill(workspace, 'review')
     const bundle: ResourceBundle = {
-      version: 1,
+      version: 2,
       exportedAt: Date.now(),
       resources: {
         skills: [{
@@ -152,6 +156,6 @@ describe('resource bundle', () => {
 
     expect((await importResources(workspace, bundle, 'skip')).skills.skipped).toEqual(['review'])
     expect((await importResources(workspace, bundle, 'overwrite')).skills.imported).toEqual(['review'])
-    expect(readFileSync(join(workspace, '.pi', 'skills', 'review', 'SKILL.md'), 'utf8')).toContain('name: Updated')
+    expect(readFileSync(join(workspace, '.mortise', 'skills', 'review', 'SKILL.md'), 'utf8')).toContain('name: Updated')
   })
 })

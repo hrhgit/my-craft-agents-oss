@@ -27,6 +27,107 @@ export class UiValidationBrowserCDP extends BrowserCDP {
     super(webContents)
   }
 
+  async captureRendererPerformance(durationMs: number): Promise<Record<string, unknown>> {
+    const boundedDurationMs = Math.min(5_000, Math.max(100, Math.round(durationMs)))
+    await this.send('Performance.enable')
+    const heapBefore = await this.send('Runtime.getHeapUsage')
+    const sample = await this.send('Runtime.evaluate', {
+      expression: `(() => new Promise((resolve) => {
+        const durationMs = ${boundedDurationMs};
+        const startedAt = performance.now();
+        const frameIntervals = [];
+        const longTasks = [];
+        let previousFrame = startedAt;
+        let settled = false;
+        let fallbackTimer;
+        const recordLongTasks = (entries) => {
+          for (const entry of entries) longTasks.push(entry.duration);
+        };
+        const finish = () => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(fallbackTimer);
+          if (observer) recordLongTasks(observer.takeRecords());
+          observer?.disconnect();
+          let highlightRangeCount = 0;
+          try {
+            for (const highlight of CSS.highlights.values()) highlightRangeCount += highlight.size;
+          } catch {}
+          resolve({
+            elapsedMs: performance.now() - startedAt,
+            frameIntervalsMs: frameIntervals.slice(-600),
+            longTasksMs: longTasks.slice(-100),
+            domNodeCount: document.getElementsByTagName('*').length,
+            mountedTurnCount: document.querySelectorAll('[data-mortise-search-target-type="turn"]').length,
+            searchTargetCount: document.querySelectorAll('[data-mortise-search-target-type]').length,
+            highlightRangeCount,
+          });
+        };
+        const observer = typeof PerformanceObserver === 'function'
+          ? new PerformanceObserver((list) => recordLongTasks(list.getEntries()))
+          : undefined;
+        try { observer?.observe({ type: 'longtask' }); } catch {}
+        const frame = (now) => {
+          frameIntervals.push(now - previousFrame);
+          previousFrame = now;
+          if (now - startedAt >= durationMs) finish();
+          else requestAnimationFrame(frame);
+        };
+        fallbackTimer = setTimeout(finish, durationMs + 2_000);
+        requestAnimationFrame(frame);
+      }))()`,
+      awaitPromise: true,
+      returnByValue: true,
+    })
+    const heapAfter = await this.send('Runtime.getHeapUsage')
+    const metrics = await this.send('Performance.getMetrics')
+    const value = sample?.result?.value as Record<string, unknown> | undefined
+    const frameIntervals = numberArray(value?.frameIntervalsMs)
+    const longTasks = numberArray(value?.longTasksMs)
+    const usedBefore = finiteNumber(heapBefore?.usedSize)
+    const usedAfter = finiteNumber(heapAfter?.usedSize)
+    const sortedFrames = [...frameIntervals].sort((a, b) => a - b)
+    const performanceMetrics = new Map<string, number>()
+    for (const metric of Array.isArray(metrics?.metrics) ? metrics.metrics : []) {
+      if (typeof metric?.name === 'string' && Number.isFinite(metric?.value)) {
+        performanceMetrics.set(metric.name, metric.value)
+      }
+    }
+
+    return {
+      durationMs: boundedDurationMs,
+      elapsedMs: finiteNumber(value?.elapsedMs),
+      domNodeCount: finiteNumber(value?.domNodeCount),
+      mountedTurnCount: finiteNumber(value?.mountedTurnCount),
+      searchTargetCount: finiteNumber(value?.searchTargetCount),
+      highlightRangeCount: finiteNumber(value?.highlightRangeCount),
+      heap: {
+        usedBefore,
+        usedAfter,
+        delta: usedBefore === undefined || usedAfter === undefined ? undefined : usedAfter - usedBefore,
+      },
+      frames: {
+        count: frameIntervals.length,
+        averageMs: average(frameIntervals),
+        p95Ms: percentile(sortedFrames, 0.95),
+        maxMs: frameIntervals.length > 0 ? Math.max(...frameIntervals) : undefined,
+        over50Ms: frameIntervals.filter(value => value > 50).length,
+      },
+      longTasks: {
+        count: longTasks.length,
+        totalMs: longTasks.reduce((sum, value) => sum + value, 0),
+        maxMs: longTasks.length > 0 ? Math.max(...longTasks) : undefined,
+      },
+      cdp: {
+        nodes: performanceMetrics.get('Nodes'),
+        documents: performanceMetrics.get('Documents'),
+        jsEventListeners: performanceMetrics.get('JSEventListeners'),
+        layoutCount: performanceMetrics.get('LayoutCount'),
+        recalcStyleCount: performanceMetrics.get('RecalcStyleCount'),
+      },
+    }
+  }
+
   override async getAccessibilitySnapshot() {
     this.childTargetRefs.clear()
     const snapshot = await super.getAccessibilitySnapshot()
@@ -605,6 +706,23 @@ export class UiValidationBrowserCDP extends BrowserCDP {
     if (!backendNodeId) throw new Error(`Semantic selector has no backend node: ${selector}`)
     return this.allocateRef(backendNodeId)
   }
+}
+
+function finiteNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined
+}
+
+function numberArray(value: unknown): number[] {
+  return Array.isArray(value) ? value.filter((item): item is number => typeof item === 'number' && Number.isFinite(item)) : []
+}
+
+function average(values: number[]): number | undefined {
+  return values.length > 0 ? values.reduce((sum, value) => sum + value, 0) / values.length : undefined
+}
+
+function percentile(sortedValues: number[], fraction: number): number | undefined {
+  if (sortedValues.length === 0) return undefined
+  return sortedValues[Math.min(sortedValues.length - 1, Math.ceil(sortedValues.length * fraction) - 1)]
 }
 
 async function mapWithConcurrency<T>(items: T[], limit: number, visit: (item: T) => Promise<void>): Promise<void> {

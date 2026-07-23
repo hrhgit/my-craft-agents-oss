@@ -13,6 +13,7 @@
     "./chat/TurnCard": "./src/components/chat/TurnCard.tsx",
     "./chat/turn-utils": "./src/components/chat/turn-utils.ts",
     "./markdown": "./src/components/markdown/index.ts",
+    "./overlay/PDFPreviewOverlay": "./src/components/overlay/PDFPreviewOverlay.tsx",
     "./tooltip": "./src/components/tooltip.tsx",
     "./annotations/follow-up-state": "./src/components/annotations/follow-up-state.ts",
     "./ui/drawer": "./src/components/ui/drawer.tsx",

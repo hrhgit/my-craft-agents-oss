@@ -20,7 +20,7 @@ describe('transform_data path containment', () => {
     dataDir = join(sessionDir, 'data');
     siblingDir = join(rootDir, 'session-evil');
     skillsDir = join(rootDir, 'skills');
-    projectSkillsDir = join(rootDir, 'project', '.pi', 'skills');
+    projectSkillsDir = join(rootDir, 'project', '.mortise', 'skills');
 
     mkdirSync(sessionDir, { recursive: true });
     mkdirSync(dataDir, { recursive: true });

@@ -8,8 +8,11 @@
 import { z } from 'zod';
 import matter from 'gray-matter';
 import { existsSync, readFileSync } from 'node:fs';
-import { stripBom } from '@mortise/shared/utils';
 import type { ValidationResult, ValidationIssue } from './types.ts';
+
+function stripBom(text: string): string {
+  return text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
+}
 
 // ============================================================
 // Validation Result Helpers
@@ -154,11 +157,24 @@ export function zodErrorToIssues(error: z.ZodError, filePath: string): Validatio
 }
 
 // ============================================================
-// Slug Validation (re-exported from @mortise/shared)
+// Slug Validation
 // ============================================================
 
-export { SLUG_REGEX, validateSlug } from '@mortise/shared/config';
-import { validateSlug } from '@mortise/shared/config';
+export const SLUG_REGEX = /^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$/;
+
+export function validateSlug(slug: string): ValidationResult {
+  if (SLUG_REGEX.test(slug)) return validResult();
+  const suggested = slug
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .replace(/-+/g, '-');
+  return invalidResult(
+    'slug',
+    'Slug must be lowercase alphanumeric with hyphens',
+    `Suggested: '${suggested || 'valid-slug-name'}'`,
+  );
+}
 
 // ============================================================
 // Skill Validation

@@ -14,6 +14,7 @@ export type {
 
   // Tool result types
   TextContent,
+  ImageContent,
   ToolResult,
 
   // Developer feedback
@@ -28,7 +29,10 @@ export type {
 // Response helpers
 export {
   errorResponse,
+  successResponse,
 } from './response.ts';
+
+export { getResultText } from './types.ts';
 
 // Validation
 export {
@@ -102,8 +106,6 @@ export {
   SESSION_SAFE_ALLOWED_TOOL_NAMES,
   SESSION_SAFE_BLOCKED_TOOL_NAMES,
   SESSION_TOOL_REGISTRY,
-  LEGACY_SESSION_TOOL_PREFIX,
-  LEGACY_DIRECT_SESSION_TOOL_PREFIX,
   // Filtered helper views
   getSessionToolDefs,
   getSessionBackendToolNames,

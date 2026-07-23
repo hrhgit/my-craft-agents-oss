@@ -16,7 +16,7 @@ depends_on: [pi-coding-runtime, shared-contracts, app-settings-security]
 collaborates_with: [extension-ui, session-tooling]
 validation:
   - { id: extension-runtime-regression, kind: unit, command: "bun test packages/shared/src/agent packages/server-core/src/handlers/pi-extension-bridge.test.ts", description: "Run extension runtime and bridge regressions.", triggers: [owned-change], required: true, evidence: "Bun test exit status and output." }
-scope_digest: 164334a5c0c9a0aaf2f7bf30d4fed5dc0b8ec839
+scope_digest: 8ef59c8ed35af8fca1a46ad71aba574069a15407
 ---
 
 ## Purpose
@@ -32,7 +32,7 @@ Maintain the Pi host manager, driver boundary, extension settings, reload interr
 Do not own extension-rendered GUI, Pi's internal extension API, or provider transport implementations.
 
 ## Contracts and invariants
-Targets accept only `pi` and `mortise`; reload interrupts running sessions only after confirmation; capability negotiation precedes use.
+Targets accept only `pi` and `mortise`; Mortise GlobalHost discovery and child processes are pinned to the runtime's explicit Mortise Agent root rather than inherited Pi defaults; reload interrupts running sessions only after confirmation; capability negotiation precedes use.
 
 ## Architecture and entry points
 Shared agent backends manage Pi hosts; server-core bridges extension contributions and interactions to connected clients.
@@ -47,8 +47,16 @@ Run host recovery, routing, extension bridge, reload, and capability tests.
 Subprocess failure can be misreported as session failure; extensions can evolve faster than a packaged host facade.
 
 ## Semantic history
+- 2026-07-23: Pinned Mortise GlobalHost startup, session runtimes, isolated runtimes, and in-process skill resolution to the Mortise project root, eliminating workspace `.pi` fallback at the embedded Pi boundary.
+- 2026-07-23: Bound shared Pi GlobalHost discovery and child process configuration to each Mortise runtime's explicit Agent root, preventing Electron-like callers from falling back to independent Pi storage.
+- 2026-07-22: Forwarded Pi's canonical user-message durability acknowledgement ahead of logical settlement, including during abort suppression, so Host completion cannot overtake the persisted JSONL write.
+- 2026-07-21: Removed legacy widget and scalar RemoteUI host mappings; Pi host events and responses now use only versioned extension contributions and interactions with trusted ownership.
+- 2026-07-21: Made runtime replacement settle suspended Mortise event streams only after awaited host release, contained teardown callback failures, and retired force-aborted runtimes before terminal UI completion.
+- 2026-07-21: Removed the per-session Pi RPC fallback and its environment escape hatches; every session now requires a version-compatible global Pi host, with process environments isolated by non-secret host fingerprints.
+- 2026-07-21: Removed session-tool prefix normalization, split browser-tool aliases, and legacy permission-mode input aliases; host routing now accepts only exact canonical tool identities and public mode names.
+- 2026-07-21: Removed ignored working-directory extension inputs and mutable cwd fallbacks; spawn, permission, skill, and tool routing use only the workspace root.
+- 2026-07-21: Made packaged Pi runtime resolution select only the compiled executable under external `resources/pi-runtime`, ignoring legacy environment and JavaScript candidates and failing explicitly when the compiled runtime is absent.
 - 2026-07-21: Kept Pi retry and abort attempt events distinct from logical `agent_settled`, exposed native follow-up delivery, and preserved raw lifecycle projection through the Mortise host bridge.
-- 2026-07-12: Added the global Pi extension host runtime.
 - 2026-07-14: Hardened RPC extension lifecycle and recovery.
 - 2026-07-20: Unified legacy capability declaration, request, response, and cancellation runtime identities while preserving host-owned routing.
 - 2026-07-20: Aligned source-auth regression coverage with the current HTTP/SSE contract and made PowerShell parser fixtures self-contained.

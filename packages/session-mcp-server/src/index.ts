@@ -31,15 +31,20 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
-import type { ToolResult } from '@mortise/shared/agent';
 import { isDeveloperFeedbackEnabled } from '@mortise/shared/feature-flags';
-import { CONFIG_DIR } from '@mortise/shared/config/paths';
-import { getSessionPath } from '@mortise/shared/sessions';
-import { createPiSkillResolver } from '@mortise/shared/pi/skill-resolver';
+import {
+  CONFIG_DIR,
+  MORTISE_PROJECT_SKILLS_DIR,
+  MORTISE_SESSIONS_DIR,
+  MORTISE_SKILLS_DIR,
+  encodePiSessionCwd,
+} from '@mortise/shared/config/paths';
+import { validateSessionId } from '@mortise/shared/sessions/validation';
 // Import from session-tools-core
 import {
   type SessionToolContext,
   type CallbackMessage,
+  type ToolResult,
   // Registry
   getSessionToolRegistry,
   getToolDefsAsJsonSchema,
@@ -118,17 +123,15 @@ function createCodexContext(config: McpServerConfig): SessionToolContext {
   // Session paths for transform_data / render_template. Shared storage helpers
   // resolve the sidecar next to Pi's workspace-scoped session projection without
   // scanning the global Pi session root from this subprocess.
-  const sessionsDir = getSessionPath(workspaceRootPath, sessionId);
+  validateSessionId(sessionId);
+  const sessionsDir = join(MORTISE_SESSIONS_DIR, encodePiSessionCwd(workspaceRootPath), '.mortise', sessionId);
   const sessionDataDir = join(sessionsDir, 'data');
-  const workingDirectory = workspaceRootPath;
-
   // Build context
   return {
     sessionId,
     workspacePath: workspaceRootPath,
-    workingDirectory,
     get skillPaths() {
-      return createPiSkillResolver(workingDirectory).getSkillPaths().map((entry) => entry.dir);
+      return [MORTISE_SKILLS_DIR, join(workspaceRootPath, MORTISE_PROJECT_SKILLS_DIR)];
     },
     get skillsPath() { return this.skillPaths?.[0] ?? ''; },
     plansFolderPath,

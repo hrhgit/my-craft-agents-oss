@@ -5,7 +5,7 @@
  *   - Satisfies IMessagingGatewayRegistry for the RPC handlers in server-core.
  *   - Acts as a single EventSink consumer fanning session events to the right gateway.
  *   - Owns the in-memory pairing code manager (shared across workspaces; codes are workspace-scoped).
- *   - Owns per-workspace MessagingConfig (messaging/config.json).
+ *   - Owns per-workspace MessagingConfig in the messaging SQLite database.
  *   - Owns platform adapter lifecycle (initialize/swap/destroy) via CredentialManager.
  *
  * The registry is constructed once, wired into HandlerDeps, then populated with
@@ -97,10 +97,10 @@ export class MessagingGatewayRegistry implements IMessagingGatewayRegistry {
   constructor(private readonly opts: MessagingGatewayRegistryOptions) {
     this.log = (opts.logger ?? consoleLogger).child({ component: 'registry' })
 
-    // Install the automation→topic binder hook on the SessionManager so
-    // executePromptAutomation can route topic-bound sessions without the
-    // SessionManager needing to import this package (avoids a package-level
-    // circular dependency).
+    // Install the automation→topic binder hook on the SessionManager so the
+    // V3 automation prompt delivery (executeAutomationPromptAction) can route
+    // topic-bound new-Session deliveries without the SessionManager needing to
+    // import this package (avoids a package-level circular dependency).
     opts.sessionManager.setAutomationBinder?.(async (input) => {
       const result = await this.bindAutomationSession(input)
       if (!result.ok) {
@@ -1224,7 +1224,7 @@ export class MessagingGatewayRegistry implements IMessagingGatewayRegistry {
   ): MessagingConfig {
     const state = this.workspaces.get(workspaceId) ?? this.bootstrapWorkspace(workspaceId)
     const cfg = state.configStore.get()
-    const tg = cfg.platforms.telegram ?? { enabled: true }
+    const tg = cfg.platforms.telegram ?? { enabled: true, accessMode: 'owner-only' }
     return state.configStore.update({
       enabled: options.ensureMessagingEnabled ? true : cfg.enabled,
       platforms: {
@@ -1251,9 +1251,6 @@ export class MessagingGatewayRegistry implements IMessagingGatewayRegistry {
     if (currentOwners.length > 0) return currentOwners
 
     const nextOwners: PlatformOwner[] = [candidate]
-    // Workspaces that haven't picked an explicit access mode default
-    // to `owner-only` once an owner exists. Existing 'open' workspaces
-    // are respected (the operator chose to stay public).
     this.patchTelegramConfig(workspaceId, {
       accessMode: cfg.platforms.telegram?.accessMode ?? 'owner-only',
       owners: nextOwners,
@@ -1290,7 +1287,7 @@ export class MessagingGatewayRegistry implements IMessagingGatewayRegistry {
   getPlatformAccessMode(workspaceId: string, platform: PlatformType): PlatformAccessMode {
     if (platform !== 'telegram') return 'open'
     const state = this.workspaces.get(workspaceId) ?? this.bootstrapWorkspace(workspaceId)
-    return state.configStore.get().platforms.telegram?.accessMode ?? 'open'
+    return state.configStore.get().platforms.telegram?.accessMode ?? 'owner-only'
   }
 
   setPlatformAccessMode(
@@ -1303,32 +1300,7 @@ export class MessagingGatewayRegistry implements IMessagingGatewayRegistry {
     }
     this.patchTelegramConfig(workspaceId, { accessMode: mode })
 
-    // Lock-down semantics: switching the workspace to `owner-only` must
-    // also close any binding that's still in `open` mode, otherwise the
-    // operator clicks "Lock down", the banner disappears, but legacy
-    // bindings remain public — exactly the false-sense-of-security UX
-    // the feature is supposed to prevent.
-    if (mode === 'owner-only') {
-      this.migrateOpenBindingsToInherit(workspaceId)
-    }
-
     this.emitBindingChanged(workspaceId)
-  }
-
-  /**
-   * Walk all Telegram bindings and flip any with `accessMode === 'open'`
-   * to `inherit` (the safe default). Used when locking down the workspace.
-   * Telegram-only — other platforms don't yet have per-binding access.
-   */
-  private migrateOpenBindingsToInherit(workspaceId: string): void {
-    const state = this.workspaces.get(workspaceId)
-    if (!state) return
-    const store = state.gateway.getBindingStore()
-    for (const b of store.getAll()) {
-      if (b.platform !== 'telegram') continue
-      if (b.config.accessMode !== 'open') continue
-      store.updateBindingConfig(b.id, { accessMode: 'inherit', allowedSenderIds: [] })
-    }
   }
 
   /** Pending senders surface in Settings → Messaging as "Pending requests". */
@@ -1379,14 +1351,14 @@ export class MessagingGatewayRegistry implements IMessagingGatewayRegistry {
     const match = pending.find((p) =>
       p.userId === userId &&
       (entryKey?.reason === undefined ||
-        (p.reason ?? 'not-owner') === entryKey.reason) &&
+        p.reason === entryKey.reason) &&
       (entryKey?.bindingId === undefined || p.bindingId === entryKey.bindingId),
     )
     if (!match) {
       throw new Error('Pending sender not found — they may have been dismissed.')
     }
 
-    const reason = match.reason ?? 'not-owner'
+    const reason = match.reason
 
     if (reason === 'not-on-binding-allowlist') {
       // Append to that specific binding's allow-list. Don't touch owners.

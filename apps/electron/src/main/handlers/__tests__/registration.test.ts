@@ -84,7 +84,6 @@ async function getExpectedChannels(): Promise<Set<string>> {
   // Core handler channels (now in server-core)
   const [
     auth,
-    automations,
     files,
     llm,
     sessions,
@@ -97,7 +96,6 @@ async function getExpectedChannels(): Promise<Set<string>> {
     transfer,
   ] = await Promise.all([
     import('@mortise/server-core/handlers/rpc/auth'),
-    import('@mortise/server-core/handlers/rpc/automations'),
     import('@mortise/server-core/handlers/rpc/files'),
     import('@mortise/server-core/handlers/rpc/pi-providers'),
     import('@mortise/server-core/handlers/rpc/sessions'),
@@ -121,7 +119,6 @@ async function getExpectedChannels(): Promise<Set<string>> {
 
   return new Set([
     ...auth.HANDLED_CHANNELS,
-    ...automations.HANDLED_CHANNELS,
     ...files.HANDLED_CHANNELS,
     ...llm.HANDLED_CHANNELS,
     ...sessions.HANDLED_CHANNELS,

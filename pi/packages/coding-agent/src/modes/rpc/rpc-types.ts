@@ -32,7 +32,6 @@ import type { SourceInfo } from "../../core/source-info.ts";
 
 export const PI_RPC_PROTOCOL_VERSION = 3;
 export const PI_HOST_HOOKS_MODULE_ENV = "PI_HOST_HOOKS_MODULE";
-export const PI_LEGACY_FETCH_INTERCEPTOR_MODULE_ENV = "PI_FETCH_INTERCEPTOR_MODULE";
 export const PI_RPC_UI_CAPABILITIES_ENV = "PI_RPC_UI_CAPABILITIES";
 
 export const PI_RPC_COMMANDS = [
@@ -140,6 +139,8 @@ export interface RpcRuntimeOpenOptions {
 	extensionTarget: "pi" | "mortise";
 	extensionPaths?: string[];
 	agentDir?: string;
+	/** Project-local config directory name. Standalone Pi defaults to `.pi`. */
+	projectConfigDir?: string;
 	sessionPath?: string;
 	forkFromSessionPath?: string;
 	sessionDir?: string;
@@ -291,9 +292,24 @@ export type RpcCommand = RpcEnvelope &
 				idOverride?: string;
 				parentSession?: string;
 		  }
-		| { id?: string; type: "list_skills"; cwd?: string; agentDir?: string; skillPaths?: string[] }
-		| { id?: string; type: "resolve_skill"; name: string; cwd?: string; agentDir?: string; skillPaths?: string[] }
-		| { id?: string; type: "get_extensions"; cwd?: string; agentDir?: string }
+		| {
+				id?: string;
+				type: "list_skills";
+				cwd?: string;
+				agentDir?: string;
+				projectConfigDir?: string;
+				skillPaths?: string[];
+		  }
+		| {
+				id?: string;
+				type: "resolve_skill";
+				name: string;
+				cwd?: string;
+				agentDir?: string;
+				projectConfigDir?: string;
+				skillPaths?: string[];
+		  }
+		| { id?: string; type: "get_extensions"; cwd?: string; agentDir?: string; projectConfigDir?: string }
 		| { id?: string; type: "set_extension_config"; name: string; config: Record<string, unknown> }
 		| { id?: string; type: "get_model_catalog"; provider?: string }
 	);
@@ -335,7 +351,6 @@ export interface RpcCapabilities {
 	commands: RpcCommandType[];
 	features: {
 		hostHooksModule: boolean;
-		legacyFetchInterceptorModule: boolean;
 		toolExecutionMetadata: boolean;
 		hostToolResults: "text" | "content";
 		extensionCommandResult: boolean;
@@ -347,7 +362,6 @@ export interface RpcCapabilities {
 	};
 	hostHooks: {
 		moduleEnv: typeof PI_HOST_HOOKS_MODULE_ENV;
-		legacyModuleEnv: typeof PI_LEGACY_FETCH_INTERCEPTOR_MODULE_ENV;
 		exports: string[];
 	};
 }
@@ -639,31 +653,6 @@ export type RpcExtensionUIRequest = RpcEnvelope & { extensionId: string } & (
 		| {
 				type: "extension_ui_request";
 				id: string;
-				method: "select";
-				title: string;
-				options: string[];
-				timeout?: number;
-		  }
-		| {
-				type: "extension_ui_request";
-				id: string;
-				method: "confirm";
-				title: string;
-				message: string;
-				timeout?: number;
-		  }
-		| {
-				type: "extension_ui_request";
-				id: string;
-				method: "input";
-				title: string;
-				placeholder?: string;
-				timeout?: number;
-		  }
-		| { type: "extension_ui_request"; id: string; method: "editor"; title: string; prefill?: string }
-		| {
-				type: "extension_ui_request";
-				id: string;
 				method: "notify";
 				message: string;
 				notifyType?: "info" | "warning" | "error";
@@ -674,14 +663,6 @@ export type RpcExtensionUIRequest = RpcEnvelope & { extensionId: string } & (
 				method: "setStatus";
 				statusKey: string;
 				statusText: string | undefined;
-		  }
-		| {
-				type: "extension_ui_request";
-				id: string;
-				method: "setWidget";
-				widgetKey: string;
-				widgetLines: string[] | undefined;
-				widgetPlacement?: "aboveEditor" | "belowEditor";
 		  }
 		| {
 				type: "extension_ui_request";
@@ -723,18 +704,12 @@ export type RpcExtensionUIRequest = RpcEnvelope & { extensionId: string } & (
 // ============================================================================
 
 /** Response to an extension UI request */
-export type RpcExtensionUIResponse = RpcEnvelope &
-	(
-		| {
-				type: "extension_ui_response";
-				id: string;
-				extensionId: string;
-				interaction: ExtensionInteractionResponseV1;
-		  }
-		| { type: "extension_ui_response"; id: string; value: string }
-		| { type: "extension_ui_response"; id: string; confirmed: boolean }
-		| { type: "extension_ui_response"; id: string; cancelled: true }
-	);
+export type RpcExtensionUIResponse = RpcEnvelope & {
+	type: "extension_ui_response";
+	id: string;
+	extensionId: string;
+	interaction: ExtensionInteractionResponseV1;
+};
 
 /** Emitted when Pi settles an interaction before the host responds. */
 export interface RpcExtensionUICancel extends RpcEnvelope {
@@ -743,8 +718,7 @@ export interface RpcExtensionUICancel extends RpcEnvelope {
 	extensionId: string;
 	schemaVersion: 1;
 	reason: Exclude<ExtensionInteractionCancelReasonV1, "user">;
-	/** Dialog method being dismissed. Omitted by older interaction-v1 producers. */
-	method?: "interact" | "select" | "confirm" | "input" | "editor";
+	method: "interact";
 }
 
 // ============================================================================

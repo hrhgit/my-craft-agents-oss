@@ -91,6 +91,10 @@ export interface MortiseUiRunManifest {
   containsClonedUserData: boolean
   runDir: string
   profileDir: string
+  profileOwnerRunId?: string
+  restartedFromRunId?: string
+  restartedByRunId?: string
+  profileRetainedAt?: string
   artifactsDir: string
   endpointManifestPath: string
   tokenPath: string
@@ -138,6 +142,7 @@ export interface MortiseUiHostAdapterEnvironment {
   MORTISE_UI_SURFACE: MortiseUiSurface
   MORTISE_UI_RUN_DIR: string
   MORTISE_UI_PROFILE_DIR: string
+  MORTISE_UI_PROFILE_MODE: MortiseUiProfileMode
   MORTISE_UI_ARTIFACTS_DIR: string
   MORTISE_UI_ENDPOINT_MANIFEST: string
   MORTISE_UI_TOKEN: string

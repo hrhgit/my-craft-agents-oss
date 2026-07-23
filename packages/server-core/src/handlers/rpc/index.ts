@@ -2,7 +2,6 @@ import type { RpcServer } from '@mortise/server-core/transport'
 import type { HandlerDeps } from '../handler-deps'
 
 import { registerAuthHandlers } from './auth'
-import { registerAutomationsHandlers } from './automations'
 import { cleanupWorkspaceFileWatchForClient, registerFilesHandlers } from './files'
 import { registerPiProviderHandlers } from './pi-providers'
 import { registerResourcesHandlers } from './resources'
@@ -33,7 +32,6 @@ export function registerCoreRpcHandlers(
   serverCtx?: ServerHandlerContext,
 ): void {
   registerAuthHandlers(server, deps)
-  registerAutomationsHandlers(server, deps)
   registerFilesHandlers(server, deps)
   registerPiProviderHandlers(server, deps)
   registerOnboardingHandlers(server, deps)

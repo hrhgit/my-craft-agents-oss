@@ -18,7 +18,6 @@ function createConfig(): BackendConfig {
       workspaceRootPath: '/tmp/mortise-host-recovery',
       createdAt: Date.now(),
       lastUsedAt: Date.now(),
-      workingDirectory: '/tmp/mortise-host-recovery',
     } as NonNullable<BackendConfig['session']>,
     isHeadless: true,
   };
@@ -69,7 +68,6 @@ describe('PiAgent GlobalHost recovery', () => {
       commands: ['invoke_extension_command'],
       features: {
         hostHooksModule: true,
-        legacyFetchInterceptorModule: true,
         toolExecutionMetadata: true,
         hostToolResults: 'content',
         extensionCommandResult: true,
@@ -81,7 +79,6 @@ describe('PiAgent GlobalHost recovery', () => {
       },
       hostHooks: {
         moduleEnv: 'PI_HOST_HOOKS_MODULE',
-        legacyModuleEnv: 'PI_FETCH_INTERCEPTOR_MODULE',
         exports: [],
       },
     };
@@ -193,12 +190,13 @@ describe('PiAgent GlobalHost recovery', () => {
     expect(onHostCapabilityRuntimeReleased).toHaveBeenCalledWith('runtime-1');
   });
 
-  it('keeps legacy capability declarations and cancellation on the Pi envelope runtime', () => {
+  it('routes capability declarations and cancellation through the acquired host runtime', () => {
     const onHostCapabilityCancel = mock(() => undefined);
     const onHostCapabilityDeclaration = mock(() => undefined);
     const agent = new PiAgent({ ...createConfig(), onHostCapabilityDeclaration, onHostCapabilityCancel });
     const internals = agent as unknown as PiAgentRecoveryInternals;
     internals.rpcClient = {
+      runtimeId: 'runtime-host',
       invokeExtensionCommandResult: mock(async () => ({ invoked: true })),
       prompt: mock(async () => undefined),
       getStderr: () => '',
@@ -207,15 +205,15 @@ describe('PiAgent GlobalHost recovery', () => {
 
     internals.handlePiClientEvent({
       type: 'extension_host_capability_declaration', version: 1,
-      extensionId: 'legacy-extension', runtimeId: 'default', declarations: [],
+      extensionId: 'extension-a', runtimeId: 'spoofed-envelope-runtime', declarations: [],
     });
     internals.handlePiClientEvent({
       type: 'extension_host_capability_cancel', version: 1,
-      extensionId: 'legacy-extension', id: 'cap-legacy', runtimeId: 'default',
+      extensionId: 'extension-a', id: 'cap-host', runtimeId: 'spoofed-envelope-runtime',
     });
 
-    expect(onHostCapabilityDeclaration).toHaveBeenCalledWith(expect.objectContaining({ runtimeId: 'default' }));
-    expect(onHostCapabilityCancel).toHaveBeenCalledWith('cap-legacy', 'default');
+    expect(onHostCapabilityDeclaration).toHaveBeenCalledWith(expect.objectContaining({ runtimeId: 'runtime-host' }));
+    expect(onHostCapabilityCancel).toHaveBeenCalledWith('cap-host', 'runtime-host');
     agent.destroy();
   });
 });

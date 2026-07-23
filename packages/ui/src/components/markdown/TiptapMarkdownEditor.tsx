@@ -8,7 +8,6 @@ import { Mathematics } from '@tiptap/extension-mathematics'
 import Image from '@tiptap/extension-image'
 import FileHandler from '@tiptap/extension-file-handler'
 import { Markdown as OfficialMarkdown } from '@tiptap/markdown'
-import { Markdown as LegacyMarkdown } from 'tiptap-markdown'
 import { tiptapCodeBlock } from './TiptapCodeBlockView'
 import { TiptapBubbleMenus, INLINE_MATH_EDIT_EVENT } from './TiptapBubbleMenus'
 import { TiptapSlashMenu } from './TiptapSlashMenu'
@@ -20,13 +19,6 @@ import { cn } from '../../lib/utils'
 import 'katex/dist/katex.min.css'
 import './tiptap-editor.css'
 import './extensions/animated-task-item.css'
-
-export type MarkdownEngine = 'legacy' | 'official'
-
-
-function getLegacyMarkdown(editor: { storage: { markdown?: { getMarkdown?: () => string } } }): string {
-  return editor.storage.markdown?.getMarkdown?.() ?? ''
-}
 
 function getOfficialMarkdown(editor: { getMarkdown?: () => string }): string {
   return editor.getMarkdown?.() ?? ''
@@ -203,12 +195,6 @@ export interface TiptapMarkdownEditorProps {
   className?: string
   /** Whether the editor is editable */
   editable?: boolean
-  /**
-   * Migration flag for markdown engine foundations.
-   * - `legacy`: tiptap-markdown (default for safe rollout)
-   * - `official`: @tiptap/markdown + mathematics extension
-   */
-  markdownEngine?: MarkdownEngine
 }
 
 export function TiptapMarkdownEditor({
@@ -217,7 +203,6 @@ export function TiptapMarkdownEditor({
   placeholder = 'Write something...',
   className,
   editable = true,
-  markdownEngine = 'legacy',
 }: TiptapMarkdownEditorProps) {
   const onUpdateRef = React.useRef(onUpdate)
   onUpdateRef.current = onUpdate
@@ -225,8 +210,6 @@ export function TiptapMarkdownEditor({
   // Ref for the editor instance — used by the Mathematics onClick callback
   // which is created at extension-configure time (before useEditor returns).
   const editorRef = React.useRef<ReturnType<typeof useEditor>>(null!)
-
-  const useOfficialMarkdown = markdownEngine === 'official'
 
   const extensions = React.useMemo(() => {
     const base = [
@@ -262,50 +245,37 @@ export function TiptapMarkdownEditor({
       ...(editable ? [TiptapSlashMenu] : []),
     ]
 
-    if (useOfficialMarkdown) {
-      return [
-        ...base,
-        Mathematics.configure({
-          inlineOptions: {
-            onClick: (_node, pos) => {
-              const e = editorRef.current
-              if (!e) return
-              e.chain().focus().setNodeSelection(pos).run()
-              // Emit after selection so BubbleMenu mounts, then the event activates the input
-              queueMicrotask(() => (e as any).emit(INLINE_MATH_EDIT_EVENT))
-            },
-          },
-          katexOptions: {
-            throwOnError: false,
-            strict: false,
-          },
-        }),
-        OfficialMarkdown.configure({
-          markedOptions: {
-            gfm: true,
-          },
-        }),
-      ]
-    }
-
     return [
       ...base,
-      LegacyMarkdown.configure({
-        html: false,
-        transformPastedText: true,
-        transformCopiedText: true,
+      Mathematics.configure({
+        inlineOptions: {
+          onClick: (_node, pos) => {
+            const e = editorRef.current
+            if (!e) return
+            e.chain().focus().setNodeSelection(pos).run()
+            // Emit after selection so BubbleMenu mounts, then the event activates the input
+            queueMicrotask(() => (e as any).emit(INLINE_MATH_EDIT_EVENT))
+          },
+        },
+        katexOptions: {
+          throwOnError: false,
+          strict: false,
+        },
+      }),
+      OfficialMarkdown.configure({
+        markedOptions: {
+          gfm: true,
+        },
       }),
     ]
-  }, [placeholder, useOfficialMarkdown])
+  }, [placeholder, editable])
 
-  const initialContent = useOfficialMarkdown
-    ? preprocessMarkdownForOfficial(content)
-    : content
+  const initialContent = preprocessMarkdownForOfficial(content)
 
   const editor = useEditor({
     extensions,
     content: initialContent,
-    ...(useOfficialMarkdown ? { contentType: 'markdown' as const } : {}),
+    contentType: 'markdown' as const,
     editable,
     editorProps: {
       attributes: {
@@ -345,12 +315,10 @@ export function TiptapMarkdownEditor({
       })
     },
     onUpdate: ({ editor }) => {
-      const md = useOfficialMarkdown
-        ? postprocessMarkdownFromOfficial(getOfficialMarkdown(editor as { getMarkdown?: () => string }))
-        : getLegacyMarkdown(editor as { storage: { markdown?: { getMarkdown?: () => string } } })
+      const md = postprocessMarkdownFromOfficial(getOfficialMarkdown(editor as { getMarkdown?: () => string }))
       onUpdateRef.current?.(md)
     },
-  }, [useOfficialMarkdown, extensions])
+  }, [extensions])
 
   // Keep editorRef in sync for the Mathematics onClick callback
   editorRef.current = editor
@@ -375,17 +343,11 @@ export function TiptapMarkdownEditor({
       // block states (e.g. slash-inserted code blocks) and jump selection.
       if (editor.isFocused) return
 
-      const currentMd = useOfficialMarkdown
-        ? postprocessMarkdownFromOfficial(getOfficialMarkdown(editor as { getMarkdown?: () => string }))
-        : getLegacyMarkdown(editor as { storage: { markdown?: { getMarkdown?: () => string } } })
+      const currentMd = postprocessMarkdownFromOfficial(getOfficialMarkdown(editor as { getMarkdown?: () => string }))
 
       if (currentMd !== content) {
-        if (useOfficialMarkdown) {
-          const normalized = preprocessMarkdownForOfficial(content)
-          editor.commands.setContent(normalized, { contentType: 'markdown' } as never)
-        } else {
-          editor.commands.setContent(content)
-        }
+        const normalized = preprocessMarkdownForOfficial(content)
+        editor.commands.setContent(normalized, { contentType: 'markdown' } as never)
 
         queueMicrotask(() => {
           if (!editor.isDestroyed) {
@@ -394,7 +356,7 @@ export function TiptapMarkdownEditor({
         })
       }
     }
-  }, [editor, content, useOfficialMarkdown])
+  }, [editor, content])
 
   return (
     <div className={cn('tiptap-editor', className)}>

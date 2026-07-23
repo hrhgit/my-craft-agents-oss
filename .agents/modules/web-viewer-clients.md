@@ -22,7 +22,7 @@ collaborates_with: [headless-server-cli]
 validation:
   - { id: web-client-regression, kind: unit, command: "bun test apps/webui apps/viewer scripts/webui-process-utils.test.ts", description: "Run WebUI, viewer, and process utility regressions.", triggers: [owned-change], required: true, evidence: "Bun test exit status and output." }
   - { id: web-client-contract, kind: contract, command: "bun run lint:webui", description: "Verify WebUI client contracts and lint rules.", triggers: [contract-change], required: true, evidence: "Lint exit status and diagnostics." }
-scope_digest: 4c193efd5618fa963941b8f2e5ef4967f5efc29f
+scope_digest: 2af2d7e101dc0ae3d69e4579386c18191936d485
 ---
 
 ## Purpose
@@ -53,6 +53,9 @@ Run WebUI type/lint tests, adapter tests, launcher process tests, and browser in
 Browser security policy differs from Electron; development auto-login must never escape the localhost launcher boundary.
 
 ## Semantic history
+- 2026-07-22: Declared the viewer's direct shared i18n dependency so source imports no longer rely on root-workspace dependency leakage.
+- 2026-07-22: Made the WebUI capability snapshot immutable on the adapter API and generate all typed unsupported-operation overrides from one checked mapping.
+- 2026-07-21: Added a versioned WebUI platform-capability snapshot and typed `CAPABILITY_UNAVAILABLE` failures for unsupported native operations instead of false-success shims.
 - 2026-07-21: Kept local skill import explicitly desktop-only in the WebUI adapter.
 - 2026-07-20: Removed the WebUI adapter's retired Data Sources OAuth orchestration.
 - 2026-07-12: Unified WebUI session projection with the shared runtime.

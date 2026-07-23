@@ -79,11 +79,6 @@ function resolveServerPath(hostRuntime: BackendHostRuntimeContext, serverName: s
 }
 
 function resolvePiCliPath(hostRuntime: BackendHostRuntimeContext): string | undefined {
-  const override = process.env.MORTISE_PI_CLI_PATH;
-  if (override && existsSync(override)) return override;
-
-  const bundledCli = join('dist', 'cli.bundle.js');
-  const bundledFullCli = join('dist', 'cli.full.bundle.js');
   const packageCli = join(
     'node_modules',
     '@mortise',
@@ -93,23 +88,19 @@ function resolvePiCliPath(hostRuntime: BackendHostRuntimeContext): string | unde
   );
 
   if (hostRuntime.isPackaged) {
-    const externalRuntimeCandidates = hostRuntime.resourcesPath
-      ? [
-          join(hostRuntime.resourcesPath, 'pi-runtime', process.platform === 'win32' ? 'pi.exe' : 'pi'),
-          join(hostRuntime.resourcesPath, 'pi-runtime', bundledCli),
-          join(hostRuntime.resourcesPath, 'pi-runtime', bundledFullCli),
-          join(hostRuntime.resourcesPath, 'pi-runtime', packageCli),
-        ]
-      : [];
-    return firstExistingPath([
-      ...externalRuntimeCandidates,
-      join(hostRuntime.appRootPath, 'dist', 'resources', 'pi-runtime', bundledCli),
-      join(hostRuntime.appRootPath, 'resources', 'pi-runtime', bundledCli),
-      join(hostRuntime.appRootPath, 'dist', 'resources', 'pi-runtime', bundledFullCli),
-      join(hostRuntime.appRootPath, 'resources', 'pi-runtime', bundledFullCli),
-      join(hostRuntime.appRootPath, 'dist', 'resources', 'pi-runtime', packageCli),
-      join(hostRuntime.appRootPath, 'resources', 'pi-runtime', packageCli),
-    ]);
+    if (!hostRuntime.resourcesPath) {
+      throw new Error('Packaged Pi runtime resolution requires resourcesPath');
+    }
+
+    const compiledRuntimePath = join(
+      hostRuntime.resourcesPath,
+      'pi-runtime',
+      process.platform === 'win32' ? 'pi.exe' : 'pi',
+    );
+    if (!existsSync(compiledRuntimePath)) {
+      throw new Error(`Packaged Pi runtime is missing: ${compiledRuntimePath}`);
+    }
+    return compiledRuntimePath;
   }
 
   return resolveUpwards(hostRuntime.appRootPath, packageCli, 10)

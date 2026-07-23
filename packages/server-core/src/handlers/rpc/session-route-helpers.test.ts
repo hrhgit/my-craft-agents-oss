@@ -54,27 +54,21 @@ describe('session route helpers', () => {
       timestamp: '2026-07-04T10:00:00.000Z',
       cwd: workspaceRoot,
     });
-    const legacyDivergentCwd = join(workspaceRoot, 'project-b');
-
-    const roots = collectSessionSearchRoots(workspaceRoot, [
-      { id: 'session-a', workingDirectory: legacyDivergentCwd },
-    ]).sort();
+    const roots = collectSessionSearchRoots(workspaceRoot, [{ id: 'session-a' }]).sort();
 
     expect(roots).toEqual([join(sessionsRoot, encodePiSessionCwd(workspaceRoot))]);
   });
 
-  it('does not resolve sessions from a divergent legacy workingDirectory bucket', () => {
-    const legacyDivergentCwd = join(workspaceRoot, 'project-b');
-    writePiSession(sessionsRoot, legacyDivergentCwd, '2026-07-04T10-05-00_session-b.jsonl', {
+  it('does not scan a different cwd bucket', () => {
+    const differentCwd = join(workspaceRoot, 'project-b');
+    writePiSession(sessionsRoot, differentCwd, '2026-07-04T10-05-00_session-b.jsonl', {
       type: 'session',
       id: 'session-b',
       timestamp: '2026-07-04T10:05:00.000Z',
-      cwd: legacyDivergentCwd,
+      cwd: differentCwd,
     });
 
-    const roots = collectSessionSearchRoots(workspaceRoot, [
-      { id: 'session-b', workingDirectory: legacyDivergentCwd },
-    ]);
+    const roots = collectSessionSearchRoots(workspaceRoot, [{ id: 'session-b' }]);
 
     expect(roots).toEqual([]);
   });

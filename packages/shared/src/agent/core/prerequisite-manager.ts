@@ -65,7 +65,7 @@ const RULES: PrerequisiteRule[] = [
   {
     toolMatcher: (toolName: string) =>
       getBrowserToolEnabled() &&
-      (toolName === 'browser_tool' || toolName === 'mcp__session__browser_tool'),
+      toolName === 'browser_tool',
     resolveRequiredPath: () => {
       return existsSync(BROWSER_TOOLS_DOC_PATH) ? BROWSER_TOOLS_DOC_PATH : null;
     },

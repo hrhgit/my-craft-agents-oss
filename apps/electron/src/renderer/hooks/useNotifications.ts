@@ -10,6 +10,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import type { Session } from '../../shared/types'
 import { RPC_CHANNELS } from '@mortise/shared/protocol'
+import { hasPlatformCapability } from '@/lib/platform-capabilities'
 
 /**
  * Draw a badge onto an icon image using Canvas
@@ -181,7 +182,7 @@ export function useNotifications({
   // Subscribe to badge draw requests from main process
   // This uses Canvas API (only available in renderer) to draw badge on icon
   useEffect(() => {
-    if (!hasGuiChannels) return
+    if (!hasGuiChannels || !hasPlatformCapability('appBadge')) return
 
     const cleanup = window.electronAPI.onBadgeDraw(async (data) => {
       try {
@@ -200,7 +201,7 @@ export function useNotifications({
 
   // Subscribe to Windows taskbar overlay draw requests from main process
   useEffect(() => {
-    if (!hasGuiChannels) return
+    if (!hasGuiChannels || !hasPlatformCapability('appBadge')) return
 
     const cleanup = window.electronAPI.onBadgeDrawWindows(async (data) => {
       try {

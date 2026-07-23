@@ -373,7 +373,7 @@ export class AuthStorage {
 	 * Mortise shell stores non-pi credentials under "mortise.<slug>" in pi's auth.json.
 	 * The slug must not contain a dot to prevent namespace pollution.
 	 */
-	setCraftCredential(slug: string, credential: AuthCredential): void {
+	setMortiseCredential(slug: string, credential: AuthCredential): void {
 		if (slug.includes(".")) {
 			throw new Error(`Invalid mortise credential slug: "${slug}" (must not contain '.')`);
 		}
@@ -383,21 +383,21 @@ export class AuthStorage {
 	/**
 	 * Get a mortise-namespaced credential.
 	 */
-	getCraftCredential(slug: string): AuthCredential | undefined {
+	getMortiseCredential(slug: string): AuthCredential | undefined {
 		return this.get(`mortise.${slug}`);
 	}
 
 	/**
 	 * Remove a mortise-namespaced credential.
 	 */
-	deleteCraftCredential(slug: string): void {
+	deleteMortiseCredential(slug: string): void {
 		this.remove(`mortise.${slug}`);
 	}
 
 	/**
 	 * List all mortise credential slugs (without the "mortise." prefix).
 	 */
-	listCraftSlugs(): string[] {
+	listMortiseSlugs(): string[] {
 		const prefix = "mortise.";
 		return this.list()
 			.filter((key) => key.startsWith(prefix))
@@ -409,12 +409,12 @@ export class AuthStorage {
 	 * Used during mortise logout to clear non-pi credentials while preserving
 	 * pi's own auth entries.
 	 *
-	 * Unlike iterating `deleteCraftCredential` (which triggers a full
+	 * Unlike iterating `deleteMortiseCredential` (which triggers a full
 	 * read-modify-write per entry — O(n) file I/O for n credentials), this
 	 * method collects all mortise.* keys and removes them in one atomic
 	 * `withLock` round-trip.
 	 */
-	deleteAllCraftCredentials(): void {
+	deleteAllMortiseCredentials(): void {
 		const prefix = "mortise.";
 		const keys = this.list().filter((key) => key.startsWith(prefix));
 		if (keys.length === 0) return;

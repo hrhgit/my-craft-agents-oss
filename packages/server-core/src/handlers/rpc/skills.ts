@@ -4,6 +4,7 @@ import { readdir, readFile } from 'fs/promises'
 import { homedir } from 'os'
 import { RPC_CHANNELS, type SkillFile } from '@mortise/shared/protocol'
 import { validateSkillContent } from '@mortise/shared/config'
+import { MORTISE_PROJECT_SKILLS_DIR } from '@mortise/shared/config/paths'
 import { importResources } from '@mortise/shared/resources'
 import {
   invalidateSkillsCache,
@@ -113,7 +114,7 @@ export async function discoverSkillsUnderHome(
   }
 
   const excludedWorkspaceSkillsRoot = workspaceRootPath
-    ? join(resolve(workspaceRootPath), '.pi', 'skills')
+    ? join(resolve(workspaceRootPath), '.mortise', 'skills')
     : undefined
   const discovered: DiscoveredSkill[] = []
   for (const skillsRoot of [...skillRoots].sort((a, b) => a.localeCompare(b))) {
@@ -153,7 +154,7 @@ export async function importSkillDirectory(
 
   const files = collectDirectoryFiles(resolvedSource)
   const result = await importResources(workspaceRootPath, {
-    version: 1,
+    version: 2,
     exportedAt: Date.now(),
     resources: { skills: [{ slug, files }] },
   }, 'skip')
@@ -200,10 +201,10 @@ export async function importSkillDirectories(
 }
 
 export function registerSkillsHandlers(server: RpcServer, deps: HandlerDeps): void {
-  // Get all skills for a workspace. The optional workingDirectory argument is
-  // accepted for older renderers but ignored: project-level skills are rooted
-  // at workspace.rootPath under complete-unification semantics.
-  server.handle(RPC_CHANNELS.skills.GET, async (ctx, workspaceId: string, _workingDirectory?: string) => {
+  server.handle(RPC_CHANNELS.skills.GET, async (ctx, workspaceId: string, ...unexpectedArgs: unknown[]) => {
+    if (unexpectedArgs.length > 0) {
+      throw new Error('skills:get accepts only workspaceId; skills are rooted at the workspace root')
+    }
     const wid = resolveWorkspaceId(ctx.workspaceId, workspaceId)
     if (!wid) return []
     deps.platform.logger?.info(`SKILLS_GET: Loading skills for workspace: ${wid}`)
@@ -285,7 +286,7 @@ export function registerSkillsHandlers(server: RpcServer, deps: HandlerDeps): vo
 
     const importResult = await importSkillDirectories(workspace.rootPath, sourcePaths)
     for (const imported of importResult.imported) {
-      deps.sessionManager.notifyConfigFileChange(workspace.rootPath, `.pi/skills/${imported.slug}/SKILL.md`)
+      deps.sessionManager.notifyConfigFileChange(workspace.rootPath, `${MORTISE_PROJECT_SKILLS_DIR}/${imported.slug}/SKILL.md`)
     }
     deps.platform.logger?.info(
       `SKILLS_IMPORT: ${importResult.imported.length} imported, ` +

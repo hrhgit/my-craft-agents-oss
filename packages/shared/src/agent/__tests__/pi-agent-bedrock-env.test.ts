@@ -22,6 +22,30 @@ function createConfig(overrides: Partial<BackendConfig> = {}): BackendConfig {
 }
 
 describe('PiAgent Bedrock env handling', () => {
+  it('isolates global hosts by process environment without exposing credentials in the key', () => {
+    const agent = new PiAgent(createConfig())
+
+    const first = (agent as any).piHostKey('node', 'pi.js', {
+      AWS_REGION: 'eu-central-1',
+      AWS_SECRET_ACCESS_KEY: 'first-secret',
+    }) as string
+    const reordered = (agent as any).piHostKey('node', 'pi.js', {
+      AWS_SECRET_ACCESS_KEY: 'first-secret',
+      AWS_REGION: 'eu-central-1',
+    }) as string
+    const second = (agent as any).piHostKey('node', 'pi.js', {
+      AWS_REGION: 'eu-central-1',
+      AWS_SECRET_ACCESS_KEY: 'second-secret',
+    }) as string
+
+    expect(reordered).toBe(first)
+    expect(second).not.toBe(first)
+    expect(first).not.toContain('first-secret')
+    expect(second).not.toContain('second-secret')
+
+    agent.destroy()
+  })
+
   it('buildAwsEnv uses only AWS credential env and no Pi private runtime toggles', () => {
     const agent = new PiAgent(createConfig())
 

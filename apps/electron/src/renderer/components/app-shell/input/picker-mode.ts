@@ -9,13 +9,13 @@
  *   1. unavailable     — current connection is gone / error state
  *   2. switcher        — multiple connections configured
  *                        (provider/model can be changed mid-session)
- *   3. locked-single   — `pi_compat` connection with ≤1 model and no
+ *   3. locked-single   — `pi_custom` connection with ≤1 model and no
  *                        switcher available (only one connection configured)
  *   4. flat            — fall-through: list models for the active connection
  *
  * Note: `switcher` deliberately wins over `locked-single`. Before #727 they
  * were checked in the opposite order, which trapped users whose default was
- * a single-model `pi_compat` connection — they could never reach the
+ * a single-model `pi_custom` connection — they could never reach the
  * switcher.
  */
 
@@ -23,7 +23,7 @@ export type PickerMode = 'unavailable' | 'switcher' | 'locked-single' | 'flat'
 
 export interface PickerModeInput {
   providerUnavailable: boolean
-  /** Non-null when the active connection is `pi_compat` with ≤1 model. */
+  /** Non-null when the active connection is `pi_custom` with ≤1 model. */
   providerDefaultModel: string | null
   /** Kept for call-site compatibility; provider switching is no longer gated by emptiness. */
   isEmptySession: boolean

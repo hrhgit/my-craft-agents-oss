@@ -23,6 +23,8 @@ function buildBindings(preset: BindingsPreset): MessagingBinding[] {
     workspaceId: PLAYGROUND_WORKSPACE_ID,
     enabled: true,
     createdAt: Date.now(),
+    accessMode: 'inherit' as const,
+    allowedSenderIds: [] as string[],
   }
   switch (preset) {
     case 'none':

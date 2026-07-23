@@ -12,6 +12,12 @@ export type {
   WorkspaceSummary,
 } from './types.ts';
 
+export {
+  getWorkspaceConfigRecordIdentity,
+  normalizeWorkspaceRecordNamespace,
+  WORKSPACE_CONFIG_RECORD_KEY,
+} from './state-contract.ts';
+
 // Storage functions
 export {
   // Path utilities
@@ -19,9 +25,9 @@ export {
   ensureDefaultWorkspacesDir,
   getWorkspacePath,
   getWorkspaceSkillsPath,
-  // Session view aggregation ()
+  // Session view aggregation
   countSessionsByCwd,
-  getWorkspacePiSessionsDir,
+  getWorkspaceSessionsDir,
   // Config operations
   loadWorkspaceConfig,
   saveWorkspaceConfig,

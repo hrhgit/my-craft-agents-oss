@@ -5,6 +5,7 @@
  */
 
 import { RPC_CHANNELS } from '@mortise/shared/protocol'
+import { MORTISE_PROJECT_SKILLS_DIR } from '@mortise/shared/config/paths'
 import { getWorkspaceOrThrow, resolveWorkspaceId } from '../utils'
 import type { RpcServer } from '@mortise/server-core/transport'
 import type { HandlerDeps } from '../handler-deps'
@@ -28,7 +29,7 @@ export function registerResourcesHandlers(server: RpcServer, deps: HandlerDeps):
       const workspace = getWorkspaceOrThrow(resolvedWorkspaceId)
 
       const { exportResources } = await import('@mortise/shared/resources')
-      const result = exportResources(workspace.rootPath, options)
+      const result = exportResources(workspace.rootPath, options, resolvedWorkspaceId)
 
       deps.platform.logger?.info(
         `RESOURCES_EXPORT: Exported from ${resolvedWorkspaceId}: ` +
@@ -49,7 +50,7 @@ export function registerResourcesHandlers(server: RpcServer, deps: HandlerDeps):
       const workspace = getWorkspaceOrThrow(resolvedWorkspaceId)
 
       const { importResources } = await import('@mortise/shared/resources')
-      const result = await importResources(workspace.rootPath, bundle, mode)
+      const result = await importResources(workspace.rootPath, bundle, mode, resolvedWorkspaceId)
 
       deps.platform.logger?.info(
         `RESOURCES_IMPORT: Imported into ${resolvedWorkspaceId} (mode=${mode}): ` +
@@ -57,13 +58,10 @@ export function registerResourcesHandlers(server: RpcServer, deps: HandlerDeps):
         `automations=${result.automations.imported.length} imported, ${result.automations.skipped.length} skipped, ${result.automations.failed.length} failed`,
       )
 
-      // Notify ConfigWatcher of imported files so UI refreshes on Linux
-      // (Bun's fs.watch doesn't reliably detect atomic renames)
-      if (result.automations.imported.length > 0 || result.automations.skipped.length === 0 && bundle.resources.automations?.length) {
-        deps.sessionManager.notifyConfigFileChange(workspace.rootPath, 'automations.json')
-      }
+      // Skills remain filesystem resources; Automations V3 publishes through
+      // its canonical store/dispatcher rather than ConfigWatcher.
       for (const slug of result.skills.imported) {
-        deps.sessionManager.notifyConfigFileChange(workspace.rootPath, `.pi/skills/${slug}/SKILL.md`)
+        deps.sessionManager.notifyConfigFileChange(workspace.rootPath, `${MORTISE_PROJECT_SKILLS_DIR}/${slug}/SKILL.md`)
       }
 
       return result

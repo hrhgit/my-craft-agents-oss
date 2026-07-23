@@ -34,7 +34,7 @@ for (const surface of surfaces) {
       })
       cycle.runId = manifest.runId
       if (surface === 'electron') {
-        const scenario = await command(manifest, 'scenario.apply', { name: 'remote-ui-composer' }, 30_000)
+        const scenario = await command(manifest, 'scenario.apply', { name: 'extension-interaction-composer' }, 30_000)
         if (!scenario.ok) throw new Error(`${scenario.error.code}: ${scenario.error.message}`)
       }
       const snapResponse = await command<Snapshot>(manifest, 'ui.snapshot', {}, 30_000)
@@ -66,7 +66,7 @@ for (const surface of surfaces) {
       const reset = await command(manifest, 'scenario.reset', {}, 30_000)
       if (!reset.ok) throw new Error(reset.error.message)
       const reload = surface === 'electron'
-        ? await command(manifest, 'scenario.apply', { name: 'remote-ui-composer', variant: 'Direct input' }, 30_000)
+        ? await command(manifest, 'scenario.apply', { name: 'extension-interaction-composer', variant: 'Direct input' }, 30_000)
         : await command<Snapshot>(manifest, 'ui.snapshot', {}, 30_000)
       if (!reload.ok) throw new Error(reload.error.message)
       if (surface === 'webui' && !snapshotNodes(reload.result as Snapshot).some(item =>

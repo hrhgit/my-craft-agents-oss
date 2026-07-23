@@ -5,8 +5,11 @@ if (!configDir || !field || value === undefined) {
   throw new Error('Usage: multi-writer-config-worker.ts <configDir> <field> <value>')
 }
 
-const config = loadStoredConfig()
-if (!config) throw new Error('Expected an existing config')
+const config = loadStoredConfig() ?? {
+  workspaces: [],
+  activeWorkspaceId: null,
+  activeSessionId: null,
+}
 
 if (field === 'colorTheme') config.colorTheme = value
 else if (field === 'notificationsEnabled') config.notificationsEnabled = value === 'true'

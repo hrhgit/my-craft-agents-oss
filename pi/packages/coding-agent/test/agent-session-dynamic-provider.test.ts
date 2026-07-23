@@ -48,7 +48,6 @@ describe("AgentSession dynamic provider registration", () => {
 			authStorage,
 			resourceLoader,
 		});
-
 		return session;
 	}
 

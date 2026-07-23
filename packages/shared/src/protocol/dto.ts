@@ -20,6 +20,7 @@ import type {
 import type { PermissionMode } from '../agent/mode-types'
 import type { ThinkingLevel } from '../agent/thinking-levels'
 import type { FileAttachment } from '../utils/files'
+import type { SessionSettlementFailure } from './types'
 
 // Re-export generateMessageId for handler convenience
 export { generateMessageId } from '@mortise/core/types'
@@ -53,7 +54,8 @@ export interface Session extends Omit<CoreSession, 'createdAt' | 'lastUsedAt'> {
    * Set to false when user views the session (and not processing).
    */
   hasUnread?: boolean
-  workingDirectory?: string
+  /** Runtime-only host durability failure. A fresh Host snapshot clears stale client state. */
+  pendingFailure?: SessionSettlementFailure
   sessionFolderPath?: string
   sharedUrl?: string
   sharedId?: string
@@ -98,13 +100,6 @@ export interface CreateSessionOptions {
    * the API request for models with `reasoning: false` in the Pi SDK catalog.
    */
   thinkingLevel?: ThinkingLevel
-  /**
-   * Working directory for the session:
-   * - 'user_default' or undefined: Use workspace's configured default working directory
-   * - 'none': No working directory (session folder only)
-   * - Absolute path string: Use this specific path
-   */
-  workingDirectory?: string | 'user_default' | 'none'
   model?: string
   provider?: string
   systemPromptPreset?: 'default' | 'mini' | string
@@ -170,13 +165,13 @@ export type SessionEvent =
   | { type: 'tool_result'; sessionId: string; toolUseId: string; toolName: string; result: string; turnId?: string; parentToolUseId?: string; isError?: boolean; timestamp?: number }
   | { type: 'error'; sessionId: string; error: string; timestamp?: number }
   | { type: 'typed_error'; sessionId: string; error: TypedError; timestamp?: number }
+  | { type: 'session_failure'; sessionId: string; error: SessionSettlementFailure; timestamp?: number }
   | { type: 'complete'; sessionId: string; tokenUsage?: Session['tokenUsage']; hasUnread?: boolean }
   | { type: 'interrupted'; sessionId: string; message?: Message; queuedMessages?: string[] }
   | { type: 'status'; sessionId: string; message: string; statusType?: 'compacting' }
   | { type: 'info'; sessionId: string; message: string; statusType?: 'compaction_complete'; level?: 'info' | 'warning' | 'error' | 'success'; timestamp?: number }
   | { type: 'title_generated'; sessionId: string; title: string }
   | { type: 'async_operation'; sessionId: string; isOngoing: boolean }
-  | { type: 'working_directory_changed'; sessionId: string; workingDirectory: string }
   | { type: 'permission_request'; sessionId: string; request: PermissionRequest }
   | { type: 'permission_mode_changed'; sessionId: string; permissionMode: PermissionMode; previousPermissionMode?: PermissionMode; transitionDisplay?: string; modeVersion?: number; changedAt?: string; changedBy?: PermissionModeState['changedBy'] }
   | { type: 'plan_submitted'; sessionId: string; message: Message }
@@ -198,7 +193,6 @@ export type SessionEvent =
   | { type: 'auth_completed'; sessionId: string; requestId: string; success: boolean; cancelled?: boolean; error?: string }
   | { type: 'usage_update'; sessionId: string; tokenUsage: { inputTokens: number; contextWindow?: number } }
   | { type: 'message_annotations_updated'; sessionId: string; messageId: string; annotations: AnnotationV1[] }
-  | { type: 'working_directory_error'; sessionId: string; error: string }
 
 export type MidStreamSendIntent = 'default' | 'alternate'
 
@@ -221,7 +215,8 @@ export type SessionCommand =
   | { type: 'setActiveViewing'; workspaceId: string }
   | { type: 'setPermissionMode'; mode: PermissionMode }
   | { type: 'setThinkingLevel'; level: ThinkingLevel }
-  | { type: 'updateWorkingDirectory'; dir: string }
+  /** Retries only an already-accepted turn's pending settlement; carries no user payload. */
+  | { type: 'retrySettlement' }
   | { type: 'showInFinder' }
   | { type: 'copyPath' }
   | { type: 'shareToViewer' }
@@ -488,33 +483,6 @@ export interface WorkspaceSettings {
   name?: string
   permissionMode?: PermissionMode
   cyclablePermissionModes?: PermissionMode[]
-  workingDirectory?: string
-}
-
-// ---------------------------------------------------------------------------
-// Automation types
-// ---------------------------------------------------------------------------
-
-export type TestAutomationAction =
-  | { type: 'prompt'; prompt: string; provider?: string; model?: string; thinkingLevel?: ThinkingLevel }
-  | { type: 'webhook'; url: string; method?: string; headers?: Record<string, string>; bodyFormat?: 'json' | 'form' | 'raw'; body?: unknown; captureResponse?: boolean; auth?: { type: 'basic'; username: string; password: string } | { type: 'bearer'; token: string } }
-
-export interface TestAutomationPayload {
-  workspaceId: string
-  automationId?: string
-  automationName?: string
-  actions: TestAutomationAction[]
-  permissionMode?: PermissionMode
-  /** Forwarded from the matcher; routes test-run sessions into a Telegram topic when paired. */
-  telegramTopic?: string
-}
-
-export type TestAutomationActionResult =
-  | { type: 'prompt'; success: boolean; stderr?: string; sessionId?: string; duration: number }
-  | { type: 'webhook'; success: boolean; url: string; statusCode: number; error?: string; duration: number }
-
-export interface TestAutomationResult {
-  actions: TestAutomationActionResult[]
 }
 
 // ---------------------------------------------------------------------------

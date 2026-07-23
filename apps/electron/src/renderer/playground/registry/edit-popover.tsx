@@ -12,6 +12,7 @@ import { ensureMockElectronAPI } from '../mock-utils'
 import { GripHorizontal, Pencil } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
+import type { ComposerSubmissionAttempt } from '../../components/app-shell/input/composer-submission'
 
 // Ensure mock electronAPI is available before any component renders
 ensureMockElectronAPI()
@@ -184,8 +185,9 @@ function CompactChatPreview({
     }
   }, [isResizing])
 
-  const handleSendMessage = (message: string) => {
-    console.log('[Playground] Send message:', message)
+  const handleSendMessage = async (attempt: ComposerSubmissionAttempt) => {
+    console.log('[Playground] Send message:', attempt)
+    return true
   }
 
   const handleOpenFile = (path: string) => {
@@ -293,7 +295,7 @@ const mockAppShellContext = {
 // Sample edit context for playground
 const sampleEditContext: EditContext = {
   label: 'Automation Configuration',
-  filePath: '/playground/automations.json',
+  filePath: 'automation.workspace',
   context: 'Playground demo of EditPopover component.',
 }
 

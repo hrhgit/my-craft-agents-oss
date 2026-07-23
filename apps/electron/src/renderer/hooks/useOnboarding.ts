@@ -20,6 +20,7 @@ import type { LocalModelSubmitData } from '@/components/onboarding/LocalModelSte
 import type { ApiKeySubmitData } from '@/components/apisetup'
 import type { CustomEndpointConfig } from '@/components/apisetup/submit-helpers'
 import type { SetupNeeds, PiGlobalProvider } from '../../shared/types'
+import { hasPlatformCapability } from '@/lib/platform-capabilities'
 
 interface UseOnboardingOptions {
   /** Called when onboarding is complete */
@@ -146,6 +147,10 @@ export function useOnboarding({
   // Check Git Bash on Windows at mount. If missing, redirect to git-bash step
   // regardless of the initial step (provider-select skips the welcome gate).
   useEffect(() => {
+    if (!hasPlatformCapability('gitBashConfiguration')) {
+      setState(s => ({ ...s, isCheckingGitBash: false }))
+      return
+    }
     const checkGitBash = async () => {
       try {
         const status = await window.electronAPI.checkGitBash()
@@ -436,6 +441,7 @@ export function useOnboarding({
   }, [])
 
   const handleRecheckGitBash = useCallback(async () => {
+    if (!hasPlatformCapability('gitBashConfiguration')) return
     setState(s => ({ ...s, isRecheckingGitBash: true }))
     try {
       const status = await window.electronAPI.checkGitBash()
@@ -520,4 +526,3 @@ export function useOnboarding({
     reset,
   }
 }
-

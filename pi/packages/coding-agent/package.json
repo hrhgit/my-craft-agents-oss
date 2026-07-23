@@ -52,6 +52,7 @@
 		"copy-assets": "node ./scripts/copy-assets.mjs",
 		"copy-binary-assets": "node ./scripts/copy-assets.mjs --binary",
 		"test": "vitest --run",
+		"measure:headless": "node ./scripts/measure-headless-runtime.mjs",
 		"shrinkwrap": "node ../../scripts/generate-coding-agent-shrinkwrap.mjs",
 		"prepublishOnly": "npm run clean && npm run build && npm run shrinkwrap"
 	},

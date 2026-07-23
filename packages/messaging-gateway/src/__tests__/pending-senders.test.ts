@@ -3,9 +3,10 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { mkdtempSync, rmSync, readFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { MultiWriterStore, type JsonValue } from '@mortise/shared/storage'
 import { PendingSendersStore } from '../pending-senders'
 
 let dir: string
@@ -119,29 +120,46 @@ describe('PendingSendersStore', () => {
     expect(b.list()[0]!.displayName).toBe('Alex')
   })
 
-  it('writes valid JSON to disk', () => {
+  it('persists only in the messaging SQLite database', () => {
     const store = new PendingSendersStore(dir)
     store.recordRejection({ platform: 'telegram', senderId: '999' })
-    const raw = readFileSync(join(dir, 'pending.json'), 'utf-8')
-    const parsed = JSON.parse(raw)
-    expect(Array.isArray(parsed)).toBe(true)
-    expect(parsed[0].userId).toBe('999')
+    expect(existsSync(join(dir, 'state.sqlite'))).toBe(true)
+    expect(existsSync(join(dir, 'pending.json'))).toBe(false)
+    expect(existsSync(join(dir, 'pending.json.sync'))).toBe(false)
   })
 
   it('TTL: entries older than 7 days are evicted on next read', () => {
     const store = new PendingSendersStore(dir)
-    // Manually insert a row with a stale timestamp by recording then mutating
-    // the persisted file. Re-read via a fresh instance to apply the TTL.
     store.recordRejection({ platform: 'telegram', senderId: 'fresh' })
-    const path = join(dir, 'pending.json')
-    const raw = JSON.parse(readFileSync(path, 'utf-8')) as Array<Record<string, unknown>>
-    raw.push({
-      platform: 'telegram',
-      userId: 'stale',
-      lastAttemptAt: Date.now() - 8 * 24 * 60 * 60 * 1000,
-      attemptCount: 99,
+
+    const database = MultiWriterStore.openSync({
+      databasePath: join(dir, 'state.sqlite'),
+      writerId: 'pending-test',
+      writerVersion: 1,
     })
-    require('node:fs').writeFileSync(path, JSON.stringify(raw))
+    try {
+      const current = database.getRecord<JsonValue[]>('messaging', 'pending-senders')
+      expect(current).not.toBeNull()
+      const result = database.mutateRecord({
+        namespace: 'messaging',
+        key: 'pending-senders',
+        value: [
+          ...(current?.value ?? []),
+          {
+            platform: 'telegram',
+            userId: 'stale',
+            lastAttemptAt: Date.now() - 8 * 24 * 60 * 60 * 1000,
+            attemptCount: 99,
+            reason: 'not-owner',
+          },
+        ],
+        expectedVersion: current?.version ?? null,
+        operationId: 'append-stale-pending-sender',
+      })
+      expect(result.status).toBe('applied')
+    } finally {
+      database.close()
+    }
 
     const reloaded = new PendingSendersStore(dir)
     const ids = reloaded.list().map((e) => e.userId)

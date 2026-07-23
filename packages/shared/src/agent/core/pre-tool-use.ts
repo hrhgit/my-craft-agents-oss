@@ -35,7 +35,7 @@ import {
 import { FEATURE_FLAGS } from '../../feature-flags.ts';
 import {
   getSessionSafeAllowedToolNames,
-  normalizeSessionToolName,
+  SESSION_TOOL_NAMES,
 } from '@mortise/session-tools-core';
 import { AGENTS_PLUGIN_NAME } from '../../skills/types.ts';
 import { validateSkillSlug } from '../../skills/storage.ts';
@@ -196,8 +196,8 @@ export function expandToolPaths(
  * The SDK resolves skills as `pluginName:skillSlug` where the plugin name is
  * read from `.claude-plugin/plugin.json` `name` field. Skills can live in 3 tiers:
  *   1. Workspace plugin: plugin name from `.claude-plugin/plugin.json` (qualification fallback only)
- *   2. Project:   {workingDir}/.pi/skills/{slug}/ → plugin name = ".agents"
- *   3. Global:    ~/.pi/agent/skills/{slug}/ → plugin name = ".agents"
+ *   2. Project:   {workspaceRoot}/.mortise/skills/{slug}/ → plugin name = ".agents"
+ *   3. Global:    ~/.mortise/agent/skills/{slug}/ → plugin name = ".agents"
  *
  * This function resolves the bare slug to the correct plugin prefix by checking
  * which directory actually contains the skill. It also handles re-qualifying
@@ -207,7 +207,6 @@ export function expandToolPaths(
  * @param input - The Skill tool input ({ skill: string, args?: string })
  * @param workspaceSlug - The workspace slug (from .claude-plugin/plugin.json name)
  * @param workspaceRootPath - Absolute path to the workspace root
- * @param workingDirectory - Absolute path to the current working directory (optional)
  * @param onDebug - Optional debug callback
  * @returns SkillQualificationResult with modified flag and updated input
  */
@@ -215,7 +214,6 @@ export function qualifySkillName(
   input: Record<string, unknown>,
   workspaceSlug: string,
   workspaceRootPath?: string,
-  workingDirectory?: string,
   onDebug?: (message: string) => void
 ): SkillQualificationResult {
   const skill = input.skill as string | undefined;
@@ -238,7 +236,7 @@ export function qualifySkillName(
   }
 
   // Resolve which plugin tier contains this skill by checking SKILL.md existence
-  const resolvedSkill = resolveSkillPlugin(bareSlug, workspaceSlug, workspaceRootPath, workingDirectory);
+  const resolvedSkill = resolveSkillPlugin(bareSlug, workspaceSlug, workspaceRootPath);
 
   if (resolvedSkill === skill) {
     // Already correctly qualified
@@ -260,9 +258,8 @@ function resolveSkillPlugin(
   bareSlug: string,
   workspaceSlug: string,
   workspaceRootPath: string,
-  workingDirectory?: string,
 ): string {
-  const resolvedSkill = createPiSkillResolver(workingDirectory ?? workspaceRootPath).resolveSkill(bareSlug);
+  const resolvedSkill = createPiSkillResolver(workspaceRootPath).resolveSkill(bareSlug);
   if (resolvedSkill) {
     return `${AGENTS_PLUGIN_NAME}:${bareSlug}`;
   }
@@ -322,7 +319,7 @@ export function stripToolMetadata(
  * invalid configs from ever reaching disk.
  *
  * Validates:
- * - .pi/skills/{slug}/SKILL.md
+ * - .mortise/skills/{slug}/SKILL.md
  * - permissions.json
  * - theme.json
  * - tool-icons/tool-icons.json
@@ -414,12 +411,11 @@ function buildCliDomainBlockMessage(namespace: CliDomainNamespace, context: stri
 function getWorkspaceRelativePath(
   filePath: string,
   workspaceRootPath: string,
-  workingDirectory?: string,
 ): string | null {
   const normalizedWorkspaceRoot = resolve(workspaceRootPath).replace(/\\/g, '/').replace(/\/?$/, '/');
   const resolvedPath = filePath.startsWith('/')
     ? resolve(filePath)
-    : resolve(workingDirectory ?? workspaceRootPath, filePath);
+    : resolve(workspaceRootPath, filePath);
   const normalizedPath = resolvedPath.replace(/\\/g, '/');
   if (!normalizedPath.startsWith(normalizedWorkspaceRoot)) return null;
 
@@ -443,21 +439,18 @@ function matchesPathScope(relativePath: string, scope: string): boolean {
 }
 
 function detectCliNamespaceFromConfigDetection(detection: ConfigFileDetection): CliDomainNamespace | null {
-  if (detection.type === 'automations') return 'automation'
   if (detection.type === 'skill') return 'skill'
   return null
 }
 
 /**
  * For selected config domains, enforce CLI usage instead of direct file operations.
- * - .pi/skills/{slug}/SKILL.md: redirect on Write/Edit
- * - automations.json: redirect on Write/Edit
+ * - .mortise/skills/{slug}/SKILL.md: redirect on Write/Edit
  */
 export function getConfigCliRedirect(
   toolName: string,
   input: Record<string, unknown>,
   workspaceRootPath: string,
-  workingDirectory?: string,
 ): { message: string } | null {
   const filePath = input.file_path as string | undefined;
 
@@ -486,7 +479,6 @@ export function getConfigCliRedirect(
 export function getConfigDomainBashRedirect(
   input: Record<string, unknown>,
   workspaceRootPath: string,
-  workingDirectory?: string,
 ): { message: string } | null {
   const command = typeof input.command === 'string' ? input.command.trim() : '';
   if (!command) return null;
@@ -495,7 +487,7 @@ export function getConfigDomainBashRedirect(
     return null;
   }
 
-  const baseDir = resolve(workingDirectory ?? workspaceRootPath);
+  const baseDir = resolve(workspaceRootPath);
   const tokenRegex = /'([^']+)'|"([^"]+)"|([^\s'";|&()<>]+)/g;
   const candidates: string[] = [];
   let match: RegExpExecArray | null;
@@ -511,7 +503,7 @@ export function getConfigDomainBashRedirect(
   const bashGuardEntries: Array<{ namespace: CliDomainNamespace; scope: string }> = MORTISE_AGENTS_CLI_BASH_GUARD_SCOPE_ENTRIES
 
   for (const candidate of candidates) {
-    const relativePath = getWorkspaceRelativePath(candidate, workspaceRootPath, baseDir);
+    const relativePath = getWorkspaceRelativePath(candidate, workspaceRootPath);
     if (!relativePath) continue;
 
     for (const entry of bashGuardEntries) {
@@ -578,8 +570,6 @@ export interface PreToolUseInput {
   plansFolderPath?: string;
   /** Data folder path (writes allowed in explore mode for transform_data output) */
   dataFolderPath?: string;
-  /** Working directory override (for skill resolution) */
-  workingDirectory?: string;
   /** PermissionManager for session-scoped whitelists */
   permissionManager: PermissionManagerLike;
   /** PrerequisiteManager for guide.md checking */
@@ -653,7 +643,6 @@ export function runPreToolUseChecks(ctx: PreToolUseInput): PreToolUseCheckResult
     workspaceId,
     plansFolderPath,
     dataFolderPath,
-    workingDirectory,
     permissionManager,
     prerequisiteManager,
     backendMetadata,
@@ -711,7 +700,7 @@ export function runPreToolUseChecks(ctx: PreToolUseInput): PreToolUseCheckResult
   // ============================================================
   // 3. SPAWN_SESSION INTERCEPTION
   // ============================================================
-  if (normalizeSessionToolName(toolName) === 'spawn_session') {
+  if (toolName === 'spawn_session') {
     return { type: 'spawn_session_intercept', input };
   }
 
@@ -730,7 +719,7 @@ export function runPreToolUseChecks(ctx: PreToolUseInput): PreToolUseCheckResult
 
   // 5b. Config-domain Bash guard (block guarded paths unless using mortise)
   if (FEATURE_FLAGS.mortiseCli && toolName === 'Bash') {
-    const configDomainBashRedirect = getConfigDomainBashRedirect(currentInput, workspaceRootPath, workingDirectory);
+    const configDomainBashRedirect = getConfigDomainBashRedirect(currentInput, workspaceRootPath);
     if (configDomainBashRedirect) {
       return { type: 'block', reason: configDomainBashRedirect.message };
     }
@@ -744,7 +733,7 @@ export function runPreToolUseChecks(ctx: PreToolUseInput): PreToolUseCheckResult
 
   // 5d. Config file CLI redirect
   if (FEATURE_FLAGS.mortiseCli) {
-    const cliRedirect = getConfigCliRedirect(toolName, currentInput, workspaceRootPath, workingDirectory);
+    const cliRedirect = getConfigCliRedirect(toolName, currentInput, workspaceRootPath);
     if (cliRedirect) {
       return { type: 'block', reason: cliRedirect.message };
     }
@@ -756,7 +745,6 @@ export function runPreToolUseChecks(ctx: PreToolUseInput): PreToolUseCheckResult
       currentInput,
       workspaceId,
       workspaceRootPath,
-      workingDirectory,
       onDebug
     );
     if (skillResult.modified) {
@@ -1007,20 +995,19 @@ export function shouldPromptInAskMode(
   }
 
   // --- Mortise host-tool mutations ---
-  const sessionToolName = normalizeSessionToolName(toolName);
-  if (sessionToolName) {
+  if (SESSION_TOOL_NAMES.has(toolName)) {
     const safeAllowedSessionTools = getSessionSafeAllowedToolNames({
       includeDeveloperFeedback: FEATURE_FLAGS.developerFeedback,
     });
-    if (!safeAllowedSessionTools.has(sessionToolName)) {
-      if (permissionManager.isCommandWhitelisted(sessionToolName)) {
-        onDebug?.(`Auto-allowing "${sessionToolName}" (previously approved)`);
+    if (!safeAllowedSessionTools.has(toolName)) {
+      if (permissionManager.isCommandWhitelisted(toolName)) {
+        onDebug?.(`Auto-allowing "${toolName}" (previously approved)`);
         return null;
       }
       return {
         promptType: 'tool_mutation',
-        description: `Mortise: ${toSessionToolDisplayName(sessionToolName)}`,
-        command: sessionToolName,
+        description: `Mortise: ${toSessionToolDisplayName(toolName)}`,
+        command: toolName,
       };
     }
     return null;

@@ -8,7 +8,7 @@ import {
   MigrationChecksumError,
   MultiWriterStore,
   OperationIdentityConflictError,
-  openCraftSqliteDatabase,
+  openMortiseSqliteDatabase,
 } from '../index.ts'
 
 const temporaryDirectories: string[] = []
@@ -142,7 +142,7 @@ describe('MultiWriterStore', () => {
       store.close()
     }
 
-    const database = await openCraftSqliteDatabase(databasePath)
+    const database = await openMortiseSqliteDatabase(databasePath)
     try {
       const journalMode = database.prepare('PRAGMA journal_mode').get<{ journal_mode: string }>()
       expect(journalMode?.journal_mode.toLowerCase()).toBe('wal')
@@ -213,7 +213,7 @@ describe('MultiWriterStore', () => {
         operationId: 'language-1',
       })
 
-      const database = await openCraftSqliteDatabase(databasePath)
+      const database = await openMortiseSqliteDatabase(databasePath)
       try {
         database.prepare(`UPDATE mortise_capabilities SET version = 2 WHERE name = 'records'`).run()
       } finally {
@@ -299,7 +299,7 @@ describe('MultiWriterStore', () => {
     const initial = await MultiWriterStore.open({ databasePath, writerId: 'writer-a', writerVersion: 1 })
     initial.close()
 
-    const database = await openCraftSqliteDatabase(databasePath)
+    const database = await openMortiseSqliteDatabase(databasePath)
     database.prepare(`
       INSERT INTO mortise_schema_migrations (id, checksum, applied_at) VALUES (?, ?, ?)
     `).run('9999_future_additive', 'future-checksum', Date.now())
@@ -308,7 +308,7 @@ describe('MultiWriterStore', () => {
     const compatible = await MultiWriterStore.open({ databasePath, writerId: 'writer-b', writerVersion: 1 })
     compatible.close()
 
-    const tamper = await openCraftSqliteDatabase(databasePath)
+    const tamper = await openMortiseSqliteDatabase(databasePath)
     tamper.prepare(`
       UPDATE mortise_schema_migrations SET checksum = 'invalid'
       WHERE id = '0001_multi_writer_core'

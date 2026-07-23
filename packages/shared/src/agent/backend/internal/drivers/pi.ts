@@ -322,7 +322,7 @@ export const piDriver: ProviderDriver = {
   });
   },
   fetchModels: async ({ providerKey, providerConfig, credentials, timeoutMs }) => {
-    // pi_compat 连接的 models 直接从 ~/.pi/agent/models.json 读取（用户手填，
+    // pi_custom 连接的 models 直接从 ~/.mortise/agent/models.json 读取（用户手填，
     // 不走自动发现）。pi 文件中无对应 provider 时返回空列表。
     if (providerConfig.baseUrl) {
       const models = providerConfig.models?.length

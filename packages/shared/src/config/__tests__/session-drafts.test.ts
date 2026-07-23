@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { mkdtempSync, readFileSync, writeFileSync } from 'fs'
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { pathToFileURL } from 'url'
@@ -87,9 +87,8 @@ describe('session draft storage', () => {
     runEval(configDir,
       "setSessionDraft('s1', { text: '', attachments: [{ path: '/tmp/a.png', name: 'a.png', base64: 'AAAA', size: 4, type: 'image', mimeType: 'image/png' }] })"
     )
-    const draftsPath = join(configDir, 'drafts.json')
-    const raw = JSON.parse(readFileSync(draftsPath, 'utf-8'))
-    expect(raw.drafts.s1.attachments).toEqual([{ path: '/tmp/a.png', name: 'a.png' }])
+    const output = runEval(configDir, "console.log(JSON.stringify(getSessionDraft('s1')))")
+    expect(JSON.parse(output).attachments).toEqual([{ path: '/tmp/a.png', name: 'a.png' }])
   })
 
   subprocessIt('round-trips a draft with a content-backed attachment (paste / web-drag path)', () => {
@@ -124,67 +123,29 @@ describe('session draft storage', () => {
     })
   })
 
-  subprocessIt('rejects on load: ref with malformed content (wrong type field)', () => {
+  subprocessIt('ignores and preserves retired drafts.json data', () => {
     const configDir = makeConfigDir()
     const draftsPath = join(configDir, 'drafts.json')
-    writeFileSync(draftsPath, JSON.stringify({
+    const legacyContents = JSON.stringify({
       drafts: {
-        s1: {
-          text: '',
-          attachments: [{ path: 'x.png', name: 'x.png', content: { type: 'bogus', mimeType: 'image/png', size: 1 } }],
-        },
+        legacy: { text: 'do not import' },
       },
       updatedAt: 0,
-    }), 'utf-8')
+    })
+    writeFileSync(draftsPath, legacyContents, 'utf-8')
+
+    runEval(configDir, "setSessionDraft('current', { text: 'sqlite only' })")
     const output = runEval(configDir, "console.log(JSON.stringify(getAllSessionDrafts()))")
-    expect(JSON.parse(output)).toEqual({})
+    expect(JSON.parse(output)).toEqual({ current: { text: 'sqlite only' } })
+    expect(readFileSync(draftsPath, 'utf-8')).toBe(legacyContents)
+    expect(existsSync(join(configDir, '.drafts.json.sync'))).toBe(false)
   })
 
-  subprocessIt('rejects on load: 0.8.11-shape ref (synthetic filename path, no content)', () => {
+  subprocessIt('does not materialize draft compatibility files', () => {
     const configDir = makeConfigDir()
-    const draftsPath = join(configDir, 'drafts.json')
-    writeFileSync(draftsPath, JSON.stringify({
-      drafts: {
-        s1: {
-          text: 'note',
-          attachments: [{ path: 'image.png', name: 'image.png' }],
-        },
-      },
-      updatedAt: 0,
-    }), 'utf-8')
-    const output = runEval(configDir, "console.log(JSON.stringify(getAllSessionDrafts()))")
-    // Entire draft is dropped (attachment validator fails → ref fails → draft fails)
-    expect(JSON.parse(output)).toEqual({})
-  })
-
-  subprocessIt('discards legacy string-shaped drafts on load', () => {
-    const configDir = makeConfigDir()
-    // Simulate a pre-upgrade drafts.json where values are strings.
-    const draftsPath = join(configDir, 'drafts.json')
-    writeFileSync(draftsPath, JSON.stringify({
-      drafts: {
-        old1: 'unmigrated text',
-        old2: 'another one',
-      },
-      updatedAt: 0,
-    }), 'utf-8')
-    const output = runEval(configDir, "console.log(JSON.stringify(getAllSessionDrafts()))")
-    expect(JSON.parse(output)).toEqual({})
-  })
-
-  subprocessIt('keeps valid SessionDraft entries and drops invalid siblings on load', () => {
-    const configDir = makeConfigDir()
-    const draftsPath = join(configDir, 'drafts.json')
-    writeFileSync(draftsPath, JSON.stringify({
-      drafts: {
-        valid: { text: 'stay' },
-        legacy: 'drop',
-        mangled: { text: 42 },
-      },
-      updatedAt: 0,
-    }), 'utf-8')
-    const output = runEval(configDir, "console.log(JSON.stringify(getAllSessionDrafts()))")
-    expect(JSON.parse(output)).toEqual({ valid: { text: 'stay' } })
+    runEval(configDir, "setSessionDraft('s1', { text: 'sqlite only' })")
+    expect(existsSync(join(configDir, 'drafts.json'))).toBe(false)
+    expect(existsSync(join(configDir, '.drafts.json.sync'))).toBe(false)
   })
 
   subprocessIt('deleteSessionDraft removes the entry', () => {

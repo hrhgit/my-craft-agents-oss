@@ -64,7 +64,13 @@ describe('Transport — error code preservation', () => {
   it('preserves `err.code` from server handler → client invoke', async () => {
     const { server, client } = await startPair()
     server.handle('explode', async () => {
-      throw new CodedError('BROWSER_INSTANCE_NOT_OWNED', 'nope')
+      throw new CodedError('SESSION_PUBLICATION_DURABILITY_FAILED', 'not published', {
+        sessionId: 'session-a',
+        stage: 'projection',
+        retryable: true,
+        terminal: true,
+        outcome: 'unpublished',
+      })
     })
 
     let caught: unknown
@@ -74,7 +80,14 @@ describe('Transport — error code preservation', () => {
       caught = err
     }
     expect(caught).toBeInstanceOf(Error)
-    expect((caught as { code?: string }).code).toBe('BROWSER_INSTANCE_NOT_OWNED')
+    expect((caught as { code?: string }).code).toBe('SESSION_PUBLICATION_DURABILITY_FAILED')
+    expect((caught as { data?: unknown }).data).toEqual({
+      sessionId: 'session-a',
+      stage: 'projection',
+      retryable: true,
+      terminal: true,
+      outcome: 'unpublished',
+    })
     // Class identity lost over the wire — receiver must branch on `.code`.
     expect(caught instanceof CodedError).toBe(false)
   })
@@ -83,7 +96,7 @@ describe('Transport — error code preservation', () => {
     const { server, client } = await startPair({ clientCapabilities: [CLIENT_BROWSER_INVOKE] })
 
     client.handleCapability(CLIENT_BROWSER_INVOKE, () => {
-      throw new CodedError('BROWSER_REMOTE_EVALUATE_BLOCKED', 'denied')
+      throw new CodedError('BROWSER_REMOTE_EVALUATE_BLOCKED', 'denied', { policy: 'read-only' })
     })
 
     // Find the client id from server.
@@ -99,6 +112,7 @@ describe('Transport — error code preservation', () => {
     }
     expect(caught).toBeInstanceOf(Error)
     expect((caught as { code?: string }).code).toBe('BROWSER_REMOTE_EVALUATE_BLOCKED')
+    expect((caught as { data?: unknown }).data).toEqual({ policy: 'read-only' })
   })
 
   it('falls back to HANDLER_ERROR when handler throws a plain Error', async () => {

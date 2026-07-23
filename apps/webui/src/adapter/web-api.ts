@@ -15,30 +15,17 @@ import { WsRpcClient } from '@mortise/server-core/transport/client'
 import { buildClientApi } from '../../../electron/src/transport/build-api'
 import { CHANNEL_MAP } from '../../../electron/src/transport/channel-map'
 import type { ElectronAPI, TransportConnectionState } from '../../../electron/src/shared/types'
+import {
+  WEBUI_PLATFORM_CAPABILITIES,
+  attachWebPlatformCapabilities,
+  createUnsupportedWebApiOverrides,
+} from './platform-capabilities'
 
 // ---------------------------------------------------------------------------
-// Web file picker (replaces native Electron dialog)
+// Web platform contract
 // ---------------------------------------------------------------------------
 
-function webFilePicker(): Promise<string[]> {
-  return new Promise((resolve) => {
-    const input = document.createElement('input')
-    input.type = 'file'
-    input.multiple = true
-    input.onchange = () => {
-      const files = input.files
-      if (!files || files.length === 0) {
-        resolve([])
-        return
-      }
-      // Return file names — actual file reading is handled elsewhere
-      resolve(Array.from(files).map(f => f.name))
-    }
-    // If user cancels the dialog
-    input.oncancel = () => resolve([])
-    input.click()
-  })
-}
+export { WEBUI_PLATFORM_CAPABILITIES }
 
 // ---------------------------------------------------------------------------
 // System theme detection
@@ -89,6 +76,8 @@ export function createWebApi(options: WebApiOptions): {
 
   // Override LOCAL_ONLY methods with web-compatible implementations
   const webOverrides: Partial<ElectronAPI> = {
+    ...createUnsupportedWebApiOverrides(),
+    platformCapabilities: WEBUI_PLATFORM_CAPABILITIES,
     // Shell operations — use browser APIs
     openUrl: (url: string) => {
       const result = openExternalUrl(url)
@@ -103,13 +92,6 @@ export function createWebApi(options: WebApiOptions): {
       }
       return Promise.resolve()
     },
-    openFile: () => Promise.resolve(), // no-op in browser
-    showInFolder: () => Promise.resolve(), // no-op in browser
-
-    // File dialogs
-    openFileDialog: webFilePicker,
-    openFolderDialog: () => Promise.resolve(null), // not possible in browser
-
     // System info
     getVersions: () => ({ node: 'n/a', chrome: navigator.userAgent, electron: 'web' }),
     getRuntimeEnvironment: () => 'web',
@@ -125,11 +107,7 @@ export function createWebApi(options: WebApiOptions): {
       return () => darkMediaQuery.removeEventListener('change', handler)
     },
 
-    // Window management — no-ops or browser equivalents
-    setTrafficLightsVisible: () => Promise.resolve(),
-    closeWindow: () => Promise.resolve(),
-    confirmCloseWindow: () => Promise.resolve(),
-    cancelCloseWindow: () => Promise.resolve(),
+    // Window management browser equivalents
     onCloseRequested: () => () => {},
     getWindowFocusState: () => Promise.resolve(document.hasFocus()),
     onWindowFocusChange: (cb: (focused: boolean) => void) => {
@@ -151,7 +129,6 @@ export function createWebApi(options: WebApiOptions): {
     switchWorkspace: async (wsId: string) => {
       await client.invoke('window:switchWorkspace', wsId)
     },
-    openWorkspace: async () => {},
     openSessionInNewWindow: async (_wsId: string, sessionId: string) => {
       // Open in new tab
       window.open(`${window.location.origin}/?session=${sessionId}`, '_blank')
@@ -162,11 +139,6 @@ export function createWebApi(options: WebApiOptions): {
     },
 
     // Auto-update — not applicable to web (but expose server version for About page)
-    checkForUpdates: () => Promise.resolve({ available: false, currentVersion: client.getServerVersion() ?? '' } as any),
-    getUpdateInfo: () => Promise.resolve({ available: false, currentVersion: client.getServerVersion() ?? '' } as any),
-    installUpdate: () => Promise.resolve(),
-    dismissUpdate: () => Promise.resolve(),
-    getDismissedUpdateVersion: () => Promise.resolve(null),
     onUpdateAvailable: () => () => {},
     onUpdateDownloadProgress: () => () => {},
     // Menu events — register as keyboard shortcuts
@@ -177,15 +149,8 @@ export function createWebApi(options: WebApiOptions): {
     onMenuToggleSidebar: () => () => {},
     onDeepLinkNavigate: () => () => {},
 
-    // Menu actions — no-ops (web has no native menu)
-    menuQuit: () => Promise.resolve(),
+    // Menu actions with browser equivalents
     menuNewWindow: () => { window.open(window.location.href, '_blank'); return Promise.resolve() },
-    menuMinimize: () => Promise.resolve(),
-    menuMaximize: () => Promise.resolve(),
-    menuZoomIn: () => Promise.resolve(),
-    menuZoomOut: () => Promise.resolve(),
-    menuZoomReset: () => Promise.resolve(),
-    menuToggleDevTools: () => Promise.resolve(),
     menuUndo: () => { document.execCommand('undo'); return Promise.resolve() },
     menuRedo: () => { document.execCommand('redo'); return Promise.resolve() },
     menuCut: () => { document.execCommand('cut'); return Promise.resolve() },
@@ -194,8 +159,6 @@ export function createWebApi(options: WebApiOptions): {
     menuSelectAll: () => { document.execCommand('selectAll'); return Promise.resolve() },
 
     // Badge — use document title
-    refreshBadge: () => Promise.resolve(),
-    setDockIconWithBadge: () => Promise.resolve(),
     onBadgeDraw: () => () => {},
     onBadgeDrawWindows: () => () => {},
 
@@ -207,23 +170,8 @@ export function createWebApi(options: WebApiOptions): {
     },
     onNotificationNavigate: () => () => {},
 
-    // Git bash (Windows-only) — not applicable
-    checkGitBash: () => Promise.resolve({ available: true } as any),
-    browseForGitBash: () => Promise.resolve(null),
-    setGitBashPath: () => Promise.resolve({ success: true }),
-
-    // Skills — open in browser not possible
-    discoverSkills: () => Promise.reject(new Error('Skill discovery requires the desktop app')),
-    importSkills: () => Promise.reject(new Error('Skill import requires the desktop app')),
-    openSkillInEditor: () => Promise.resolve(),
-    openSkillInFinder: () => Promise.resolve(),
-
     // Confirmation dialogs — use browser confirm()
     showDeleteSessionConfirmation: (name: string) => Promise.resolve(window.confirm(i18n.t('dialog.deleteSessionConfirmation', { name }))),
-
-    // Power settings — not applicable
-    getKeepAwakeWhileRunning: () => Promise.resolve(false),
-    setKeepAwakeWhileRunning: () => Promise.resolve(),
 
     // Transport state
     getTransportConnectionState: () => Promise.resolve(client.getConnectionState() as TransportConnectionState),
@@ -235,11 +183,9 @@ export function createWebApi(options: WebApiOptions): {
 
     // Relaunch — reload page
     relaunchApp: () => { window.location.reload(); return Promise.resolve() },
-    removeWorkspace: () => Promise.resolve(false), // not supported in web UI
-    invokeOnServer: () => Promise.reject(new Error('Cross-server RPC not available in web UI')),
   }
 
-  const api = { ...baseApi, ...webOverrides } as ElectronAPI
+  const api = attachWebPlatformCapabilities({ ...baseApi, ...webOverrides }) as ElectronAPI
 
   return { api, client }
 }

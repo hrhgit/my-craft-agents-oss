@@ -38,6 +38,7 @@ type RuntimeResourceLoadOptions = {
 export type CreateAgentSessionRuntimeFactory = (options: {
 	cwd: string;
 	agentDir: string;
+	projectConfigDir?: string;
 	sessionManager: SessionManager;
 	sessionStartEvent?: SessionStartEvent;
 	deferResourceLoad?: boolean;
@@ -141,6 +142,7 @@ export class AgentSessionRuntime {
 	async createSibling(options: {
 		cwd: string;
 		agentDir?: string;
+		projectConfigDir?: string;
 		sessionManager: SessionManager;
 		sessionStartEvent?: SessionStartEvent;
 		deferResourceLoad?: boolean;
@@ -151,6 +153,7 @@ export class AgentSessionRuntime {
 		return createAgentSessionRuntime(this.createRuntime, {
 			cwd: options.cwd,
 			agentDir: options.agentDir ?? this.services.agentDir,
+			projectConfigDir: options.projectConfigDir ?? this.services.projectConfigDir,
 			sessionManager: options.sessionManager,
 			sessionStartEvent: options.sessionStartEvent,
 			deferResourceLoad: options.deferResourceLoad ?? this.resourceLoadOptions.deferResourceLoad,
@@ -216,6 +219,7 @@ export class AgentSessionRuntime {
 			reason,
 			targetSessionFile,
 		});
+		await this.session.sessionManager.flush();
 		this.beforeSessionInvalidate?.();
 		this.session.dispose();
 		await this.services.networkManager.dispose();
@@ -367,6 +371,7 @@ export class AgentSessionRuntime {
 			if (!forkedSessionPath) {
 				throw new Error("Failed to create forked session");
 			}
+			await sessionManager.flush();
 			await this.teardownCurrent("fork", sessionManager.getSessionFile());
 			this.apply(
 				await this.createReplacementRuntime({
@@ -444,13 +449,38 @@ export class AgentSessionRuntime {
 	}
 
 	async dispose(): Promise<void> {
-		await emitSessionShutdownEvent(this.session.extensionRunner, {
-			type: "session_shutdown",
-			reason: "quit",
-		});
-		this.beforeSessionInvalidate?.();
-		this.session.dispose();
-		await this.services.networkManager.dispose();
+		const errors: unknown[] = [];
+		try {
+			await emitSessionShutdownEvent(this.session.extensionRunner, {
+				type: "session_shutdown",
+				reason: "quit",
+			});
+		} catch (error) {
+			errors.push(error);
+		}
+		try {
+			await this.session.sessionManager.flush();
+		} catch (error) {
+			errors.push(error);
+		}
+		try {
+			this.beforeSessionInvalidate?.();
+		} catch (error) {
+			errors.push(error);
+		}
+		try {
+			this.session.dispose();
+		} catch (error) {
+			errors.push(error);
+		}
+		try {
+			await this.services.networkManager.dispose();
+		} catch (error) {
+			errors.push(error);
+		}
+
+		if (errors.length === 1) throw errors[0];
+		if (errors.length > 1) throw new AggregateError(errors, "Failed to fully dispose the agent session runtime");
 	}
 }
 
@@ -465,6 +495,7 @@ export async function createAgentSessionRuntime(
 	options: {
 		cwd: string;
 		agentDir: string;
+		projectConfigDir?: string;
 		sessionManager: SessionManager;
 		sessionStartEvent?: SessionStartEvent;
 		deferResourceLoad?: boolean;

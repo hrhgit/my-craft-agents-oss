@@ -4,7 +4,7 @@ import { resolve } from 'node:path'
 import { PrerequisiteManager } from '../prerequisite-manager.ts'
 
 const WORKSPACE_ROOT = '/test/workspace'
-const skillPath = (slug: string) => resolve(WORKSPACE_ROOT, '.pi', 'skills', slug, 'SKILL.md')
+const skillPath = (slug: string) => resolve(WORKSPACE_ROOT, '.mortise', 'skills', slug, 'SKILL.md')
 
 describe('PrerequisiteManager', () => {
   let manager: PrerequisiteManager

@@ -1,18 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import type { PiProjectionEventV1 } from '@mortise/shared/protocol'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { dirname, join } from 'path'
 import {
-  appendStoredMessagesViaPiSessionManager,
   createSession,
-  getSessionFilePath,
   getSessionPath,
   loadSession,
+  saveSession,
   setSharedPiSessionsDirForTests,
 } from '@mortise/shared/sessions'
 import { PiProjectionBuilder } from '@mortise/shared/agent/backend'
-import { SessionManager, createManagedSession } from './SessionManager.ts'
+import type { ConversationProjector } from '../projection'
+import { SessionManager, createManagedSession, selectPiProjectionReplaceStrategy } from './SessionManager.ts'
 
 function projectionEvent(
   seq: number,
@@ -45,6 +45,12 @@ describe('Pi projection persistence', () => {
   afterEach(() => {
     setSharedPiSessionsDirForTests(undefined)
     rmSync(workspaceRoot, { recursive: true, force: true })
+  })
+
+  it('selects displacement before awaiting Windows replacement of an existing file', () => {
+    expect(selectPiProjectionReplaceStrategy('win32', true)).toBe('displace-existing')
+    expect(selectPiProjectionReplaceStrategy('win32', false)).toBe('direct')
+    expect(selectPiProjectionReplaceStrategy('linux', true)).toBe('direct')
   })
 
   it('reloads pi-projection-v1.json after the Host restarts', async () => {
@@ -104,15 +110,70 @@ describe('Pi projection persistence', () => {
     expect(persisted.entities).toHaveLength(25)
   })
 
+  it('atomically replaces an existing projection without leaving write artifacts', async () => {
+    const workspace = { id: 'workspace-1', name: 'Projection Workspace', rootPath: workspaceRoot, createdAt: Date.now() } as never
+    const session = createManagedSession({ mortiseId: 'session-1' }, workspace)
+    const host = new SessionManager()
+    const internals = host as unknown as {
+      sessions: Map<string, typeof session>
+      flushPiProjectionWrites: (managed: typeof session) => Promise<void>
+    }
+    internals.sessions.set(session.id, session)
+
+    expect(host.applyPiProjectionEvent(projectionEvent(1)).status).toBe('applied')
+    await internals.flushPiProjectionWrites(session)
+    expect(host.applyPiProjectionEvent(projectionEvent(2)).status).toBe('applied')
+    await internals.flushPiProjectionWrites(session)
+
+    const sessionPath = getSessionPath(workspaceRoot, session.id)
+    const persisted = JSON.parse(readFileSync(join(sessionPath, 'pi-projection-v1.json'), 'utf8'))
+    expect(persisted.lastSeq).toBe(2)
+    expect(readdirSync(sessionPath).filter(name => name.endsWith('.tmp') || name.endsWith('.replaced'))).toEqual([])
+  })
+
+  it('propagates projection write failures and retries the retained snapshot', async () => {
+    const workspace = { id: 'workspace-1', name: 'Projection Workspace', rootPath: workspaceRoot, createdAt: Date.now() } as never
+    const session = createManagedSession({ mortiseId: 'session-1' }, workspace)
+    const host = new SessionManager()
+    const internals = host as unknown as {
+      sessions: Map<string, typeof session>
+      getPiProjectionSnapshotPath: (managed: typeof session) => string
+      flushPiProjectionWrites: (managed: typeof session) => Promise<void>
+      enqueuePiProjectionPersist: (managed: typeof session, snapshot: ReturnType<ConversationProjector['createSnapshot']>) => void
+      piProjectionBySession: Map<string, ConversationProjector>
+    }
+    internals.sessions.set(session.id, session)
+
+    const blockedParent = join(workspaceRoot, 'blocked-parent')
+    writeFileSync(blockedParent, 'not a directory', 'utf8')
+    const originalPathResolver = internals.getPiProjectionSnapshotPath.bind(host)
+    internals.getPiProjectionSnapshotPath = () => join(blockedParent, 'pi-projection-v1.json')
+
+    expect(host.applyPiProjectionEvent(projectionEvent(1)).status).toBe('applied')
+    await expect(internals.flushPiProjectionWrites(session)).rejects.toBeDefined()
+
+    internals.getPiProjectionSnapshotPath = originalPathResolver
+    const snapshot = internals.piProjectionBySession.get(session.id)!.createSnapshot()
+    internals.enqueuePiProjectionPersist(session, snapshot)
+    await internals.flushPiProjectionWrites(session)
+
+    const persisted = JSON.parse(readFileSync(join(getSessionPath(workspaceRoot, session.id), 'pi-projection-v1.json'), 'utf8'))
+    expect(persisted.lastSeq).toBe(1)
+  })
+
   it('rebuilds a missing sidecar from the public Pi session projection', async () => {
     const workspace = {
       id: 'workspace-1', name: 'Projection Workspace', rootPath: workspaceRoot, createdAt: Date.now(),
     } as never
     const header = await createSession(workspaceRoot, { name: 'Pi history' })
-    const sessionFile = getSessionFilePath(workspaceRoot, header.mortiseId)
-    appendStoredMessagesViaPiSessionManager(sessionFile, dirname(sessionFile), workspaceRoot, [
-      { id: 'source-user', type: 'user', content: 'question from Pi', timestamp: 100 },
-    ])
+    await saveSession({
+      ...header,
+      messages: [
+        { id: 'source-user', type: 'user', content: 'question from Pi', timestamp: 100 },
+        { id: 'source-assistant', type: 'assistant', content: 'answer from Pi', timestamp: 101 },
+      ],
+      tokenUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, contextTokens: 0, costUsd: 0 },
+    })
 
     const managed = createManagedSession(header, workspace, { messagesLoaded: true })
     const host = new SessionManager()
@@ -140,10 +201,14 @@ describe('Pi projection persistence', () => {
     } as never
     const timestamp = 1_783_861_200_000
     const header = await createSession(workspaceRoot, { name: 'Pi history' })
-    const sessionFile = getSessionFilePath(workspaceRoot, header.mortiseId)
-    appendStoredMessagesViaPiSessionManager(sessionFile, dirname(sessionFile), workspaceRoot, [
-      { id: 'source-user', type: 'user', content: 'restore my timestamp', timestamp },
-    ])
+    await saveSession({
+      ...header,
+      messages: [
+        { id: 'source-user', type: 'user', content: 'restore my timestamp', timestamp },
+        { id: 'source-assistant', type: 'assistant', content: 'restored', timestamp: timestamp + 1 },
+      ],
+      tokenUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, contextTokens: 0, costUsd: 0 },
+    })
 
     const managed = createManagedSession(header, workspace, { messagesLoaded: true })
     const host = new SessionManager()
@@ -187,10 +252,14 @@ describe('Pi projection persistence', () => {
       id: 'workspace-1', name: 'Projection Workspace', rootPath: workspaceRoot, createdAt: Date.now(),
     } as never
     const header = await createSession(workspaceRoot, { name: 'Pi history' })
-    const sessionFile = getSessionFilePath(workspaceRoot, header.mortiseId)
-    appendStoredMessagesViaPiSessionManager(sessionFile, dirname(sessionFile), workspaceRoot, [
-      { id: 'source-user', type: 'user', content: 'survives corrupt sidecar', timestamp: 100 },
-    ])
+    await saveSession({
+      ...header,
+      messages: [
+        { id: 'source-user', type: 'user', content: 'survives corrupt sidecar', timestamp: 100 },
+        { id: 'source-assistant', type: 'assistant', content: 'survives too', timestamp: 101 },
+      ],
+      tokenUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, contextTokens: 0, costUsd: 0 },
+    })
 
     const managed = createManagedSession(header, workspace, { messagesLoaded: true })
     const host = new SessionManager()
@@ -291,6 +360,14 @@ describe('Pi projection persistence', () => {
       id: 'workspace-1', name: 'Projection Workspace', rootPath: workspaceRoot, createdAt: Date.now(),
     } as never
     const header = await createSession(workspaceRoot, { name: 'Projected metadata' })
+    await saveSession({
+      ...header,
+      messages: [
+        { id: 'seed-user', type: 'user', content: 'seed', timestamp: 100 },
+        { id: 'seed-assistant', type: 'assistant', content: 'seeded', timestamp: 101 },
+      ],
+      tokenUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, contextTokens: 0, costUsd: 0 },
+    })
     const managed = createManagedSession(header, workspace, { messagesLoaded: true })
     const host = new SessionManager()
     const internals = host as unknown as {
@@ -336,7 +413,7 @@ describe('Pi projection persistence', () => {
       preview: 'Persisted projection prompt',
       lastMessageRole: 'assistant',
       lastFinalMessageId: 'assistant-final',
-      messages: [],
+      messages: expect.any(Array),
     })
 
     const restarted = createManagedSession({

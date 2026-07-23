@@ -136,11 +136,8 @@ export * from './core/index.ts';
 
 // Export browser tool name normalization helpers
 export {
-  LEGACY_BROWSER_TOOL_ALIASES,
   normalizeCanonicalBrowserToolName,
-  normalizeBrowserToolName,
   isCanonicalBrowserToolName,
-  isBrowserToolNameOrAlias,
 } from './browser-tool-names.ts';
 
 // Export PowerShell validator root setter (for Electron startup on Windows)

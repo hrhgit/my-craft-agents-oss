@@ -37,19 +37,15 @@ interface NativeSnapshot {
 }
 
 const fixtureRoot = await mkdtemp(join(tmpdir(), 'mortise-ui-extension-source-'))
-const sourceMortise = join(fixtureRoot, 'mortise')
-const sourcePi = join(fixtureRoot, 'pi-agent')
-const sourceWorkspace = join(fixtureRoot, 'workspace')
 const extensionPackageRoot = join(fixtureRoot, 'extension-package')
+const workspaceId = 'ui-extension-workspace'
+const sessionId = 'ui-extension-published-session'
 const extensionSourcePath = resolve(process.env.MORTISE_UI_EXTENSION_EXAMPLE
   ?? join(process.cwd(), 'pi', 'packages', 'coding-agent', 'examples', 'extensions', 'mortise-gui.ts'))
 
 if (!existsSync(extensionSourcePath)) throw new Error(`Pi Mortise GUI example is missing: ${extensionSourcePath}`)
 
-await Promise.all([
-  mkdir(sourceMortise, { recursive: true }), mkdir(sourcePi, { recursive: true }),
-  mkdir(sourceWorkspace, { recursive: true }), mkdir(extensionPackageRoot, { recursive: true }),
-])
+await mkdir(extensionPackageRoot, { recursive: true })
 await copyFile(extensionSourcePath, join(extensionPackageRoot, 'index.ts'))
 await writeFile(join(extensionPackageRoot, 'package.json'), `${JSON.stringify({
   name: 'mortise-gui-example-e2e',
@@ -73,35 +69,28 @@ await writeFile(join(extensionPackageRoot, 'package.json'), `${JSON.stringify({
     }],
   },
 }, null, 2)}\n`, 'utf8')
-await writeFile(join(sourceMortise, 'config.json'), `${JSON.stringify({
-  workspaces: [{ id: 'ui-extension-workspace', name: 'UI Extension E2E', rootPath: sourceWorkspace, createdAt: Date.now() }],
-  activeWorkspaceId: 'ui-extension-workspace',
-  activeSessionId: null,
-  setupDeferred: true,
-}, null, 2)}\n`, 'utf8')
-await writeFile(join(sourcePi, 'settings.json'), `${JSON.stringify({
-  defaultProvider: 'ui-validation-local',
-  defaultModel: 'ui-validation-model',
-}, null, 2)}\n`, 'utf8')
-await writeFile(join(sourcePi, 'models.json'), `${JSON.stringify({
-  providers: {
-    'ui-validation-local': {
-      baseUrl: 'http://127.0.0.1:1/v1',
-      api: 'openai-completions',
-      apiKey: 'ui-validation-fixture',
-      models: [{ id: 'ui-validation-model', name: 'UI Validation Model', input: ['text'], contextWindow: 4096, maxTokens: 1024 }],
-    },
-  },
-}, null, 2)}\n`, 'utf8')
-
 const manifest = await startMortiseUiRun({
   surface: 'electron',
-  profileMode: 'clone',
+  profileMode: 'fixture',
   windowMode: 'foreground',
-  sourceMortiseConfigDir: sourceMortise,
-  sourcePiAgentDir: sourcePi,
+  fixtureSpec: {
+    version: 1,
+    active: { workspaceId, sessionId },
+    workspaces: [{
+      id: workspaceId,
+      name: 'UI Extension E2E',
+      sessions: [{
+        id: sessionId,
+        name: 'Published extension validation session',
+        messages: [
+          { role: 'user', content: 'Load the extension validation surface.' },
+          { role: 'assistant', content: 'The extension validation surface is ready.' },
+        ],
+      }],
+    }],
+  },
   extensionPaths: [extensionPackageRoot],
-  waitMs: 180_000,
+  waitMs: 600_000,
 })
 
 if (manifest.mountedExtensions?.[0]?.entries[0]?.id !== 'mortise-gui-example') {
@@ -110,21 +99,20 @@ if (manifest.mountedExtensions?.[0]?.entries[0]?.id !== 'mortise-gui-example') {
 
 try {
   const initial = await command<Snapshot>('ui.snapshot')
-  const newSession = nodes(initial).find(node => node.semanticId === 'app.new-session')
-  if (!newSession) throw new Error('Real AppShell did not expose app.new-session.')
+  const publishedSession = nodes(initial).find(node => node.semanticId === `navigation.session_${workspaceId}_${sessionId}`)
+  if (!publishedSession) throw new Error(`Published fixture session ${sessionId} was not available in workspace navigation.`)
   await command('ui.action', {
     revision: initial.revision,
-    target: { ref: newSession.ref },
+    target: { ref: publishedSession.ref },
     action: 'click',
     mode: 'physical',
-    waitUntil: { kind: 'state', scope: 'sessions', phase: 'ready', detail: { count: 1 }, timeoutMs: 60_000 },
+    waitUntil: { kind: 'state', scope: 'session', entityId: sessionId, phase: 'ready', timeoutMs: 60_000 },
     timeoutMs: 60_000,
   }, 'renderer-verified')
 
-  const composer = await command<Snapshot>('ui.snapshot')
-  const input = nodes(composer).find(node => node.semanticId?.startsWith('composer.') && node.semanticId.endsWith('.input'))
-  if (!input?.semanticId) throw new Error('Created session did not expose a semantic composer input.')
-  const sessionId = input.semanticId.slice('composer.'.length, -'.input'.length)
+  const sessionSnapshot = await command<Snapshot>('ui.snapshot')
+  const input = nodes(sessionSnapshot).find(node => node.semanticId === `composer.${sessionId}.input`)
+  if (!input) throw new Error(`Published fixture session ${sessionId} did not expose its semantic composer input.`)
 
   await command('ui.wait', {
     predicate: { kind: 'state', scope: 'extension', phase: 'ready' },

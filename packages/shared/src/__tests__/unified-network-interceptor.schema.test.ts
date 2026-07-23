@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -6,31 +6,29 @@ import { tmpdir } from 'node:os';
 let injectMetadataIntoToolSchema: typeof import('../unified-network-interceptor.ts').injectMetadataIntoToolSchema;
 let sanitizeEmptyTextCacheControl: typeof import('../unified-network-interceptor.ts').sanitizeEmptyTextCacheControl;
 let upgradePromptCacheTtl: typeof import('../unified-network-interceptor.ts').upgradePromptCacheTtl;
-let _resetConfigCacheForTesting: typeof import('../interceptor-common.ts')._resetConfigCacheForTesting;
 
 let tempRoot: string;
 let piAgentDir: string;
-let previousCraftConfigDir: string | undefined;
+let previousMortiseConfigDir: string | undefined;
 let previousPiAgentDir: string | undefined;
 
 beforeAll(async () => {
   tempRoot = mkdtempSync(join(tmpdir(), 'mortise-interceptor-settings-'));
   piAgentDir = join(tempRoot, 'pi-agent');
-  previousCraftConfigDir = process.env.MORTISE_CONFIG_DIR;
+  previousMortiseConfigDir = process.env.MORTISE_CONFIG_DIR;
   previousPiAgentDir = process.env.PI_CODING_AGENT_DIR;
   process.env.MORTISE_CONFIG_DIR = join(tempRoot, 'mortise');
   process.env.PI_CODING_AGENT_DIR = piAgentDir;
   mkdirSync(piAgentDir, { recursive: true });
 
   ({ injectMetadataIntoToolSchema, sanitizeEmptyTextCacheControl, upgradePromptCacheTtl } = await import('../unified-network-interceptor.ts'));
-  ({ _resetConfigCacheForTesting } = await import('../interceptor-common.ts'));
 });
 
 afterAll(() => {
-  if (previousCraftConfigDir === undefined) {
+  if (previousMortiseConfigDir === undefined) {
     delete process.env.MORTISE_CONFIG_DIR;
   } else {
-    process.env.MORTISE_CONFIG_DIR = previousCraftConfigDir;
+    process.env.MORTISE_CONFIG_DIR = previousMortiseConfigDir;
   }
 
   if (previousPiAgentDir === undefined) {
@@ -151,10 +149,6 @@ describe('sanitizeEmptyTextCacheControl', () => {
 });
 
 describe('upgradePromptCacheTtl', () => {
-  afterEach(() => {
-    _resetConfigCacheForTesting();
-  });
-
   function writeAgentSettings(extendedPromptCache: boolean) {
     mkdirSync(piAgentDir, { recursive: true });
     writeFileSync(

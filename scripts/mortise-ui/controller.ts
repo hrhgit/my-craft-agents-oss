@@ -185,16 +185,24 @@ export async function startMortiseUiRun(args: {
   adapterCommand?: string[]
   runRoot?: string
   sourceMortiseConfigDir?: string
-  sourcePiAgentDir?: string
   waitMs?: number
   waitForReady?: boolean
   extraEnv?: Record<string, string>
   scenario?: Record<string, unknown>
   fixtureSpec?: MortiseUiFixtureSpec
   extensionPaths?: string[]
+  profileSetup?: (profile: Awaited<ReturnType<(typeof import('./profile.ts'))['prepareProfile']>>) => void | Promise<void>
+  reuseProfile?: {
+    profileDir: string
+    ownerRunId: string
+    profileMode: MortiseUiProfileMode
+    containsClonedUserData: boolean
+    fixture?: MortiseUiRunManifest['fixture']
+    mountedExtensions?: MortiseUiRunManifest['mountedExtensions']
+  }
 }): Promise<MortiseUiRunManifest> {
-  if (args.profileMode === 'clone' && (!args.sourceMortiseConfigDir || !args.sourcePiAgentDir)) {
-    throw new Error('clone profile requires explicit sourceMortiseConfigDir and sourcePiAgentDir paths')
+  if (args.profileMode === 'clone' && !args.sourceMortiseConfigDir) {
+    throw new Error('clone profile requires an explicit sourceMortiseConfigDir path')
   }
   if (args.fixtureSpec && args.profileMode !== undefined && args.profileMode !== 'fixture') {
     throw new Error('fixtureSpec requires the fixture profile mode')
@@ -207,8 +215,9 @@ export async function startMortiseUiRun(args: {
   if (adapterCommand.length === 0 || !adapterCommand[0]) throw new Error('An adapter command is required')
   const label = validateRunLabel(args.label)
   const runId = makeRunId()
-  const runDir = join(resolve(args.runRoot ?? DEFAULT_MORTISE_UI_RUN_ROOT), runId)
-  const profileDir = join(runDir, 'profile')
+  const runRoot = resolve(args.runRoot ?? DEFAULT_MORTISE_UI_RUN_ROOT)
+  const runDir = join(runRoot, runId)
+  const profileDir = args.reuseProfile?.profileDir ?? join(runRoot, 'profiles', runId)
   const artifactsDir = join(runDir, 'artifacts')
   const endpointManifestPath = join(runDir, 'endpoint.json')
   const tokenPath = join(runDir, 'token')
@@ -230,11 +239,13 @@ export async function startMortiseUiRun(args: {
     createdAt: now,
     updatedAt: now,
     controllerPid: process.pid,
-    profileMode: args.profileMode ?? 'fixture',
+    profileMode: args.reuseProfile?.profileMode ?? args.profileMode ?? 'fixture',
     windowMode,
-    containsClonedUserData: args.profileMode === 'clone',
+    containsClonedUserData: args.reuseProfile?.containsClonedUserData ?? args.profileMode === 'clone',
     runDir,
     profileDir,
+    profileOwnerRunId: args.reuseProfile?.ownerRunId ?? runId,
+    ...(args.reuseProfile ? { restartedFromRunId: args.reuseProfile.ownerRunId } : {}),
     artifactsDir,
     endpointManifestPath,
     tokenPath,
@@ -251,17 +262,25 @@ export async function startMortiseUiRun(args: {
   writeJsonAtomic(join(runDir, 'run.json'), manifest)
   // Token files are raw strings for simple cross-runtime adapters.
   writeFileSync(tokenPath, `${token}\n`, { encoding: 'utf8', mode: 0o600 })
-  let profile: ReturnType<(typeof import('./profile.ts'))['prepareProfile']>
+  let profile: Awaited<ReturnType<(typeof import('./profile.ts'))['prepareProfile']>>
   try {
-    const { prepareProfile } = await import('./profile.ts')
-    profile = prepareProfile({
-      profileDir,
-      mode: args.profileMode ?? 'fixture',
-      sourceMortiseConfigDir: args.sourceMortiseConfigDir,
-      sourcePiAgentDir: args.sourcePiAgentDir,
-      fixtureSpec: args.fixtureSpec,
-      extensionPaths: args.extensionPaths,
-    })
+    const { prepareProfile, reusePreparedProfile } = await import('./profile.ts')
+    profile = args.reuseProfile
+      ? reusePreparedProfile({
+          profileDir,
+          mode: args.reuseProfile.profileMode,
+          containsClonedUserData: args.reuseProfile.containsClonedUserData,
+          fixture: args.reuseProfile.fixture,
+          mountedExtensions: args.reuseProfile.mountedExtensions,
+        })
+      : await prepareProfile({
+          profileDir,
+          mode: args.profileMode ?? 'fixture',
+          sourceMortiseConfigDir: args.sourceMortiseConfigDir,
+          fixtureSpec: args.fixtureSpec,
+          extensionPaths: args.extensionPaths,
+        })
+    await args.profileSetup?.(profile)
     manifest = updateRunManifest(runDir, {
       profileMode: profile.mode,
       containsClonedUserData: profile.containsClonedUserData,
@@ -270,7 +289,7 @@ export async function startMortiseUiRun(args: {
     })
   } catch (error) {
     const message = `Failed to prepare Mortise UI profile: ${error instanceof Error ? error.message : String(error)}`
-    const failed = await failMortiseUiStart(runDir, 'profile', message, [])
+    const failed = await failMortiseUiStart(runDir, 'profile', message, [], !args.reuseProfile)
     throw new MortiseUiStartError(message, failed)
   }
 
@@ -288,11 +307,12 @@ export async function startMortiseUiRun(args: {
         ...process.env,
         ...args.extraEnv,
         MORTISE_CONFIG_DIR: profile.mortiseConfigDir,
-        PI_CODING_AGENT_DIR: profile.piAgentDir,
+        PI_CODING_AGENT_DIR: profile.mortiseAgentDir,
         MORTISE_UI_RUN_ID: runId,
         MORTISE_UI_SURFACE: args.surface,
         MORTISE_UI_RUN_DIR: runDir,
         MORTISE_UI_PROFILE_DIR: profileDir,
+        MORTISE_UI_PROFILE_MODE: profile.mode,
         MORTISE_UI_ARTIFACTS_DIR: artifactsDir,
         MORTISE_UI_ENDPOINT_MANIFEST: endpointManifestPath,
         MORTISE_UI_TOKEN: token,
@@ -305,7 +325,7 @@ export async function startMortiseUiRun(args: {
     })
   } catch (error) {
     const message = `Failed to start Mortise UI host: ${error instanceof Error ? error.message : String(error)}`
-    const failed = await failMortiseUiStart(runDir, 'spawn', message, [])
+    const failed = await failMortiseUiStart(runDir, 'spawn', message, [], !args.reuseProfile)
     throw new MortiseUiStartError(message, failed)
   } finally {
     closeSync(stdoutFd)
@@ -317,7 +337,7 @@ export async function startMortiseUiRun(args: {
   })
   if (spawnError) {
     const message = `Failed to start Mortise UI host: ${spawnError.message}`
-    const failed = await failMortiseUiStart(runDir, 'spawn', message, [child.pid])
+    const failed = await failMortiseUiStart(runDir, 'spawn', message, [child.pid], !args.reuseProfile)
     throw new MortiseUiStartError(message, failed)
   }
   child.unref()
@@ -337,7 +357,7 @@ export async function startMortiseUiRun(args: {
         || (currentManifest.buildId !== undefined && endpoint.buildId !== currentManifest.buildId)
       ) {
         const error = 'Host endpoint manifest identity does not match the controller run'
-        const failed = await failMortiseUiStart(runDir, 'endpoint', error, [child.pid, endpoint.pid])
+        const failed = await failMortiseUiStart(runDir, 'endpoint', error, [child.pid, endpoint.pid], !args.reuseProfile)
         throw new MortiseUiStartError(error, failed)
       }
       let readyManifest = updateRunManifest(runDir, {
@@ -357,7 +377,7 @@ export async function startMortiseUiRun(args: {
       if (!readiness.ok) {
         const error = `Host endpoint opened but the application did not become ready: ${readiness.error.code}: ${readiness.error.message}`
         await requestMortiseUiHost({ ...readyManifest, command: 'app.shutdown', timeoutMs: MORTISE_UI_SHUTDOWN_REQUEST_TIMEOUT_MS }).catch(() => undefined)
-        const failed = await failMortiseUiStart(runDir, 'app-readiness', error, [child.pid, endpoint.pid])
+        const failed = await failMortiseUiStart(runDir, 'app-readiness', error, [child.pid, endpoint.pid], !args.reuseProfile)
         throw new MortiseUiStartError(error, failed)
       }
       readyManifest = updateRunManifest(runDir, { lastResponseSeq: readiness.seq, lastRevision: readiness.revision, verificationLevel: readiness.verificationLevel })
@@ -372,7 +392,7 @@ export async function startMortiseUiRun(args: {
       if (!semanticReadiness.ok) {
         const error = `Application state became ready but its semantic UI did not: ${semanticReadiness.error.code}: ${semanticReadiness.error.message}`
         await requestMortiseUiHost({ ...readyManifest, command: 'app.shutdown', timeoutMs: MORTISE_UI_SHUTDOWN_REQUEST_TIMEOUT_MS }).catch(() => undefined)
-        const failed = await failMortiseUiStart(runDir, 'semantic-readiness', error, [child.pid, endpoint.pid])
+        const failed = await failMortiseUiStart(runDir, 'semantic-readiness', error, [child.pid, endpoint.pid], !args.reuseProfile)
         throw new MortiseUiStartError(error, failed)
       }
       readyManifest = updateRunManifest(runDir, {
@@ -393,7 +413,7 @@ export async function startMortiseUiRun(args: {
         if (!applied.ok) {
           const error = `Initial scenario failed: ${applied.error.code}: ${applied.error.message}`
           await requestMortiseUiHost({ ...readyManifest, command: 'app.shutdown', timeoutMs: MORTISE_UI_SHUTDOWN_REQUEST_TIMEOUT_MS }).catch(() => undefined)
-          const failed = await failMortiseUiStart(runDir, 'initial-scenario', error, [child.pid, endpoint.pid])
+          const failed = await failMortiseUiStart(runDir, 'initial-scenario', error, [child.pid, endpoint.pid], !args.reuseProfile)
           throw new MortiseUiStartError(error, failed)
         }
       }
@@ -405,13 +425,13 @@ export async function startMortiseUiRun(args: {
       const error = latestManifest.buildError
         ? `Mortise UI build failed: ${latestManifest.buildError}`
         : `Mortise UI host exited before becoming ready. See ${stderrPath}`
-      const failed = await failMortiseUiStart(runDir, phase, error, [child.pid])
+      const failed = await failMortiseUiStart(runDir, phase, error, [child.pid], !args.reuseProfile)
       throw new MortiseUiStartError(error, failed)
     }
     await Bun.sleep(100)
   }
   const error = `Timed out waiting for Mortise UI host endpoint after ${waitMs}ms`
-  const failed = await failMortiseUiStart(runDir, 'endpoint', error, [child.pid])
+  const failed = await failMortiseUiStart(runDir, 'endpoint', error, [child.pid], !args.reuseProfile)
   throw new MortiseUiStartError(error, failed)
 }
 
@@ -459,8 +479,9 @@ export async function recordMortiseUiStartFailure(
   return await failMortiseUiStart(runDir, phase, message, [manifest.launcherPid, manifest.hostPid])
 }
 
-export async function stopMortiseUiRunDetailed(runDir: string): Promise<{ manifest: MortiseUiRunManifest; response?: MortiseUiResponse }> {
+export async function stopMortiseUiRunDetailed(runDir: string, options: { preserveProfile?: boolean } = {}): Promise<{ manifest: MortiseUiRunManifest; response?: MortiseUiResponse }> {
   const original = readRunManifest(runDir)
+  if (original.restartedByRunId) return { manifest: original }
   if (original.status === 'stopped' && !original.cleanupError && !existsSync(original.profileDir)) return { manifest: original }
   let manifest = updateRunManifest(runDir, { status: 'stopping' })
   let shutdownResponse: MortiseUiResponse | undefined
@@ -491,6 +512,14 @@ export async function stopMortiseUiRunDetailed(runDir: string): Promise<{ manife
       response: shutdownResponse,
     }
   }
+  if (options.preserveProfile) {
+    manifest = updateRunManifest(runDir, {
+      status: 'stopped',
+      profileRetainedAt: new Date().toISOString(),
+      cleanupError: undefined,
+    })
+    return { manifest, response: shutdownResponse }
+  }
   let cleanupError: string | undefined
   for (let attempt = 0; attempt < 5; attempt += 1) {
     try {
@@ -512,14 +541,46 @@ export async function stopMortiseUiRun(runDir: string): Promise<MortiseUiRunMani
   return (await stopMortiseUiRunDetailed(runDir)).manifest
 }
 
+export async function restartMortiseUiRun(runDir: string, options: {
+  label?: string
+  waitMs?: number
+  waitForReady?: boolean
+} = {}): Promise<MortiseUiRunManifest> {
+  const original = readRunManifest(runDir)
+  if (original.restartedByRunId) throw new Error(`Run ${original.runId} already transferred its profile to ${original.restartedByRunId}`)
+  const stopped = await stopMortiseUiRunDetailed(runDir, { preserveProfile: true })
+  if (stopped.manifest.status !== 'stopped') throw new Error(`Run ${original.runId} could not stop cleanly for restart`)
+  const restarted = await startMortiseUiRun({
+    surface: original.surface,
+    label: options.label ?? original.label,
+    windowMode: original.windowMode,
+    adapterCommand: original.adapterCommand,
+    runRoot: dirname(original.runDir),
+    waitMs: options.waitMs,
+    waitForReady: options.waitForReady,
+    reuseProfile: {
+      profileDir: original.profileDir,
+      ownerRunId: original.runId,
+      profileMode: original.profileMode,
+      containsClonedUserData: original.containsClonedUserData,
+      fixture: original.fixture,
+      mountedExtensions: original.mountedExtensions,
+    },
+  })
+  updateRunManifest(restarted.runDir, { profileOwnerRunId: restarted.runId })
+  updateRunManifest(original.runDir, { restartedByRunId: restarted.runId })
+  return readRunManifest(restarted.runDir)
+}
+
 async function failMortiseUiStart(
   runDir: string,
   phase: MortiseUiStartupPhase,
   message: string,
   pids: Array<number | undefined>,
+  removeProfile = true,
 ): Promise<MortiseUiRunManifest> {
   updateRunManifest(runDir, { status: 'failed', error: message })
-  const cleanup = await terminateAndCleanFailedRun(runDir, pids)
+  const cleanup = await terminateAndCleanFailedRun(runDir, pids, removeProfile)
   const current = readRunManifest(runDir)
   const failure: MortiseUiFailureDiagnostics = {
     phase,
@@ -539,12 +600,13 @@ async function failMortiseUiStart(
 async function terminateAndCleanFailedRun(
   runDir: string,
   pids: Array<number | undefined>,
+  removeProfile = true,
 ): Promise<MortiseUiFailureDiagnostics['cleanup']> {
   const manifest = readRunManifest(runDir)
   const identities = pids.map(pid => identityForPid(manifest, pid)).filter((value): value is MortiseUiProcessIdentity => !!value)
   const remainingPids = await terminateOwnedProcessTrees(identities)
   let cleanupError: string | undefined
-  for (let attempt = 0; attempt < 5; attempt += 1) {
+  for (let attempt = 0; removeProfile && attempt < 5; attempt += 1) {
     try {
       rmSync(manifest.profileDir, { recursive: true, force: true, maxRetries: 2, retryDelay: 100 })
       cleanupError = undefined
@@ -556,7 +618,9 @@ async function terminateAndCleanFailedRun(
   }
   updateRunManifest(runDir, cleanupError
     ? { cleanupError }
-    : { profileCleanedAt: new Date().toISOString(), cleanupError: undefined })
+    : removeProfile
+      ? { profileCleanedAt: new Date().toISOString(), cleanupError: undefined }
+      : { profileRetainedAt: new Date().toISOString(), cleanupError: undefined })
   return {
     attempted: identities.length > 0 || existsSync(manifest.profileDir),
     remainingPids,

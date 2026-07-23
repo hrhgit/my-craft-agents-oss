@@ -10,11 +10,11 @@ describe('server lock process identity', () => {
     expect(isProcessIdentityMismatch({ startedAt: 10_000, processStartedAt: 9_000 }, 20_000)).toBe(true)
   })
 
-  it('detects PID reuse for legacy locks when the new process started later', () => {
+  it('detects PID reuse when process identity capture was unavailable', () => {
     expect(isProcessIdentityMismatch({ startedAt: 10_000 }, 20_000)).toBe(true)
   })
 
-  it('keeps legacy locks conservative when process ordering is ambiguous', () => {
+  it('stays conservative when process identity capture was unavailable', () => {
     expect(isProcessIdentityMismatch({ startedAt: 10_000 }, 9_500)).toBe(false)
     expect(isProcessIdentityMismatch({ startedAt: 10_000 }, null)).toBe(false)
   })

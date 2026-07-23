@@ -11,7 +11,6 @@ import { defaultSessionOptions, mergeSessionOptions } from './hooks/useSessionOp
 import { generateMessageId } from '../shared/types'
 import { useEventProcessor } from './event-processor'
 import type { AgentEvent, Effect } from './event-processor'
-import { normalizeSessionEvent } from './event-processor/normalize-session-event'
 import { isProjectionOwnedHostEvent } from './event-processor/projection-ownership'
 import { AppShell } from '@/components/app-shell/AppShell'
 import type { AppShellContextType } from '@/context/AppShellContext'
@@ -85,11 +84,16 @@ import {
   ShikiThemeProvider,
   PlatformProvider,
   ImagePreviewOverlay,
-  PDFPreviewOverlay,
   CodePreviewOverlay,
   DocumentFormattedMarkdownOverlay,
   JSONPreviewOverlay,
 } from '@mortise/ui'
+
+const PDFPreviewOverlay = React.lazy(() =>
+  import('@mortise/ui/overlay/PDFPreviewOverlay').then(module => ({
+    default: module.PDFPreviewOverlay,
+  })),
+)
 import { useLinkInterceptor, type FilePreviewState } from '@/hooks/useLinkInterceptor'
 import { useTransportConnectionState } from '@/hooks/useTransportConnectionState'
 import { useUiValidationStateBridge } from '@/ui-validation/state-bridge'
@@ -99,6 +103,7 @@ import { TransportConnectionBanner, shouldShowTransportConnectionBanner } from '
 import type { WorkspaceSwitchDestination } from '@/components/workspace/useWorkspaceNavigation'
 import { getFileManagerName } from '@/lib/platform'
 import { rendererLog } from '@/lib/logger'
+import { hasPlatformCapability } from '@/lib/platform-capabilities'
 import { ActionRegistryProvider } from '@/actions'
 import { toast } from 'sonner'
 
@@ -996,7 +1001,7 @@ export default function App() {
         return
       }
 
-      const agentEvent = normalizeSessionEvent(event)
+      const agentEvent: AgentEvent = event
 
       // Track activity for stale session watchdog
       trackSessionActivity(sessionId)
@@ -1049,9 +1054,9 @@ export default function App() {
           // Show notification on complete (when window is not focused)
           // Skip hidden sessions (mini-agent sessions) - they shouldn't trigger notifications
           if (event.type === 'complete' && !updatedSession.hidden) {
-            // Get the last assistant/plan message as preview
+            // Get the last assistant message as preview.
             const lastMessage = updatedSession.messages.findLast(
-              m => (m.role === 'assistant' || m.role === 'plan') && !m.isIntermediate
+              m => m.role === 'assistant' && !m.isIntermediate
             )
             // Strip markdown so OS notifications display clean plain text
             const rawPreview = lastMessage?.content?.substring(0, 200) || undefined
@@ -1161,6 +1166,7 @@ export default function App() {
 
   // Listen for menu bar events
   useEffect(() => {
+    if (!hasPlatformCapability('nativeMenu')) return
     const unsubNewChat = window.electronAPI.onMenuNewChat(() => {
       setMenuNewChatTrigger(n => n + 1)
     })
@@ -1234,7 +1240,7 @@ export default function App() {
     // Also update lastReadMessageId for backwards compatibility
     updateSessionById(sessionId, (s) => {
       const lastFinalId = s.messages.findLast(
-        m => (m.role === 'assistant' || m.role === 'plan') && !m.isIntermediate
+        m => m.role === 'assistant' && !m.isIntermediate
       )?.id
       return {
         hasUnread: false,
@@ -1373,7 +1379,7 @@ export default function App() {
     return badges
   }, [skills, windowWorkspaceSlug])
 
-  const handleSendMessage = useCallback(async (sessionId: string, message: string, attachments?: FileAttachment[], skillSlugs?: string[], externalBadges?: ContentBadge[], midStreamSendIntent?: MidStreamSendIntent) => {
+  const handleSendMessage = useCallback(async (sessionId: string, message: string, attachments?: FileAttachment[], skillSlugs?: string[], externalBadges?: ContentBadge[], midStreamSendIntent?: MidStreamSendIntent, submissionAttemptId?: string) => {
     let optimisticMessageId: string | null = null
     try {
       // Capture pre-send processing state so we can flag mid-stream sends
@@ -1401,7 +1407,7 @@ export default function App() {
       // Step 5: Create a Mortise-owned UI overlay keyed by the projected message.
       // Pi owns text and order; this carrier supplies persistent attachment paths,
       // badges, and optimistic queue state until projection confirmation arrives.
-      optimisticMessageId = generateMessageId()
+      optimisticMessageId = submissionAttemptId ?? generateMessageId()
       const projectionAtom = piProjectionAtomFamily(sessionId)
       store.set(projectionAtom, current => insertOptimisticPiUser(current, optimisticMessageId!, message, storedAttachments?.map(attachment => ({
         id: attachment.id,
@@ -1450,7 +1456,7 @@ export default function App() {
           ? removePiUserOverlayCarrier(s.messages, optimisticMessageId)
           : s.messages,
       }))
-      return false
+      throw error
     }
   }, [buildMessageBadges, prepareMessageAttachments, store, updateSessionById])
 
@@ -2278,13 +2284,15 @@ function FilePreviewRenderer({
 
     case 'pdf':
       return (
-        <PDFPreviewOverlay
-          isOpen
-          onClose={onClose}
-          filePath={state.filePath}
-          loadPdfData={loadPdfData}
-          theme={theme}
-        />
+        <React.Suspense fallback={null}>
+          <PDFPreviewOverlay
+            isOpen
+            onClose={onClose}
+            filePath={state.filePath}
+            loadPdfData={loadPdfData}
+            theme={theme}
+          />
+        </React.Suspense>
       )
 
     case 'code':

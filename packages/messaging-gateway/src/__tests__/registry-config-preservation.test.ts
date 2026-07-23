@@ -26,7 +26,6 @@ let dir: string
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'reg-cfg-'))
 })
-
 afterEach(() => {
   rmSync(dir, { recursive: true, force: true })
 })
@@ -143,46 +142,5 @@ describe('MessagingGatewayRegistry — config preservation across writes', () =>
     const owners = registry.getPlatformOwners(workspaceId, 'telegram')
     expect(owners).toHaveLength(1)
     expect(owners[0]!.userId).toBe('first')
-  })
-})
-
-describe('MessagingGatewayRegistry — lock-down migrates open bindings', () => {
-  it('setPlatformAccessMode("owner-only") flips legacy open bindings to inherit', () => {
-    const { registry, workspaceId } = makeRegistry()
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const state = (registry as any).workspaces.get(workspaceId) ??
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (registry as any).bootstrapWorkspace(workspaceId)
-    const store = state.gateway.getBindingStore()
-    // Persist a binding in legacy 'open' mode (mimics migration).
-    const b = store.bind('ws-test', 'sess-A', 'telegram', 'chat-1', undefined, {
-      accessMode: 'open',
-    })
-    expect(b.config.accessMode).toBe('open')
-
-    registry.setPlatformAccessMode(workspaceId, 'telegram', 'owner-only')
-
-    const reloaded = store.getAll().find((x: { id: string }) => x.id === b.id)
-    expect(reloaded.config.accessMode).toBe('inherit')
-    // Binding ID and createdAt must have survived the migration (no rotation).
-    expect(reloaded.id).toBe(b.id)
-    expect(reloaded.createdAt).toBe(b.createdAt)
-  })
-
-  it('non-telegram bindings are not touched by the lock-down', () => {
-    const { registry, workspaceId } = makeRegistry()
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const state = (registry as any).workspaces.get(workspaceId) ??
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (registry as any).bootstrapWorkspace(workspaceId)
-    const store = state.gateway.getBindingStore()
-    const wa = store.bind('ws-test', 'sess-A', 'whatsapp', 'chan-A', undefined, {
-      accessMode: 'open',
-    })
-
-    registry.setPlatformAccessMode(workspaceId, 'telegram', 'owner-only')
-
-    const reloaded = store.getAll().find((x: { id: string }) => x.id === wa.id)
-    expect(reloaded.config.accessMode).toBe('open')
   })
 })

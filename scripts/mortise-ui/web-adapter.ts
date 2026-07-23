@@ -36,6 +36,7 @@ import { writeJsonAtomic } from './files.ts'
 import {
   buildWebAccessibilityDescriptor,
   buildWebSemanticSnapshot,
+  WebSemanticRevisionClock,
   resolveWebTarget,
   routeFromParams,
   type WebSemanticDescriptor,
@@ -78,6 +79,7 @@ let page: Page | undefined
 let lastSnapshot: SemanticSnapshot | undefined
 let lastEvidenceSnapshot: SemanticSnapshot | undefined
 const snapshotHistory = new Map<number, SemanticSnapshot>()
+const semanticRevisionClock = new WebSemanticRevisionClock()
 let descriptorsByNodeId = new Map<string, WebSemanticDescriptor>()
 let currentRoute: UiValidationRoute = { surface: 'unknown' }
 let seq = 0
@@ -451,13 +453,10 @@ async function appShellScenarioCommand(method: WebScenarioMethod, input?: unknow
 async function snapshot(): Promise<SemanticSnapshot> {
   const raw = await activePage().evaluate(() => {
     const state = (window as unknown as { __mortiseUiValidation?: { revision: number; snapshot?: (options?: { maxNodes?: number; maxStringLength?: number }) => unknown } }).__mortiseUiValidation
-    const revision = state?.revision ?? 0
     const business = typeof state?.snapshot === 'function' ? state.snapshot({ maxNodes: 1_000, maxStringLength: 2_048 }) : null
     const selectors = '[role],button,a,input,textarea,select,[data-testid],[aria-label],[contenteditable="true"],h1,h2,h3,[aria-live]'
     const all = [...document.querySelectorAll<HTMLElement>(selectors)].slice(0, 2_000)
-    const cssPath = (element: Element): string => {
-      const testId = element.getAttribute('data-testid')
-      if (testId) return `[data-testid=${JSON.stringify(testId)}]`
+    const structuralPath = (element: Element): string => {
       const parts: string[] = []
       let current: Element | null = element
       while (current && current !== document.documentElement && parts.length < 12) {
@@ -469,6 +468,11 @@ async function snapshot(): Promise<SemanticSnapshot> {
         current = parent
       }
       return parts.join(' > ')
+    }
+    const cssPath = (element: Element): string => {
+      const testId = element.getAttribute('data-testid')
+      if (testId) return `[data-testid=${JSON.stringify(testId)}]`
+      return structuralPath(element)
     }
     const implicitRole = (element: HTMLElement): string => {
       if (element.getAttribute('role')) return element.getAttribute('role')!
@@ -500,7 +504,7 @@ async function snapshot(): Promise<SemanticSnapshot> {
         || input.placeholder || element.innerText?.trim().replace(/\s+/g, ' ').slice(0, 500) || ''
       const sensitive = input.type === 'password' || /password|secret|token|api.?key/i.test(`${label} ${element.getAttribute('name') ?? ''}`)
       return {
-        source: 'dom' as const, selector: cssPath(element), testId: element.getAttribute('data-testid') || undefined,
+        source: 'dom' as const, selector: cssPath(element), identity: structuralPath(element), testId: element.getAttribute('data-testid') || undefined,
         role: implicitRole(element), name: label, description: element.getAttribute('aria-description') || undefined,
         value: sensitive ? '[REDACTED]' : ('value' in input ? String(input.value).slice(0, 1_000) : undefined),
         states: {
@@ -513,19 +517,36 @@ async function snapshot(): Promise<SemanticSnapshot> {
       }
     })
     const focused = document.activeElement instanceof HTMLElement ? cssPath(document.activeElement) : undefined
-    return { revision, descriptors, focused, business }
+    const businessIdentities: Array<string | undefined> = []
+    for (const node of business?.nodes ?? []) {
+      if (!node || typeof node.domSelector !== 'string') {
+        businessIdentities.push(undefined)
+        continue
+      }
+      try {
+        const matches = document.querySelectorAll(node.domSelector)
+        businessIdentities.push(matches.length === 1 ? structuralPath(matches[0]!) : undefined)
+      } catch { businessIdentities.push(undefined) }
+    }
+    return { descriptors, focused, business, businessIdentities }
   })
   const accessibilityDescriptors = await captureWebAccessibilityDescriptors()
   const business = raw.business as null | { nodes?: Array<{
     id: string; role: string; name: string; value?: string; description?: string; state?: WebSemanticDescriptor['states']; actions?: string[]
     actionModes?: { semantic?: string[]; physical?: string[] }; domSelector: string
   }> }
-  const domBySelector = new Map(raw.descriptors.map(descriptor => [descriptor.selector, descriptor]))
-  const businessDescriptors: WebSemanticDescriptor[] = (business?.nodes ?? []).map(node => {
-    const dom = domBySelector.get(node.domSelector)
+  const businessIdentities = raw.businessIdentities as Array<string | null | undefined>
+  const domBySelector = new Map(raw.descriptors.flatMap(descriptor => [
+    [descriptor.selector, descriptor] as const,
+    ...(descriptor.identity ? [[descriptor.identity, descriptor] as const] : []),
+  ]))
+  const businessDescriptors: WebSemanticDescriptor[] = (business?.nodes ?? []).map((node, index) => {
+    const identity = businessIdentities[index] ?? undefined
+    const dom = domBySelector.get(identity ?? node.domSelector)
     return {
       source: 'business',
       selector: node.domSelector,
+      ...(identity ? { identity } : {}),
       semanticId: node.id,
       role: node.role,
       name: node.name,
@@ -545,12 +566,21 @@ async function snapshot(): Promise<SemanticSnapshot> {
       } : {}),
     }
   })
-  const built = buildWebSemanticSnapshot({
-    revision: raw.revision,
+  let built = buildWebSemanticSnapshot({
+    revision: semanticRevisionClock.revision,
     descriptors: [...raw.descriptors, ...accessibilityDescriptors, ...businessDescriptors],
     route: currentRoute,
     focusedSelector: raw.focused,
   })
+  const semanticRevision = semanticRevisionClock.observe(built.decisionFingerprint)
+  if (semanticRevision !== built.snapshot.revision) {
+    built = buildWebSemanticSnapshot({
+      revision: semanticRevision,
+      descriptors: [...raw.descriptors, ...accessibilityDescriptors, ...businessDescriptors],
+      route: currentRoute,
+      focusedSelector: raw.focused,
+    })
+  }
   lastSnapshot = built.snapshot
   rememberWebSnapshot(built.snapshot)
   descriptorsByNodeId = built.descriptorsByNodeId
@@ -620,16 +650,29 @@ async function resolveWebAxNode(session: CDPSession, node: RawWebAxNode): Promis
           }
           selector = parts.join(' > ');
         }
-        return { selector, testId: testId || undefined, bounds: { x: rect.x, y: rect.y, width: rect.width, height: rect.height } };
+        const identityParts = [];
+        let identityCurrent = element;
+        while (identityCurrent && identityCurrent !== document.documentElement && identityParts.length < 12) {
+          let part = identityCurrent.tagName.toLowerCase();
+          if (identityCurrent.id) { part += '#' + CSS.escape(identityCurrent.id); identityParts.unshift(part); break; }
+          const parent = identityCurrent.parentElement;
+          if (parent) part += ':nth-child(' + ([...parent.children].indexOf(identityCurrent) + 1) + ')';
+          identityParts.unshift(part);
+          identityCurrent = parent;
+        }
+        return { selector, identity: identityParts.join(' > '), testId: testId || undefined, bounds: { x: rect.x, y: rect.y, width: rect.width, height: rect.height } };
       }`,
-    }) as { result?: { value?: { selector?: unknown; testId?: unknown; bounds?: unknown } | null } }
+    }) as { result?: { value?: { selector?: unknown; identity?: unknown; testId?: unknown; bounds?: unknown } | null } }
     const value = location.result?.value
     if (!value || typeof value.selector !== 'string' || value.selector.length === 0) return undefined
-    return buildWebAccessibilityDescriptor(node, {
-      selector: value.selector,
-      ...(typeof value.testId === 'string' ? { testId: value.testId } : {}),
-      ...(isAxBounds(value.bounds) ? { bounds: value.bounds } : {}),
-    })
+    return {
+      ...buildWebAccessibilityDescriptor(node, {
+        selector: value.selector,
+        ...(typeof value.testId === 'string' ? { testId: value.testId } : {}),
+        ...(isAxBounds(value.bounds) ? { bounds: value.bounds } : {}),
+      }),
+      ...(typeof value.identity === 'string' ? { identity: value.identity } : {}),
+    }
   } finally {
     await session.send('Runtime.releaseObject', { objectId }).catch(() => undefined)
   }
@@ -692,8 +735,13 @@ async function extensionDefinitionSnapshot(target: Record<string, unknown>): Pro
 async function action(raw: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
   const request = parseUiValidationActionRequest(raw)
   const beforeState = await rendererStateSnapshot()
-  const before = lastSnapshot ?? await snapshot()
-  if (await liveRevision() !== before.revision) throw new UiValidationError('STALE_REF', 'The UI changed after the last snapshot.', { retryable: true })
+  const before = await snapshot()
+  if (request.revision !== undefined && request.revision !== before.revision) {
+    throw new UiValidationError('STALE_REF', 'The decision-relevant UI changed after the requested snapshot.', {
+      details: { requestedRevision: request.revision, currentRevision: before.revision },
+      retryable: true,
+    })
+  }
   const resolved = resolveWebTarget(request.target, before, descriptorsByNodeId)
   if (resolved.node.states?.disabled) throw new UiValidationError('DISABLED', 'The target is disabled.')
   if (!resolved.node.actions?.includes(request.action)) throw new UiValidationError('UNSUPPORTED', `${request.action} is not declared for this target.`)

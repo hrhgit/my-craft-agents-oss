@@ -9,10 +9,19 @@ describe('createManagedSession', () => {
     createdAt: Date.now(),
   }
 
-  it('normalizes legacy thinkingLevel=think on restore', () => {
+  it('drops removed thinkingLevel values instead of migrating them on restore', () => {
     const managed = createManagedSession({
       mortiseId: 'session_legacy',
       thinkingLevel: 'think' as any,
+    }, workspace as any)
+
+    expect(managed.thinkingLevel).toBeUndefined()
+  })
+
+  it('preserves a canonical thinking level on restore', () => {
+    const managed = createManagedSession({
+      mortiseId: 'session_current',
+      thinkingLevel: 'medium',
     }, workspace as any)
 
     expect(managed.thinkingLevel).toBe('medium')

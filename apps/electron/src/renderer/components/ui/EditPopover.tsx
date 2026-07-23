@@ -21,6 +21,7 @@ import type { ContentBadge, Session, CreateSessionOptions } from '../../../share
 import { useActiveWorkspace, useAppShellContext, useSession, usePendingPermission } from '@/context/AppShellContext'
 import { useEscapeInterrupt } from '@/context/EscapeInterruptContext'
 import { ChatDisplay } from '../app-shell/ChatDisplay'
+import type { ComposerSubmissionAttempt } from '../app-shell/input/composer-submission'
 
 /** Rotating placeholder keys for compact mode input - short, action-oriented */
 const COMPACT_PLACEHOLDER_KEYS = [
@@ -211,7 +212,7 @@ const EDIT_CONFIGS: Record<EditContextKey, (location: string) => EditConfig> = {
   'add-skill': (location) => ({
     context: {
       label: 'Add Skill',
-      filePath: `${location}/.pi/skills/`, // location is the workspace root path
+      filePath: `${location}/.mortise/skills/`, // location is the workspace root path
       context:
         'The user wants to add a new skill to their workspace. ' +
         'Skills are specialized instructions with a SKILL.md file containing YAML frontmatter (name, description) and markdown instructions. ' +
@@ -257,7 +258,7 @@ const EDIT_CONFIGS: Record<EditContextKey, (location: string) => EditConfig> = {
       context:
         'Use the host-owned automation.workspace capability for all automation work. ' +
         'Create, update, delete, enable, run, and inspect history through its versioned typed operations. ' +
-        'Do not edit automations.json or any .pi prompt-automation file directly. ' +
+        'Do not edit automation storage files directly. ' +
         'Use cron, once, interval, event triggers, prompt targets, and webhook actions from the V3 protocol. ' +
         'Confirm the accepted operation and resulting automation ID clearly.',
     },
@@ -316,13 +317,6 @@ export interface EditPopoverProps {
   context: EditContext
   /** Permission mode for the new session (default: 'allow-all' / canonical: execute for fast execution) */
   permissionMode?: CreateSessionOptions['permissionMode']
-  /**
-   * Working directory for the new session:
-   * - 'none' (default): No working directory (session folder only) - best for config edits
-   * - 'user_default': Use workspace's configured default
-   * - Absolute path string: Use this specific path
-   */
-  workingDirectory?: string | 'user_default' | 'none'
   /** Model tier hint: 'fast' uses the connection's mini model, 'default' uses the primary model */
   model?: 'fast' | 'default'
   /** System prompt preset for mini agent (e.g., 'mini' for focused edits) */
@@ -428,7 +422,6 @@ export function EditPopover({
   example,
   context,
   permissionMode = 'allow-all',
-  workingDirectory = 'none', // Default to session folder for config edits
   model,
   systemPromptPreset,
   width = 400, // Default 400px for compact chat embedding
@@ -667,8 +660,8 @@ export function EditPopover({
 
   // Handle sending message from ChatDisplay (inline mode)
   // Creates hidden session on first message, then uses App context for sending
-  const handleInlineSendMessage = useCallback(async (message: string) => {
-    const { prompt, badges } = buildEditPrompt(context, message, displayLabel)
+  const handleInlineSendMessage = useCallback(async (attempt: ComposerSubmissionAttempt) => {
+    const { prompt, badges } = buildEditPrompt(context, attempt.message, displayLabel)
 
     // Create session on first message
     let sessionId = inlineSessionId
@@ -677,7 +670,6 @@ export function EditPopover({
         model: model || 'fast',
         systemPromptPreset: systemPromptPreset || 'mini',
         permissionMode,
-        workingDirectory,
         hidden: true, // Hidden sessions use same App code path but don't appear in list
       }
       const newSession = await onCreateSession(workspace.id, createOptions)
@@ -688,25 +680,33 @@ export function EditPopover({
     // Send message via App context (includes optimistic user message update)
     // Pass badges to hide the <edit_request> XML metadata in the user message bubble
     if (sessionId) {
-      onSendMessage(sessionId, prompt, undefined, undefined, badges)
+      return onSendMessage(
+        sessionId,
+        prompt,
+        attempt.attachments,
+        attempt.skillSlugs,
+        badges,
+        attempt.midStreamSendIntent,
+      )
     }
-  }, [context, displayLabel, inlineSessionId, workspace?.id, model, systemPromptPreset, permissionMode, workingDirectory, onCreateSession, onSendMessage])
+    return false
+  }, [context, displayLabel, inlineSessionId, workspace?.id, model, systemPromptPreset, permissionMode, onCreateSession, onSendMessage])
 
   // Legacy mode: navigates to chat in the same window
-  const handleLegacySendMessage = useCallback((message: string) => {
-    const { prompt, badges } = buildEditPrompt(context, message, displayLabel)
+  const handleLegacySendMessage = useCallback(async (attempt: ComposerSubmissionAttempt) => {
+    const { prompt, badges } = buildEditPrompt(context, attempt.message, displayLabel)
     const encodedInput = encodeURIComponent(prompt)
     const encodedBadges = encodeURIComponent(JSON.stringify(badges))
 
-    const workdirParam = workingDirectory ? `&workdir=${encodeURIComponent(workingDirectory)}` : ''
     const modelParam = model ? `&model=${encodeURIComponent(model)}` : ''
     const systemPromptParam = systemPromptPreset ? `&systemPrompt=${encodeURIComponent(systemPromptPreset)}` : ''
     // Navigate in same window by omitting window=focused parameter
-    const url = `mortise://action/new-session?input=${encodedInput}&send=true&mode=${permissionMode}&badges=${encodedBadges}${workdirParam}${modelParam}${systemPromptParam}`
+    const url = `mortise://action/new-session?input=${encodedInput}&send=true&mode=${permissionMode}&badges=${encodedBadges}${modelParam}${systemPromptParam}`
 
     window.electronAPI.openUrl(url)
     setOpen(false)
-  }, [context, displayLabel, workingDirectory, model, systemPromptPreset, permissionMode, setOpen])
+    return true
+  }, [context, displayLabel, model, systemPromptPreset, permissionMode, setOpen])
 
   return (
     <>

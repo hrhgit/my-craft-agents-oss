@@ -610,11 +610,14 @@ describe("Coding Agent Tools", () => {
 		});
 
 		it("should include output from both prefix and command", async () => {
+			const isWindows = process.platform === "win32";
 			const bashWithPrefix = createBashTool(testDir, {
-				commandPrefix: "echo prefix-output",
+				commandPrefix: isWindows ? "Write-Output 'prefix-output'" : "echo prefix-output",
 			});
 
-			const result = await bashWithPrefix.execute("test-prefix-2", { command: "echo command-output" });
+			const result = await bashWithPrefix.execute("test-prefix-2", {
+				command: isWindows ? "Write-Output 'command-output'" : "echo command-output",
+			});
 			expect(normalizeNewlines(getTextOutput(result).trim())).toBe("prefix-output\ncommand-output");
 		});
 

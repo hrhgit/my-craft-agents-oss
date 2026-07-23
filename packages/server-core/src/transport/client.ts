@@ -683,11 +683,12 @@ export class WsRpcClient implements RpcClient {
       const message = err instanceof Error ? err.message : String(err)
       const rawCode = (err as { code?: unknown } | null)?.code
       const code: TransportErrorCode = isTransportErrorCode(rawCode) ? rawCode : 'HANDLER_ERROR'
+      const data = (err as { data?: unknown } | null)?.data
       const response: MessageEnvelope = {
         id: envelope.id,
         type: 'response',
         channel: envelope.channel,
-        error: { code, message },
+        error: { code, message, ...(data !== undefined ? { data } : {}) },
       }
       this.trySendEnvelope(this.ws, response)
     }

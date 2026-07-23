@@ -19,6 +19,7 @@ import {
   handleComplete,
   handleError,
   handleTypedError,
+  handleSessionFailure,
   handleNameChanged,
   handlePermissionRequest,
   handlePlanSubmitted,
@@ -29,7 +30,6 @@ import {
   handleInterrupted,
   handleTitleGenerated,
   handleAsyncOperation,
-  handleWorkingDirectoryChanged,
   handlePermissionModeChanged,
   handleSessionModelChanged,
   handleProviderChanged,
@@ -104,6 +104,9 @@ export function processEvent(
     case 'typed_error':
       return handleTypedError(state, event)
 
+    case 'session_failure':
+      return handleSessionFailure(state, event)
+
     case 'status':
       return handleStatus(state, event)
 
@@ -118,16 +121,6 @@ export function processEvent(
 
     case 'async_operation':
       return handleAsyncOperation(state, event)
-
-    case 'working_directory_changed':
-      return handleWorkingDirectoryChanged(state, event)
-
-    case 'working_directory_error':
-      // No state change — just emit a toast effect
-      return {
-        state: { ...state, session: { ...state.session } },
-        effects: [{ type: 'toast_error', message: event.error }],
-      }
 
     case 'permission_mode_changed':
       return handlePermissionModeChanged(state, event)
@@ -167,6 +160,14 @@ export function processEvent(
 
     case 'usage_update':
       return handleUsageUpdate(state, event)
+
+    // Current host events consumed by renderer features outside conversation state.
+    case 'shell_killed':
+    case 'auth_completed':
+      return {
+        state: { ...state, session: { ...state.session } },
+        effects: [],
+      }
 
     default: {
       // Unknown event type - return state unchanged but as new reference

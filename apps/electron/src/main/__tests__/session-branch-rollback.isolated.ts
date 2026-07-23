@@ -16,8 +16,11 @@ let appendedMessages: any[] = []
 // Partial-mock baseline: import real modules via file paths (avoids recursive mock imports)
 const actualSharedAgentModule = await import('../../../../../packages/shared/src/agent/index.ts')
 const actualSharedAgentBackendModule = await import('../../../../../packages/shared/src/agent/backend/index.ts')
-// 真实的 Mortise metadata fields 和 pickSessionFields，避免 mock 字段列表与实际不同步
+// Use the real Mortise metadata contract so the mock stays aligned with production.
 const actualSessionUtils = await import('../../../../../packages/shared/src/sessions/utils.ts')
+// Spread the real config barrel so every transitive import (CONFIG_DIR,
+// alternateMidStreamBehavior, etc.) resolves without manual enumeration.
+const actualConfigModule = await import('../../../../../packages/shared/src/config/index.ts')
 
 mock.module('electron', () => ({
   app: {
@@ -60,6 +63,7 @@ mock.module('../logger', () => {
 })
 
 mock.module('@mortise/shared/config', () => ({
+  ...actualConfigModule,
   getWorkspaceByNameOrId: (id: string) => (id === workspace.id ? workspace : null),
   getWorkspaces: () => [workspace],
   loadConfigDefaults: () => ({
@@ -150,16 +154,21 @@ mock.module('@mortise/shared/agent/backend', () => ({
 }))
 
 mock.module('@mortise/shared/automations', () => ({
-  AutomationSystem: class AutomationSystem {
+  // Minimal V3 surface: the branch test does not exercise automation dispatch,
+  // but SessionManager imports AutomationWorkspaceHostV3 at module load time.
+  // Provide a constructible stub so the import resolves without pulling in the
+  // real scheduler/store/runtime stack.
+  AutomationWorkspaceHostV3: class AutomationWorkspaceHostV3 {
     constructor(..._args: unknown[]) {}
-    setInitialSessionMetadata() {}
-    reloadConfig() { return { errors: [], automationCount: 0 } }
+    start() {}
+    stop() {}
+    refresh() {}
+    isReadOnly() { return true }
+    store = {
+      initialize() { return { definitions: [] } },
+      isWritable() { return false },
+    }
   },
-  validateAutomationsConfig: () => ({ valid: true, errors: [], config: { automations: {} } }),
-  validateAutomationsContent: () => ({ valid: true, errors: [], warnings: [] }),
-  validateAutomations: () => ({ valid: true, errors: [], warnings: [] }),
-  AUTOMATIONS_CONFIG_FILE: 'automations.json',
-  AUTOMATIONS_HISTORY_FILE: 'automations.history.jsonl',
 }))
 
 mock.module('@mortise/shared/sessions', () => ({
@@ -180,7 +189,6 @@ mock.module('@mortise/shared/sessions', () => ({
       name: opts?.name ?? null,
       messages: [],
       permissionMode: opts?.permissionMode ?? 'ask',
-      workingDirectory: opts?.workingDirectory,
       hidden: !!opts?.hidden,
       createdAt: now,
       lastUsedAt: now,
@@ -247,7 +255,7 @@ mock.module('@mortise/shared/sessions', () => ({
   getOrCreateLatestSession: async () => null,
   sessionPersistenceQueue: { flush: async () => {} },
   // 使用真实实现，避免手工维护字段列表与 Mortise metadata fields 不同步
-  pickSessionFields: actualSessionUtils.pickSessionFields,
+  pickMortiseSessionMetadata: actualSessionUtils.pickMortiseSessionMetadata,
   validateSessionId: () => true,
 }))
 

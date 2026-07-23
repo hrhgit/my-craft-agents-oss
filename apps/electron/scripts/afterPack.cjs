@@ -87,7 +87,29 @@ function findFilesNamed(root, filename, matches = []) {
   return matches;
 }
 
+function legacyPiRuntimeCandidates(layout) {
+  return [
+    path.join(layout.piRuntimeRoot, 'runtime_modules'),
+    path.join(layout.piRuntimeRoot, 'node_modules'),
+    path.join(layout.piRuntimeRoot, 'dist', 'cli.bundle.js'),
+    path.join(layout.piRuntimeRoot, 'dist', 'cli.full.bundle.js'),
+    path.join(layout.piRuntimeRoot, 'dist', 'cli.interactive.bundle.js'),
+    path.join(layout.appDist, 'resources', 'pi-runtime'),
+    path.join(layout.appResources, 'pi-runtime'),
+  ];
+}
+
+function assertCanonicalPiRuntime(layout) {
+  assertNonEmptyFile(layout.piExecutable);
+  const legacyCandidates = legacyPiRuntimeCandidates(layout)
+    .filter(candidate => fs.existsSync(candidate));
+  if (legacyCandidates.length > 0) {
+    throw new Error(`Electron package contains legacy Pi runtime candidates: ${legacyCandidates.join(', ')}`);
+  }
+}
+
 function validatePackagedLayout(layout) {
+  assertCanonicalPiRuntime(layout);
   const allowedAppEntries = new Set(['dist', 'node_modules', 'package.json', 'resources']);
   const unexpectedAppEntries = fs.readdirSync(layout.appRoot)
     .filter(entry => !allowedAppEntries.has(entry));
@@ -112,15 +134,7 @@ function validatePackagedLayout(layout) {
     layout.appExecutable,
   ];
 
-  if (fs.existsSync(layout.piExecutable)) {
-    requiredFiles.push(layout.piExecutable);
-  } else {
-    requiredFiles.push(
-      path.join(layout.piRuntimeRoot, 'package.json'),
-      path.join(layout.piRuntimeRoot, 'dist', 'cli.bundle.js'),
-      path.join(layout.piRuntimeRoot, 'node_modules', '@mortise', 'pi-ai', 'package.json'),
-    );
-  }
+  requiredFiles.push(layout.piExecutable);
 
   for (const file of requiredFiles) assertNonEmptyFile(file);
 
@@ -269,22 +283,10 @@ async function smokeWorkspaceServer(layout, context) {
 
 module.exports = async function afterPack(context) {
   const layout = resolvePackagedLayout(context);
-  const stagedModules = path.join(layout.piRuntimeRoot, 'runtime_modules');
-  const nodeModules = path.join(layout.piRuntimeRoot, 'node_modules');
   const compiledBinary = layout.piExecutable;
 
-  // electron-builder prunes directories named node_modules even when they are
-  // extraResources. The staging step deliberately uses runtime_modules; once
-  // files have been copied, restore the standard name expected by Bun.
-  if (fs.existsSync(compiledBinary)) {
-    console.log(`Compiled Pi runtime finalized: ${compiledBinary}`);
-  } else if (fs.existsSync(stagedModules)) {
-    fs.rmSync(nodeModules, { recursive: true, force: true });
-    fs.renameSync(stagedModules, nodeModules);
-    console.log(`Pi runtime modules finalized: ${nodeModules}`);
-  } else {
-    throw new Error(`Packaged Pi runtime modules missing: ${stagedModules}`);
-  }
+  assertCanonicalPiRuntime(layout);
+  console.log(`Canonical compiled Pi runtime finalized: ${compiledBinary}`);
 
   // Only process the icon on macOS builds.
   if (context.electronPlatformName !== 'darwin') {
@@ -316,5 +318,6 @@ module.exports = async function afterPack(context) {
 
 module.exports.resolvePackagedLayout = resolvePackagedLayout;
 module.exports.validatePackagedLayout = validatePackagedLayout;
+module.exports.assertCanonicalPiRuntime = assertCanonicalPiRuntime;
 module.exports.smokeWorkspaceServer = smokeWorkspaceServer;
 module.exports.probeWorkspaceHandshake = probeWorkspaceHandshake;

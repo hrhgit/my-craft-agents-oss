@@ -8,10 +8,9 @@ import {
 
 describe('browser-tool-detection', () => {
   describe('normalizeBrowserToolName', () => {
-    it('normalizes direct and namespaced browser_tool names only', () => {
+    it('accepts only the canonical browser_tool name', () => {
       expect(normalizeBrowserToolName('browser_tool')).toBe('browser_tool')
-      expect(normalizeBrowserToolName('mcp__session__browser_tool')).toBe('browser_tool')
-      expect(normalizeBrowserToolName('mcp__workspace__browser_tool')).toBe('browser_tool')
+      expect(normalizeBrowserToolName('mcp__workspace__browser_tool')).toBeNull()
     })
 
     it('returns null for non-browser_tool names', () => {
@@ -51,19 +50,19 @@ describe('browser-tool-detection', () => {
       expect(shouldActivateBrowserOverlay('browser_tool', { command: 'help' })).toBe(false)
       expect(shouldActivateBrowserOverlay('browser_tool', { command: 'open' })).toBe(false)
       expect(shouldActivateBrowserOverlay('browser_tool', { command: 'open --foreground' })).toBe(false)
-      expect(shouldActivateBrowserOverlay('mcp__session__browser_tool', { command: 'release' })).toBe(false)
+      expect(shouldActivateBrowserOverlay('browser_tool', { command: 'release' })).toBe(false)
       expect(shouldActivateBrowserOverlay('browser_tool', { command: 'close' })).toBe(false)
       expect(shouldActivateBrowserOverlay('browser_tool', { command: 'hide' })).toBe(false)
     })
 
     it('does not activate when browser_tool command is missing', () => {
       expect(shouldActivateBrowserOverlay('browser_tool', {})).toBe(false)
-      expect(shouldActivateBrowserOverlay('mcp__session__browser_tool', { command: '   ' })).toBe(false)
+      expect(shouldActivateBrowserOverlay('browser_tool', { command: '   ' })).toBe(false)
     })
 
     it('activates for browser_tool actionable commands', () => {
       expect(shouldActivateBrowserOverlay('browser_tool', { command: 'snapshot' })).toBe(true)
-      expect(shouldActivateBrowserOverlay('mcp__session__browser_tool', { command: 'navigate https://linear.app' })).toBe(true)
+      expect(shouldActivateBrowserOverlay('browser_tool', { command: 'navigate https://linear.app' })).toBe(true)
     })
   })
 })

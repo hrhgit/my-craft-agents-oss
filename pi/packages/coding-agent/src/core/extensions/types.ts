@@ -1806,10 +1806,7 @@ export type ExtensionUICategory =
 	| "search"
 	| "other";
 export type ExtensionSettingScalar = string | number | boolean;
-export type ExtensionModelReference =
-	| "current-session"
-	| `default:${number}`
-	| `model:${string}/${string}`;
+export type ExtensionModelReference = "current-session" | `default:${number}` | `model:${string}/${string}`;
 export interface ExtensionSettingConditionV1 {
 	key: string;
 	equals: ExtensionSettingScalar;

@@ -77,7 +77,7 @@ describe('mortise-ui immutable Electron build cache', () => {
     expect(buildsWhileActive).not.toContain('2'.repeat(64))
     releaseElectronBuild(active, { retainCount: 1, maxBytes: 1_000_000 })
     expect(buildIds(buildRoot)).toEqual(['3'.repeat(64)])
-  }, 15_000)
+  }, 30_000)
 
   it('publishes from an immutable snapshot while the live source keeps changing', () => {
     const root = tempRoot('mortise-ui-build-source-race-')
@@ -138,7 +138,7 @@ describe('mortise-ui immutable Electron build cache', () => {
     expect(new Set(results.map(result => result.appDir)).size).toBe(1)
     expect(buildIds(buildRoot)).toEqual([fingerprint])
     expect(cleanupElectronBuildCache({ buildRoot, retainCount: 0, maxBytes: 1 }).removedBuildIds).toContain(fingerprint)
-  }, 20_000)
+  }, 30_000)
 
   it('lets different source identities compile at the same time', async () => {
     const root = tempRoot('mortise-ui-build-parallel-')

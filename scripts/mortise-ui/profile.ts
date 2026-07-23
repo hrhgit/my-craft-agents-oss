@@ -1,15 +1,32 @@
 import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import {
   appendStoredMessagesViaPiSessionManager,
-  ensureSharedPiTreeSessionFile,
+  ensureSharedPiTreeSessionFileAsync,
   getSessionPath,
   setSharedPiSessionsDirForTests,
-  writeTreeSessionCraftMetadata,
+  writeTreeSessionMortiseMetadataAsync,
   type StoredMessage,
   type StoredSession,
 } from '@mortise/shared/sessions'
+import {
+  MultiWriterStore,
+  openMortiseSqliteDatabaseSync,
+  type JsonValue,
+} from '@mortise/shared/storage'
+import {
+  GLOBAL_CONFIG_RECORD_KEY,
+  GLOBAL_CONFIG_RECORD_NAMESPACE,
+  MORTISE_STATE_DATABASE_FILENAME,
+  MORTISE_STATE_WRITER_VERSION,
+  getMortiseStateDatabasePath,
+} from '@mortise/shared/config/state-contract'
+import { expandPath } from '@mortise/shared/utils/paths'
+import {
+  getWorkspaceConfigRecordIdentity,
+} from '@mortise/shared/workspaces/state-contract'
 import type { MortiseUiMountedExtension, MortiseUiProfileMode } from './protocol.ts'
 import { mountMortiseUiExtensions } from './extension-mount.ts'
 import {
@@ -22,13 +39,30 @@ import {
 } from './fixture.ts'
 
 const EXCLUDED_NAMES = new Set([
-  '.server.lock', '.workspace-server.lock', 'logs', 'node_modules', 'cache', 'Cache',
+  '.server.lock', '.workspace-server.lock', 'logs', 'node_modules', 'cache', '.cache', 'Cache',
+  'npm', 'git',
   'Code Cache', 'GPUCache', 'Crashpad', 'window-state.json',
+])
+
+const LEGACY_MORTISE_CONFIG_NAMES = new Set([
+  'config.json',
+  'drafts.json',
+  '.config.json.sync',
+  '.drafts.json.sync',
+  '.mortise-config.sync',
 ])
 
 const FIXTURE_CREATED_AT = Date.UTC(2026, 0, 1)
 
-function copyProfileTree(source: string, target: string): void {
+function isLegacyMortiseConfigName(name: string): boolean {
+  return LEGACY_MORTISE_CONFIG_NAMES.has(name)
+    || /^config\.json\.(?:bak-|corrupt-)/.test(name)
+    || name === `${MORTISE_STATE_DATABASE_FILENAME}-wal`
+    || name === `${MORTISE_STATE_DATABASE_FILENAME}-shm`
+    || name === MORTISE_STATE_DATABASE_FILENAME
+}
+
+function copyProfileTree(source: string, target: string, excludeLegacyMortiseConfig = false): void {
   if (!existsSync(source)) return
   cpSync(source, target, {
     recursive: true,
@@ -36,7 +70,9 @@ function copyProfileTree(source: string, target: string): void {
     dereference: true,
     filter(path) {
       if (path === source) return true
-      if (EXCLUDED_NAMES.has(path.split(/[\\/]/).at(-1) ?? '')) return false
+      const name = path.split(/[\\/]/).at(-1) ?? ''
+      if (EXCLUDED_NAMES.has(name)) return false
+      if (excludeLegacyMortiseConfig && isLegacyMortiseConfigName(name)) return false
       // Never traverse links while cloning a profile: their targets may escape
       // the explicitly selected source directory or pull in large caches.
       try { return !lstatSync(path).isSymbolicLink() } catch { return false }
@@ -44,10 +80,53 @@ function copyProfileTree(source: string, target: string): void {
   })
 }
 
+function stateDatabasePath(mortiseConfigDir: string): string {
+  return getMortiseStateDatabasePath(mortiseConfigDir)
+}
+
+function snapshotStateDatabase(sourceMortiseConfigDir: string, targetMortiseConfigDir: string): void {
+  const source = stateDatabasePath(sourceMortiseConfigDir)
+  if (!existsSync(source)) return
+  const target = stateDatabasePath(targetMortiseConfigDir)
+  mkdirSync(targetMortiseConfigDir, { recursive: true })
+  const database = openMortiseSqliteDatabaseSync(source)
+  try {
+    database.exec(`VACUUM INTO '${target.replaceAll("'", "''")}'`)
+  } finally {
+    database.close()
+  }
+}
+
+function openProfileStateStore(mortiseConfigDir: string): MultiWriterStore {
+  return MultiWriterStore.openSync({
+    databasePath: stateDatabasePath(mortiseConfigDir),
+    writerId: `mortise-ui-profile-${process.pid}-${randomUUID()}`,
+    writerVersion: MORTISE_STATE_WRITER_VERSION,
+  })
+}
+
+function writeStateRecord(
+  store: MultiWriterStore,
+  namespace: string,
+  value: JsonValue,
+): void {
+  const current = store.getRecord(namespace, GLOBAL_CONFIG_RECORD_KEY)
+  const result = store.mutateRecord({
+    namespace,
+    key: GLOBAL_CONFIG_RECORD_KEY,
+    value,
+    expectedVersion: current?.version ?? null,
+    operationId: `mortise-ui-profile-${randomUUID()}`,
+  })
+  if (result.status !== 'applied') {
+    throw new Error(`Failed to write profile state record ${namespace}/${GLOBAL_CONFIG_RECORD_KEY}`)
+  }
+}
+
 export interface PreparedMortiseUiProfile {
   root: string
   mortiseConfigDir: string
-  piAgentDir: string
+  mortiseAgentDir: string
   electronUserDataDir: string
   mode: MortiseUiProfileMode
   containsClonedUserData: boolean
@@ -56,21 +135,64 @@ export interface PreparedMortiseUiProfile {
 }
 
 function redirectClonedWorkspaceRoots(mortiseConfigDir: string, profileRoot: string): void {
-  const configPath = join(mortiseConfigDir, 'config.json')
-  if (!existsSync(configPath)) return
-  const config = JSON.parse(readFileSync(configPath, 'utf8')) as { workspaces?: Array<Record<string, unknown>> }
-  if (!Array.isArray(config.workspaces)) return
-  const cloneRoot = join(profileRoot, 'workspace-clones')
-  mkdirSync(cloneRoot, { recursive: true })
-  config.workspaces = config.workspaces.map((workspace, index) => {
-    const identity = typeof workspace.id === 'string' && /^[A-Za-z0-9._-]+$/.test(workspace.id)
-      ? workspace.id
-      : `workspace-${index + 1}`
-    const rootPath = join(cloneRoot, identity)
-    mkdirSync(rootPath, { recursive: true })
-    return { ...workspace, rootPath }
-  })
-  writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`, 'utf8')
+  const databasePath = stateDatabasePath(mortiseConfigDir)
+  if (!existsSync(databasePath)) return
+  const store = openProfileStateStore(mortiseConfigDir)
+  try {
+    const configRecord = store.getRecord(GLOBAL_CONFIG_RECORD_NAMESPACE, GLOBAL_CONFIG_RECORD_KEY)
+    if (!configRecord) return
+    const config = configRecord.value as { workspaces?: Array<Record<string, JsonValue>> }
+    if (!Array.isArray(config.workspaces)) return
+    const cloneRoot = join(profileRoot, 'workspace-clones')
+    mkdirSync(cloneRoot, { recursive: true })
+    const workspaces = config.workspaces.map((workspace, index) => {
+      const identity = typeof workspace.id === 'string' && /^[A-Za-z0-9._-]+$/.test(workspace.id)
+        ? workspace.id
+        : `workspace-${index + 1}`
+      const sourceRootPath = workspace.rootPath
+      if (typeof sourceRootPath !== 'string' || sourceRootPath.length === 0) {
+        throw new Error(`Cloned workspace ${identity} has no current rootPath`)
+      }
+      const rootPath = join(cloneRoot, identity)
+      mkdirSync(rootPath, { recursive: true })
+      const sourceIdentity = getWorkspaceConfigRecordIdentity(expandPath(sourceRootPath))
+      const workspaceRecord = store.getRecord(sourceIdentity.namespace, sourceIdentity.key)
+      if (!workspaceRecord) {
+        throw new Error(`Cloned workspace ${identity} has no SQLite workspace configuration`)
+      }
+      writeStateRecord(store, getWorkspaceConfigRecordIdentity(rootPath).namespace, workspaceRecord.value)
+      return { ...workspace, rootPath }
+    })
+    writeStateRecord(store, GLOBAL_CONFIG_RECORD_NAMESPACE, { ...config, workspaces } as JsonValue)
+  } finally {
+    store.close()
+  }
+}
+
+export function reusePreparedProfile(args: {
+  profileDir: string
+  mode: MortiseUiProfileMode
+  containsClonedUserData: boolean
+  fixture?: MortiseUiFixtureSummary
+  mountedExtensions?: MortiseUiMountedExtension[]
+}): PreparedMortiseUiProfile {
+  const root = resolve(args.profileDir)
+  const mortiseConfigDir = join(root, 'mortise-config')
+  const mortiseAgentDir = join(mortiseConfigDir, 'agent')
+  const electronUserDataDir = join(root, 'electron-user-data')
+  for (const path of [root, mortiseConfigDir, mortiseAgentDir, electronUserDataDir]) {
+    if (!existsSync(path) || !lstatSync(path).isDirectory()) throw new Error(`Reusable Mortise UI profile directory is missing: ${path}`)
+  }
+  return {
+    root,
+    mortiseConfigDir,
+    mortiseAgentDir,
+    electronUserDataDir,
+    mode: args.mode,
+    containsClonedUserData: args.containsClonedUserData,
+    fixture: args.fixture,
+    mountedExtensions: args.mountedExtensions,
+  }
 }
 
 function writeJson(path: string, value: unknown): void {
@@ -83,7 +205,7 @@ function writeFixtureFile(basePath: string, file: MortiseUiFixtureFile): void {
   writeFileSync(filePath, file.content, 'utf8')
 }
 
-function seedFixtureProfile(root: string, mortiseConfigDir: string, piAgentDir: string, input?: MortiseUiFixtureSpec): MortiseUiFixtureSummary {
+async function seedFixtureProfile(root: string, mortiseConfigDir: string, mortiseAgentDir: string, input?: MortiseUiFixtureSpec): Promise<MortiseUiFixtureSummary> {
   const spec = validateMortiseUiFixtureSpec(input ?? DEFAULT_MORTISE_UI_FIXTURE)
   const fixtureRoot = join(root, 'workspaces')
   const workspaces = spec.workspaces.map((workspace, index) => ({
@@ -94,30 +216,57 @@ function seedFixtureProfile(root: string, mortiseConfigDir: string, piAgentDir: 
 
   for (const workspace of workspaces) {
     mkdirSync(workspace.rootPath, { recursive: true })
-    writeJson(join(workspace.rootPath, 'config.json'), {
-      id: workspace.id,
-      name: workspace.name,
-      slug: workspace.slug,
-      defaults: {
-        permissionMode: workspace.permissionMode ?? 'safe',
-        cyclablePermissionModes: ['safe', 'ask', 'allow-all'],
-      },
-      createdAt: FIXTURE_CREATED_AT,
-      updatedAt: FIXTURE_CREATED_AT,
-    })
     for (const file of workspace.files ?? []) writeFixtureFile(workspace.rootPath, file)
   }
 
-  setSharedPiSessionsDirForTests(join(piAgentDir, 'sessions'))
+  const stateStore = openProfileStateStore(mortiseConfigDir)
+  try {
+    for (const workspace of workspaces) {
+      writeStateRecord(stateStore, getWorkspaceConfigRecordIdentity(workspace.rootPath).namespace, {
+        id: workspace.id,
+        name: workspace.name,
+        slug: workspace.slug,
+        defaults: {
+          permissionMode: workspace.permissionMode ?? 'safe',
+          cyclablePermissionModes: ['safe', 'ask', 'allow-all'],
+        },
+        createdAt: FIXTURE_CREATED_AT,
+        updatedAt: FIXTURE_CREATED_AT,
+      })
+    }
+    writeStateRecord(stateStore, GLOBAL_CONFIG_RECORD_NAMESPACE, {
+      workspaces: workspaces.map(workspace => ({
+        id: workspace.id,
+        name: workspace.name,
+        slug: workspace.slug,
+        rootPath: workspace.rootPath,
+        createdAt: FIXTURE_CREATED_AT,
+      })),
+      activeWorkspaceId: spec.active?.workspaceId ?? workspaces[0]!.id,
+      activeSessionId: spec.active?.sessionId ?? null,
+      setupDeferred: true,
+      notificationsEnabled: false,
+      colorTheme: 'default',
+      sendMessageKey: 'enter',
+      spellCheck: false,
+      keepAwakeWhileRunning: false,
+      richToolDescriptions: true,
+      browserToolEnabled: true,
+    })
+  } finally {
+    stateStore.close()
+  }
+
+  setSharedPiSessionsDirForTests(join(mortiseAgentDir, 'sessions'))
   try {
     const sessionFiles = new Map<string, string>()
     const fixtureSessions: Array<{ id: string; parentSessionId?: string; sessionFile: string }> = []
-    workspaces.forEach((workspace, workspaceIndex) => {
-      ;(workspace.sessions ?? []).forEach((session, sessionIndex) => {
+    for (const [workspaceIndex, workspace] of workspaces.entries()) {
+      for (const [sessionIndex, session] of (workspace.sessions ?? []).entries()) {
         const createdAt = session.createdAt ?? FIXTURE_CREATED_AT + workspaceIndex * 86_400_000 + sessionIndex * 60_000
         const messages = (session.messages ?? []).map((message, messageIndex): StoredMessage => ({
           id: message.id ?? `m-${workspaceIndex + 1}-${sessionIndex + 1}-${messageIndex + 1}`,
-          type: message.role,
+          type: message.role as StoredMessage['type'],
           content: message.content,
           timestamp: message.timestamp ?? createdAt + (messageIndex + 1) * 1_000,
           toolName: message.toolName,
@@ -134,27 +283,27 @@ function seedFixtureProfile(root: string, mortiseConfigDir: string, piAgentDir: 
           createdAt,
           lastUsedAt: session.lastUsedAt ?? messages.at(-1)?.timestamp ?? createdAt,
           lastMessageAt: messages.at(-1)?.timestamp,
-          workingDirectory: workspace.rootPath,
           sdkCwd: workspace.rootPath,
           permissionMode: session.permissionMode ?? workspace.permissionMode ?? 'safe',
           hasUnread: session.hasUnread,
           hidden: session.hidden,
+          pendingPlanExecution: session.pendingPlanExecution,
           messages,
           tokenUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, contextTokens: 0, costUsd: 0 },
         }
-        const sessionFile = ensureSharedPiTreeSessionFile(storedSession)
+        const sessionFile = await ensureSharedPiTreeSessionFileAsync(storedSession)
         sessionFiles.set(session.id, sessionFile)
         fixtureSessions.push({ id: session.id, parentSessionId: session.parentSessionId, sessionFile })
-        const idMap = appendStoredMessagesViaPiSessionManager(sessionFile, dirname(sessionFile), workspace.rootPath, messages)
+        const idMap = await appendStoredMessagesViaPiSessionManager(sessionFile, dirname(sessionFile), workspace.rootPath, messages)
         if (idMap.size > 0) {
-          writeTreeSessionCraftMetadata(sessionFile, {
+          await writeTreeSessionMortiseMetadataAsync(sessionFile, {
             ...storedSession,
             messages: messages.map(message => ({ ...message, id: idMap.get(message.id) ?? message.id })),
           })
         }
         for (const file of session.files ?? []) writeFixtureFile(getSessionPath(workspace.rootPath, session.id), file)
-      })
-    })
+      }
+    }
     for (const child of fixtureSessions) {
       if (!child.parentSessionId) continue
       const parentFile = sessionFiles.get(child.parentSessionId)
@@ -165,25 +314,6 @@ function seedFixtureProfile(root: string, mortiseConfigDir: string, piAgentDir: 
     setSharedPiSessionsDirForTests(undefined)
   }
 
-  writeJson(join(mortiseConfigDir, 'config.json'), {
-    workspaces: workspaces.map(workspace => ({
-      id: workspace.id,
-      name: workspace.name,
-      slug: workspace.slug,
-      rootPath: workspace.rootPath,
-      createdAt: FIXTURE_CREATED_AT,
-    })),
-    activeWorkspaceId: spec.active?.workspaceId ?? workspaces[0]!.id,
-    activeSessionId: spec.active?.sessionId ?? null,
-    setupDeferred: true,
-    notificationsEnabled: false,
-    colorTheme: 'default',
-    sendMessageKey: 'enter',
-    spellCheck: false,
-    keepAwakeWhileRunning: false,
-    richToolDescriptions: true,
-    browserToolEnabled: true,
-  })
   writeJson(join(mortiseConfigDir, 'preferences.json'), {
     name: 'Mortise UI Tester',
     timezone: 'UTC',
@@ -211,32 +341,32 @@ function readTreeHeader(path: string): Record<string, unknown> {
   return JSON.parse(firstLine) as Record<string, unknown>
 }
 
-export function prepareProfile(args: {
+export async function prepareProfile(args: {
   profileDir: string
   mode: MortiseUiProfileMode
   sourceMortiseConfigDir?: string
-  sourcePiAgentDir?: string
   fixtureSpec?: MortiseUiFixtureSpec
   extensionPaths?: string[]
-}): PreparedMortiseUiProfile {
+}): Promise<PreparedMortiseUiProfile> {
   const root = resolve(args.profileDir)
   const mortiseConfigDir = join(root, 'mortise-config')
-  const piAgentDir = join(root, 'pi-agent')
+  const mortiseAgentDir = join(mortiseConfigDir, 'agent')
   const electronUserDataDir = join(root, 'electron-user-data')
   rmSync(root, { recursive: true, force: true })
   mkdirSync(root, { recursive: true })
   if (args.mode === 'clone') {
-    copyProfileTree(resolve(args.sourceMortiseConfigDir ?? process.env.MORTISE_CONFIG_DIR ?? join(homedir(), '.mortise')), mortiseConfigDir)
-    copyProfileTree(resolve(args.sourcePiAgentDir ?? process.env.PI_CODING_AGENT_DIR ?? join(homedir(), '.pi', 'agent')), piAgentDir)
+    const sourceMortiseConfigDir = resolve(args.sourceMortiseConfigDir ?? process.env.MORTISE_CONFIG_DIR ?? join(homedir(), '.mortise'))
+    copyProfileTree(sourceMortiseConfigDir, mortiseConfigDir, true)
+    snapshotStateDatabase(sourceMortiseConfigDir, mortiseConfigDir)
     redirectClonedWorkspaceRoots(mortiseConfigDir, root)
   }
   mkdirSync(mortiseConfigDir, { recursive: true })
-  mkdirSync(piAgentDir, { recursive: true })
+  mkdirSync(mortiseAgentDir, { recursive: true })
   mkdirSync(electronUserDataDir, { recursive: true })
-  const fixture = args.mode === 'fixture' ? seedFixtureProfile(root, mortiseConfigDir, piAgentDir, args.fixtureSpec) : undefined
-  const mountedExtensions = mountMortiseUiExtensions(piAgentDir, args.extensionPaths ?? [])
+  const fixture = args.mode === 'fixture' ? await seedFixtureProfile(root, mortiseConfigDir, mortiseAgentDir, args.fixtureSpec) : undefined
+  const mountedExtensions = mountMortiseUiExtensions(mortiseAgentDir, args.extensionPaths ?? [])
   return {
-    root, mortiseConfigDir, piAgentDir, electronUserDataDir, mode: args.mode,
+    root, mortiseConfigDir, mortiseAgentDir, electronUserDataDir, mode: args.mode,
     containsClonedUserData: args.mode === 'clone', fixture,
     ...(mountedExtensions.length > 0 ? { mountedExtensions } : {}),
   }

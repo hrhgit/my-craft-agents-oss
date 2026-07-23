@@ -149,12 +149,11 @@ Use `capabilities relevant` to return only the current route and actions adverti
 
 `fixture` is the default profile. Without `--fixture`, it sets `setupDeferred` and opens the normal application on a populated product-release conversation. The preset contains three disposable workspaces: a product launch with code, release files, multiple sessions, a tool-call transcript, and plan data; customer research with Markdown/CSV/JSON inputs and analysis sessions; and support operations with runbooks, incident/ticket files, triage sessions, and unread state. A custom `--fixture` replaces that preset with the declared real data scene. Fixture profiles contain no provider credentials or live endpoints; use registered typed scenarios for transient loading, streaming, approval, extension, permission, and error states.
 
-Use `isolated` only for onboarding and pristine-profile behavior. When real provider or user configuration is required, clone mode requires both source paths explicitly and redirects every write into temporary directories:
+Use `isolated` only for onboarding and pristine-profile behavior. When real provider or user configuration is required, clone mode requires the Mortise profile explicitly and redirects every write into temporary directories:
 
 ```bash
 bun run mortise-ui -- start --label real-provider-clone --surface electron --profile clone \
-  --source-mortise-profile /explicit/mortise/profile \
-  --source-pi-profile /explicit/pi/agent --json
+  --source-mortise-profile /explicit/mortise/profile --json
 ```
 
 Verification levels are cumulative evidence, not interchangeable labels:
@@ -182,7 +181,6 @@ bun run test:ui-validation:raw-host-smoke
 
 ```bash
 MORTISE_E2E_SOURCE_PROFILE=/explicit/mortise/profile \
-MORTISE_E2E_SOURCE_PI_PROFILE=/explicit/pi/agent \
 bun run test:electron:chat-real
 ```
 

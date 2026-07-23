@@ -117,9 +117,16 @@ async function ok<T = Record<string, unknown>>(
   command: string,
   params: Record<string, unknown> = {},
 ): Promise<T> {
-  const response = await requestMortiseUiHost<T>({ ...run, command, params, timeoutMs: 60_000 })
-  if (!response.ok) throw new Error(`${command}: ${response.error.code}: ${response.error.message}`)
-  return response.result
+  const startedAt = Date.now()
+  process.stderr.write(`[runtime-contract] ${command} started\n`)
+  try {
+    const response = await requestMortiseUiHost<T>({ ...run, command, params, timeoutMs: 60_000 })
+    if (!response.ok) throw new Error(`${command}: ${response.error.code}: ${response.error.message}`)
+    process.stderr.write(`[runtime-contract] ${command} completed in ${Date.now() - startedAt}ms\n`)
+    return response.result
+  } catch (error) {
+    throw new Error(`${command} failed after ${Date.now() - startedAt}ms: ${error instanceof Error ? error.message : String(error)}`, { cause: error })
+  }
 }
 
 function sameStableSemantics(left: Snapshot, right: Snapshot): boolean {

@@ -1,5 +1,6 @@
 import log from 'electron-log/main'
 import { appendFileSync, existsSync, mkdirSync, renameSync, rmSync, statSync } from 'node:fs'
+import { appendFile, mkdir, rename, rm, stat } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { homedir } from 'node:os'
 import type {
@@ -78,6 +79,260 @@ export const searchLog = log.scope('search')
 
 const CONFIG_DIR = process.env.MORTISE_CONFIG_DIR || join(homedir(), '.mortise')
 
+export type DedicatedLogLevel = 'info' | 'warn' | 'error'
+
+export interface DedicatedLogQueueStats {
+  pending: number
+  pendingBytes: number
+  dropped: Readonly<Record<DedicatedLogLevel, number>>
+  failed: number
+  highWaterMark: number
+  highWaterBytes: number
+  draining: boolean
+}
+
+export interface DedicatedLogWriterOptions {
+  path: string
+  maxBytes: number
+  maxPendingLines?: number
+  maxPendingBytes?: number
+  onFailure?: (error: unknown) => void
+}
+
+interface PendingDedicatedLogLine {
+  level: DedicatedLogLevel
+  line: string
+  bytes: number
+}
+
+const DEFAULT_DEDICATED_LOG_MAX_PENDING_LINES = 1_024
+const MIN_DEDICATED_LOG_MAX_PENDING_BYTES = 1024 * 1024
+const DEDICATED_LOG_DRAIN_BATCH_SIZE = 64
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await stat(path)
+    return true
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false
+    throw error
+  }
+}
+
+/**
+ * Single-file asynchronous writer used by always-on Electron diagnostics.
+ * Enqueue never performs filesystem work; the bounded queue prevents a log
+ * storm from growing main-process memory without limit.
+ */
+export class BoundedAsyncDedicatedLogWriter {
+  private readonly path: string
+  private readonly backupPath: string
+  private readonly maxBytes: number
+  private readonly maxPendingLines: number
+  private readonly maxPendingBytes: number
+  private readonly onFailure: (error: unknown) => void
+  private readonly pending: PendingDedicatedLogLine[] = []
+  private readonly dropped: Record<DedicatedLogLevel, number> = { info: 0, warn: 0, error: 0 }
+  private draining = false
+  private active: PendingDedicatedLogLine[] = []
+  private pendingBytes = 0
+  private activeBytes = 0
+  private failed = 0
+  private highWaterMark = 0
+  private highWaterBytes = 0
+  private unreportedFailure: unknown = null
+  private waiters: Array<{ resolve: () => void; reject: (error: unknown) => void }> = []
+
+  constructor(options: DedicatedLogWriterOptions) {
+    this.path = options.path
+    this.backupPath = `${options.path}.1`
+    this.maxBytes = options.maxBytes
+    this.maxPendingLines = options.maxPendingLines ?? DEFAULT_DEDICATED_LOG_MAX_PENDING_LINES
+    this.maxPendingBytes = options.maxPendingBytes
+      ?? Math.max(options.maxBytes * 2, MIN_DEDICATED_LOG_MAX_PENDING_BYTES)
+    this.onFailure = options.onFailure ?? (() => {})
+    if (this.maxBytes <= 0) throw new Error('Dedicated log maxBytes must be positive')
+    if (this.maxPendingLines <= 0) throw new Error('Dedicated log maxPendingLines must be positive')
+    if (this.maxPendingBytes <= 0) throw new Error('Dedicated log maxPendingBytes must be positive')
+  }
+
+  enqueue(level: DedicatedLogLevel, line: string): boolean {
+    const item = { level, line, bytes: Buffer.byteLength(line) }
+    while (
+      this.pending.length + this.active.length >= this.maxPendingLines
+      || this.pendingBytes + this.activeBytes + item.bytes > this.maxPendingBytes
+    ) {
+      const evictionIndex = this.findEvictionIndex(level)
+      if (evictionIndex < 0) {
+        this.dropped[level] += 1
+        return false
+      }
+      const [evicted] = this.pending.splice(evictionIndex, 1)
+      if (evicted) {
+        this.pendingBytes -= evicted.bytes
+        this.dropped[evicted.level] += 1
+      }
+    }
+
+    this.pending.push(item)
+    this.pendingBytes += item.bytes
+    this.highWaterMark = Math.max(this.highWaterMark, this.pending.length + this.active.length)
+    this.highWaterBytes = Math.max(this.highWaterBytes, this.pendingBytes + this.activeBytes)
+    this.scheduleDrain()
+    return true
+  }
+
+  async flush(): Promise<void> {
+    if (!this.draining && this.pending.length === 0) {
+      this.throwUnreportedFailure()
+      return
+    }
+    await new Promise<void>((resolve, reject) => this.waiters.push({ resolve, reject }))
+  }
+
+  /** Reserved for process exit, after the event loop can no longer drain. */
+  flushSync(): void {
+    const remaining = [...this.active, ...this.pending]
+    this.active = []
+    this.activeBytes = 0
+    this.pending.length = 0
+    this.pendingBytes = 0
+    for (const item of remaining) {
+      try {
+        this.appendLineSync(item)
+      } catch (error) {
+        this.recordFailure(error)
+      }
+    }
+  }
+
+  stats(): DedicatedLogQueueStats {
+    return {
+      pending: this.pending.length + this.active.length,
+      pendingBytes: this.pendingBytes + this.activeBytes,
+      dropped: { ...this.dropped },
+      failed: this.failed,
+      highWaterMark: this.highWaterMark,
+      highWaterBytes: this.highWaterBytes,
+      draining: this.draining,
+    }
+  }
+
+  private findEvictionIndex(incoming: DedicatedLogLevel): number {
+    const candidates: DedicatedLogLevel[] = incoming === 'error'
+      ? ['info', 'warn']
+      : incoming === 'warn'
+        ? ['info']
+        : []
+    for (const candidate of candidates) {
+      const index = this.pending.findIndex(item => item.level === candidate)
+      if (index >= 0) return index
+    }
+    return -1
+  }
+
+  private scheduleDrain(): void {
+    if (this.draining) return
+    this.draining = true
+    setImmediate(() => void this.drain())
+  }
+
+  private async drain(): Promise<void> {
+    try {
+      while (this.pending.length > 0) {
+        this.active = this.pending.splice(0, DEDICATED_LOG_DRAIN_BATCH_SIZE)
+        this.activeBytes = this.active.reduce((total, item) => total + item.bytes, 0)
+        this.pendingBytes -= this.activeBytes
+        try {
+          await this.appendLines(this.active)
+        } catch (error) {
+          this.recordFailure(error, this.active.length)
+        } finally {
+          this.active = []
+          this.activeBytes = 0
+        }
+      }
+    } finally {
+      this.draining = false
+      if (this.pending.length > 0) {
+        this.scheduleDrain()
+        return
+      }
+      this.settleWaiters()
+    }
+  }
+
+  private async appendLines(items: readonly PendingDedicatedLogLine[]): Promise<void> {
+    if (items.length === 0) return
+    await mkdir(dirname(this.path), { recursive: true })
+    let currentSize = await this.currentSize()
+    let lines: string[] = []
+    let linesBytes = 0
+
+    const appendPending = async () => {
+      if (lines.length === 0) return
+      await appendFile(this.path, lines.join(''), 'utf8')
+      currentSize += linesBytes
+      lines = []
+      linesBytes = 0
+    }
+
+    for (const item of items) {
+      if (currentSize + linesBytes > 0 && currentSize + linesBytes + item.bytes > this.maxBytes) {
+        await appendPending()
+        await rm(this.backupPath, { force: true })
+        await rename(this.path, this.backupPath)
+        currentSize = 0
+      }
+      lines.push(item.line)
+      linesBytes += item.bytes
+    }
+    await appendPending()
+  }
+
+  private appendLineSync(item: PendingDedicatedLogLine): void {
+    mkdirSync(dirname(this.path), { recursive: true })
+    const currentSize = existsSync(this.path) ? statSync(this.path).size : 0
+    if (currentSize > 0 && currentSize + item.bytes > this.maxBytes) {
+      rmSync(this.backupPath, { force: true })
+      renameSync(this.path, this.backupPath)
+    }
+    appendFileSync(this.path, item.line, 'utf8')
+  }
+
+  private async currentSize(): Promise<number> {
+    return await pathExists(this.path) ? (await stat(this.path)).size : 0
+  }
+
+  private recordFailure(error: unknown, count = 1): void {
+    this.failed += count
+    this.unreportedFailure ??= error
+    try {
+      this.onFailure(error)
+    } catch {
+      // Failure reporting cannot break the writer drain.
+    }
+  }
+
+  private settleWaiters(): void {
+    const waiters = this.waiters.splice(0)
+    if (waiters.length === 0) return
+    const failure = this.unreportedFailure
+    this.unreportedFailure = null
+    for (const waiter of waiters) {
+      if (failure === null) waiter.resolve()
+      else waiter.reject(failure)
+    }
+  }
+
+  private throwUnreportedFailure(): void {
+    if (this.unreportedFailure === null) return
+    const failure = this.unreportedFailure
+    this.unreportedFailure = null
+    throw failure
+  }
+}
+
 /**
  * Dedicated messaging gateway log.
  *
@@ -85,26 +340,16 @@ const CONFIG_DIR = process.env.MORTISE_CONFIG_DIR || join(homedir(), '.mortise')
  * inspected independently at a stable path across debug and production builds.
  */
 export const messagingGatewayLogPath = join(CONFIG_DIR, 'logs', 'messaging-gateway.log')
-const messagingGatewayBackupPath = `${messagingGatewayLogPath}.1`
 const MESSAGING_LOG_MAX_BYTES = 5 * 1024 * 1024 // 5MB
 
-function ensureMessagingLogDir(): void {
-  mkdirSync(dirname(messagingGatewayLogPath), { recursive: true })
-}
-
-function rotateMessagingLogIfNeeded(nextLineBytes: number): void {
-  if (!existsSync(messagingGatewayLogPath)) return
-  try {
-    const currentSize = statSync(messagingGatewayLogPath).size
-    if (currentSize + nextLineBytes <= MESSAGING_LOG_MAX_BYTES) return
-    if (existsSync(messagingGatewayBackupPath)) {
-      rmSync(messagingGatewayBackupPath, { force: true })
-    }
-    renameSync(messagingGatewayLogPath, messagingGatewayBackupPath)
-  } catch (error) {
-    mainLog.warn('[messaging-gateway] failed to rotate dedicated log file', normalizeLogValue(error))
-  }
-}
+const messagingGatewayLogWriter = new BoundedAsyncDedicatedLogWriter({
+  path: messagingGatewayLogPath,
+  maxBytes: MESSAGING_LOG_MAX_BYTES,
+  onFailure: error => mainLog.warn(
+    '[messaging-gateway] failed to write dedicated log entry',
+    normalizeLogValue(error),
+  ),
+})
 
 function normalizeLogValue(value: unknown, depth = 0): unknown {
   if (depth > 4) return '[truncated]'
@@ -157,16 +402,7 @@ function writeMessagingGatewayLog(
   }
 
   const line = JSON.stringify(entry) + '\n'
-  try {
-    ensureMessagingLogDir()
-    rotateMessagingLogIfNeeded(Buffer.byteLength(line))
-    appendFileSync(messagingGatewayLogPath, line, 'utf8')
-  } catch (error) {
-    mainLog.warn('[messaging-gateway] failed to write dedicated log entry', {
-      error: normalizeLogValue(error),
-      attemptedEntry: entry,
-    })
-  }
+  messagingGatewayLogWriter.enqueue(level, line)
 
   if (level === 'error') {
     mainLog.error('[messaging-gateway]', message, entry)
@@ -214,22 +450,16 @@ export const messagingGatewayLog: MessagingLogger = new StructuredMessagingGatew
  * path regardless of debug mode, mirroring the messaging-gateway log above.
  */
 export const autoUpdateLogPath = join(CONFIG_DIR, 'logs', 'auto-update.log')
-const autoUpdateBackupPath = `${autoUpdateLogPath}.1`
 const AUTO_UPDATE_LOG_MAX_BYTES = 2 * 1024 * 1024 // 2MB
 
-function rotateAutoUpdateLogIfNeeded(nextLineBytes: number): void {
-  if (!existsSync(autoUpdateLogPath)) return
-  try {
-    const currentSize = statSync(autoUpdateLogPath).size
-    if (currentSize + nextLineBytes <= AUTO_UPDATE_LOG_MAX_BYTES) return
-    if (existsSync(autoUpdateBackupPath)) {
-      rmSync(autoUpdateBackupPath, { force: true })
-    }
-    renameSync(autoUpdateLogPath, autoUpdateBackupPath)
-  } catch (error) {
-    mainLog.warn('[auto-update] failed to rotate dedicated log file', normalizeLogValue(error))
-  }
-}
+const autoUpdateLogWriter = new BoundedAsyncDedicatedLogWriter({
+  path: autoUpdateLogPath,
+  maxBytes: AUTO_UPDATE_LOG_MAX_BYTES,
+  onFailure: error => mainLog.warn(
+    '[auto-update] failed to write dedicated log entry',
+    normalizeLogValue(error),
+  ),
+})
 
 function writeAutoUpdateLog(level: 'info' | 'warn' | 'error', message: string, meta?: unknown): void {
   const entry = {
@@ -241,13 +471,7 @@ function writeAutoUpdateLog(level: 'info' | 'warn' | 'error', message: string, m
   }
 
   const line = JSON.stringify(entry) + '\n'
-  try {
-    mkdirSync(dirname(autoUpdateLogPath), { recursive: true })
-    rotateAutoUpdateLogIfNeeded(Buffer.byteLength(line))
-    appendFileSync(autoUpdateLogPath, line, 'utf8')
-  } catch (error) {
-    mainLog.warn('[auto-update] failed to write dedicated log entry', normalizeLogValue(error))
-  }
+  autoUpdateLogWriter.enqueue(level, line)
 
   // Mirror to the Electron logger too (a no-op in production where transports
   // are disabled, but keeps --debug console/file output intact).
@@ -282,6 +506,34 @@ export function getLogFilePath(): string | undefined {
 
 export function getMessagingGatewayLogFilePath(): string {
   return messagingGatewayLogPath
+}
+
+/** Flush both always-on dedicated logs during an orderly committed exit. */
+export async function flushDedicatedLogs(): Promise<void> {
+  const results = await Promise.allSettled([
+    messagingGatewayLogWriter.flush(),
+    autoUpdateLogWriter.flush(),
+  ])
+  const failures = results.flatMap(result => result.status === 'rejected' ? [result.reason] : [])
+  if (failures.length > 0) {
+    throw new AggregateError(failures, 'Failed to flush dedicated Electron logs')
+  }
+}
+
+/** Final best-effort fallback for the synchronous process exit event only. */
+export function flushDedicatedLogsSync(): void {
+  messagingGatewayLogWriter.flushSync()
+  autoUpdateLogWriter.flushSync()
+}
+
+export function getDedicatedLogQueueStats(): {
+  messagingGateway: DedicatedLogQueueStats
+  autoUpdate: DedicatedLogQueueStats
+} {
+  return {
+    messagingGateway: messagingGatewayLogWriter.stats(),
+    autoUpdate: autoUpdateLogWriter.stats(),
+  }
 }
 
 export default log

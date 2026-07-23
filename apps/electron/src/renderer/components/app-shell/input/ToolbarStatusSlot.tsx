@@ -24,6 +24,7 @@ import { getHostname, getThemeLuminance } from '@/components/browser/utils'
 import { browserInstancesAtom, filterInstancesForWorkspace } from '@/atoms/browser-pane'
 import { useAppShellContext } from '@/context/AppShellContext'
 import type { BrowserInstanceInfo } from '../../../../shared/types'
+import { canUseNativeBrowserPanes } from '@/lib/platform-capabilities'
 
 interface ToolbarStatusSlotProps {
   /** Whether the escape interrupt overlay should be visible (highest priority) */
@@ -63,7 +64,7 @@ export function ToolbarStatusSlot({
   }, [browserInstances, sessionId])
 
   // Priority resolution: escape interrupt > browser status
-  const showBrowser = !showEscapeOverlay && browserInstance !== null
+  const showBrowser = canUseNativeBrowserPanes() && !showEscapeOverlay && browserInstance !== null
 
   const handleBrowserClick = React.useCallback((instanceId: string) => {
     window.electronAPI?.browserPane?.focus?.(instanceId)

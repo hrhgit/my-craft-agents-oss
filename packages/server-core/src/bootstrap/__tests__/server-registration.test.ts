@@ -35,7 +35,7 @@ afterEach(async () => {
 })
 
 describe('server protocol registry', () => {
-  it('allows multiple protocol-aware backends and transfers the legacy sentinel', async () => {
+  it('allows multiple protocol-aware backends and transfers coordinator ownership', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'mortise-server-registry-'))
     directories.push(directory)
     const lockFile = join(directory, '.server.lock')

@@ -130,7 +130,7 @@ The `run` command is fully self-contained — it spawns a headless server, creat
 | `--mode <mode>` | `allow-all` | Permission mode for the session |
 | `--no-cleanup` | `false` | Skip session deletion on exit |
 | `--server-entry <path>` | — | Custom server entry point |
-| `--interactive` | `false` | Render versioned extension interactions and legacy RemoteUI dialogs (auto-cancels when omitted) |
+| `--interactive` | `false` | Render versioned extension interactions (returns a structured cancellation when omitted) |
 
 **LLM Configuration:**
 
@@ -165,9 +165,8 @@ renderer / Chromium window infrastructure. The following tools are therefore
 | `browser_tool` | Depends on the Electron app's built-in Chromium windows (`browser-pane:*` channels). The CLI cannot create, navigate, or snapshot browser panes. See `docs/browser-tools.md`. |
 | Other renderer-only tools | Any tool relying on the Electron renderer process (rich previews, in-app notification surfaces) is not functional over the CLI. |
 
-Pi extensions that use interaction V1 or legacy RemoteUI work with
-`--interactive`, and degrade gracefully (auto-cancel) in the default
-non-interactive mode.
+Pi extensions that use interaction V1 work with `--interactive` and receive a
+structured `host-disconnected` cancellation in the default non-interactive mode.
 
 ### Automations
 

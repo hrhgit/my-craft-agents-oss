@@ -5,7 +5,6 @@ export interface NewConversationDraftOptions {
   model?: string
   thinkingLevel: import('@mortise/shared/agent/thinking-levels').ThinkingLevel
   permissionMode: import('../../shared/types').PermissionMode
-  workingDirectory?: string
 }
 
 export function createNewConversationDraftId(): string {

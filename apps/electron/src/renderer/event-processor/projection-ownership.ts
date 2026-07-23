@@ -5,7 +5,6 @@ const PROJECTION_OWNED_HOST_EVENTS = new Set([
   'tool_result',
   'error',
   'typed_error',
-  'complete',
   'user_message',
   'permission_request',
   'plan_submitted',
@@ -13,7 +12,7 @@ const PROJECTION_OWNED_HOST_EVENTS = new Set([
   'plan_mode_state_changed',
 ])
 
-/** Pi projection is the sole owner of transcript and lifecycle presentation. */
+/** Pi projection owns transcript/attempt presentation; Host complete owns durable readiness. */
 export function isProjectionOwnedHostEvent(eventType: string): boolean {
   return PROJECTION_OWNED_HOST_EVENTS.has(eventType)
 }

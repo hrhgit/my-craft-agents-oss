@@ -7,6 +7,7 @@ import {
 import { toPortablePath } from '../utils/paths.js'
 import { readSessionHeader } from './jsonl.js'
 import { debug } from '../utils/debug.js'
+import { existsSync } from 'node:fs'
 
 interface PendingWrite {
   data: StoredSession
@@ -18,6 +19,43 @@ interface HeaderMetadataSignature {
   permissionMode?: string
   hasUnread?: boolean
   lastReadMessageId?: string
+}
+
+export class SessionPersistenceError extends Error {
+  readonly code = 'SESSION_PERSISTENCE_FAILED' as const
+  readonly retryable: boolean
+  readonly sessionId: string
+  readonly cause: unknown
+  readonly data: { sessionId: string; retryable: boolean }
+
+  constructor(sessionId: string, cause: unknown) {
+    super(`Failed to persist session ${sessionId}: ${cause instanceof Error ? cause.message : String(cause)}`)
+    this.name = 'SessionPersistenceError'
+    this.retryable = (cause as { retryable?: unknown } | null)?.retryable !== false
+    this.sessionId = sessionId
+    this.cause = cause
+    this.data = { sessionId, retryable: this.retryable }
+  }
+}
+
+class CanonicalSessionHeaderRejectedError extends Error {
+  readonly code = 'SESSION_HEADER_REJECTED' as const
+  readonly retryable = false
+
+  constructor(treeFilePath: string) {
+    super(`Canonical Session header was rejected after metadata write: ${treeFilePath}`)
+    this.name = 'CanonicalSessionHeaderRejectedError'
+  }
+}
+
+class CanonicalSessionMetadataMismatchError extends Error {
+  readonly code = 'SESSION_METADATA_MISMATCH' as const
+  readonly retryable = false
+
+  constructor(treeFilePath: string, intended: string, persisted: string) {
+    super(`Canonical Session metadata does not match the requested durable state: ${treeFilePath} (intended=${intended}, persisted=${persisted})`)
+    this.name = 'CanonicalSessionMetadataMismatchError'
+  }
 }
 
 function getHeaderMetadataSignature(header: SessionHeader): string {
@@ -45,7 +83,7 @@ class SessionPersistenceQueue {
   private pending = new Map<string, PendingWrite>()
   private writeInProgress = new Map<string, Promise<void>>()
   private lastWrittenHeaderSignature = new Map<string, string>()
-  private failedWrites = new Set<string>()
+  private failedWrites = new Map<string, SessionPersistenceError>()
   private cancelling = new Set<string>()
   private cancelled = new Map<string, number>()
   private debounceMs: number
@@ -81,7 +119,10 @@ class SessionPersistenceQueue {
     }
 
     const timer = setTimeout(() => {
-      this.trackWrite(sessionId)
+      // Debounced writes are best-effort until a caller explicitly flushes;
+      // retain the error for that flush rather than creating an unhandled
+      // rejection from the timer callback.
+      void this.trackWrite(sessionId).catch(() => {})
     }, this.debounceMs)
 
     this.pending.set(sessionId, { data: normalizedSession, timer })
@@ -147,7 +188,7 @@ class SessionPersistenceQueue {
    *   Line 2+: tree entries (message, compaction, branch_summary, etc.)
    *
    * Mortise-specific metadata is merged into the header's `mortise` field via
-   * writeTreeSessionCraftMetadata(). The Pi entry body is owned by the Pi
+   * writeTreeSessionMortiseMetadata(). The Pi entry body is owned by the Pi
    * runtime and is not rewritten by Mortise.
    */
   private async write(sessionId: string): Promise<void> {
@@ -158,14 +199,13 @@ class SessionPersistenceQueue {
 
     try {
       const { data } = entry
-      ensureSessionsDir(data.workspaceRootPath, data.workingDirectory)
-      ensureSessionDir(data.workspaceRootPath, sessionId, data.workingDirectory)
+      ensureSessionsDir(data.workspaceRootPath)
+      ensureSessionDir(data.workspaceRootPath, sessionId)
 
       // Prepare session with portable paths for cross-machine compatibility
       const storageSession: StoredSession = {
         ...data,
         workspaceRootPath: toPortablePath(data.workspaceRootPath),
-        workingDirectory: toPortablePath(data.workspaceRootPath),
         sdkCwd: data.sdkCwd ? toPortablePath(data.sdkCwd) : toPortablePath(data.workspaceRootPath),
         lastUsedAt: data.lastUsedAt ?? Date.now(),
       }
@@ -175,27 +215,30 @@ class SessionPersistenceQueue {
       const treeFilePath = await ensureSharedPiTreeSessionFileAsync(storageSession, {
         lastWrittenHeaderSignature: this.lastWrittenHeaderSignature.get(sessionId),
       })
-      const header = readSessionHeader(treeFilePath)
-      if (header) {
-        const persistedHeaderSignature = getHeaderMetadataSignature(header)
-        this.lastWrittenHeaderSignature.set(
-          sessionId,
-          persistedHeaderSignature === intendedHeaderSignature
-            ? persistedHeaderSignature
-            : intendedHeaderSignature,
-        )
+      if (!existsSync(treeFilePath)) {
+        // Ordinary pre-assistant Sessions remain drafts. Pi will atomically
+        // publish the canonical JSONL when the first assistant message exists.
+        this.failedWrites.delete(sessionId)
+        return
       }
+      const header = readSessionHeader(treeFilePath)
+      if (!header) {
+        throw new CanonicalSessionHeaderRejectedError(treeFilePath)
+      }
+      const persistedHeaderSignature = getHeaderMetadataSignature(header)
+      if (persistedHeaderSignature !== intendedHeaderSignature) {
+        throw new CanonicalSessionMetadataMismatchError(treeFilePath, intendedHeaderSignature, persistedHeaderSignature)
+      }
+      this.lastWrittenHeaderSignature.set(sessionId, persistedHeaderSignature)
       debug(`[PersistenceQueue] Updated Pi tree session metadata ${sessionId} -> ${treeFilePath}`)
 
       // Write succeeded — clear any previous failure flag for this session.
       this.failedWrites.delete(sessionId)
     } catch (error) {
-      // Record the failure so callers/monitoring can detect data loss.
-      // We intentionally do NOT re-throw: existing flush() callers do not
-      // handle rejection, and re-throwing would surface as unhandled
-      // rejections up the call stack. Use hasFailedWrite() to inspect.
-      this.failedWrites.add(sessionId)
-      console.error(`[PersistenceQueue] Failed to write session ${sessionId}:`, error)
+      const persistenceError = new SessionPersistenceError(sessionId, error)
+      this.failedWrites.set(sessionId, persistenceError)
+      console.error(`[PersistenceQueue] ${persistenceError.message}`)
+      throw persistenceError
     }
   }
 
@@ -217,6 +260,8 @@ class SessionPersistenceQueue {
     if (inProgress) {
       await inProgress
     }
+    const failure = this.failedWrites.get(sessionId)
+    if (failure) throw failure
   }
 
   /**
@@ -244,7 +289,7 @@ class SessionPersistenceQueue {
       // files deleted by the caller (e.g. deleteSession) after this returns.
       const inProgress = this.writeInProgress.get(sessionId)
       if (inProgress) {
-        await inProgress
+        await inProgress.catch(() => {})
       }
 
       // Delete after awaiting in-progress writes. Any enqueue that sneaks in
@@ -282,9 +327,8 @@ class SessionPersistenceQueue {
 
   /**
    * Check if the most recent write for a session failed. Callers/monitoring
-   * can poll this to detect silent data loss (the queue does not re-throw on
-   * write failure to preserve existing flush() semantics). The flag is
-   * cleared on the next successful write or cancel().
+   * can inspect the latest failed write. Critical callers should use flush(),
+   * which propagates the same typed error; this method is diagnostic only.
    */
   hasFailedWrite(sessionId: string): boolean {
     return this.failedWrites.has(sessionId)

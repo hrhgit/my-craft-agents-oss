@@ -14,7 +14,7 @@
  *     此 hook 调用 toast 显示通知
  *
  * 说明：
- * - widget 渲染由 ExtensionWidgetZone 组件通过 `extension_widget` 事件渲染，
+ * - rich UI renders through versioned contribution surfaces.
  *   本 hook 不重复实现。
  * - 本 hook 只负责 `extension_notify` 事件的提示；`extension_status`
  *   留给状态承载点或静默消费。

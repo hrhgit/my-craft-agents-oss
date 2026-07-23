@@ -33,6 +33,18 @@ export class SearchUnavailableError extends Error {
 // were collected, so callers never hang.
 let currentSearchProcess: ChildProcess | null = null;
 
+function terminateSearchProcess(processToTerminate: ChildProcess): void {
+  if (processToTerminate.killed) return;
+
+  // ChildProcess.kill() uses TerminateProcess on Windows. POSIX gets an
+  // explicit graceful signal so ripgrep can close its output pipes cleanly.
+  if (process.platform === 'win32') {
+    processToTerminate.kill();
+  } else {
+    processToTerminate.kill('SIGTERM');
+  }
+}
+
 // Module-level platform ref — set once during init via setSearchPlatform()
 let _platform: PlatformServices | null = null;
 
@@ -215,8 +227,15 @@ export async function searchSessions(
     ignoreCase = true,
     searchId = Date.now().toString(36),
   } = options;
+  const sessionLimit = Number.isFinite(maxSessions)
+    ? Math.max(0, Math.floor(maxSessions))
+    : 50;
 
   if (!query.trim()) {
+    return [];
+  }
+
+  if (sessionLimit === 0) {
     return [];
   }
 
@@ -241,12 +260,16 @@ export async function searchSessions(
   return new Promise((resolve) => {
     const results = new Map<string, SessionSearchResult>();
     let buffer = '';
+    let stopAfterFilePath: string | null = null;
+    let stoppedAtSessionLimit = false;
+    let settled = false;
 
     // Build ripgrep arguments
     const args = [
       '--json',           // JSON output format (NDJSON)
       '--max-count', '10', // Limit matches per file to prevent huge results
       '--max-depth', '1', // Pi sessions are flat files directly under the cwd bucket
+      '--sortr', 'path',  // Stable newest-first traversal bounds the useful Session prefix
       '-g', '*.jsonl',    // Match Pi flat {timestamp}_{sessionId}.jsonl files only
     ];
 
@@ -265,33 +288,53 @@ export async function searchSessions(
     // Promise resolves with partial results via its 'close' handler — that
     // is the accepted cancellation signal, not a silent failure.
     if (currentSearchProcess) {
-      // Platform-aware termination (SIGTERM doesn't exist on Windows)
-      if (process.platform === 'win32') {
-        currentSearchProcess.kill();
-      } else {
-        currentSearchProcess.kill('SIGTERM');
-      }
+      terminateSearchProcess(currentSearchProcess);
       currentSearchProcess = null;
     }
 
     const rg = spawn(rgPath, args, {
       stdio: ['ignore', 'pipe', 'pipe'],
-      timeout,
     });
     currentSearchProcess = rg;
 
+    const finish = (discardResults = false): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeoutHandle);
+
+      if (currentSearchProcess === rg) {
+        currentSearchProcess = null;
+      }
+
+      const resultArray = discardResults ? [] : Array.from(results.values());
+      resultArray.sort((a, b) => {
+        const countDifference = b.matchCount - a.matchCount;
+        if (countDifference !== 0) return countDifference;
+        if (a.sessionId === b.sessionId) return 0;
+        return a.sessionId < b.sessionId ? -1 : 1;
+      });
+
+      searchLog.info('ripgrep:complete', {
+        searchId,
+        durationMs: Date.now() - startTime,
+        returnedSessions: resultArray.length,
+        stoppedAtSessionLimit,
+      });
+
+      resolve(resultArray);
+    };
+
     // Set up timeout
     const timeoutHandle = setTimeout(() => {
-      // Platform-aware termination (SIGTERM doesn't exist on Windows)
-      if (process.platform === 'win32') {
-        rg.kill();
-      } else {
-        rg.kill('SIGTERM');
-      }
+      terminateSearchProcess(rg);
       handlerLog.warn('[search] Search timed out after', timeout, 'ms');
     }, timeout);
 
     rg.stdout.on('data', (chunk: Buffer) => {
+      // Keep draining the pipe after termination so Windows can deliver the
+      // child close event, but do not parse any buffered post-limit output.
+      if (stoppedAtSessionLimit) return;
+
       buffer += chunk.toString();
 
       // Process complete lines
@@ -303,6 +346,20 @@ export async function searchSessions(
 
         try {
           const result = JSON.parse(line);
+
+          // ripgrep emits an end event after all matches for a file. Once the
+          // Nth matching Session has been discovered, finish that file so its
+          // matchCount is accurate, then terminate before scanning later files.
+          if (result.type === 'end') {
+            const endedFilePath = result.data?.path?.text;
+            if (stopAfterFilePath && endedFilePath === stopAfterFilePath) {
+              stoppedAtSessionLimit = true;
+              buffer = '';
+              terminateSearchProcess(rg);
+              break;
+            }
+            continue;
+          }
 
           // We only care about 'match' type results
           if (result.type !== 'match') continue;
@@ -333,19 +390,31 @@ export async function searchSessions(
           // Get or create session result
           let sessionResult = results.get(sessionId);
           if (!sessionResult) {
+            // Defensive guard for malformed or unexpectedly unordered output.
+            // Normal sorted ripgrep output stops at the end event for the Nth
+            // matching file before another Session can reach this branch.
+            if (results.size >= sessionLimit) {
+              stoppedAtSessionLimit = true;
+              buffer = '';
+              terminateSearchProcess(rg);
+              break;
+            }
+
             sessionResult = {
               sessionId,
               matchCount: 0,
               matches: [],
             };
             results.set(sessionId, sessionResult);
+
+            if (results.size === sessionLimit) {
+              stopAfterFilePath = filePath;
+            }
           }
 
           sessionResult.matchCount += data.submatches?.length || 1;
 
-          // Only extract snippets for first maxSessions (skip expensive work for the rest)
-          // ripgrep continues to count total sessions for "showing X of Y" display
-          if (results.size <= maxSessions && sessionResult.matches.length < maxMatchesPerSession) {
+          if (sessionResult.matches.length < maxMatchesPerSession) {
             const matchText = data.submatches?.[0]?.match?.text || query;
 
             // Use fast snippet extraction (no JSON.parse)
@@ -371,35 +440,17 @@ export async function searchSessions(
     handlerLog.debug('[search] Running ripgrep:', rgPath, args.join(' '));
 
     rg.on('close', (code) => {
-      clearTimeout(timeoutHandle);
-      // Clear reference if this is still the current search
-      if (currentSearchProcess === rg) {
-        currentSearchProcess = null;
-      }
-
       if (code !== 0 && code !== 1) {
         // Exit code 1 means no matches found (not an error)
         handlerLog.debug('[search] ripgrep exited with code:', code);
       }
 
-      // Convert map to array, sorted by match count (descending)
-      const resultArray = Array.from(results.values());
-      resultArray.sort((a, b) => b.matchCount - a.matchCount);
-
-      searchLog.info('ripgrep:complete', {
-        searchId,
-        durationMs: Date.now() - startTime,
-        totalSessions: results.size,
-        returnedSessions: Math.min(resultArray.length, maxSessions),
-      });
-
-      resolve(resultArray);
+      finish();
     });
 
     rg.on('error', (error) => {
-      clearTimeout(timeoutHandle);
       handlerLog.error('[search] ripgrep error:', error);
-      resolve([]);
+      finish(true);
     });
   });
 }

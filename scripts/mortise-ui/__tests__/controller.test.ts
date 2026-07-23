@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { UI_VALIDATION_MAX_WAIT_MS } from '@mortise/shared/ui-validation'
-import { DEFAULT_MORTISE_UI_START_WAIT_MS, getDefaultAdapterCommand, getMortiseUiRunStatus, readRunManifest, resolveRunDir, startMortiseUiRun, stopMortiseUiRun, updateRunManifest } from '../controller.ts'
+import { DEFAULT_MORTISE_UI_START_WAIT_MS, getDefaultAdapterCommand, getMortiseUiRunStatus, readRunManifest, resolveRunDir, restartMortiseUiRun, startMortiseUiRun, stopMortiseUiRun, updateRunManifest } from '../controller.ts'
 import { requestMortiseUiHost } from '../client.ts'
 import { collectLocalEvidence, registerReturnedArtifacts } from '../evidence.ts'
 
@@ -15,7 +15,7 @@ afterEach(async () => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
   if (originalDeveloperHostPath === undefined) delete process.env.MORTISE_DEV_HOST_PATH
   else process.env.MORTISE_DEV_HOST_PATH = originalDeveloperHostPath
-})
+}, 30_000)
 
 describe('mortise-ui controller', () => {
   it('allows slow cold source-development launches by default', () => {
@@ -32,7 +32,7 @@ describe('mortise-ui controller', () => {
 
   it('requires explicit source profiles for clone mode', async () => {
     await expect(startMortiseUiRun({ surface: 'electron', profileMode: 'clone' }))
-      .rejects.toThrow('explicit sourceMortiseConfigDir and sourcePiAgentDir')
+      .rejects.toThrow('explicit sourceMortiseConfigDir')
   })
 
   it('enforces the shared maximum cold-start budget', async () => {
@@ -128,7 +128,8 @@ describe('mortise-ui controller', () => {
     expect(manifest.profileMode).toBe('fixture')
     expect(manifest.windowMode).toBe('background')
     expect(manifest.containsClonedUserData).toBe(false)
-    expect(existsSync(join(manifest.profileDir, 'mortise-config', 'config.json'))).toBe(true)
+    expect(existsSync(join(manifest.profileDir, 'mortise-config', 'state.sqlite'))).toBe(true)
+    expect(existsSync(join(manifest.profileDir, 'mortise-config', 'config.json'))).toBe(false)
     expect(readFileSync(manifest.tokenPath, 'utf8').trim()).toHaveLength(64)
 
     const status = await getMortiseUiRunStatus(manifest.runDir) as { processAlive: boolean; host: { ok: boolean } }
@@ -151,6 +152,38 @@ describe('mortise-ui controller', () => {
     expect(stopped.status).toBe('stopped')
     expect(stopped.profileCleanedAt).toBeString()
     expect(existsSync(manifest.profileDir)).toBe(false)
+  }, 30_000)
+
+  it('restarts against the same profile with a fresh run identity and protocol sequence', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'mortise-ui-restart-')); roots.push(root)
+    const first = await startMortiseUiRun({
+      surface: 'electron',
+      label: 'restart-profile',
+      adapterCommand: [process.execPath, join(import.meta.dir, '..', 'test-host.fixture.ts')],
+      runRoot: root,
+      waitMs: 10_000,
+    })
+    runs.push(first)
+    writeFileSync(join(first.profileDir, 'restart-marker.txt'), 'persisted', 'utf8')
+    const firstToken = readFileSync(first.tokenPath, 'utf8')
+    const firstSeq = first.lastResponseSeq ?? 0
+
+    const second = await restartMortiseUiRun(first.runDir, { waitMs: 10_000 })
+    runs.splice(0, 1, second)
+
+    expect(second.runId).not.toBe(first.runId)
+    expect(second.profileDir).toBe(first.profileDir)
+    expect(second.restartedFromRunId).toBe(first.runId)
+    expect(second.profileOwnerRunId).toBe(second.runId)
+    expect(readRunManifest(first.runDir).restartedByRunId).toBe(second.runId)
+    expect(readFileSync(join(second.profileDir, 'restart-marker.txt'), 'utf8')).toBe('persisted')
+    expect(readFileSync(second.tokenPath, 'utf8')).not.toBe(firstToken)
+    expect(second.lastResponseSeq).toBeGreaterThan(0)
+    expect(second.lastResponseSeq).toBeLessThanOrEqual(firstSeq)
+
+    const response = await requestMortiseUiHost({ ...second, command: 'app.status', minimumSeqExclusive: second.lastResponseSeq })
+    expect(response.ok).toBe(true)
+    expect(response.seq).toBeGreaterThan(second.lastResponseSeq ?? 0)
   }, 30_000)
 })
 

@@ -28,10 +28,9 @@ import type { LoadedSkill } from '../../shared/types'
 interface SkillInfoPageProps {
   skillSlug: string
   workspaceId: string
-  workingDirectory?: string
 }
 
-export default function SkillInfoPage({ skillSlug, workspaceId, workingDirectory }: SkillInfoPageProps) {
+export default function SkillInfoPage({ skillSlug, workspaceId }: SkillInfoPageProps) {
   const { t } = useTranslation()
   const [skill, setSkill] = useState<LoadedSkill | null>(null)
   const [loading, setLoading] = useState(true)
@@ -47,7 +46,7 @@ export default function SkillInfoPage({ skillSlug, workspaceId, workingDirectory
 
     const loadSkill = async () => {
       try {
-        const skills = await window.electronAPI.getSkills(workspaceId, workingDirectory)
+        const skills = await window.electronAPI.getSkills(workspaceId)
 
         if (!isMounted) return
 
@@ -81,7 +80,7 @@ export default function SkillInfoPage({ skillSlug, workspaceId, workingDirectory
       isMounted = false
       unsubscribe?.()
     }
-  }, [workspaceId, skillSlug, workingDirectory])
+  }, [workspaceId, skillSlug])
 
   // Handle open in finder
   const handleOpenInFinder = useCallback(async () => {
@@ -107,7 +106,7 @@ export default function SkillInfoPage({ skillSlug, workspaceId, workingDirectory
   // Format path to show the skill-relative Pi location.
   const formatPath = (path: string) => {
     const normalizedPath = path.replace(/\\/g, '/')
-    for (const marker of ['/.pi/skills/', '/.pi/agent/skills/']) {
+    for (const marker of ['/.mortise/skills/', '/.mortise/agent/skills/']) {
       const markerIndex = normalizedPath.indexOf(marker)
       if (markerIndex !== -1) {
         return normalizedPath.slice(markerIndex + 1)

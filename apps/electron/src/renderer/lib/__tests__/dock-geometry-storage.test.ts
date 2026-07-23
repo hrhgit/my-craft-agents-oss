@@ -3,6 +3,7 @@ import {
   createDockGeometryStorage,
   type DockGeometryStorageTarget,
 } from '../dock-geometry-storage'
+import { createLayoutPersistenceCoordinator } from '../../components/app-shell/coordinated-layout-client'
 
 function memoryStorage(): DockGeometryStorageTarget & { size(): number } {
   const values = new Map<string, string>()
@@ -60,4 +61,28 @@ describe('dock geometry storage ownership', () => {
 
     expect(persistent.size()).toBe(1)
   })
+
+  it('restores the last coalesced geometry after a window-close boundary', async () => {
+    const persistent = memoryStorage()
+    const first = createDockGeometryStorage<{ revision: number }>(
+      'workspace-a:primary',
+      'primary',
+      { persistent, windowSession: memoryStorage() },
+    )
+    const coordinator = createLayoutPersistenceCoordinator<{ revision: number }>({
+      persist: async geometry => first.write(geometry),
+    })
+    for (let revision = 1; revision <= 100; revision += 1) {
+      coordinator.markDirty({ revision })
+    }
+    await coordinator.flush('window-close')
+
+    const restarted = createDockGeometryStorage<{ revision: number }>(
+      'workspace-a:primary',
+      'primary',
+      { persistent, windowSession: memoryStorage() },
+    )
+    expect(restarted.read({ revision: 0 })).toEqual({ revision: 100 })
+  })
+
 })

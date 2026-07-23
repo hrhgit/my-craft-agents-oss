@@ -1,4 +1,4 @@
-import { MultiWriterStore, openCraftSqliteDatabase } from '../../index.ts'
+import { MultiWriterStore, openMortiseSqliteDatabase } from '../../index.ts'
 
 const [mode, databasePath, writerId, rawCount] = process.argv.slice(2)
 if (!mode || !databasePath || !writerId) {
@@ -44,7 +44,7 @@ if (mode === 'append') {
   const store = await MultiWriterStore.open({ databasePath, writerId, writerVersion: 1 })
   store.close()
 
-  const database = await openCraftSqliteDatabase(databasePath)
+  const database = await openMortiseSqliteDatabase(databasePath)
   database.exec('BEGIN IMMEDIATE')
   database.prepare(`
     INSERT INTO mortise_records

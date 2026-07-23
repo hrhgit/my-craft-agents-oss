@@ -13,6 +13,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import type { UpdateInfo } from '../../shared/types'
+import { hasPlatformCapability } from '@/lib/platform-capabilities'
 
 interface UseUpdateCheckerResult {
   /** Current update info */
@@ -36,6 +37,7 @@ const UPDATE_TOAST_ID = 'update-available'
 
 export function useUpdateChecker(): UseUpdateCheckerResult {
   const { t } = useTranslation()
+  const autoUpdateAvailable = hasPlatformCapability('autoUpdate')
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null)
   // Track if we've shown the toast for this version to avoid duplicates
   const shownToastVersionRef = useRef<string | null>(null)
@@ -83,6 +85,7 @@ export function useUpdateChecker(): UseUpdateCheckerResult {
 
   // Load initial state and check if update ready
   useEffect(() => {
+    if (!autoUpdateAvailable) return
     const checkAndNotify = async (info: UpdateInfo) => {
       if (!info.available || !info.latestVersion) return
       if (info.downloadState !== 'ready') return
@@ -118,10 +121,11 @@ export function useUpdateChecker(): UseUpdateCheckerResult {
       cleanupAvailable()
       cleanupProgress()
     }
-  }, [showUpdateToast, installUpdate])
+  }, [autoUpdateAvailable, showUpdateToast, installUpdate])
 
   // Check for updates manually
   const checkForUpdates = useCallback(async () => {
+    if (!autoUpdateAvailable) return
     try {
       const info = await window.electronAPI.checkForUpdates()
       setUpdateInfo(info)
@@ -142,7 +146,7 @@ export function useUpdateChecker(): UseUpdateCheckerResult {
         description: error instanceof Error ? error.message : 'Unknown error',
       })
     }
-  }, [showUpdateToast, installUpdate])
+  }, [autoUpdateAvailable, showUpdateToast, installUpdate])
 
   return {
     updateInfo,

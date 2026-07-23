@@ -192,13 +192,13 @@ describe('detectConfigFileType', () => {
 
   it('detects skill SKILL.md files', () => {
     const result = detectConfigFileType(
-      `${workspaceRoot}/.pi/skills/commit/SKILL.md`,
+      `${workspaceRoot}/.mortise/skills/commit/SKILL.md`,
       workspaceRoot
     );
     expect(result).not.toBeNull();
     expect(result!.type).toBe('skill');
     expect(result!.slug).toBe('commit');
-    expect(result!.displayFile).toBe('.pi/skills/commit/SKILL.md');
+    expect(result!.displayFile).toBe('.mortise/skills/commit/SKILL.md');
   });
 
   it('detects workspace-level permissions.json', () => {
@@ -211,14 +211,12 @@ describe('detectConfigFileType', () => {
     expect(result!.displayFile).toBe('permissions.json');
   });
 
-  it('detects workspace-level automations.json', () => {
+  it('does not recognize retired workspace-level automations.json', () => {
     const result = detectConfigFileType(
       `${workspaceRoot}/automations.json`,
       workspaceRoot
     );
-    expect(result).not.toBeNull();
-    expect(result!.type).toBe('automations');
-    expect(result!.displayFile).toBe('automations.json');
+    expect(result).toBeNull();
   });
 
   it('returns null for files outside workspace root', () => {
@@ -265,7 +263,7 @@ describe('detectAppConfigFileType', () => {
 
 describe('validateConfigFileContent', () => {
   it('dispatches to skill validator', () => {
-    const detection = { type: 'skill' as const, slug: 'my-skill', displayFile: '.pi/skills/my-skill/SKILL.md' };
+    const detection = { type: 'skill' as const, slug: 'my-skill', displayFile: '.mortise/skills/my-skill/SKILL.md' };
     const content = `---
 name: Test
 description: Test skill
@@ -281,16 +279,6 @@ Content here.
   it('dispatches to permissions validator', () => {
     const detection = { type: 'permissions' as const, displayFile: 'permissions.json' };
     const result = validateConfigFileContent(detection, '{}');
-    expect(result).not.toBeNull();
-    expect(result!.valid).toBe(true);
-  });
-
-  it('dispatches to automations validator', () => {
-    const detection = { type: 'automations' as const, displayFile: 'automations.json' };
-    const result = validateConfigFileContent(detection, JSON.stringify({
-      version: 1,
-      automations: {},
-    }));
     expect(result).not.toBeNull();
     expect(result!.valid).toBe(true);
   });

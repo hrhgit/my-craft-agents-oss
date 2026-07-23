@@ -2087,13 +2087,13 @@ function synthesizeMalformedBodyResponse(
  *
  * `Symbol.for` (global registry) so the marker survives the module being
  * loaded twice in one process (e.g. the CJS bundle AND the TS source bundled
- * into Pi RpcClient). {@link createCraftFetchInterceptor} checks it to stay
+ * into Pi RpcClient). {@link createFetchInterceptor} checks it to stay
  * idempotent — a fetch that already runs the mortise pipeline is never wrapped
  * again.
  */
 const MORTISE_FETCH_MARKER = Symbol.for('mortise.interceptedFetch');
 
-function isCraftInterceptedFetch(fn: unknown): boolean {
+function isMortiseInterceptedFetch(fn: unknown): boolean {
   return typeof fn === 'function' && (fn as unknown as Record<symbol, unknown>)[MORTISE_FETCH_MARKER] === true;
 }
 
@@ -2121,8 +2121,8 @@ function extractFetchUrl(input: unknown): string | undefined {
  * mortise-intercepted. This makes it safe to pass unconditionally — it never
  * double-wraps a fetch that already runs the mortise pipeline.
  */
-export function createCraftFetchInterceptor(baseFetch: typeof fetch): typeof fetch {
-  if (isCraftInterceptedFetch(baseFetch)) {
+export function createFetchInterceptor(baseFetch: typeof fetch): typeof fetch {
+  if (isMortiseInterceptedFetch(baseFetch)) {
     return baseFetch;
   }
   const intercepted = (input: string | URL | Request, init?: RequestInit) =>
@@ -2131,7 +2131,7 @@ export function createCraftFetchInterceptor(baseFetch: typeof fetch): typeof fet
   return intercepted as typeof fetch;
 }
 
-export function resolveCraftToolMetadata(
+export function resolveToolMetadata(
   toolCallOrId: string | { id?: unknown; toolCallId?: unknown },
 ): { intent?: string; displayName?: string } | undefined {
   const rawId = typeof toolCallOrId === 'string'
@@ -2166,10 +2166,10 @@ export function resolveCraftToolMetadata(
   return undefined;
 }
 
-export const toolMetadataResolver = resolveCraftToolMetadata;
+export const toolMetadataResolver = resolveToolMetadata;
 
-export function createCraftToolMetadataResolver(): typeof resolveCraftToolMetadata {
-  return resolveCraftToolMetadata;
+export function createToolMetadataResolver(): typeof resolveToolMetadata {
+  return resolveToolMetadata;
 }
 
 async function interceptedFetchWith(

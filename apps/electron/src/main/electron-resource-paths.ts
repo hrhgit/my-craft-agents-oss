@@ -9,7 +9,6 @@ export interface ElectronResourcePaths {
   messagingExtensionPath: string
   commandDocsPath: string
   bunBinaryPath?: string
-  piRuntimePath: string
   messagingWorkerPath: string
 }
 
@@ -34,7 +33,6 @@ export function resolveElectronResourcePaths(
   const path = platform === 'win32' ? win32 : posix
   const join = path.join
   const executable = platform === 'win32' ? 'bun.exe' : 'bun'
-  const piExecutable = platform === 'win32' ? 'pi.exe' : 'pi'
 
   const appResourcesPath = options.isPackaged
     ? join(options.appPath, 'dist', 'resources')
@@ -56,7 +54,6 @@ export function resolveElectronResourcePaths(
       join(externalResourcesPath, 'vendor', 'bun', executable),
       join(options.appPath, 'vendor', 'bun', executable),
     ].filter(Boolean)),
-    piRuntimePath: join(externalResourcesPath, 'pi-runtime', piExecutable),
     messagingWorkerPath: join(externalResourcesPath, 'messaging-whatsapp-worker', 'worker.cjs'),
   }
 }

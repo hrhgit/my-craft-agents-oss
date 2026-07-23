@@ -33,20 +33,19 @@ mortise-cli run <message> [options]
 | `--output-format` | `text` or `stream-json` (default: `text`) |
 | `--no-cleanup` | Keep session after completion |
 | `--server-entry` | Path to server/index.ts |
-| `--interactive` | Render versioned extension interactions and legacy RemoteUI dialogs in the terminal |
+| `--interactive` | Render versioned extension interactions in the terminal |
 
 ## Pi extension interaction
 
 The `run` command subscribes to the `extensions:EVENT` channel and forwards
-versioned `extension_interaction_request` events and legacy `remoteui:request`
-events from pi extensions to a terminal interaction handler.
+versioned `extension_interaction_request` events from Pi extensions to a
+terminal interaction handler.
 Two modes are supported:
 
 ### Non-interactive mode (default)
 
-When a pi extension requests interaction, the CLI **automatically responds
-with a cancellation**. Versioned interactions receive a structured
-`host-disconnected` response; legacy RemoteUI receives `payload=null`.
+When a Pi extension requests interaction, the CLI **automatically responds
+with a structured `host-disconnected` cancellation**.
 The extension is expected to degrade gracefully (e.g. skip the question, use
 a default, or abort the operation). A one-line notice is written to stderr so
 the user can see that an extension request was auto-cancelled (useful for
@@ -59,21 +58,12 @@ for terminal input that will never come.
 
 When `--interactive` is passed, the CLI renders a terminal dialog for each
 interaction request and waits for the user to respond via stdin. Versioned
-interactions support choice, text, multiline editor, and confirmation fields;
-legacy requests retain the following adapters:
-
-- **`select`** — Lists the options with numeric indices. The user enters a
-  number (or comma-separated numbers when `allowMultiple` is set). If the
-  request allows freeform input or an additional comment, follow-up prompts
-  are shown.
-- **`editor`** — Prompts the user to type multi-line text. An empty line
-  finishes input. If the request ships a `prefill`, the user is asked whether
-  to accept it as-is.
+interactions support choice, text, multiline editor, and confirmation fields.
 
 Interaction details:
 
-- **Ctrl+C** cancels the *current* request only (responds with `null` +
-  `reason="cancelled"`). The session keeps running; press Ctrl+C again (when no
+- **Ctrl+C** cancels the *current* request with a structured `user`
+  cancellation. The session keeps running; press Ctrl+C again (when no
   dialog is on screen) to cancel the whole session.
 - If stdin is **not a TTY** (e.g. piped input), interactive mode automatically
   falls back to the non-interactive auto-cancel behaviour.
@@ -90,9 +80,8 @@ renderer / Chromium window infrastructure. The following tools are therefore
 | `browser_tool` | Strongly depends on the Electron app's built-in Chromium windows (`browser-pane:*` channels). The CLI cannot create, navigate, or snapshot browser panes. See [`docs/browser-tools.md`](../../apps/electron/resources/docs/browser-tools.md). |
 | Other renderer-only tools | Any tool that relies on the Electron renderer process (e.g. rich previews, in-app notification surfaces) is not functional over the CLI. |
 
-Pi extensions that use versioned interaction V1 or legacy RemoteUI work in
-`--interactive` mode, and degrade gracefully in the default non-interactive
-mode.
+Pi extensions that use interaction V1 work in `--interactive` mode and receive
+a structured cancellation in the default non-interactive mode.
 
 ### Independent child-session windows (desktop-only)
 

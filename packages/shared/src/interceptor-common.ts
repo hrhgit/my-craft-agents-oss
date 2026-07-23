@@ -13,6 +13,7 @@ import { existsSync, readFileSync, writeFileSync, renameSync, unlinkSync, append
 import { join } from 'node:path';
 import { CONFIG_DIR } from './config/paths.ts';
 import { readPiMortiseBoolean } from './config/pi-global-config.ts';
+import { getRichToolDescriptions } from './config/storage.ts';
 
 // ============================================================================
 // CONSTANTS
@@ -26,9 +27,6 @@ export const INTERCEPTOR_LOGGING_ENABLED = !IS_PACKAGED;
 
 export const DEBUG = INTERCEPTOR_LOGGING_ENABLED &&
   (process.argv.includes('--debug') || process.env.MORTISE_DEBUG === '1');
-
-/** Config file path for reading settings in the SDK subprocess */
-export const CONFIG_FILE = join(CONFIG_DIR, 'config.json');
 
 /** Session directory — set by env var (subprocess) or setSessionDir() (main process) */
 let _sessionDir: string | null = process.env.MORTISE_SESSION_DIR || null;
@@ -89,50 +87,17 @@ export function debugLog(...args: unknown[]) {
 // ============================================================================
 
 /**
- * Read and cache config.json for the duration of a single request cycle.
- * Multiple interceptor functions can call this without redundant file reads.
- * Cache expires after 100ms to pick up changes between requests.
- */
-let _cachedConfig: Record<string, unknown> | null = null;
-let _cacheTimestamp = 0;
-const CONFIG_CACHE_TTL_MS = 100;
-
-function getInterceptorConfig(): Record<string, unknown> | null {
-  const now = Date.now();
-  if (_cachedConfig && (now - _cacheTimestamp) < CONFIG_CACHE_TTL_MS) return _cachedConfig;
-  try {
-    const content = readFileSync(CONFIG_FILE, 'utf-8');
-    _cachedConfig = JSON.parse(content);
-    _cacheTimestamp = now;
-    return _cachedConfig;
-  } catch {
-    return null;
-  }
-}
-
-/** Reset the config cache. Used by tests to ensure fresh reads after writing config. */
-export function _resetConfigCacheForTesting(): void {
-  _cachedConfig = null;
-  _cacheTimestamp = 0;
-}
-
-/**
  * Check if rich tool descriptions are enabled (adds _intent/_displayName to all tools).
- * Reads from config.json via shared cache — the file is small and this runs once per API request.
- * Defaults to true if config is unreadable or field is not set.
+ * Reads from the shared SQLite-backed global configuration authority.
  */
 export function isRichToolDescriptionsEnabled(): boolean {
-  const config = getInterceptorConfig();
-  if (config?.richToolDescriptions !== undefined) {
-    return config.richToolDescriptions as boolean;
-  }
-  return true;
+  return getRichToolDescriptions();
 }
 
 /**
  * Check if extended prompt cache (1h TTL) is enabled.
  * When enabled, the interceptor upgrades all cache_control blocks from 5m to 1h TTL.
- * Source of truth is ~/.pi/agent/settings.json (`mortise.agent.extendedPromptCache`).
+ * Source of truth is ~/.mortise/agent/settings.json (`mortise.agent.extendedPromptCache`).
  */
 export function isExtendedPromptCacheEnabled(): boolean {
   return readPiMortiseBoolean('extendedPromptCache', false);
@@ -143,7 +108,7 @@ export function isExtendedPromptCacheEnabled(): boolean {
  * When disabled, the interceptor strips the context-1m beta header.
  * Defaults to false — the 1M beta requires Anthropic Tier 4+, so it's opt-in
  * to avoid 400 "Invalid Request" on lower-tier API keys (issue #567).
- * Source of truth is ~/.pi/agent/settings.json (`mortise.agent.enable1MContext`).
+ * Source of truth is ~/.mortise/agent/settings.json (`mortise.agent.enable1MContext`).
  */
 export function is1MContextEnabled(): boolean {
   return readPiMortiseBoolean('enable1MContext', false);

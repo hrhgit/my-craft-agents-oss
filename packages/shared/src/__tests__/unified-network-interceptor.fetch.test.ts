@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
-import { createCraftFetchInterceptor } from '../unified-network-interceptor.ts';
+import { createFetchInterceptor } from '../unified-network-interceptor.ts';
 
-describe('createCraftFetchInterceptor fetch input handling', () => {
+describe('createFetchInterceptor fetch input handling', () => {
   it('passes through fetch-like inputs without a usable URL instead of crashing', async () => {
     const calls: Array<{ input: unknown; init?: RequestInit }> = [];
     const baseFetch = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
@@ -9,7 +9,7 @@ describe('createCraftFetchInterceptor fetch input handling', () => {
       return new Response('ok');
     }) as typeof fetch;
 
-    const wrapped = createCraftFetchInterceptor(baseFetch) as unknown as (
+    const wrapped = createFetchInterceptor(baseFetch) as unknown as (
       input: unknown,
       init?: RequestInit,
     ) => Promise<Response>;

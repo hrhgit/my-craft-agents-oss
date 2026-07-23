@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync } from 'node:fs'
+import { mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import {
   CapabilityReadOnlyError,
@@ -7,14 +7,9 @@ import {
   OperationIdentityConflictError,
   type JsonValue,
 } from '../storage/index.ts'
-import { resolveAutomationsConfigPath } from './resolve-config-path.ts'
-import { validateAutomationsConfig } from './validation.ts'
-import { migrateAutomationsConfigV2 } from './v3-migration.ts'
-import { commitLegacyPromptAutomationMigration, planLegacyPromptAutomationMigration } from './v3-prompt-automation-migration.ts'
 import { AutomationsDocumentV3Schema, CloudEventV1Schema } from './v3-schemas.ts'
 import type {
   AutomationCapabilityResultV1,
-  AutomationMigrationResultV1,
   AutomationRunV1,
   AutomationsDocumentV3,
   CloudEventV1,
@@ -96,7 +91,6 @@ export interface AutomationV3StoreOptions {
   workspaceRootPath: string
   databasePath?: string
   writerId?: string
-  legacyGlobalConfigPath?: string | null
 }
 
 export interface AcceptCloudEventOptions {
@@ -110,7 +104,6 @@ export class AutomationV3Store {
   readonly workspaceRootPath: string
   readonly databasePath: string
   readonly writerId: string
-  private readonly legacyGlobalConfigPath: string | null | undefined
   private readonly store: MultiWriterStore
 
   constructor(options: AutomationV3StoreOptions) {
@@ -119,7 +112,6 @@ export class AutomationV3Store {
     this.databasePath = options.databasePath ?? join(options.workspaceRootPath, '.mortise', DATABASE_NAME)
     mkdirSync(dirname(this.databasePath), { recursive: true })
     this.writerId = options.writerId ?? `automations-${process.pid}-${randomUUID()}`
-    this.legacyGlobalConfigPath = options.legacyGlobalConfigPath
     this.store = MultiWriterStore.openSync({
       databasePath: this.databasePath,
       writerId: this.writerId,
@@ -152,42 +144,12 @@ export class AutomationV3Store {
     return parsed
   }
 
-  initializeOrMigrate(): { document: AutomationsDocumentV3; migration?: AutomationMigrationResultV1 } {
+  initialize(): AutomationsDocumentV3 {
     const current = this.getDocument()
-    if (current) return { document: current }
+    if (current) return current
     this.assertWritable()
-
-    const configPath = resolveAutomationsConfigPath(this.workspaceRootPath)
-    let migration: AutomationMigrationResultV1 | undefined
-    if (existsSync(configPath)) {
-      const raw = JSON.parse(readFileSync(configPath, 'utf8')) as unknown
-      const v3 = AutomationsDocumentV3Schema.safeParse(raw)
-      if (v3.success) {
-        migration = { document: { ...v3.data, revision: 1 } as AutomationsDocumentV3, aliases: {}, diagnostics: [] }
-      } else {
-        const v2 = validateAutomationsConfig(raw)
-        if (!v2.valid || !v2.config) throw new Error(`Cannot migrate invalid automations config: ${v2.errors.join('; ')}`)
-        migration = migrateAutomationsConfigV2(v2.config, { workspaceId: this.workspaceId, initialRevision: 1 })
-      }
-    }
-    const legacyPlan = planLegacyPromptAutomationMigration(this.workspaceId, this.workspaceRootPath, new Date(), {
-      globalConfigPath: this.legacyGlobalConfigPath,
-    })
-    const baseDocument = migration?.document ?? { schemaVersion: 3 as const, revision: 1, definitions: [] }
-    const existingIds = new Set(baseDocument.definitions.map(item => item.id))
-    const legacyDefinitions = legacyPlan.definitions.filter(item => !existingIds.has(item.id))
-    const document: AutomationsDocumentV3 = {
-      ...baseDocument,
-      definitions: [...baseDocument.definitions, ...legacyDefinitions],
-    }
-    if (legacyPlan.sources.length > 0) {
-      migration = {
-        document,
-        aliases: migration?.aliases ?? {},
-        diagnostics: [...(migration?.diagnostics ?? []), ...legacyPlan.diagnostics],
-      }
-    }
-    const operationId = automationIdentity('op_migration', this.workspaceId, migration ?? document)
+    const document: AutomationsDocumentV3 = { schemaVersion: 3, revision: 1, definitions: [] }
+    const operationId = automationIdentity('op_initialize', this.workspaceId, document)
     const result = this.store.mutateRecord({
       capability: 'automations.definitions',
       namespace: this.documentNamespace(),
@@ -199,14 +161,9 @@ export class AutomationV3Store {
     if (result.status === 'conflict') {
       const raced = this.getDocument()
       if (!raced) throw new Error('Automation document initialization conflicted without a current document')
-      if (legacyPlan.definitions.every(item => raced.definitions.some(definition => definition.id === item.id))) {
-        commitLegacyPromptAutomationMigration(this.workspaceRootPath, legacyPlan)
-      }
-      return { document: raced }
+      return raced
     }
-    const committed = AutomationsDocumentV3Schema.parse(result.value) as AutomationsDocumentV3
-    commitLegacyPromptAutomationMigration(this.workspaceRootPath, legacyPlan)
-    return { document: committed, ...(migration ? { migration } : {}) }
+    return AutomationsDocumentV3Schema.parse(result.value) as AutomationsDocumentV3
   }
 
   mutateDocument(input: {

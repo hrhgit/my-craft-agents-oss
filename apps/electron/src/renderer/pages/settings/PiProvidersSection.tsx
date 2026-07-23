@@ -2,13 +2,13 @@
  * PiProvidersSection
  *
  * Embedded section for AiSettingsPage. Manages Pi CLI global providers
- * (~/.pi/agent/models.json) and the default provider/model
- * (~/.pi/agent/settings.json). Lets the user:
+ * (~/.mortise/agent/models.json) and the default provider/model
+ * (~/.mortise/agent/settings.json). Lets the user:
  *   - See all configured providers (key, host, model count, default badge)
  *   - Switch the default provider+model (writes settings.json)
  *   - Add / edit / delete providers (writes models.json; credentials go to auth.json)
  *
- * Reads ~/.pi/agent/ directly via the pi:* RPC channel; does NOT touch
+ * Reads ~/.mortise/agent/ directly via the pi:* RPC channel; does NOT touch
  * ~/.mortise/config.json. Live updates arrive via the GLOBAL_CHANGED
  * broadcast (usePiGlobalConfig subscribes automatically).
  */

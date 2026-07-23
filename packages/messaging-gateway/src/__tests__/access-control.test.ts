@@ -13,8 +13,8 @@ import {
   evaluatePreBindingAccess,
 } from '../access-control'
 import {
-  normalizeBindingConfig,
-  type RawBindingConfig,
+  createBindingConfig,
+  type BindingConfig,
   type IncomingMessage,
   type MessagingConfig,
   type PlatformAccessMode,
@@ -38,7 +38,7 @@ function buildMsg(overrides: Partial<IncomingMessage> = {}): IncomingMessage {
 }
 
 function buildConfig(args: {
-  accessMode?: PlatformAccessMode
+  accessMode: PlatformAccessMode
   owners?: PlatformOwner[]
 }): MessagingConfig {
   return {
@@ -46,16 +46,16 @@ function buildConfig(args: {
     platforms: {
       telegram: {
         enabled: true,
-        ...(args.accessMode ? { accessMode: args.accessMode } : {}),
+        accessMode: args.accessMode,
         ...(args.owners ? { owners: args.owners } : {}),
       },
     },
   }
 }
 
-function bindingWith(overrides: RawBindingConfig = {}) {
+function bindingWith(overrides: Partial<BindingConfig> = {}) {
   return {
-    config: normalizeBindingConfig('telegram', overrides),
+    config: createBindingConfig('telegram', overrides),
   }
 }
 
@@ -111,12 +111,12 @@ describe('evaluatePreBindingAccess', () => {
     expect(verdict.allow).toBe(false)
   })
 
-  it('missing accessMode defaults to "open"', () => {
+  it('an absent Telegram configuration uses the secure owner-only default', () => {
     const verdict = evaluatePreBindingAccess({
       msg: buildMsg({ senderId: STRANGER_ID }),
-      workspaceConfig: buildConfig({}),
+      workspaceConfig: { enabled: false, platforms: {} },
     })
-    expect(verdict.allow).toBe(true)
+    expect(verdict.allow).toBe(false)
   })
 })
 
@@ -178,7 +178,7 @@ describe('evaluateBindingAccess', () => {
     if (!verdict.allow) expect(verdict.reason).toBe('not-owner')
   })
 
-  it('binding "inherit" with workspace "open" allows everyone (legacy behaviour)', () => {
+  it('binding "inherit" with explicitly open workspace allows everyone', () => {
     const verdict = evaluateBindingAccess({
       msg: buildMsg({ senderId: STRANGER_ID }),
       workspaceConfig: buildConfig({ accessMode: 'open' }),
@@ -195,33 +195,6 @@ describe('evaluateBindingAccess', () => {
     })
     expect(verdict.allow).toBe(false)
     if (!verdict.allow) expect(verdict.reason).toBe('bot-sender')
-  })
-})
-
-// ---------------------------------------------------------------------------
-// Migration: legacy bindings (no accessMode field) default to 'open'
-// ---------------------------------------------------------------------------
-
-describe('normalizeBindingConfig migration', () => {
-  it('persisted config without accessMode defaults to "open"', () => {
-    const raw = { responseMode: 'progress', streamResponses: true } as RawBindingConfig
-    const normalized = normalizeBindingConfig('telegram', raw)
-    expect(normalized.accessMode).toBe('open')
-    expect(normalized.allowedSenderIds).toEqual([])
-  })
-
-  it('fresh BindingConfig (undefined) defaults to "inherit"', () => {
-    const normalized = normalizeBindingConfig('telegram')
-    expect(normalized.accessMode).toBe('inherit')
-  })
-
-  it('explicit accessMode is preserved across normalisation', () => {
-    const normalized = normalizeBindingConfig('telegram', {
-      accessMode: 'allow-list',
-      allowedSenderIds: ['42'],
-    })
-    expect(normalized.accessMode).toBe('allow-list')
-    expect(normalized.allowedSenderIds).toEqual(['42'])
   })
 })
 

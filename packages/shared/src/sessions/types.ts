@@ -2,12 +2,12 @@
  * Session Types
  *
  * Unified type definitions for workspace-scoped sessions.
- * Sessions are stored at ~/.pi/agent/sessions/{encoded-cwd}/{timestamp}_{sessionId}.jsonl
+ * Sessions are stored at ~/.mortise/agent/sessions/{encoded-cwd}/{timestamp}_{sessionId}.jsonl
  *
  * Pi Tree JSONL v3 Format (primary):
  * - On-disk 第一行结构: Pi 顶层字段 + `mortise` 子对象（Mortise 扩展字段）
  * - 内部类型拆分为 PiSessionHeader / MortiseSessionMetadata / SessionComputedMetadata
- * - renderer/RPC 兼容 DTO 仍可使用扁平 SessionHeader
+ * - renderer/RPC 当前 DTO 使用扁平 SessionHeader
  * - 序列化层（tree-jsonl.ts）负责扁平 DTO ↔ 嵌套 tree header 转换
  */
 
@@ -18,7 +18,7 @@ import type { PlanModeStateV1, StoredMessage } from '@mortise/core/types';
 /**
  * Mortise session metadata fields that persist to disk (写入 Pi 文件 mortise 子对象).
  * Add new Mortise metadata fields here - they automatically propagate to JSONL
- * read/write via pickCraftSessionMetadata().
+ * read/write via pickMortiseSessionMetadata().
  *
  * IMPORTANT: When adding a new field:
  * 1. Add it to this array
@@ -35,7 +35,7 @@ export const MORTISE_SESSION_METADATA_FIELDS = [
   // Read tracking
   'lastReadMessageId', 'hasUnread',
   // Config
-  'permissionMode', 'previousPermissionMode', 'workingDirectory',
+  'permissionMode', 'previousPermissionMode',
   // Model/Provider
   'model', 'provider', 'thinkingLevel',
   // Sharing
@@ -173,8 +173,6 @@ export interface MortiseSessionMetadata {
   permissionMode?: PermissionMode;
   /** 前一次权限模式（保留 modeTransition 上下文跨重启） */
   previousPermissionMode?: PermissionMode;
-  /** 工作目录（agent 用于 bash 命令和上下文） */
-  workingDirectory?: string;
   /** SDK cwd — 创建时设置一次，永不更改（确保 SDK 能找到 session transcripts） */
   sdkCwd?: string;
 
@@ -186,7 +184,7 @@ export interface MortiseSessionMetadata {
   model?: string;
   /** Pi provider key（session override） */
   provider?: string;
-  /** 思考级别（'off', 'think', 'max'） */
+  /** 思考级别 */
   thinkingLevel?: ThinkingLevel;
 
   // ============================================
@@ -267,7 +265,7 @@ export interface SessionComputedMetadata {
   /** 消息数（列表展示用，免加载 messages） */
   messageCount?: number;
   /** 最后消息角色（列表展示用） */
-  lastMessageRole?: 'user' | 'assistant' | 'plan' | 'tool' | 'error';
+  lastMessageRole?: 'user' | 'assistant' | 'tool' | 'error';
   /** 首条用户消息预览（前 150 字符） */
   preview?: string;
   /** Token 用量统计 */
@@ -284,8 +282,8 @@ export interface SessionComputedMetadata {
 }
 
 /**
- * Flat compatibility DTO exposed to renderer/RPC and older shared/server call
- * sites. New storage/projection code should prefer the split interfaces above.
+ * Flat current DTO exposed to renderer/RPC and shared/server call sites.
+ * New storage/projection code should prefer the split interfaces above.
  */
 export interface SessionHeader
   extends PiSessionHeader, MortiseSessionMetadata, SessionComputedMetadata {}
@@ -296,4 +294,16 @@ export interface SessionHeader
 export interface StoredSession extends SessionHeader {
   messages: StoredMessage[];
   tokenUsage: SessionTokenUsage;
+}
+
+/** Raised when a caller submits a field removed from the current Session contract. */
+export class RemovedSessionFieldError extends Error {
+  readonly code = 'SESSION_FIELD_REMOVED' as const;
+  readonly field: string;
+
+  constructor(field: string) {
+    super(`Session field "${field}" has been removed; workspaceRootPath is the sole working-directory authority`);
+    this.name = 'RemovedSessionFieldError';
+    this.field = field;
+  }
 }

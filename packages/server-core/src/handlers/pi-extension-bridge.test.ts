@@ -95,36 +95,6 @@ describe('Pi extension contribution bridge', () => {
     })
   })
 
-  it('normalizes legacy widgets into revisioned contributions', () => {
-    const payloads: unknown[] = []
-    const sink = ((...args: Parameters<EventSink>) => { payloads.push(args[2]) }) as EventSink
-    const forward = createExtensionEventForwarder(sink, 'workspace', 'session')
-    forward({ type: 'extension_widget', ...route, key: 'legacy', content: ['one', 'two'], placement: 'belowEditor' })
-    const payload = payloads[0] as { type: string; delta: { operation: string; revision: number; contribution: { id: string } } }
-    expect(payload.type).toBe('extension_contribution')
-    expect(payload.delta).toMatchObject({ operation: 'upsert', revision: 1, contribution: { id: 'legacy-widget:legacy' } })
-  })
-
-  it('preserves Pi default placement above the composer', () => {
-    const payloads: unknown[] = []
-    const sink = ((...args: Parameters<EventSink>) => { payloads.push(args[2]) }) as EventSink
-    createExtensionEventForwarder(sink, 'workspace', 'session')({ type: 'extension_widget', ...route, key: 'default', content: ['one'] })
-    expect(payloads[0]).toMatchObject({ delta: { contribution: { surface: 'composer.above' } } })
-  })
-
-  it('removes a legacy widget when Pi sends an empty content array', () => {
-    const payloads: unknown[] = []
-    const sink = ((...args: Parameters<EventSink>) => { payloads.push(args[2]) }) as EventSink
-    const forward = createExtensionEventForwarder(sink, 'workspace', 'session')
-    forward({ type: 'extension_widget', ...route, key: 'legacy', content: ['visible'] })
-    forward({ type: 'extension_widget', ...route, key: 'legacy', content: [] })
-
-    expect(payloads[1]).toMatchObject({
-      type: 'extension_contribution',
-      delta: { operation: 'remove', contributionId: 'legacy-widget:legacy', revision: 2 },
-    })
-  })
-
   it('overrides temporary interaction routing with the trusted host session', () => {
     const payloads: unknown[] = []
     const sink = ((...args: Parameters<EventSink>) => { payloads.push(args[2]) }) as EventSink

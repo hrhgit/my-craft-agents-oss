@@ -30,7 +30,7 @@ export interface BroadcastEventMap {
   [RPC_CHANNELS.permissions.DEFAULTS_CHANGED]: [value: null]
   [RPC_CHANNELS.workspaces.REMOTE_UPDATED]: [data: { workspaceId: string }]
 
-  // Pi global config (~/.pi/agent/) change broadcast
+  // Pi global config (~/.mortise/agent/) change broadcast
   [RPC_CHANNELS.pi.GLOBAL_CHANGED]: []
 
   // Theme broadcasts (global)

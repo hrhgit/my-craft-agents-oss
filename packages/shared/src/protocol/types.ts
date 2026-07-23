@@ -73,6 +73,8 @@ export interface WireError {
 // Error codes
 // ---------------------------------------------------------------------------
 
+export const SESSION_SETTLEMENT_ERROR_CODE = 'SESSION_SETTLEMENT_FAILED' as const
+
 export type TransportErrorCode =
   | 'HANDLER_ERROR'
   | 'CHANNEL_NOT_FOUND'
@@ -86,6 +88,10 @@ export type TransportErrorCode =
   | 'TRANSFER_VERIFICATION_FAILED'
   | 'REQUEST_TIMEOUT'
   | 'CAPABILITY_UNAVAILABLE'
+  | 'SESSION_PERSISTENCE_FAILED'
+  | 'SESSION_PROJECTION_PERSISTENCE_FAILED'
+  | 'SESSION_PUBLICATION_DURABILITY_FAILED'
+  | typeof SESSION_SETTLEMENT_ERROR_CODE
   | 'CLIENT_DISCONNECTED'
   | 'CLIENT_REQUEST_TIMEOUT'
   | 'BROWSER_NO_CAPABLE_CLIENT'
@@ -106,6 +112,10 @@ const KNOWN_ERROR_CODES: ReadonlySet<string> = new Set<TransportErrorCode>([
   'TRANSFER_VERIFICATION_FAILED',
   'REQUEST_TIMEOUT',
   'CAPABILITY_UNAVAILABLE',
+  'SESSION_PERSISTENCE_FAILED',
+  'SESSION_PROJECTION_PERSISTENCE_FAILED',
+  'SESSION_PUBLICATION_DURABILITY_FAILED',
+  SESSION_SETTLEMENT_ERROR_CODE,
   'CLIENT_DISCONNECTED',
   'CLIENT_REQUEST_TIMEOUT',
   'BROWSER_NO_CAPABLE_CLIENT',
@@ -118,6 +128,45 @@ export function isTransportErrorCode(value: unknown): value is TransportErrorCod
   return typeof value === 'string' && KNOWN_ERROR_CODES.has(value)
 }
 
+export interface SessionSettlementFailureData {
+  sessionId: string
+  stage: 'turn-settlement'
+  retryable: true
+  terminal: false
+  outcome: 'accepted-pending-settlement'
+}
+
+/**
+ * The user message is already canonical and must never be submitted again.
+ * Recovery may only retry the host-owned settlement boundary for this Session.
+ */
+export interface SessionSettlementFailure extends WireError {
+  code: typeof SESSION_SETTLEMENT_ERROR_CODE
+  data: SessionSettlementFailureData
+}
+
+export function isSessionSettlementFailure(value: unknown): value is SessionSettlementFailure {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const failure = value as { code?: unknown; message?: unknown; data?: unknown }
+  if (
+    failure.code !== SESSION_SETTLEMENT_ERROR_CODE
+    || typeof failure.message !== 'string'
+    || !failure.data
+    || typeof failure.data !== 'object'
+    || Array.isArray(failure.data)
+  ) {
+    return false
+  }
+
+  const data = failure.data as Record<string, unknown>
+  return typeof data.sessionId === 'string'
+    && data.sessionId.length > 0
+    && data.stage === 'turn-settlement'
+    && data.retryable === true
+    && data.terminal === false
+    && data.outcome === 'accepted-pending-settlement'
+}
+
 /**
  * Sender-side helper for throwing transport errors with a typed `code`.
  *
@@ -127,9 +176,11 @@ export function isTransportErrorCode(value: unknown): value is TransportErrorCod
  */
 export class CodedError extends Error {
   readonly code: TransportErrorCode
-  constructor(code: TransportErrorCode, message: string) {
+  readonly data?: unknown
+  constructor(code: TransportErrorCode, message: string, data?: unknown) {
     super(message)
     this.code = code
+    this.data = data
     this.name = 'CodedError'
   }
 }

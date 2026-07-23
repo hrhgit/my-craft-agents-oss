@@ -578,7 +578,7 @@ export class CredentialManager {
    * 1. The credential file (pi auth.json) can be read and parsed (if it exists)
    * 2. The default Pi provider has valid credentials
    *
-   * Note: credentials are stored as plaintext JSON in ~/.pi/agent/auth.json
+   * Note: credentials are stored as plaintext JSON in ~/.mortise/agent/auth.json
    * (0600 permissions). There is no decryption step; the former
    * `decryption_failed` branch (machine migration detection) is no longer
    * reachable and has been removed.

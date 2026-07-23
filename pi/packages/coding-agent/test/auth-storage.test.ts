@@ -340,25 +340,20 @@ describe("AuthStorage", () => {
 			});
 
 			test("clearConfigValueCache allows command to run again", async () => {
-				const counterFile = join(tempDir, "counter");
-				writeFileSync(counterFile, "0");
-
-				const counterPath = toShPath(counterFile);
-				const command = `!sh -c 'count=$(cat "${counterPath}"); echo $((count + 1)) > "${counterPath}"; echo "key-value"'`;
+				const envName = "PI_AUTH_STORAGE_CACHE_TEST_VALUE";
+				const command = `!node -p "process.env.${envName}"`;
 				writeAuthJson({
 					anthropic: { type: "api_key", key: command },
 				});
 
 				authStorage = AuthStorage.create(authJsonPath);
-				await authStorage.getApiKey("anthropic");
+				process.env[envName] = "first";
+				expect(await authStorage.getApiKey("anthropic")).toBe("first");
 
-				// Clear cache and call again
+				process.env[envName] = "second";
 				clearConfigValueCache();
-				await authStorage.getApiKey("anthropic");
-
-				// Command should have run twice
-				const count = parseInt(readFileSync(counterFile, "utf-8").trim(), 10);
-				expect(count).toBe(2);
+				expect(await authStorage.getApiKey("anthropic")).toBe("second");
+				delete process.env[envName];
 			});
 
 			test("different commands are cached separately", async () => {

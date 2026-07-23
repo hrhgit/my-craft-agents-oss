@@ -720,8 +720,9 @@ export const samplePdfAttachment: FileAttachment = {
 // ============================================================================
 
 export const mockInputCallbacks = {
-  onSubmit: (message: string, attachments?: FileAttachment[]) => {
-    console.log('[Playground] Message submitted:', { message, attachments })
+  onSubmit: async (attempt: import('../components/app-shell/input/composer-submission').ComposerSubmissionAttempt) => {
+    console.log('[Playground] Message submitted:', attempt)
+    return true
   },
 
   onModelChange: (model: string) => {

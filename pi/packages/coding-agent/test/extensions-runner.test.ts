@@ -7,13 +7,27 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
-import { createExtensionRuntime, discoverAndLoadExtensions } from "../src/core/extensions/loader.ts";
+import { createExtensionRuntime, loadExtensions } from "../src/core/extensions/loader.ts";
 import { ExtensionRunner } from "../src/core/extensions/runner.ts";
 import type { ExtensionActions, ExtensionContextActions, ProviderConfig } from "../src/core/extensions/types.ts";
 import { KeybindingsManager, type KeyId } from "../src/core/keybindings.ts";
 import { ModelRegistry } from "../src/core/model-registry.ts";
 import { SessionActivityRegistry } from "../src/core/session-activity-registry.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
+
+async function discoverAndLoadExtensions(_paths: string[], agentDir: string, cwd: string) {
+	const extensionsDir = path.join(agentDir, "extensions");
+	const declaredPaths = fs.existsSync(extensionsDir)
+		? fs.readdirSync(extensionsDir).map((entry) => path.join(extensionsDir, entry))
+		: [];
+	const metadata = new Map(
+		declaredPaths.map((extensionPath, index) => [
+			extensionPath,
+			{ id: `runner-test-${index}`, target: "pi" as const, agentDir },
+		]),
+	);
+	return loadExtensions(declaredPaths, cwd, undefined, undefined, metadata);
+}
 
 describe("ExtensionRunner", () => {
 	let tempDir: string;

@@ -15,7 +15,7 @@ import { ThemeToggle } from './ThemeToggle'
 import { Sidebar } from './Sidebar'
 import { ComponentPreview } from './ComponentPreview'
 import { VariantsSidebar } from './VariantsSidebar'
-import { getCategories, getComponentById, type ComponentVariant } from './registry'
+import type { ComponentVariant } from './registry/types'
 
 const SELECTED_STORAGE_KEY = 'playground-selected-component'
 const VARIANTS_SIDEBAR_KEY = 'playground-variants-sidebar-open'
@@ -47,7 +47,8 @@ const FALLBACK_THEME_OPTIONS = [
 ] as const
 
 export function PlaygroundApp() {
-  const categories = React.useMemo(() => getCategories(), [])
+  const [registry, setRegistry] = React.useState<typeof import('./registry') | null>(null)
+  const categories = React.useMemo(() => registry?.getCategories() ?? [], [registry])
   const {
     workspaceColorTheme,
     effectiveColorTheme,
@@ -59,16 +60,12 @@ export function PlaygroundApp() {
   const scenario = React.useMemo(requestedScenario, [])
   const [presetThemes, setPresetThemes] = React.useState<PresetTheme[]>([])
   const [selectedId, setSelectedId] = React.useState<string | null>(() => {
-    if (scenario.componentId && getComponentById(scenario.componentId)) return scenario.componentId
+    if (scenario.componentId) return scenario.componentId
     // Try to restore from localStorage
     try {
       const stored = localStorage.getItem(SELECTED_STORAGE_KEY)
       if (stored) {
-        // Verify the component still exists
-        const component = getComponentById(stored)
-        if (component) {
-          return stored
-        }
+        return stored
       }
     } catch {
       // Ignore parse errors
@@ -85,6 +82,18 @@ export function PlaygroundApp() {
       return true
     }
   })
+
+  React.useEffect(() => {
+    let active = true
+    void import('./registry').then(module => {
+      if (active) setRegistry(module)
+    })
+    return () => { active = false }
+  }, [])
+
+  React.useEffect(() => {
+    if (registry && selectedId && !registry.getComponentById(selectedId)) setSelectedId(null)
+  }, [registry, selectedId])
 
   React.useEffect(() => {
     const loadThemes = async () => {
@@ -153,7 +162,9 @@ export function PlaygroundApp() {
     }
   }, [variantsSidebarOpen])
 
-  const selectedComponent = selectedId ? (getComponentById(selectedId) ?? null) : null
+  const selectedComponent = selectedId && registry
+    ? (registry.getComponentById(selectedId) ?? null)
+    : null
 
   // Reset props when component changes
   React.useEffect(() => {

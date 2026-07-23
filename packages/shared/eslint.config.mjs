@@ -44,7 +44,7 @@ export default [
     rules: {
       // Prevent direct imports of 'open' package — use openUrl() from utils instead
       'mortise-shared/no-direct-open-import': 'error',
-      // Prevent new raw ~/.pi/agent file access outside documented seams
+      // Prevent new raw ~/.mortise/agent file access outside documented seams
       'mortise-shared/no-raw-pi-file-io': 'error',
 
       // Red line: Pi SDK (@mortise/pi-*) is bottom-layer. Shared/host code must
@@ -72,7 +72,7 @@ export default [
   // Sanctioned seam extensions — files that consume Pi's typed PUBLIC API and are
   // the single place for their domain. These are the goal state, not violations:
   //   - secure-storage.ts: thin wrapper over Pi AuthStorage's mortise.<slug> credential
-  //     namespace (setCraftCredential/getCraftCredential — purpose-built public API).
+  //     namespace (setMortiseCredential/getMortiseCredential — purpose-built public API).
   //     Reimplementing auth.json I/O + locking in mortise would violate the red line's
   //     deeper principle (Pi owns credential storage).
   //   - models-pi.ts: static model/provider catalog (getModels/getProviders) used for

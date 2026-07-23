@@ -706,7 +706,6 @@ export function NavigationProvider({
               }
               const parsedMode = parsed.params.mode ? parsePermissionMode(parsed.params.mode) : undefined
               if (parsedMode) createOptions.permissionMode = parsedMode
-              if (parsed.params.workdir) createOptions.workingDirectory = parsed.params.workdir
               if (parsed.params.model) createOptions.model = parsed.params.model
               if (parsed.params.systemPrompt) createOptions.systemPromptPreset = parsed.params.systemPrompt
               onInputChange?.(draftStorageKey, parsed.params.input)

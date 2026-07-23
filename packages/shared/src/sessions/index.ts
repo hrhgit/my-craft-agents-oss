@@ -4,7 +4,7 @@
  * Public exports for workspace-scoped session management.
  *
  * Sessions are stored in Pi tree JSONL v3 format at
- * ~/.pi/agent/sessions/{encoded-cwd}/{timestamp}_{sessionId}.jsonl.
+ * ~/.mortise/agent/sessions/{encoded-cwd}/{timestamp}_{sessionId}.jsonl.
  */
 
 // Types
@@ -24,6 +24,7 @@ export type {
 export {
   MORTISE_SESSION_METADATA_FIELDS,
   SESSION_COMPUTED_METADATA_FIELDS,
+  RemovedSessionFieldError,
 } from './types.ts';
 
 // Storage functions
@@ -38,7 +39,7 @@ export {
   getSessionPlansPath,
   getPiNativeSessionDir,
   getPiNativeSessionFilePath,
-  ensureSharedPiTreeSessionFile,
+  ensureSharedPiTreeSessionFileAsync,
   ensureAttachmentsDir,
   // ID generation
   generateSessionId,
@@ -57,8 +58,6 @@ export {
   markPendingPlanExecutionDispatched,
   clearPendingPlanExecution,
   getPendingPlanExecution,
-  // Session filtering
-  listActiveSessions,
   // Async persistence queue
   sessionPersistenceQueue,
   // Header metadata signature (for self-triggered event suppression)
@@ -80,13 +79,14 @@ export {
 // Tree JSONL shared session projection (Pi/Mortise unified history format)
 export {
   looksLikeTreeSessionJsonl,
-  getCraftIdFromTreeHeader,
+  getMortiseIdFromTreeHeader,
   readTreeSessionJsonl,
   readTreeSessionMetadata,
   projectTreeSessionProjectionAsStoredSession,
   projectTreeSessionPlanData,
-  writeTreeSessionCraftMetadata,
-  writeCraftSessionOverlay,
+  writeTreeSessionMortiseMetadata,
+  writeTreeSessionMortiseMetadataAsync,
+  writeMortiseSessionOverlayAsync,
   appendPiBranchMessagesViaSessionManager,
   appendStoredMessagesViaPiSessionManager,
 } from './tree-jsonl.ts';
@@ -102,7 +102,7 @@ export type {
 } from './plan-artifact-projection.ts';
 
 // Field utilities
-export { pickCraftSessionMetadata, pickSessionFields } from './utils.ts';
+export { pickMortiseSessionMetadata } from './utils.ts';
 
 // Slug generator utilities
 export {
@@ -118,12 +118,10 @@ export {
 // Session bundle (export/import/dispatch)
 export type {
   SessionBundle,
-  BundleFile,
   BundleBranchInfo,
   DispatchMode,
 } from './bundle.ts';
 export {
   serializeSession,
   validateBundle,
-  MAX_BUNDLE_SIZE_BYTES,
 } from './bundle.ts';

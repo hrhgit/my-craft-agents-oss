@@ -10,17 +10,16 @@
  */
 
 import { existsSync } from 'node:fs';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { AgentEvent } from '@mortise/core/types';
 import type { FileAttachment } from '../utils/files.ts';
 import { createSanitizedEnv } from '../utils/env.ts';
 import { getProxyEnvVars } from '../config/proxy-env.ts';
-import { PI_AGENT_DIR } from '../config/paths.ts';
+import { MORTISE_AGENT_DIR, MORTISE_PROJECT_DIR } from '../config/paths.ts';
 import { isPiModelReference, resolvePiModelReference } from '../config/pi-global-config.ts';
 import {
-  RpcClient as PiRpcClient,
   type PiRuntimeHandle,
   type RpcCapabilities as PiRpcCapabilities,
   type RpcClientEvent as PiRpcClientEvent,
@@ -93,7 +92,6 @@ import {
 import {
   SESSION_BACKEND_TOOL_NAMES,
   SESSION_TOOL_REGISTRY,
-  normalizeSessionToolName,
   type ToolResult as SessionToolResult,
   type TextContent,
 } from '@mortise/session-tools-core';
@@ -131,28 +129,6 @@ import {
   type CoordinationToolResultRequest,
 } from './workspace-coordination-bridge.ts';
 
-/**
- * Convert the renderer's typed RemoteUI payload back to Pi's scalar dialog
- * protocol. Pi select/input/editor requests resolve with a string, while the
- * renderer uses result objects for the generic host-rendered interaction.
- */
-function remoteUIResponseValue(payload: unknown): string {
-  if (!payload || typeof payload !== 'object') return String(payload ?? '');
-
-  const result = payload as {
-    text?: unknown;
-    freeformText?: unknown;
-    selections?: unknown;
-  };
-  if (typeof result.text === 'string') return result.text;
-  if (typeof result.freeformText === 'string') return result.freeformText;
-  if (Array.isArray(result.selections)) {
-    const selections = result.selections.filter((selection): selection is string => typeof selection === 'string');
-    if (selections.length > 0) return selections.join(', ');
-  }
-  return '';
-}
-
 // ============================================================
 // PiAgent Implementation
 // ============================================================
@@ -162,7 +138,6 @@ export const PI_BACKEND_SESSION_TOOL_NAMES = new Set<string>([
   'spawn_session',
 ]);
 
-const PI_RPC_START_TIMEOUT_MS = 15_000;
 const PI_ABORT_ACK_TIMEOUT_MS = 5_000;
 const SETTLED_EXTENSION_INTERACTION_TTL_MS = 5 * 60_000;
 const MAX_SETTLED_EXTENSION_INTERACTIONS = 512;
@@ -211,7 +186,7 @@ const AWS_ENVIRONMENT_AUTH_VARS = [
 
 type PiRpcToolPermissionRequest = Extract<PiRpcClientEvent, { type: 'tool_permission_request' }>;
 type PiRpcToolExecuteRequest = Extract<PiRpcClientEvent, { type: 'tool_execute_request' }>;
-type PiSessionRpcClient = PiRpcClient | PiRuntimeHandle;
+type PiSessionRpcClient = PiRuntimeHandle;
 interface PiCoordinationRpcClient {
   setToolResultHandler(
     handler: ((request: CoordinationToolResultRequest) => Promise<void>) | null,
@@ -269,7 +244,6 @@ export interface PiSpawnChildSessionOptions {
   permissionMode?: PermissionMode;
   thinkingLevel?: ThinkingLevel;
   name?: string;
-  workingDirectory?: string;
   attachments?: Array<{ path: string; name?: string }>;
 }
 
@@ -347,6 +321,23 @@ export class PiAgent extends BaseAgent {
     const waiters = [...this.agentSettledWaiters];
     this.agentSettledWaiters.clear();
     for (const resolve of waiters) resolve();
+  }
+
+  /**
+   * A runtime replacement cannot emit Pi's final agent_settled event after its
+   * subscriptions are removed. Close every Mortise waiter at that same boundary
+   * so the active chat generator cannot remain suspended on a retired runtime.
+   */
+  private settleTurnForRuntimeReplacement(): void {
+    this.resolveAgentSettledWaiters();
+    this.coordinationBridge?.completeTurn();
+    this.eventQueue.complete();
+  }
+
+  private stopRpcClientDetached(reason: string): void {
+    void this.stopRpcClient().catch(error => {
+      this.writePiRuntimeLog('warn', 'host.runtime_detached_cleanup_failed', { reason, error });
+    });
   }
 
   // Error deduplication — suppress identical consecutive errors after a threshold.
@@ -549,41 +540,7 @@ export class PiAgent extends BaseAgent {
     throw new Error(`Pi CLI entrypoint not found. Checked: ${checkedPaths.join('; ')}`);
   }
 
-  private buildRpcArgs(): string[] {
-    const args: string[] = [];
-    const browserExtensionPath = process.env.MORTISE_BROWSER_EXTENSION_PATH;
-    if (browserExtensionPath && existsSync(browserExtensionPath)) {
-      args.push('--extension', browserExtensionPath);
-    }
-    const messagingExtensionPath = process.env.MORTISE_MESSAGING_EXTENSION_PATH;
-    if (messagingExtensionPath && existsSync(messagingExtensionPath)) {
-      args.push('--extension', messagingExtensionPath);
-    }
-    const sessionId = this.config.session?.mortiseId;
-    const branchFromPiSessionFile = this.config.session?.branchFromPiSessionFile;
-    const sessionDir = this.config.session
-      ? getPiNativeSessionDir(this.config.workspace.rootPath, this.config.session.workingDirectory)
-      : undefined;
-
-    if (sessionDir) {
-      args.push('--session-dir', sessionDir);
-    }
-    if (branchFromPiSessionFile) {
-      args.push('--fork', branchFromPiSessionFile);
-    }
-    if (sessionId) {
-      args.push('--session-id', sessionId);
-    }
-    if (this._thinkingLevel) {
-      args.push('--thinking', this._thinkingLevel);
-    }
-    if (this.config.session?.name) {
-      args.push('--name', this.config.session.name);
-    }
-    return args;
-  }
-
-  private getCraftExtensionPaths(): string[] {
+  private getMortiseExtensionPaths(): string[] {
     return [process.env.MORTISE_BROWSER_EXTENSION_PATH, process.env.MORTISE_MESSAGING_EXTENSION_PATH]
       .filter((value): value is string => Boolean(value && existsSync(value)));
   }
@@ -591,7 +548,8 @@ export class PiAgent extends BaseAgent {
   private startRpcClient(): Promise<void> {
     if (this.rpcClientReady) return this.rpcClientReady;
 
-    const ready = this.startRpcClientUnlocked().catch((error) => {
+    const ready = this.startRpcClientUnlocked().catch(async (error) => {
+      await this.stopRpcClient();
       if (this.rpcClientReady === ready) {
         this.rpcClientReady = null;
       }
@@ -601,32 +559,16 @@ export class PiAgent extends BaseAgent {
     return ready;
   }
 
-  private withRpcStartupTimeout(startup: Promise<void>): Promise<void> {
-    let timeout: ReturnType<typeof setTimeout> | null = null;
-    const timeoutPromise = new Promise<never>((_, reject) => {
-      timeout = setTimeout(() => {
-        reject(new Error(`Pi RpcClient startup timed out after ${PI_RPC_START_TIMEOUT_MS}ms`));
-      }, PI_RPC_START_TIMEOUT_MS);
-    });
-
-    return Promise.race([startup, timeoutPromise]).finally(() => {
-      if (timeout) clearTimeout(timeout);
-    });
-  }
-
-  private shouldUseSharedPiHost(runtime: { piAuthProvider?: string }): boolean {
-    if (process.env.PI_GLOBAL_HOST === '0' || process.env.MORTISE_PI_HOST_MODE === 'legacy') return false;
-    if (runtime.piAuthProvider === 'amazon-bedrock') return false;
-    if (this.config.authType === 'environment' || this.config.authType === 'iam_credentials') return false;
-    const processScopedOverrides = Object.keys(this.config.envOverrides ?? {}).filter(
-      (key) => key !== 'MORTISE_WORKSPACE_PATH',
-    );
-    return processScopedOverrides.length === 0;
+  private piHostKey(nodePath: string, cliPath: string, env: Record<string, string | undefined>): string {
+    const environmentFingerprint = createHash('sha256')
+      .update(JSON.stringify(Object.entries(env).sort(([left], [right]) => left.localeCompare(right))))
+      .digest('hex');
+    return `${nodePath}\u0000${cliPath}\u0000${MORTISE_AGENT_DIR}\u0000${environmentFingerprint}`;
   }
 
   private async startRpcClientUnlocked(): Promise<void> {
     const runtime = getBackendRuntime(this.config);
-    const cwd = this.resolvedCwd();
+    const cwd = this.resolvedWorkspaceRoot();
     const cliPath = this.resolvePiCliPath();
     const usesCompiledBinary = basename(cliPath).toLowerCase() === (process.platform === 'win32' ? 'pi.exe' : 'pi');
     const nodePath = usesCompiledBinary ? cliPath : (runtime.paths?.node || process.execPath);
@@ -634,11 +576,6 @@ export class PiAgent extends BaseAgent {
     this.debug(`Starting Pi RpcClient: ${nodePath} ${cliPath}`);
     this.resetRpcErrorDedup();
     this.rpcProcessFailureHandled = false;
-
-    const sessionId = this.config.session?.mortiseId || `agent-${Date.now()}`;
-    const mortiseSessionDir = this.config.session
-      ? getSessionPath(this.config.workspace.rootPath, sessionId)
-      : undefined;
 
     const commandArgs: string[] = [];
 
@@ -653,7 +590,6 @@ export class PiAgent extends BaseAgent {
 
     const piAuth = await this.getPiAuth();
     const awsEnv = this.buildAwsEnv(piAuth, runtime);
-    const rpcArgs = this.buildRpcArgs();
     const pipeStderr = process.env.MORTISE_DEBUG === '1';
 
     this.writePiRuntimeLog('info', 'startup.begin', {
@@ -662,8 +598,6 @@ export class PiAgent extends BaseAgent {
       cwd,
       runtimeProvider: runtime.piAuthProvider,
       authType: this.config.authType,
-      rpcArgs,
-      mortiseSessionDir,
       pipeStderr,
     });
 
@@ -680,110 +614,44 @@ export class PiAgent extends BaseAgent {
         ...createSanitizedEnv(),
         ...getProxyEnvVars(),
         ...awsEnv,
+        ...this.config.envOverrides,
         PI_EXTENSION_TARGET: 'mortise',
         MORTISE_DEBUG: (process.argv.includes('--debug') || process.env.MORTISE_DEBUG === '1') ? '1' : '0',
       },
       pipeStderr,
     };
 
-    let rpcClient: PiSessionRpcClient | null = null;
-    if (this.shouldUseSharedPiHost(runtime)) {
-      try {
-        const sessionDir = this.config.session
-          ? getPiNativeSessionDir(this.config.workspace.rootPath, this.config.session.workingDirectory)
-          : undefined;
-        const runtimeId = this.config.session?.mortiseId ?? `runtime-${Date.now()}`;
-        const lease = await piHostManager.acquire({
-          key: `${nodePath}\u0000${cliPath}\u0000${PI_AGENT_DIR}`,
-          client: clientOptions,
-          runtime: {
-            runtimeId,
-            cwd,
-            agentDir: PI_AGENT_DIR,
-            extensionTarget: 'mortise',
-            extensionPaths: this.getCraftExtensionPaths(),
-            sessionDir,
-            sessionId: this.config.session?.mortiseId,
-            forkFromSessionPath: this.config.session?.branchFromPiSessionFile,
-            uiCapabilities: mortiseRpcUiCapabilities(),
-          },
-        });
-        this.rpcHostLease = lease;
-        this.rpcCapabilities = lease.capabilities;
-        rpcClient = lease.runtime;
-        this.writePiRuntimeLog('info', 'host.runtime.acquired', {
-          runtimeId: lease.runtime.runtimeId,
-          protocolVersion: lease.capabilities.protocolVersion,
-        });
-      } catch (error) {
-        this.writePiRuntimeLog('warn', 'host.fallback', {
-          reason: error instanceof Error ? error.message : String(error),
-        });
-      }
-    }
-
-    if (!rpcClient) {
-      const legacyClient = new PiRpcClient({
-        ...clientOptions,
-        args: rpcArgs,
-        env: {
-          ...clientOptions.env,
-          ...this.config.envOverrides,
-          ...(mortiseSessionDir ? { MORTISE_SESSION_DIR: mortiseSessionDir } : {}),
-          PI_RPC_UI_CAPABILITIES: JSON.stringify(mortiseRpcUiCapabilities()),
-        },
-      });
-      rpcClient = legacyClient;
-      this.rpcClient = legacyClient;
-      this.unsubscribePiEvent = legacyClient.onEvent((event) => this.handlePiEvent(event as unknown as Record<string, unknown>));
-      this.unsubscribePiClientEvent = legacyClient.onClientEvent((event) => this.handlePiClientEvent(event));
-      const startup = legacyClient.start().then(async () => {
-        try {
-          const capabilities = await legacyClient.getCapabilities();
-          this.rpcCapabilities = capabilities;
-          this.debug(
-            `Pi RpcClient capabilities loaded: protocol=${this.rpcCapabilities.protocolVersion} ` +
-            `version=${this.rpcCapabilities.packageVersion}`
-          );
-          this.writePiRuntimeLog('info', 'capabilities.loaded', {
-            protocolVersion: capabilities.protocolVersion,
-            packageVersion: capabilities.packageVersion,
-            commands: capabilities.commands,
-          });
-        } catch (error) {
-          this.writePiRuntimeLog('error', 'capabilities.failed', {
-            error,
-            stderr: legacyClient.getStderr(),
-          });
-          throw new Error(
-            `Pi RpcClient get_capabilities failed. ` +
-            `The Pi process may have exited before the capabilities handshake completed. ` +
-            `Original error: ${error instanceof Error ? error.message : String(error)}`
-          );
-        }
-      });
-      await this.withRpcStartupTimeout(startup).catch(async (error) => {
-        this.writePiRuntimeLog('error', 'startup.failed', {
-          error,
-          stderr: legacyClient.getStderr(),
-        });
-        if (this.rpcClient === legacyClient) {
-          this.rpcCapabilities = null;
-          try { this.unsubscribePiEvent?.(); } catch {}
-          try { this.unsubscribePiClientEvent?.(); } catch {}
-          this.unsubscribePiEvent = null;
-          this.unsubscribePiClientEvent = null;
-          this.rpcClient = null;
-          await legacyClient.stop().catch(() => undefined);
-        }
-        throw error;
-      });
-    } else {
-      this.rpcClient = rpcClient;
-      this.unsubscribePiEvent = rpcClient.onEvent((event) => this.handlePiEvent(event as unknown as Record<string, unknown>));
-      this.unsubscribePiClientEvent = rpcClient.onClientEvent((event) => this.handlePiClientEvent(event));
-      for (const event of this.rpcHostLease?.startupEvents ?? []) this.handlePiClientEvent(event);
-    }
+    const sessionDir = this.config.session
+      ? getPiNativeSessionDir(this.config.workspace.rootPath)
+      : undefined;
+    const runtimeId = this.config.session?.mortiseId ?? `runtime-${Date.now()}`;
+    const lease = await piHostManager.acquire({
+      key: this.piHostKey(nodePath, cliPath, clientOptions.env ?? {}),
+      client: clientOptions,
+      runtime: {
+        runtimeId,
+        cwd,
+        agentDir: MORTISE_AGENT_DIR,
+        projectConfigDir: MORTISE_PROJECT_DIR,
+        extensionTarget: 'mortise',
+        extensionPaths: this.getMortiseExtensionPaths(),
+        sessionDir,
+        sessionId: this.config.session?.mortiseId,
+        forkFromSessionPath: this.config.session?.branchFromPiSessionFile,
+        uiCapabilities: mortiseRpcUiCapabilities(),
+      },
+    });
+    this.rpcHostLease = lease;
+    this.rpcCapabilities = lease.capabilities;
+    const rpcClient = lease.runtime;
+    this.rpcClient = rpcClient;
+    this.unsubscribePiEvent = rpcClient.onEvent((event) => this.handlePiEvent(event as unknown as Record<string, unknown>));
+    this.unsubscribePiClientEvent = rpcClient.onClientEvent((event) => this.handlePiClientEvent(event));
+    for (const event of lease.startupEvents) this.handlePiClientEvent(event);
+    this.writePiRuntimeLog('info', 'host.runtime.acquired', {
+      runtimeId: rpcClient.runtimeId,
+      protocolVersion: lease.capabilities.protocolVersion,
+    });
 
     if (this.rpcClient !== rpcClient) throw new Error('Pi RpcClient startup was superseded');
     const state = await rpcClient.getState();
@@ -792,14 +660,12 @@ export class PiAgent extends BaseAgent {
     this.debug('Pi RpcClient is ready');
     this.writePiRuntimeLog('info', 'startup.ready', {
       piSessionId: this.piSessionId,
-      runtimeId: 'runtimeId' in rpcClient ? rpcClient.runtimeId : 'legacy',
+      runtimeId: rpcClient.runtimeId,
     });
 
-    if ('runtimeId' in rpcClient) {
-      const provider = runtime.piAuthProvider;
-      if (provider && this._model) await rpcClient.setModel(provider, this._model);
-      if (this._thinkingLevel) await rpcClient.setThinkingLevel(this._thinkingLevel as any);
-    }
+    const provider = runtime.piAuthProvider;
+    if (provider && this._model) await rpcClient.setModel(provider, this._model);
+    if (this._thinkingLevel) await rpcClient.setThinkingLevel(this._thinkingLevel as any);
 
     try {
       await rpcClient.setAutoCompaction(true);
@@ -1147,9 +1013,8 @@ export class PiAgent extends BaseAgent {
 
     if (event.type === 'extension_host_capability_declaration') {
       const sessionId = this.config.session?.mortiseId ?? this._sessionId;
-      // Host-bound clients own the runtime identity. Legacy clients do not expose
-      // one, so preserve the Pi wire envelope's runtimeId (usually "default").
-      const runtimeId = this.currentRpcRuntimeId() ?? event.runtimeId ?? `legacy:${sessionId}`;
+      const runtimeId = this.currentRpcRuntimeId();
+      if (!runtimeId) return;
       this.config.onHostCapabilityDeclaration?.({
         version: 1,
         sessionId,
@@ -1161,12 +1026,9 @@ export class PiAgent extends BaseAgent {
     }
 
     if (event.type === 'extension_host_capability_cancel') {
-      this.config.onHostCapabilityCancel?.(
-        event.id,
-        this.currentRpcRuntimeId()
-          ?? event.runtimeId
-          ?? `legacy:${this.config.session?.mortiseId ?? this._sessionId}`,
-      );
+      const runtimeId = this.currentRpcRuntimeId();
+      if (!runtimeId) return;
+      this.config.onHostCapabilityCancel?.(event.id, runtimeId);
       return;
     }
 
@@ -1236,9 +1098,7 @@ export class PiAgent extends BaseAgent {
     const sessionId = this.config.session?.mortiseId ?? this._sessionId;
     // Runtime identity is assigned by the Host client. Never accept an extension-supplied
     // route value here: capability authorization and cleanup depend on this boundary.
-    const runtimeId = 'runtimeId' in client && typeof client.runtimeId === 'string'
-      ? client.runtimeId
-      : event.runtimeId ?? `legacy:${sessionId}`;
+    const runtimeId = client.runtimeId;
     const responseRoute = {
       runtimeId,
       sessionId: event.sessionId ?? sessionId,
@@ -1321,9 +1181,13 @@ export class PiAgent extends BaseAgent {
 
   private extensionEventRoute(extensionId: string, runtimeId?: string): Pick<ExtensionBridgeEvent, 'extensionId' | 'runtimeId' | 'sessionId'> {
     const client = this.rpcClient;
+    const resolvedRuntimeId = runtimeId ?? client?.runtimeId;
+    if (!resolvedRuntimeId) {
+      throw new Error('Pi extension event is missing its global host runtime identity');
+    }
     return {
       extensionId,
-      runtimeId: runtimeId ?? (client && 'runtimeId' in client ? client.runtimeId : 'legacy'),
+      runtimeId: resolvedRuntimeId,
       sessionId: this.config.session?.mortiseId ?? this.piSessionId ?? '',
     };
   }
@@ -1476,63 +1340,6 @@ export class PiAgent extends BaseAgent {
         ...route,
       };
     }
-    if (event.method === 'setWidget') {
-      return {
-        type: 'extension_widget',
-        key: event.widgetKey,
-        content: event.widgetLines,
-        placement: event.widgetPlacement,
-        source: extensionId,
-        ...route,
-      };
-    }
-    if (event.method === 'select') {
-      return {
-        type: 'remoteui_request',
-        requestId: event.id,
-        kind: 'select',
-        title: event.title,
-        options: event.options.map(title => ({ title })),
-        timeout: event.timeout,
-        source: extensionId,
-        ...route,
-      };
-    }
-    if (event.method === 'confirm') {
-      return {
-        type: 'remoteui_request',
-        requestId: event.id,
-        kind: 'confirm',
-        title: event.title,
-        message: event.message,
-        timeout: event.timeout,
-        source: extensionId,
-        ...route,
-      };
-    }
-    if (event.method === 'input') {
-      return {
-        type: 'remoteui_request',
-        requestId: event.id,
-        kind: 'editor',
-        title: event.title,
-        placeholder: event.placeholder,
-        timeout: event.timeout,
-        source: extensionId,
-        ...route,
-      };
-    }
-    if (event.method === 'editor') {
-      return {
-        type: 'remoteui_request',
-        requestId: event.id,
-        kind: 'editor',
-        title: event.title,
-        prefill: event.prefill,
-        source: extensionId,
-        ...route,
-      };
-    }
     if (event.method === 'setTitle') {
       return { type: 'extension_set_title', title: event.title, ...route };
     }
@@ -1594,7 +1401,8 @@ export class PiAgent extends BaseAgent {
     const suppressCompatibilityEvent = this.suppressAbortedTurnEvents
       && eventType !== 'turn_end'
       && eventType !== 'agent_end'
-      && eventType !== 'agent_settled';
+      && eventType !== 'agent_settled'
+      && eventType !== 'pi_user_message_persisted';
     let adaptedEvent = event;
 
     if (eventType === 'tool_execution_start') {
@@ -1697,7 +1505,7 @@ export class PiAgent extends BaseAgent {
       tool_input: input,
     });
 
-    const rootPath = this.config.workspace.rootPath ?? this.workingDirectory;
+    const rootPath = this.workspaceRoot;
     const workspaceSlug = extractWorkspaceSlug(rootPath, this.config.workspace.id);
     const sessionId = this.config.session?.mortiseId || this._sessionId;
     const plansFolderPath = sessionId
@@ -1722,7 +1530,6 @@ export class PiAgent extends BaseAgent {
       workspaceId: workspaceSlug,
       plansFolderPath,
       dataFolderPath,
-      workingDirectory: this.config.session?.workingDirectory,
       permissionManager: this.permissionManager,
       prerequisiteManager: this.prerequisiteManager,
       rtkContext,
@@ -1856,11 +1663,8 @@ export class PiAgent extends BaseAgent {
     toolName: string,
     args: Record<string, unknown>
   ): Promise<{ content: string; isError: boolean }> {
-    // Runtime names are canonical. Normalization accepts persisted legacy aliases.
-    const strippedName = normalizeSessionToolName(toolName) ?? toolName;
-
-    if (SESSION_TOOL_NAMES.has(strippedName)) {
-      return this.executeSessionTool(strippedName, args);
+    if (SESSION_TOOL_NAMES.has(toolName)) {
+      return this.executeSessionTool(toolName, args);
     }
 
     // Unknown tool
@@ -1882,7 +1686,6 @@ export class PiAgent extends BaseAgent {
     this._sessionToolContext = createSessionToolContext({
       sessionId,
       workspacePath,
-      getWorkingDirectory: () => this.config.session?.workingDirectory ?? this.workingDirectory,
       onPlanSubmitted: (planPath: string) => {
         setLastPlanFilePath(sessionId, planPath);
         this.onPlanSubmitted?.(planPath);
@@ -2056,9 +1859,9 @@ export class PiAgent extends BaseAgent {
     const sessionId = this.config.session?.mortiseId;
     if (!this.config.onPiProjectionEvent || !sessionId) return null;
     const client = this.rpcClient;
-    const runtimeId = client && 'runtimeId' in client && typeof client.runtimeId === 'string'
+    const runtimeId = client
       ? `${client.runtimeId}:${this.projectionEpoch}`
-      : `legacy:${sessionId}`;
+      : `pending:${sessionId}:${this.projectionEpoch}`;
     if (!this.projectionBuilder || this.projectionBuilder.runtimeId !== runtimeId) {
       this.projectionBuilder = new PiProjectionBuilder(
         sessionId,
@@ -2132,22 +1935,12 @@ export class PiAgent extends BaseAgent {
   // 扩展桥接：向 Pi RpcClient 发送扩展相关指令
   // ============================================================
 
-  /**
-   * 回复 remoteui:request。payload=null 表示取消。
-   * 由渲染进程通过 IPC → SessionManager → 此方法转发到 Pi。
-   */
-  sendRemoteUIResponse(requestId: string, payload: unknown | null, reason?: 'cancelled' | 'no_remote' | 'disconnected'): boolean {
+  /** Forward a validated versioned interaction response to Pi. */
+  respondToExtensionInteraction(requestId: string, interaction: ExtensionInteractionResponseV1): boolean {
     const client = this.rpcClient;
     if (!client) return false;
     const interactionOwner = this.pendingExtensionInteractions.get(requestId);
     if (interactionOwner) {
-      const interaction: ExtensionInteractionResponseV1 = reason || payload === null
-        ? {
-            schemaVersion: 1,
-            status: 'cancelled',
-            reason: reason === 'disconnected' || reason === 'no_remote' ? 'host-disconnected' : 'user',
-          }
-        : payload as ExtensionInteractionResponseV1;
       const error = validateExtensionInteractionResponseV1(interaction);
       if (error) {
         this.writePiRuntimeLog('warn', 'extension.interaction_response_rejected', {
@@ -2191,25 +1984,14 @@ export class PiAgent extends BaseAgent {
       this.writePiRuntimeLog('debug', 'extension.interaction_duplicate_response_ignored', { requestId });
       return true;
     }
-    if (payload === null || reason) {
-      client.respondToExtensionUI({ type: 'extension_ui_response', id: requestId, cancelled: true });
-    } else if (typeof payload === 'object' && payload && 'confirmed' in payload) {
-      client.respondToExtensionUI({ type: 'extension_ui_response', id: requestId, confirmed: Boolean((payload as { confirmed?: unknown }).confirmed) });
-    } else {
-      client.respondToExtensionUI({
-        type: 'extension_ui_response',
-        id: requestId,
-        value: remoteUIResponseValue(payload),
-      });
-    }
-    return true;
+    return false;
   }
 
   private getCoordinationBridge(): WorkspaceCoordinationBridge {
     if (!this.coordinationBridge) {
       const sessionId = this.config.session?.mortiseId || this._sessionId;
       this.coordinationBridge = new WorkspaceCoordinationBridge({
-        workspaceRoot: this.config.workspace.rootPath ?? this.workingDirectory,
+        workspaceRoot: this.workspaceRoot,
         workspaceId: this.config.workspace.id,
         sessionId,
       });
@@ -2411,7 +2193,7 @@ export class PiAgent extends BaseAgent {
               undefined, // pinnedPreferencesPrompt
               this.config.debugMode,
               this.config.workspace.rootPath,
-              this.config.session?.workingDirectory,
+              this.config.workspace.rootPath,
               this.config.systemPromptPreset,
               'Mortise Backend', // backendName
               getCoAuthorPreference() // respect user's includeCoAuthoredBy preference (#576)
@@ -2691,14 +2473,32 @@ export class PiAgent extends BaseAgent {
       return;
     }
     const settled = this.waitForAgentSettled();
+    let abortTimeout: ReturnType<typeof setTimeout> | null = null;
     void Promise.race([
       Promise.all([client.abort(), settled]),
-      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Pi force-abort settlement timed out')), PI_ABORT_ACK_TIMEOUT_MS)),
-    ]).catch(error => {
-      this.handleRpcError(error);
-      this.resolveAgentSettledWaiters();
-      this.eventQueue.complete();
-    });
+      new Promise<never>((_, reject) => {
+        abortTimeout = setTimeout(
+          () => reject(new Error('Pi force-abort settlement timed out')),
+          PI_ABORT_ACK_TIMEOUT_MS,
+        );
+      }),
+    ])
+      .catch(async error => {
+        this.writePiRuntimeLog('warn', 'chat.force_abort_failed', { error });
+        // A timed-out abort is not a settlement acknowledgment. Retire the
+        // runtime before exposing terminal state so it cannot publish after UI
+        // completion against the replaced Session projection.
+        await this.stopRpcClient();
+        this.resolveAgentSettledWaiters();
+        this.handleRpcError(error);
+      })
+      .finally(() => {
+        if (abortTimeout) clearTimeout(abortTimeout);
+      })
+      .catch(error => {
+        this.writePiRuntimeLog('error', 'chat.force_abort_cleanup_failed', { error });
+        this.settleTurnForRuntimeReplacement();
+      });
   }
 
   /**
@@ -2763,22 +2563,25 @@ export class PiAgent extends BaseAgent {
   }
 
   override setWorkspace(workspace: Workspace): void {
+    this.settleTurnForRuntimeReplacement();
     this.coordinationBridge?.close();
     this.coordinationBridge = null;
     super.setWorkspace(workspace);
     this.piSessionId = null;
     this._sessionToolContext = null;
-    void this.stopRpcClient();
+    this.stopRpcClientDetached('workspace-replaced');
   }
 
   override clearHistory(): void {
     this.piSessionId = null;
-    void this.stopRpcClient();
+    this.settleTurnForRuntimeReplacement();
+    this.stopRpcClientDetached('history-cleared');
     super.clearHistory();
     this.debug('History cleared - next chat will start a new Pi RpcClient');
   }
 
   destroy(): void {
+    this.settleTurnForRuntimeReplacement();
     this.coordinationBridge?.close();
     this.coordinationBridge = null;
     this.stopConfigWatcher();
@@ -2789,15 +2592,12 @@ export class PiAgent extends BaseAgent {
     }
 
     this._sessionToolContext = null;
-    this.resolveAgentSettledWaiters();
     // Pool clients are owned by the main process — don't close them here.
-    void this.stopRpcClient();
+    this.stopRpcClientDetached('agent-destroyed');
     this.debug('PiAgent destroyed');
   }
 
   async disposeForRestart(): Promise<void> {
-    this.coordinationBridge?.close();
-    this.coordinationBridge = null;
     this.stopConfigWatcher();
 
     if (this.config.session?.mortiseId) {
@@ -2805,7 +2605,13 @@ export class PiAgent extends BaseAgent {
     }
 
     this._sessionToolContext = null;
-    await this.stopRpcClient();
+    try {
+      await this.stopRpcClient();
+    } finally {
+      this.settleTurnForRuntimeReplacement();
+      this.coordinationBridge?.close();
+      this.coordinationBridge = null;
+    }
     this.debug('PiAgent disposed for restart');
   }
 
@@ -2813,26 +2619,45 @@ export class PiAgent extends BaseAgent {
    * Reconnect by stopping RpcClient -- next chat() will spawn fresh.
    */
   async reconnect(): Promise<void> {
-    await this.stopRpcClient();
+    try {
+      await this.stopRpcClient();
+    } finally {
+      this.settleTurnForRuntimeReplacement();
+    }
     this.debug('PiAgent reconnected (Pi RpcClient will be restarted on next chat)');
   }
 
   private async stopRpcClient(): Promise<void> {
-    this.coordinationBridge?.releasePending();
-    const client = this.rpcClient;
+    try {
+      this.coordinationBridge?.releasePending();
+    } catch (error) {
+      this.writePiRuntimeLog('warn', 'host.coordination_release_failed', { error });
+    }
     const runtimeId = this.currentRpcRuntimeId();
     if (runtimeId) {
-      this.config.onHostCapabilityRuntimeReleased?.(runtimeId);
-      this.config.onExtensionEvent?.({
-        type: 'extension_contributions_runtime_reset',
-        ...this.extensionEventRoute('pi-runtime', runtimeId),
-      });
+      try {
+        this.config.onHostCapabilityRuntimeReleased?.(runtimeId);
+        this.config.onExtensionEvent?.({
+          type: 'extension_contributions_runtime_reset',
+          ...this.extensionEventRoute('pi-runtime', runtimeId),
+        });
+      } catch (error) {
+        this.writePiRuntimeLog('warn', 'host.runtime_release_callback_failed', { runtimeId, error });
+      }
     }
     const hostLease = this.rpcHostLease;
     this.cancelPendingExtensionInteractions('runtime-disposed');
-    this.unsubscribePiEvent?.();
+    try {
+      this.unsubscribePiEvent?.();
+    } catch (error) {
+      this.writePiRuntimeLog('warn', 'host.event_unsubscribe_failed', { channel: 'agent', error });
+    }
     this.unsubscribePiEvent = null;
-    this.unsubscribePiClientEvent?.();
+    try {
+      this.unsubscribePiClientEvent?.();
+    } catch (error) {
+      this.writePiRuntimeLog('warn', 'host.event_unsubscribe_failed', { channel: 'client', error });
+    }
     this.unsubscribePiClientEvent = null;
     this.rpcClient = null;
     this.rpcHostLease = null;
@@ -2847,18 +2672,11 @@ export class PiAgent extends BaseAgent {
       await hostLease.release().catch(error => {
         this.debug(`Failed to release Pi runtime cleanly: ${error instanceof Error ? error.message : String(error)}`);
       });
-    } else if (client && 'stop' in client) {
-      await client.stop().catch(error => {
-        this.debug(`Failed to stop Pi RpcClient cleanly: ${error instanceof Error ? error.message : String(error)}`);
-      });
     }
   }
 
   private currentRpcRuntimeId(): string | undefined {
-    const client = this.rpcClient;
-    return client && 'runtimeId' in client && typeof client.runtimeId === 'string'
-      ? client.runtimeId
-      : undefined;
+    return this.rpcClient?.runtimeId;
   }
 
   // ============================================================
@@ -2884,8 +2702,9 @@ export class PiAgent extends BaseAgent {
 
     const runtime = await host.openRuntime({
       runtimeId: `automation-isolated-${randomUUID()}`,
-      cwd: this.resolvedCwd(),
-      agentDir: PI_AGENT_DIR,
+      cwd: this.resolvedWorkspaceRoot(),
+      agentDir: MORTISE_AGENT_DIR,
+      projectConfigDir: MORTISE_PROJECT_DIR,
       extensionTarget: 'mortise',
       inMemory: true,
       persistInitialState: false,
@@ -2964,12 +2783,9 @@ export class PiAgent extends BaseAgent {
   // Helpers
   // ============================================================
 
-  /**
-   * Resolve working directory to an absolute path.
-   * BaseAgent stores paths with tilde (~) but Node.js spawn doesn't expand tilde.
-   */
-  private resolvedCwd(): string {
-    const wd = this.workingDirectory;
+  /** Resolve the canonical workspace root for subprocess APIs. */
+  private resolvedWorkspaceRoot(): string {
+    const wd = this.workspaceRoot;
     if (wd.startsWith('~/')) return join(homedir(), wd.slice(2));
     if (wd === '~') return homedir();
     return wd;

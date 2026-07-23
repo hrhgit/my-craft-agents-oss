@@ -1,7 +1,4 @@
 import { describe, expect, it } from 'bun:test'
-import { mkdtempSync, rmSync, writeFileSync } from 'fs'
-import { join } from 'path'
-import { tmpdir } from 'os'
 import type { Stats } from 'fs'
 import {
   validatePathFormat,
@@ -50,27 +47,14 @@ describe('validatePathFormat', () => {
 
 describe('isValidWorkingDirectory', () => {
   it('accepts an existing Unix directory', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'mortise-path-validation-'))
-    try {
-      expect(isValidWorkingDirectory(dir, 'darwin')).toEqual({ valid: true })
-    } finally {
-      rmSync(dir, { recursive: true, force: true })
-    }
+    expect(isValidWorkingDirectory('/workspace', 'darwin', directoryStats)).toEqual({ valid: true })
   })
 
   it('rejects a file path', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'mortise-path-validation-'))
-    const file = join(dir, 'file.txt')
-    writeFileSync(file, 'x')
-
-    try {
-      expect(isValidWorkingDirectory(file, 'darwin')).toEqual({
-        valid: false,
-        reason: `Not a directory: ${file}`,
-      })
-    } finally {
-      rmSync(dir, { recursive: true, force: true })
-    }
+    expect(isValidWorkingDirectory('/workspace/file.txt', 'darwin', fileStats)).toEqual({
+      valid: false,
+      reason: 'Not a directory: /workspace/file.txt',
+    })
   })
 
   it('rejects invalid Windows paths before filesystem checks', () => {

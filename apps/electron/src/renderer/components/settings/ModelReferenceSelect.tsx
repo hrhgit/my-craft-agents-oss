@@ -36,8 +36,8 @@ export function useModelReferenceOptions(
 }
 
 export interface ModelReferenceSelectRowProps {
-  label: React.ReactNode
-  description?: React.ReactNode
+  label: string
+  description?: string
   value?: string
   providers: PiGlobalProviderForDisplay[]
   defaultSlots: PiGlobalDefaultSlot[]

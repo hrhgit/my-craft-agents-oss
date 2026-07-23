@@ -4,7 +4,6 @@ import { tryGetSessionFilePath } from '@mortise/shared/sessions';
 
 export interface SessionSearchRootInput {
   id: string;
-  workingDirectory?: string;
   createdAt?: number;
 }
 
@@ -26,9 +25,8 @@ export function serializeExtensionCommandArgs(
  *
  * Uses tryGetSessionFilePath (no mkdir side effect) so that listing/searching
  * sessions does not create empty bucket directories under
- * ~/.pi/agent/sessions/{encoded-cwd}/ for sessions whose Pi file does not yet
- * exist. The legacy per-session workingDirectory field is accepted only for
- * DTO compatibility; storage helpers route by workspaceRootPath.
+ * ~/.mortise/agent/sessions/{encoded-cwd}/ for sessions whose Pi file does not yet
+ * exist. Storage helpers route only by workspaceRootPath.
  */
 export function collectSessionSearchRoots(
   workspaceRootPath: string,
@@ -37,11 +35,7 @@ export function collectSessionSearchRoots(
   const roots = new Set<string>();
 
   for (const session of sessions) {
-    const sessionFile = tryGetSessionFilePath(
-      workspaceRootPath,
-      session.id,
-      session.workingDirectory,
-    );
+    const sessionFile = tryGetSessionFilePath(workspaceRootPath, session.id);
     if (!sessionFile) continue;
     const root = dirname(sessionFile);
     if (existsSync(root)) {

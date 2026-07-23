@@ -216,7 +216,7 @@ export const RPC_CHANNELS = {
     GET_API_KEY_PROVIDERS: 'pi:getApiKeyProviders',
     GET_PROVIDER_BASE_URL: 'pi:getProviderBaseUrl',
     GET_PROVIDER_MODELS: 'pi:getProviderModels',
-    // Global config (read/write ~/.pi/agent/) — pure Pi + custom provider mode
+    // Global config (read/write ~/.mortise/agent/) — pure Pi + custom provider mode
     GET_GLOBAL_PROVIDERS: 'pi:getGlobalProviders',
     GET_GLOBAL_SETTINGS: 'pi:getGlobalSettings',
     GET_GLOBAL_PROVIDER: 'pi:getGlobalProvider',
@@ -297,14 +297,14 @@ export const RPC_CHANNELS = {
     GET_CATALOG: 'piExtensions:getCatalog',
     PATCH_EXTENSION_CONFIG: 'piExtensions:patchExtensionConfig',
     RELOAD: 'piExtensions:reload',
-    // 逐扩展启停状态（读写 ~/.pi/agent/settings.json 的 extensions.<name>.enabled）
+    // 逐扩展启停状态（读写 ~/.mortise/agent/settings.json 的 extensions.<name>.enabled）
     GET_EXTENSION_STATES: 'piExtensions:getExtensionStates',
     SET_EXTENSION_ENABLED: 'piExtensions:setExtensionEnabled',
   },
   // 扩展事件桥接：Pi RpcClient的扩展事件转发到渲染进程
   extensions: {
     EVENT: 'extensions:event',
-    REMOTEUI_RESPONSE: 'extensions:remoteuiResponse',
+    INTERACTION_RESPONSE: 'extensions:interactionResponse',
     COMMAND_INVOKE: 'extensions:commandInvoke',
     GET_COMMANDS: 'extensions:getCommands',
   },
@@ -350,14 +350,6 @@ export const RPC_CHANNELS = {
   automations: {
     /** Canonical versioned Automations command surface. */
     COMMAND: 'automations:command',
-    GET: 'automations:get',
-    TEST: 'automations:test',
-    SET_ENABLED: 'automations:setEnabled',
-    DUPLICATE: 'automations:duplicate',
-    DELETE: 'automations:delete',
-    GET_HISTORY: 'automations:getHistory',
-    GET_LAST_EXECUTED: 'automations:getLastExecuted',
-    REPLAY: 'automations:replay',
     CHANGED: 'automations:changed',
   },
   resources: {

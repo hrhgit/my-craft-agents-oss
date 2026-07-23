@@ -31,7 +31,7 @@ Mortise GUI 必须跟随 Pi 扩展分发，而不是由 Mortise 按扩展名称�
 - 风险：扩展失联后残留 UI，或重连时旧 revision 覆盖新状态。
 - 风险：声明式 primitive 不够自由，扩展转而依赖私有 Mortise DOM。
 - 回滚触发：贡献协议导致会话不可用、主输入区不可操作或 renderer 崩溃。
-- 回滚动作：关闭统一 `legacyExtensionGui`/native contribution feature gate，清空对应 runtime registry；Mortise 核心对话和通用 RemoteUI 不依赖扩展贡献，始终保留。
+- 回滚动作：停用有问题的扩展贡献并清空对应 runtime registry；Mortise 核心对话始终保留，交互只使用 versioned interaction contract。
 
 ## 5. 当前实现与后续约束
 
@@ -147,7 +147,7 @@ Validation V1 does not enforce referential integrity between `definition.contrib
 
 ## Legacy Isolation And Migration
 
-The extension-specific legacy GUI gate and contribution-renderer ID switches have been removed. Generic RemoteUI dialogs, notifications, title/editor bridges and the widget-to-contribution adapter remain protocol compatibility features. Side Tasks refresh now follows generic parent and known-child session lifecycle events, so it no longer matches extension identities or source names.
+The extension-specific legacy GUI gate, contribution-renderer ID switches, RemoteUI scalar protocol, and widget wire adapter have been removed. Convenience dialog and widget author APIs emit only versioned interaction and contribution events. Side Tasks refresh follows generic parent and known-child session lifecycle events, so it does not match extension identities or source names.
 
 Completed migration inventory:
 

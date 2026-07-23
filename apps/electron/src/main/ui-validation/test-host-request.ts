@@ -25,6 +25,13 @@ export function parseElectronWaitParams(params: Record<string, unknown>): UiVali
   })
 }
 
+export function parseRendererPerformanceDuration(value: unknown): number | null {
+  if (value === undefined) return 1_000
+  return typeof value === 'number' && Number.isFinite(value) && value >= 100 && value <= 5_000
+    ? value
+    : null
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value)
 }

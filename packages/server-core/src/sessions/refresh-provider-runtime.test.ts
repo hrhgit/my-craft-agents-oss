@@ -197,7 +197,7 @@ describe('refreshProviderRuntime', () => {
 
   it('records customModels with the per-model supportsImages flag in the IPC payload', async () => {
     // End-to-end shape check: when the session's connection resolves to a
-    // pi_compat connection with explicit per-model `supportsImages`, the
+    // pi_custom connection with explicit per-model `supportsImages`, the
     // helper must forward that field on `customModels` so the Pi subprocess
     // can re-register the model with `input: ['text', 'image']`.
     const agent = createAgentStub()

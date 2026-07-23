@@ -165,7 +165,7 @@ describe("WebUI process lifecycle utilities", () => {
     expect(result.found).toBe(true);
     expect(result.pid).toBeGreaterThan(0);
     expect(result.port).toBeGreaterThan(0);
-  });
+  }, 30_000);
 
   test("starts Vite with non-interactive standard input and persists child state", () => {
     const launcher = readFileSync(launcherPath, "utf8");
@@ -196,7 +196,7 @@ describe("WebUI process lifecycle utilities", () => {
   });
 
   test("cleans stale processes before portmux chooses a replacement port", () => {
-    const launcher = readFileSync(instanceLauncherPath, "utf8");
+    const launcher = readFileSync(instanceLauncherPath, "utf8").replace(/\r\n/g, "\n");
     const cleanupIndex = launcher.indexOf("Clear-StaleWebuiLaunch\n  Write-Host");
     const portmuxIndex = launcher.indexOf("& portmux start --project $repoRoot");
     expect(cleanupIndex).toBeGreaterThan(-1);

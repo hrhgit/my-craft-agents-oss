@@ -16,7 +16,15 @@ import { type Args, parseArgs } from "./cli/args.ts";
 import { processFileArguments } from "./cli/file-processor.ts";
 import { buildInitialMessage } from "./cli/initial-message.ts";
 import { selectSession } from "./cli/session-picker.ts";
-import { APP_NAME, DISPLAY_VERSION, ENV_SESSION_DIR, expandTildePath, getAgentDir, getPackageDir } from "./config.ts";
+import {
+	APP_NAME,
+	DISPLAY_VERSION,
+	ENV_SESSION_DIR,
+	expandTildePath,
+	getAgentDir,
+	getPackageDir,
+	getProjectConfigDir,
+} from "./config.ts";
 import { type CreateAgentSessionRuntimeFactory, createAgentSessionRuntime } from "./core/agent-session-runtime.ts";
 import {
 	type AgentSessionRuntimeDiagnostic,
@@ -437,7 +445,8 @@ export async function runInteractiveCli(args: string[], options?: InteractiveCli
 	validateForkFlags(parsed);
 	validateSessionIdFlags(parsed);
 
-	const { migratedAuthProviders: migratedProviders, deprecationWarnings } = runMigrations(process.cwd());
+	const projectConfigDir = getProjectConfigDir();
+	const { deprecationWarnings } = runMigrations(process.cwd(), projectConfigDir);
 	time("runMigrations");
 
 	const cwd = process.cwd();
@@ -466,6 +475,7 @@ export async function runInteractiveCli(args: string[], options?: InteractiveCli
 			process.exit(1);
 		}
 		sessionManager.appendSessionInfo(name);
+		await sessionManager.flush();
 	}
 	time("createSessionManager");
 
@@ -477,6 +487,7 @@ export async function runInteractiveCli(args: string[], options?: InteractiveCli
 	const createRuntime: CreateAgentSessionRuntimeFactory = async ({
 		cwd,
 		agentDir,
+		projectConfigDir,
 		sessionManager,
 		sessionStartEvent,
 		deferResourceLoad,
@@ -487,6 +498,7 @@ export async function runInteractiveCli(args: string[], options?: InteractiveCli
 		const services = await createAgentSessionServices({
 			cwd,
 			agentDir,
+			projectConfigDir,
 			authStorage,
 			extensionFlagValues: parsed.unknownFlags,
 			deferResourceLoad,
@@ -583,6 +595,7 @@ export async function runInteractiveCli(args: string[], options?: InteractiveCli
 	const runtime = await createAgentSessionRuntime(createRuntime, {
 		cwd: sessionManager.getCwd(),
 		agentDir,
+		projectConfigDir,
 		sessionManager,
 		deferResourceLoad: true,
 		persistInitialState: false,
@@ -616,7 +629,6 @@ export async function runInteractiveCli(args: string[], options?: InteractiveCli
 
 	const startupBenchmark = isTruthyEnvFlag(process.env.PI_STARTUP_BENCHMARK);
 	const interactiveMode = new InteractiveMode(runtime, {
-		migratedProviders,
 		modelFallbackMessage: runtime.modelFallbackMessage,
 		initialMessage,
 		initialImages,

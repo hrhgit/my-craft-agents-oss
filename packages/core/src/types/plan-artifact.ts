@@ -53,8 +53,6 @@ export interface PlanArtifactV1 {
   finalizedAt?: number;
   executionStartedAt?: number;
   completedAt?: number;
-  /** Read-compatibility marker for historical role=plan messages. */
-  legacy?: boolean;
 }
 
 export type PlanModePhase =
@@ -142,7 +140,7 @@ export function isPlanArtifactV1(value: unknown): value is PlanArtifactV1 {
   if (!isPlanReview(value.review) || !Array.isArray(value.checklist) || !value.checklist.every(isChecklistItem)) return false;
   if (!isOptionalString(value.error) || !isOptionalTimestamp(value.createdAt) || value.createdAt === undefined) return false;
   if (!isOptionalTimestamp(value.finalizedAt) || !isOptionalTimestamp(value.executionStartedAt) || !isOptionalTimestamp(value.completedAt)) return false;
-  if (value.legacy !== undefined && typeof value.legacy !== 'boolean') return false;
+  if ('legacy' in value) return false;
   if (value.models !== undefined) {
     if (!isRecord(value.models) || !isOptionalString(value.models.planner) || !isOptionalString(value.models.reviewer)) return false;
   }
@@ -168,19 +166,4 @@ export function parsePlanArtifactMessageDetails(value: unknown): PlanArtifactMes
 export function parsePlanModeStateMessageDetails(value: unknown): PlanModeStateMessageDetailsV1 | null {
   if (!isRecord(value) || value.schemaVersion !== PLAN_ARTIFACT_SCHEMA_VERSION || !isPlanModeStateV1(value.state)) return null;
   return value as unknown as PlanModeStateMessageDetailsV1;
-}
-
-export function createLegacyPlanArtifact(messageId: string, timestamp: number): PlanArtifactV1 {
-  return {
-    schemaVersion: PLAN_ARTIFACT_SCHEMA_VERSION,
-    kind: 'plan',
-    artifactId: `legacy-${messageId}`,
-    revision: 1,
-    state: 'superseded',
-    review: { status: 'not_requested' },
-    checklist: [],
-    createdAt: timestamp,
-    finalizedAt: timestamp,
-    legacy: true,
-  };
 }

@@ -2,12 +2,8 @@ import { describe, it, expect } from 'bun:test'
 import { groupMessagesByTurn } from '../turn-utils'
 import type { Message } from '@mortise/core'
 
-// F25: SubmitPlan (mcp__session__SubmitPlan) 已废弃，此处 toolName 仅作为
-// 历史兼容测试数据，用于验证 groupMessagesByTurn 对带 plan 注解的工具消息
-// 的分组行为。不应在新代码中引用此工具名。
-
 describe('groupMessagesByTurn plan annotations', () => {
-  it('keeps plan message id and annotations on plan activity payload', () => {
+  it('keeps canonical plan artifact message id and annotations on the assistant response', () => {
     const annotations: NonNullable<Message['annotations']> = [{
       id: 'ann-plan-1',
       schemaVersion: 1,
@@ -32,20 +28,21 @@ describe('groupMessagesByTurn plan annotations', () => {
         timestamp: 1000,
       },
       {
-        id: 'tool-1',
-        role: 'tool',
-        content: 'Submitting plan',
-        timestamp: 1100,
-        toolName: 'mcp__session__SubmitPlan',
-        toolUseId: 'tu-1',
-        toolStatus: 'completed',
-      },
-      {
         id: 'plan-msg-1',
-        role: 'plan',
+        role: 'assistant',
         content: '# Plan\n- Step 1',
         timestamp: 1200,
         annotations,
+        artifact: {
+          schemaVersion: 1,
+          kind: 'plan',
+          artifactId: 'plan-1',
+          revision: 1,
+          state: 'ready',
+          review: { status: 'not_requested' },
+          checklist: [],
+          createdAt: 1200,
+        },
       },
     ]
 
@@ -55,9 +52,8 @@ describe('groupMessagesByTurn plan annotations', () => {
     expect(assistantTurn).toBeDefined()
     if (!assistantTurn || assistantTurn.type !== 'assistant') return
 
-    const planActivity = assistantTurn.activities.find((activity) => activity.type === 'plan')
-    expect(planActivity).toBeDefined()
-    expect(planActivity?.messageId).toBe('plan-msg-1')
-    expect(planActivity?.annotations).toEqual(annotations)
+    expect(assistantTurn.response?.messageId).toBe('plan-msg-1')
+    expect(assistantTurn.response?.annotations).toEqual(annotations)
+    expect(assistantTurn.response?.artifact).toMatchObject({ artifactId: 'plan-1' })
   })
 })

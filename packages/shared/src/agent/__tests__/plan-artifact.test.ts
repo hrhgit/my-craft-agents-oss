@@ -1,10 +1,9 @@
 import { describe, expect, it } from 'bun:test';
-import type { Message, StoredMessage } from '@mortise/core/types';
+import type { Message } from '@mortise/core/types';
 import {
   isPlanArtifactV1,
   isPlanModeStateV1,
   parsePlanArtifactMessageDetails,
-  storedToMessage,
 } from '@mortise/core/types';
 import { applyPlanCustomMessageToRuntime } from '../../sessions/plan-artifact-projection.ts';
 
@@ -37,26 +36,6 @@ describe('plan artifact protocol', () => {
   it('validates session-authoritative plan mode state', () => {
     expect(isPlanModeStateV1({ schemaVersion: 1, phase: 'discussing', updatedAt: 100 })).toBe(true);
     expect(isPlanModeStateV1({ schemaVersion: 1, phase: 'unknown', updatedAt: 100 })).toBe(false);
-  });
-
-  it('normalizes legacy role=plan messages to assistant artifacts', () => {
-    const stored: StoredMessage = {
-      id: 'legacy-message',
-      type: 'plan',
-      content: '# Old plan',
-      timestamp: 123,
-      planPath: 'plans/old.md',
-    };
-
-    const message = storedToMessage(stored);
-    expect(message.role).toBe('assistant');
-    expect(message.content).toBe('# Old plan');
-    expect(message.artifact).toMatchObject({
-      kind: 'plan',
-      artifactId: 'legacy-legacy-message',
-      state: 'superseded',
-      legacy: true,
-    });
   });
 
   it('binds by full assistant content and supersedes the previous ready plan', () => {

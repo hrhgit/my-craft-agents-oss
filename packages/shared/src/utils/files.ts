@@ -1,4 +1,5 @@
 import { closeSync, existsSync, fsyncSync, openSync, readFileSync, statSync, writeFileSync, unlinkSync, mkdtempSync, renameSync } from 'fs';
+import { mkdir, open, rename, rm } from 'node:fs/promises';
 import { extname, basename, resolve, join, relative, dirname } from 'path';
 import { execSync } from 'child_process';
 import { tmpdir } from 'os';
@@ -51,6 +52,22 @@ export function atomicWriteFileSync(filePath: string, data: string): void {
       try { closeSync(fd); } catch {}
     }
     try { unlinkSync(tmpPath); } catch {}
+    throw error;
+  }
+}
+
+export async function atomicWriteFile(filePath: string, data: string): Promise<void> {
+  await mkdir(dirname(filePath), { recursive: true });
+  const tmpPath = `${filePath}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const handle = await open(tmpPath, 'wx');
+  try {
+    await handle.writeFile(data, 'utf8');
+    await handle.sync();
+    await handle.close();
+    await rename(tmpPath, filePath);
+  } catch (error) {
+    await handle.close().catch(() => {});
+    await rm(tmpPath, { force: true }).catch(() => {});
     throw error;
   }
 }

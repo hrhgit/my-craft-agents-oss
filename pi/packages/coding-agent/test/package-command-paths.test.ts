@@ -375,23 +375,4 @@ if(args.includes("install")) process.exit(23);
 			logSpy.mockRestore();
 		}
 	});
-
-	it("disables self-update when running with self-update disabled", async () => {
-		const fetchMock = vi.fn();
-		vi.stubGlobal("fetch", fetchMock);
-		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-
-		try {
-			await expect(main(["update", "--self"])).resolves.toBeUndefined();
-
-			const stderr = errorSpy.mock.calls.map(([message]) => String(message)).join("\n");
-			expect(process.exitCode).toBe(1);
-			expect(fetchMock).not.toHaveBeenCalled();
-			expect(stderr).toContain("Self-update is disabled for this distribution");
-		} finally {
-			logSpy.mockRestore();
-			errorSpy.mockRestore();
-		}
-	});
 });

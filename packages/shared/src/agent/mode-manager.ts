@@ -16,10 +16,10 @@ import { debug } from '../utils/debug.ts';
 import { expandHome, normalizeForComparison, isPathWithinDirectory } from '../utils/paths.ts';
 import {
   getSessionSafeAllowedToolNames,
-  normalizeSessionToolName,
+  SESSION_TOOL_NAMES,
 } from '@mortise/session-tools-core';
 import { FEATURE_FLAGS } from '../feature-flags.ts';
-import { isBrowserToolNameOrAlias } from './browser-tool-names.ts';
+import { isCanonicalBrowserToolName } from './browser-tool-names.ts';
 import type { PermissionsContext, MergedPermissionsConfig } from './permissions-config.ts';
 import {
   validateBashCommand,
@@ -1634,19 +1634,20 @@ export function getPathHint(targetPath: string, plansFolderPath: string, dataFol
 
   // Case: Writing to workspace root instead of session
   // Legacy layout: ~/.mortise/workspaces/{id}/ (missing /sessions/)
-  // Pi layout: ~/.pi/agent/sessions/{encoded-cwd}/ (missing /.mortise/{sessionId}/)
+  // Mortise Agent layout: ~/.mortise/agent/sessions/{encoded-cwd}/
+  // (missing the sidecar /.mortise/{sessionId}/ segment)
   const inMortiseWorkspaceRoot =
     normalizedTarget.includes('/.mortise/workspaces/') && !normalizedTarget.includes('/sessions/');
-  const inPiSessionsBucketRoot =
-    normalizedTarget.includes('/.pi/agent/sessions/') && !normalizedTarget.includes('/.mortise/');
-  if (inMortiseWorkspaceRoot || inPiSessionsBucketRoot) {
+  const inMortiseSessionsBucketRoot =
+    /\/\.mortise\/agent\/sessions\/[^/]+\/?$/.test(normalizedTarget);
+  if (inMortiseWorkspaceRoot || inMortiseSessionsBucketRoot) {
     return 'Hint: Write to the session plans or data folder, not the workspace root.';
   }
 
   // Case: Writing outside known session storage entirely
-  // Valid writes live under either ~/.mortise/ (legacy) or
-  // ~/.pi/agent/sessions/.../.mortise/{sessionId}/ (Pi sidecar layout).
-  if (!normalizedTarget.includes('/.mortise/') && !normalizedTarget.includes('/.pi/agent/sessions/')) {
+  // Valid writes live under the Mortise config root, including the
+  // agent/sessions/.../.mortise/{sessionId}/ sidecar layout.
+  if (!normalizedTarget.includes('/.mortise/')) {
     return 'Hint: Files must be written to the session plans or data folder. Use plansFolderPath or dataFolderPath from <session_state>.';
   }
 
@@ -1735,9 +1736,8 @@ export function shouldAllowToolInMode(
     }
   }
 
-  // Browser tool aliases (legacy browser_open/browser_snapshot/...)
-  // are normalized centrally to avoid drift across permission checks.
-  if (isBrowserToolNameOrAlias(toolName)) {
+  // The built-in browser exposes one exact host-tool identity.
+  if (isCanonicalBrowserToolName(toolName)) {
     return { allowed: true };
   }
 
@@ -1892,14 +1892,13 @@ export function shouldAllowToolInMode(
     };
   }
 
-  // Session host tools use canonical names; legacy prefixed names remain readable.
-  const sessionToolName = normalizeSessionToolName(toolName);
-  if (sessionToolName) {
+  // Session host tools use exact canonical names.
+  if (SESSION_TOOL_NAMES.has(toolName)) {
     const safeAllowedSessionTools = getSessionSafeAllowedToolNames({
       includeDeveloperFeedback: FEATURE_FLAGS.developerFeedback,
     });
 
-    if (safeAllowedSessionTools.has(sessionToolName)) {
+    if (safeAllowedSessionTools.has(toolName)) {
       return { allowed: true };
     }
 

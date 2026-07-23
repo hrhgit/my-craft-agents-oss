@@ -498,6 +498,12 @@ export function usesPublishedUpdateChannel(): boolean {
 // e.g., PI_CODING_AGENT_DIR or TAU_CODING_AGENT_DIR
 export const ENV_AGENT_DIR = `${APP_NAME.toUpperCase()}_CODING_AGENT_DIR`;
 export const ENV_SESSION_DIR = `${APP_NAME.toUpperCase()}_CODING_AGENT_SESSION_DIR`;
+export const ENV_PROJECT_CONFIG_DIR = `${APP_NAME.toUpperCase()}_CODING_AGENT_PROJECT_DIR`;
+
+/** Get the project-local config directory name for this process. */
+export function getProjectConfigDir(): string {
+	return process.env[ENV_PROJECT_CONFIG_DIR]?.trim() || CONFIG_DIR_NAME;
+}
 
 export function expandTildePath(path: string): string {
 	return normalizePath(path);

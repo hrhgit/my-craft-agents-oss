@@ -7,7 +7,6 @@ import { ActiveOptionBadges } from '../ActiveOptionBadges'
 import { InputContainer } from './InputContainer'
 import { InputErrorBoundary } from './InputErrorBoundary'
 import { useOptionalAppShellContext } from '@/context/AppShellContext'
-import { RemoteUIComposer } from '@/components/extensions/RemoteUIModal'
 import { ExtensionInteractionComposer } from '@/components/extensions/ExtensionInteractionComposer'
 
 interface ChatInputZoneProps {
@@ -42,8 +41,8 @@ export function ChatInputZone({
   const appShellContext = useOptionalAppShellContext()
   const shouldShowOptionBadges = showOptionBadges ?? !compactMode
   const inputResetKey = `${sessionId}::${inputProps.structuredInput?.type ?? 'freeform'}`
-  const remoteUIRequest = appShellContext?.remoteUIRequest?.sessionId === sessionId
-    ? appShellContext.remoteUIRequest
+  const extensionInteraction = appShellContext?.extensionInteraction?.sessionId === sessionId
+    ? appShellContext.extensionInteraction
     : null
 
   const handleClearDraft = React.useCallback(() => {
@@ -77,15 +76,10 @@ export function ChatInputZone({
         </div>
       )}
 
-      {remoteUIRequest?.type === 'extension_interaction_request' && appShellContext?.respondRemoteUI ? (
+      {extensionInteraction && appShellContext?.respondToExtensionInteraction ? (
         <ExtensionInteractionComposer
-          event={remoteUIRequest}
-          onRespond={appShellContext.respondRemoteUI}
-        />
-      ) : remoteUIRequest?.type === 'remoteui_request' && appShellContext?.respondRemoteUI ? (
-        <RemoteUIComposer
-          request={remoteUIRequest}
-          onRespond={appShellContext.respondRemoteUI}
+          event={extensionInteraction}
+          onRespond={appShellContext.respondToExtensionInteraction}
         />
       ) : (
         <InputErrorBoundary
@@ -98,7 +92,6 @@ export function ChatInputZone({
             compactMode={compactMode}
             permissionMode={permissionMode}
             onPermissionModeChange={onPermissionModeChange}
-            sessionFolderPath={sessionFolderPath}
             sessionId={sessionId}
           />
         </InputErrorBoundary>

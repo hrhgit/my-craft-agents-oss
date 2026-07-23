@@ -1,17 +1,17 @@
 /**
- * ConfigStore — workspace-scoped messaging config.json persistence.
+ * ConfigStore — workspace-scoped messaging configuration persistence.
  *
- * Stored at `{storageDir}/config.json`. Shape is `MessagingConfig`.
+ * Stored in `{storageDir}/state.sqlite`. Shape is `MessagingConfig`.
  */
 
 import { DEFAULT_MESSAGING_CONFIG, type MessagingConfig, type MessagingLogger } from './types'
-import { JsonFileStore, NOOP_LOGGER } from './json-file-store'
+import { NOOP_LOGGER, SqliteRecordStore } from './sqlite-record-store'
 
-export class ConfigStore extends JsonFileStore<MessagingConfig> {
+export class ConfigStore extends SqliteRecordStore<MessagingConfig> {
   private config: MessagingConfig
 
   constructor(storageDir: string, logger: MessagingLogger = NOOP_LOGGER) {
-    super(storageDir, 'config.json', logger)
+    super(storageDir, 'config', logger)
     this.config = this.load()
   }
 
@@ -28,7 +28,7 @@ export class ConfigStore extends JsonFileStore<MessagingConfig> {
       },
     }
     this.config = next
-    this.saveFile(this.config)
+    this.saveRecord(this.config)
     return this.get()
   }
 
@@ -37,7 +37,7 @@ export class ConfigStore extends JsonFileStore<MessagingConfig> {
   // -------------------------------------------------------------------------
 
   private load(): MessagingConfig {
-    const parsed = this.loadFile()
+    const parsed = this.loadRecord()
     if (!parsed) {
       return { ...DEFAULT_MESSAGING_CONFIG, platforms: {} }
     }

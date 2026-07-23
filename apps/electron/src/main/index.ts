@@ -95,7 +95,7 @@ function redactBrowserUrl(value: string): string {
 import { join, delimiter } from 'path'
 import { existsSync, readFileSync } from 'fs'
 import { RPC_CHANNELS } from '@mortise/shared/protocol'
-import { SessionManager, setSessionPlatform, setSessionRuntimeHooks } from '@mortise/server-core/sessions'
+import { SessionManager, setSessionPlatform, setSessionRuntimeHooks, type SessionBackendFactory } from '@mortise/server-core/sessions'
 import { createAutomationWorkspaceCapabilityProvider, createBrowserCommandProvider, createBrowserControlProvider, createBrowserOperationsProvider, createBrowserProvider, createFilePreviewProvider, createFilesProvider, createMessagingSessionCapabilityProvider, createSessionShareCapabilityProvider, createSessionTransferCapabilityProvider, createSystemNotificationProvider, getWorkspaceAllowedDirs, validateFilePath } from '@mortise/server-core'
 import { executeAutomationWorkspaceOperationV1 } from '@mortise/server-core/handlers/rpc/automations'
 import { registerAutomationWorkspaceRpcHandlers } from '@mortise/server-core/handlers'
@@ -124,18 +124,19 @@ import { routes } from '../shared/routes'
 import { LayoutCoordinator } from './layout-coordinator'
 import { loadWindowState, saveWindowState } from './window-state'
 import { getWorkspaces, getWorkspaceByNameOrId, loadStoredConfig, addWorkspace, saveConfig, CONFIG_DIR } from '@mortise/shared/config'
+import { MORTISE_AGENT_DIR } from '@mortise/shared/config/paths'
 import { getDefaultWorkspacesDir } from '@mortise/shared/workspaces'
 import { initializeDocs } from '@mortise/shared/docs'
 import { ensureDefaultPermissions } from '@mortise/shared/agent/permissions-config'
 import { ensureToolIcons, ensurePresetThemes } from '@mortise/shared/config'
-import { setBundledAssetsRoot, writeRuntimeLog } from '@mortise/shared/utils'
+import { errorMessage, flushRuntimeLogs, flushRuntimeLogsSync, setBundledAssetsRoot, writeRuntimeLog } from '@mortise/shared/utils'
 import { initializeBackendHostRuntime } from '@mortise/shared/agent/backend'
 import { setPowerShellValidatorRoot } from '@mortise/shared/agent'
 import { handleDeepLink } from './deep-link'
 import { BrowserPaneManager } from './browser-pane-manager'
 import { createBrowserCapabilityAdapter } from './browser-capability-adapter'
 import { registerThumbnailScheme, registerThumbnailHandler } from './thumbnail-protocol'
-import log, { isDebugMode, mainLog, getLogFilePath, getMessagingGatewayLogFilePath, messagingGatewayLog, autoUpdateLog } from './logger'
+import log, { isDebugMode, mainLog, getLogFilePath, getMessagingGatewayLogFilePath, messagingGatewayLog, autoUpdateLog, flushDedicatedLogs, flushDedicatedLogsSync } from './logger'
 import { setPerfEnabled, enableDebug } from '@mortise/shared/utils'
 import { initNotificationService, initBadgeIcon, initInstanceBadge, updateBadgeCount, showNotification } from './notifications'
 import { setAutoUpdateEventSink, isUpdating, setBeforeUpdateQuitHook } from './auto-update'
@@ -149,8 +150,13 @@ process.env.MORTISE_PROCESS_ROLE ??= 'electron-main'
 process.env.MORTISE_BACKEND_KIND ??= 'electron'
 process.env.MORTISE_PRODUCT_VERSION ??= app.getVersion()
 process.env.MORTISE_BUILD_ID ??= process.env.MORTISE_UI_BUILD_ID ?? `${app.isPackaged ? 'packaged' : 'source'}:${app.getVersion()}`
+process.env.PI_CODING_AGENT_DIR = MORTISE_AGENT_DIR
 writeRuntimeLog('info', { scope: 'process', event: 'started', data: { argv0: process.argv0 } })
-process.once('exit', code => writeRuntimeLog('info', { scope: 'process', event: 'finished', data: { exitCode: code } }))
+process.once('exit', code => {
+  writeRuntimeLog('info', { scope: 'process', event: 'finished', data: { exitCode: code } })
+  flushDedicatedLogsSync()
+  flushRuntimeLogsSync()
+})
 
 if (__MORTISE_UI_VALIDATION_BUILD__ && process.env.MORTISE_UI_TEST_HOST === '1' && ((!app.isPackaged && process.env.NODE_ENV !== 'production') || isPackagedDeveloperHost)) {
   const isolatedElectronData = process.env.MORTISE_UI_ELECTRON_USER_DATA_DIR
@@ -228,7 +234,7 @@ if (isDebugMode) {
   if (!bundledUvExists) {
     mainLog.warn('Bundled uv binary missing, CLI document tools may fail unless uv is available on PATH.', {
       expectedUvPath: uvBinary,
-      usingCraftUv: process.env.MORTISE_UV,
+      usingMortiseUv: process.env.MORTISE_UV,
     })
   }
 
@@ -618,13 +624,26 @@ app.whenReady().then(async () => {
       }
     })
 
+    let uiValidationSessionBackend: SessionBackendFactory | undefined
     if (__MORTISE_UI_VALIDATION_BUILD__) {
-      const { installUiValidationStateBridge } = await import('./ui-validation.dev')
+      const { installSessionValidationBackend, installUiValidationStateBridge } = await import('./ui-validation.dev')
       installUiValidationStateBridge({
         enabled: process.env.MORTISE_UI_TEST_HOST === '1',
         isPackaged: app.isPackaged,
         allowPackagedDevHost: __MORTISE_DEV_HOST_BUILD__,
       })
+
+      const profileMode = process.env.MORTISE_UI_PROFILE_MODE
+      const isolatedElectronData = process.env.MORTISE_UI_ELECTRON_USER_DATA_DIR
+      const isApprovedValidationRuntime = process.env.MORTISE_UI_TEST_HOST === '1'
+        && !isHeadless
+        && ((!app.isPackaged && process.env.NODE_ENV !== 'production') || isPackagedDeveloperHost)
+      const isIsolatedValidationProfile = (profileMode === 'fixture' || profileMode === 'isolated')
+        && !!isolatedElectronData
+        && app.getPath('userData') === isolatedElectronData
+      if (isApprovedValidationRuntime && isIsolatedValidationProfile) {
+        uiValidationSessionBackend = installSessionValidationBackend()
+      }
     }
 
     // Dialog bridge — preload capability handlers use ipcRenderer.invoke to
@@ -772,7 +791,9 @@ app.whenReady().then(async () => {
           setImageProcessor(p.imageProcessor)
         },
         createSessionManager: () => {
-          const sm = new SessionManager()
+          const sm = new SessionManager(uiValidationSessionBackend
+            ? { createSessionBackend: uiValidationSessionBackend }
+            : {})
           if (isHeadless) return sm
           sm.setBrowserPaneManager(browserPaneManager!)
           sm.setCapabilityPrompt(async (request) => {
@@ -918,8 +939,6 @@ app.whenReady().then(async () => {
         bindRpcServer: (sm, server) => sm.setRpcServer(server),
         createHandlerDeps: ({ sessionManager: sm, platform: p }) => {
           // The messaging handle is built here because it needs sessionManager.
-          // The WS publisher is attached after bootstrapServer resolves (via
-          // handle.setPublisher) because wsServer isn't available yet.
           messagingHandle = createMessagingBootstrap({
             sessionManager: sm,
             credentialManager: getCredentialManager(),
@@ -1038,8 +1057,35 @@ app.whenReady().then(async () => {
             tokens: automationIngressTokens,
           })
         },
-        setSessionEventSink: (sm, sink) => sm.setEventSink(sink),
+        setSessionEventSink: (sm, sink) => {
+          sm.setEventSink(messagingHandle ? messagingHandle.wrapSink(sink) : sink)
+        },
         initializeSessionManager: (sm) => sm.initialize(),
+        initializeRuntime: async ({ server }) => {
+          for (const workspace of getWorkspaces()) {
+            if (!workspace.remoteServer) automationIngressTokens.ensure(workspace.id)
+          }
+          if (!messagingHandle) {
+            throw new Error('Messaging handle was not constructed in createHandlerDeps')
+          }
+          messagingHandle.setPublisher(server.push.bind(server))
+          await messagingHandle.initializeWorkspaces(
+            getWorkspaces().filter(workspace => !workspace.remoteServer).map(workspace => workspace.id),
+          )
+          if (messagingHandle.registry.size > 0) {
+            mainLog.info(`[messaging] Fan-out sink active for ${messagingHandle.registry.size} workspace(s)`)
+          }
+        },
+        cleanupRuntime: async () => {
+          await messagingHandle?.dispose()
+        },
+        cleanupSessionManager: async (sm) => {
+          try {
+            await sm.flushAllSessions()
+          } finally {
+            await sm.cleanup()
+          }
+        },
         initModelRefreshService: () => initModelRefreshService(async (slug: string) => {
           const { getCredentialManager } = await import('@mortise/shared/credentials')
           const manager = getCredentialManager()
@@ -1069,42 +1115,9 @@ app.whenReady().then(async () => {
       sessionManager = instance.sessionManager
       moduleSink = instance.wsServer.push.bind(instance.wsServer)
       moduleClientResolver = resolveClientId
-      for (const workspace of getWorkspaces()) {
-        if (!workspace.remoteServer) automationIngressTokens.ensure(workspace.id)
-      }
       layoutCoordinator?.setChangedHandler(layout => {
         moduleSink?.(RPC_CHANNELS.layout.CHANGED, { to: 'workspace', workspaceId: layout.workspaceId }, layout)
       })
-
-      // -----------------------------------------------------------------------
-      // Messaging Gateway — attach the WS publisher, init local workspaces,
-      // install the fan-out event sink. The handle was created inside
-      // createHandlerDeps so the registry could be wired into HandlerDeps.
-      // -----------------------------------------------------------------------
-      try {
-        if (!messagingHandle) {
-          throw new Error('Messaging handle was not constructed in createHandlerDeps')
-        }
-
-        messagingHandle.setPublisher(instance.wsServer.push.bind(instance.wsServer))
-
-        // Skip remote-owned workspaces — messaging runs on the remote server.
-        const localWorkspaceIds = getWorkspaces()
-          .filter((ws) => !ws.remoteServer)
-          .map((ws) => ws.id)
-        await messagingHandle.initializeWorkspaces(localWorkspaceIds)
-
-        // Compose fan-out event sink: RPC push + messaging gateway dispatch.
-        // Always install — this lets workspaces enable messaging at runtime
-        // without a process restart.
-        const baseSink = instance.wsServer.push.bind(instance.wsServer)
-        instance.sessionManager.setEventSink(messagingHandle.wrapSink(baseSink))
-        if (messagingHandle.registry.size > 0) {
-          mainLog.info(`[messaging] Fan-out sink active for ${messagingHandle.registry.size} workspace(s)`)
-        }
-      } catch (err) {
-        mainLog.error('[messaging] Gateway initialization failed:', err)
-      }
 
       // IPC handlers — preload uses sendSync to get WS connection details
 
@@ -1783,6 +1796,18 @@ app.on('before-quit', async (event) => {
     {
       name: 'server-lock',
       run: () => releaseServerLock(),
+    },
+    {
+      name: 'layout-flush',
+      run: () => layoutCoordinator?.flush(),
+    },
+    {
+      name: 'dedicated-logs',
+      run: () => flushDedicatedLogs(),
+    },
+    {
+      name: 'runtime-logs',
+      run: () => flushRuntimeLogs(),
     },
   ], (name, error) => {
     mainLog.error(`[quit] Cleanup failed (${name}); continuing exit`, error)

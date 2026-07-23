@@ -1,7 +1,7 @@
 /**
  * Pi Credential Store - pi auth.json wrapper
  *
- * 凭证统一存储在 ~/.pi/agent/auth.json 的 mortise.<slug> 命名空间。此模块为
+ * 凭证统一存储在 ~/.mortise/agent/auth.json 的 mortise.<slug> 命名空间。此模块为
  * auth.json 的 thin wrapper，保留对外方法签名以兼容调用方。
  *
  * 设计要点：
@@ -13,7 +13,7 @@
  *   因此 mortise 可以用自定义 envelope 无损存储任意 StoredCredential。
  *
  * Slug 命名约定（沿用 credentialIdToAccount 的 `::` 分隔格式，无 `.`，符合
- * pi setCraftCredential 的 slug 校验）：
+ * Pi Mortise credential slug validation):
  *   - llm_api_key::<providerKey>
  *   - llm_oauth::<providerKey>
  *   - llm_iam::<providerKey>
@@ -26,11 +26,11 @@
  */
 
 import {
-  deleteAllCraftCredentials as deleteAllPiHostCraftCredentials,
-  deleteCraftCredential as deletePiHostCraftCredential,
-  getCraftCredential as getPiHostCraftCredential,
-  listCraftCredentialSlugs as listPiHostCraftCredentialSlugs,
-  setCraftCredential as setPiHostCraftCredential,
+  deleteAllMortiseCredentials as deleteAllPiHostMortiseCredentials,
+  deleteMortiseCredential as deletePiHostMortiseCredential,
+  getMortiseCredential as getPiHostMortiseCredential,
+  listMortiseCredentialSlugs as listPiHostMortiseCredentialSlugs,
+  setMortiseCredential as setPiHostMortiseCredential,
 } from '@mortise/pi-coding-agent/host-facade';
 import type { CredentialBackend } from './types.ts';
 import type { CredentialId, CredentialType, StoredCredential } from '../types.ts';
@@ -59,30 +59,30 @@ interface MortiseCredentialEnvelope {
   stored: StoredCredential;
 }
 
-function getCraftCredential(slug: string): AuthCredential | undefined {
-  return getPiHostCraftCredential(slug) as AuthCredential | undefined;
+function getMortiseCredential(slug: string): AuthCredential | undefined {
+  return getPiHostMortiseCredential(slug) as AuthCredential | undefined;
 }
 
-export function clearAllCraftCredentials(): number {
-  const count = listPiHostCraftCredentialSlugs().length;
-  deleteAllPiHostCraftCredentials();
+export function clearAllMortiseCredentials(): number {
+  const count = listPiHostMortiseCredentialSlugs().length;
+  deleteAllPiHostMortiseCredentials();
   return count;
 }
 
-function setCraftCredential(slug: string, credential: AuthCredential): void {
-  setPiHostCraftCredential(slug, credential);
+function setMortiseCredential(slug: string, credential: AuthCredential): void {
+  setPiHostMortiseCredential(slug, credential);
 }
 
-function deleteCraftCredential(slug: string): void {
-  deletePiHostCraftCredential(slug);
+function deleteMortiseCredential(slug: string): void {
+  deletePiHostMortiseCredential(slug);
 }
 
-function listCraftSlugs(): string[] {
-  return listPiHostCraftCredentialSlugs();
+function listMortiseSlugs(): string[] {
+  return listPiHostMortiseCredentialSlugs();
 }
 
 /**
- * Slug 点号转义：pi 的 setCraftCredential 校验 slug 不含 `.`（与 `mortise.<slug>`
+ * Slug 点号转义：Pi Mortise credential slug 不含 `.`（与 `mortise.<slug>`
  * 命名空间前缀冲突），而 mortise 的 scope 段（providerKey / workspaceId / 自定义
  * 连接名）可能含 `.`。使用百分号编码 `%2E`——可逆且无碰撞风险。
  *
@@ -125,22 +125,22 @@ export class PiCredentialStore implements CredentialBackend {
   readonly priority = 100;
 
   async isAvailable(): Promise<boolean> {
-    // pi AuthStorage 文件后端始终可用（首次写入时自动创建 ~/.pi/agent/ 目录）
+    // pi AuthStorage 文件后端始终可用（首次写入时自动创建 ~/.mortise/agent/ 目录）
     return true;
   }
 
   async get(id: CredentialId): Promise<StoredCredential | null> {
     const slug = escapeSlugSegment(credentialIdToAccount(id));
-    const cred = getCraftCredential(slug);
+    const cred = getMortiseCredential(slug);
     const decoded = decodeCredential(cred);
     return decoded?.stored ?? null;
   }
 
   async set(id: CredentialId, credential: StoredCredential): Promise<void> {
     const slug = escapeSlugSegment(credentialIdToAccount(id));
-    setCraftCredential(slug, encodeCredential(credential, id.type));
+    setMortiseCredential(slug, encodeCredential(credential, id.type));
     // 回读校验：通过 Pi facade 重新读取，确保写入确实落到 Pi AuthStorage。
-    const readBack = getCraftCredential(slug);
+    const readBack = getMortiseCredential(slug);
     if (readBack === undefined) {
       throw new Error(
         `Failed to persist credential: ${slug} (auth.json write did not reach disk)`,
@@ -154,11 +154,11 @@ export class PiCredentialStore implements CredentialBackend {
 
   deleteSync(id: CredentialId): boolean {
     const slug = escapeSlugSegment(credentialIdToAccount(id));
-    const existed = getCraftCredential(slug) !== undefined;
+    const existed = getMortiseCredential(slug) !== undefined;
     if (!existed) return false;
-    deleteCraftCredential(slug);
+    deleteMortiseCredential(slug);
     // 回读校验：通过 Pi facade 确认凭据已真正删除。
-    if (getCraftCredential(slug) !== undefined) {
+    if (getMortiseCredential(slug) !== undefined) {
       throw new Error(
         `Failed to delete credential: ${slug} (still present on disk after reload)`,
       );
@@ -167,7 +167,7 @@ export class PiCredentialStore implements CredentialBackend {
   }
 
   async list(filter?: Partial<CredentialId>): Promise<CredentialId[]> {
-    const slugs = listCraftSlugs();
+    const slugs = listMortiseSlugs();
     const ids: CredentialId[] = [];
     for (const slug of slugs) {
       const id = accountToCredentialId(unescapeSlugSegment(slug));

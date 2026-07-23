@@ -2,7 +2,10 @@ import { afterEach, describe, expect, it } from 'bun:test'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join, resolve } from 'path'
-import { discoverSkillsUnderHome, importSkillDirectories, importSkillDirectory } from './skills'
+import type { RpcServer } from '@mortise/server-core/transport'
+import type { HandlerDeps } from '../handler-deps'
+import { RPC_CHANNELS } from '@mortise/shared/protocol'
+import { discoverSkillsUnderHome, importSkillDirectories, importSkillDirectory, registerSkillsHandlers } from './skills'
 
 const tempDirectories: string[] = []
 
@@ -42,13 +45,13 @@ describe('skill directory import', () => {
       slug: 'imported-skill',
       name: 'Imported Skill',
     })
-    expect(readFileSync(join(workspace, '.pi', 'skills', 'imported-skill', 'scripts', 'run.ts'), 'utf-8'))
+    expect(readFileSync(join(workspace, '.mortise', 'skills', 'imported-skill', 'scripts', 'run.ts'), 'utf-8'))
       .toContain('imported = true')
   })
 
   it('skips an existing workspace skill without overwriting it', async () => {
     const workspace = tempDirectory('mortise-skill-workspace-')
-    const existing = join(workspace, '.pi', 'skills', 'existing-skill')
+    const existing = join(workspace, '.mortise', 'skills', 'existing-skill')
     writeSkill(existing, 'Existing Skill')
     const sourceRoot = tempDirectory('mortise-skill-source-')
     const source = join(sourceRoot, 'existing-skill')
@@ -69,11 +72,28 @@ describe('skill directory import', () => {
     mkdirSync(missing)
 
     await expect(importSkillDirectory(workspace, missing)).rejects.toThrow('does not contain SKILL.md')
-    expect(existsSync(join(workspace, '.pi', 'skills', 'missing-skill'))).toBe(false)
+    expect(existsSync(join(workspace, '.mortise', 'skills', 'missing-skill'))).toBe(false)
 
     const invalid = join(sourceRoot, 'Invalid Skill')
     writeSkill(invalid)
     await expect(importSkillDirectory(workspace, invalid)).rejects.toThrow('Slug must be lowercase')
+  })
+})
+
+describe('skills RPC contract', () => {
+  it('rejects the retired workingDirectory argument', async () => {
+    let getHandler: ((ctx: { workspaceId: string | null }, workspaceId: string, ...args: unknown[]) => Promise<unknown>) | undefined
+    const server = {
+      handle(channel: string, handler: typeof getHandler) {
+        if (channel === RPC_CHANNELS.skills.GET) getHandler = handler
+      },
+    } as unknown as RpcServer
+
+    registerSkillsHandlers(server, {} as HandlerDeps)
+
+    expect(getHandler).toBeDefined()
+    await expect(getHandler!({ workspaceId: 'workspace-a' }, 'workspace-a', 'C:/retired-cwd'))
+      .rejects.toThrow('skills:get accepts only workspaceId')
   })
 })
 
@@ -96,7 +116,7 @@ describe('skill discovery', () => {
       claudeSkill,
       codexSkill,
     ])
-    expect(existsSync(join(workspace, '.pi'))).toBe(false)
+    expect(existsSync(join(workspace, '.mortise'))).toBe(false)
   })
 
   it('bounds both home traversal and traversal within each skills directory at depth four', async () => {
@@ -116,10 +136,10 @@ describe('skill discovery', () => {
     expect(discovered.map(skill => skill.slug)).toEqual(['home-limit', 'skill-limit'])
   })
 
-  it("excludes the current workspace's own .pi/skills directory", async () => {
+  it("excludes the current workspace's own .mortise/skills directory", async () => {
     const home = tempDirectory('mortise-skill-home-')
     const workspace = join(home, 'projects', 'current-workspace')
-    const workspaceSkill = join(workspace, '.pi', 'skills', 'workspace-skill')
+    const workspaceSkill = join(workspace, '.mortise', 'skills', 'workspace-skill')
     const externalSkill = join(home, '.claude', 'skills', 'external-skill')
     writeSkill(workspaceSkill, 'Workspace Skill')
     writeSkill(externalSkill, 'External Skill')
@@ -148,14 +168,14 @@ describe('confirmed skill batch import', () => {
       skipped: [],
       failed: [],
     })
-    expect(existsSync(join(workspace, '.pi', 'skills', 'selected-skill', 'SKILL.md'))).toBe(true)
-    expect(existsSync(join(workspace, '.pi', 'skills', 'unselected-skill'))).toBe(false)
+    expect(existsSync(join(workspace, '.mortise', 'skills', 'selected-skill', 'SKILL.md'))).toBe(true)
+    expect(existsSync(join(workspace, '.mortise', 'skills', 'unselected-skill'))).toBe(false)
   })
 
   it('skips conflicts without overwriting the existing workspace skill', async () => {
     const home = tempDirectory('mortise-skill-home-')
     const workspace = tempDirectory('mortise-skill-workspace-')
-    const existing = join(workspace, '.pi', 'skills', 'existing-skill')
+    const existing = join(workspace, '.mortise', 'skills', 'existing-skill')
     const source = join(home, '.codex', 'skills', 'existing-skill')
     writeSkill(existing, 'Existing Skill')
     writeSkill(source, 'Replacement Skill')
@@ -183,6 +203,6 @@ describe('confirmed skill batch import', () => {
         error: 'Skill source must be inside the user home directory',
       }],
     })
-    expect(existsSync(join(workspace, '.pi', 'skills', 'outside-skill'))).toBe(false)
+    expect(existsSync(join(workspace, '.mortise', 'skills', 'outside-skill'))).toBe(false)
   })
 })

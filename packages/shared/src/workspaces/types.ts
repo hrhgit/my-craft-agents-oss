@@ -2,17 +2,16 @@
  * Workspace Types
  *
  * Workspaces are the top-level organizational unit. Sessions are stored at
- * ~/.pi/agent/sessions/.
+ * ~/.mortise/agent/sessions/.
  *
- * Directory structure:
- * ~/.mortise/workspaces/{slug}/
- *   ├── config.json      - Workspace settings
+ * Workspace configuration is stored in ~/.mortise/state.sqlite. Workspace
+ * folders contain user-owned project data, not a mirrored configuration file.
  */
 
 import type { PermissionMode } from '../agent/mode-manager.ts';
 
 /**
- * Workspace configuration (stored in config.json)
+ * Workspace configuration (stored in state.sqlite)
  */
 export interface WorkspaceConfig {
   id: string;

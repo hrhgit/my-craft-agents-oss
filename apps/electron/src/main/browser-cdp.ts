@@ -174,7 +174,9 @@ export class BrowserCDP {
   private resetIdleDetachTimer(): void {
     if (this.idleDetachTimer) {
       clearTimeout(this.idleDetachTimer)
+      this.idleDetachTimer = null
     }
+    if (this.inFlightCommands > 0) return
     this.idleDetachTimer = setTimeout(() => {
       if (this.attached) {
         mainLog.info('[browser-cdp] idle detach — detaching debugger after inactivity')
@@ -197,7 +199,6 @@ export class BrowserCDP {
   }
 
   protected async send(method: string, params?: Record<string, unknown>, sessionId?: string): Promise<any> {
-    await this.ensureAttached()
     this.inFlightCommands += 1
     if (this.idleDetachTimer) {
       clearTimeout(this.idleDetachTimer)
@@ -206,6 +207,7 @@ export class BrowserCDP {
     let timeout: ReturnType<typeof setTimeout> | undefined
     let timedOut = false
     try {
+      await this.ensureAttached()
       const command = this.webContents.debugger.sendCommand(method, params, sessionId)
       return await Promise.race([
         command,
@@ -489,7 +491,7 @@ export class BrowserCDP {
   async getElementGeometry(ref: string): Promise<ElementGeometry> {
     const target = this.targetForRef(ref)
     if (!target) {
-      throw new Error(`Element ${ref} not found. Run browser_snapshot first to get current element refs.`)
+      throw new Error(`Element ${ref} not found. Run a browser_tool snapshot first to get current element refs.`)
     }
 
     const { model } = await this.send('DOM.getBoxModel', { backendNodeId: target.backendNodeId }, target.sessionId)
@@ -891,7 +893,7 @@ export class BrowserCDP {
 
   async replaceTextElement(ref: string, text: string): Promise<ElementGeometry> {
     const target = this.targetForRef(ref)
-    if (!target) throw new Error(`Element ${ref} not found. Run browser_snapshot first.`)
+    if (!target) throw new Error(`Element ${ref} not found. Run a browser_tool snapshot first.`)
     await this.send('DOM.focus', { backendNodeId: target.backendNodeId }, target.sessionId)
     this.webContents.selectAll()
     await this.send('Input.insertText', { text })
@@ -900,7 +902,7 @@ export class BrowserCDP {
 
   async composeTextElement(ref: string, text: string): Promise<ElementGeometry> {
     const target = this.targetForRef(ref)
-    if (!target) throw new Error(`Element ${ref} not found. Run browser_snapshot first.`)
+    if (!target) throw new Error(`Element ${ref} not found. Run a browser_tool snapshot first.`)
     await this.send('DOM.focus', { backendNodeId: target.backendNodeId }, target.sessionId)
     await this.send('Input.imeSetComposition', {
       text,
@@ -934,7 +936,7 @@ export class BrowserCDP {
   async clickElement(ref: string): Promise<ElementGeometry> {
     const target = this.targetForRef(ref)
     if (!target) {
-      throw new Error(`Element ${ref} not found. Run browser_snapshot first to get current element refs.`)
+      throw new Error(`Element ${ref} not found. Run a browser_tool snapshot first to get current element refs.`)
     }
 
     try {
@@ -965,7 +967,7 @@ export class BrowserCDP {
   async fillElement(ref: string, value: string): Promise<ElementGeometry> {
     const target = this.targetForRef(ref)
     if (!target) {
-      throw new Error(`Element ${ref} not found. Run browser_snapshot first to get current element refs.`)
+      throw new Error(`Element ${ref} not found. Run a browser_tool snapshot first to get current element refs.`)
     }
 
     try {
@@ -988,7 +990,7 @@ export class BrowserCDP {
   async selectOption(ref: string, value: string): Promise<ElementGeometry> {
     const target = this.targetForRef(ref)
     if (!target) {
-      throw new Error(`Element ${ref} not found. Run browser_snapshot first to get current element refs.`)
+      throw new Error(`Element ${ref} not found. Run a browser_tool snapshot first to get current element refs.`)
     }
 
     try {
@@ -1176,7 +1178,7 @@ export class BrowserCDP {
   async setFileInputFiles(ref: string, filePaths: string[]): Promise<ElementGeometry> {
     const target = this.targetForRef(ref)
     if (!target) {
-      throw new Error(`Element ${ref} not found. Run browser_snapshot first to get current element refs.`)
+      throw new Error(`Element ${ref} not found. Run a browser_tool snapshot first to get current element refs.`)
     }
 
     try {

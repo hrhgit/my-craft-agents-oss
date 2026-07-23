@@ -11,7 +11,7 @@ import type {
   PiProjectionEventV1,
   PiProjectionSnapshotV1,
 } from '../../../protocol/pi-projection.ts'
-import { stripLeadingCraftInjectedUserContext } from '../../../prompts/strip-injected-user-context.ts'
+import { stripLeadingMortiseInjectedUserContext } from '../../../prompts/strip-injected-user-context.ts'
 import type { HostQueuedUserProjection, HostRuntimeErrorProjection } from '../types.ts'
 
 type ProjectableAgentEvent = Extract<
@@ -329,7 +329,7 @@ export class PiProjectionBuilder {
     // Pi stores the full model input, including Mortise's volatile date, session
     // state, and source blocks. Projection payloads are user-visible, so only
     // retain the original user-authored tail.
-    const text = stripLeadingCraftInjectedUserContext(this.extractText(value.content))
+    const text = stripLeadingMortiseInjectedUserContext(this.extractText(value.content))
     const attachments = this.sanitizeUserAttachments(value.attachments)
     if (!text && attachments.length === 0) return []
     const clientMutationId = typeof value.clientMutationId === 'string' && value.clientMutationId.length > 0

@@ -7,6 +7,7 @@
 
 import type { Session, Message, PermissionRequest, TypedError, PermissionMode, ToolDisplayMeta } from '../../shared/types'
 import type { PlanModeStateV1 } from '@mortise/core/types'
+import type { SessionEvent } from '@mortise/shared/protocol'
 
 /**
  * Streaming state for a session - replaces streamingTextRef
@@ -112,6 +113,8 @@ export interface ErrorEvent {
   /** Timestamp from main process for consistent ordering */
   timestamp?: number
 }
+
+export type SessionFailureEvent = Extract<SessionEvent, { type: 'session_failure' }>
 
 /**
  * Permission request event
@@ -222,24 +225,6 @@ export interface AsyncOperationEvent {
   type: 'async_operation'
   sessionId: string
   isOngoing: boolean
-}
-
-/**
- * Working directory changed event (user-initiated via UI)
- */
-export interface WorkingDirectoryChangedEvent {
-  type: 'working_directory_changed'
-  sessionId: string
-  workingDirectory: string
-}
-
-/**
- * Working directory error event - server rejected the path (cross-platform, not found, etc.)
- */
-export interface WorkingDirectoryErrorEvent {
-  type: 'working_directory_error'
-  sessionId: string
-  error: string
 }
 
 /**
@@ -385,41 +370,8 @@ export interface UsageUpdateEvent {
   }
 }
 
-/**
- * Union of all agent events
- */
-export type AgentEvent =
-  | TextDeltaEvent
-  | TextCompleteEvent
-  | ToolStartEvent
-  | ToolResultEvent
-  | CompleteEvent
-  | ErrorEvent
-  | TypedErrorEvent
-  | PermissionRequestEvent
-  | NameChangedEvent
-  | PlanSubmittedEvent
-  | PlanArtifactChangedEvent
-  | PlanModeStateChangedEvent
-  | StatusEvent
-  | InfoEvent
-  | InterruptedEvent
-  | TitleGeneratedEvent
-  | AsyncOperationEvent
-  | WorkingDirectoryChangedEvent
-  | WorkingDirectoryErrorEvent
-  | PermissionModeChangedEvent
-  | SessionModelChangedEvent
-  | ProviderChangedEvent
-  | TaskBackgroundedEvent
-  | ShellBackgroundedEvent
-  | TaskProgressEvent
-  | TaskCompletedEvent
-  | UserMessageEvent
-  | MessageAnnotationsUpdatedEvent
-  | SessionSharedEvent
-  | SessionUnsharedEvent
-  | UsageUpdateEvent
+/** Current shared events that reach the conversation event processor. */
+export type AgentEvent = Exclude<SessionEvent, { type: 'session_created' | 'session_deleted' }>
 
 /**
  * Side effects that need to be handled outside the pure processor

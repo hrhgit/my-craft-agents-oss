@@ -1,800 +1,225 @@
-# Automations Configuration Guide
+# Mortise Automations
 
-This guide explains how to configure automations in Mortise Agent to automate workflows based on events.
+Mortise Automations is the host-owned system for time and event triggers. Definitions, scheduling, occurrence claims, run history, retries, idempotency, and restart recovery all use one versioned V3 store.
 
-> **CLI-first workflow (recommended):** Use `mortise automation ...` commands instead of editing JSON directly.
-> - `mortise automation --help`
-> - Canonical command reference: [mortise-cli.md](./mortise-cli.md)
+Do not create `automations.json`, prompt-automation files, a second scheduler, or a separate run-history store. Extensions, the CLI, and Agent tools are typed clients of the same `automation.workspace/v1` capability.
 
-## What Are Automations?
+## Quick Start
 
-Automations allow you to trigger actions automatically when specific events occur in Mortise Agent. You can:
-- Send prompts to create agent sessions based on events
-- Send webhook HTTP requests to external services (Slack, Discord, custom APIs, etc.)
-- Execute actions on a schedule using cron expressions
-- Automate workflows based on permission mode changes, flags, or session status changes
+Open **Automations** in Mortise, create an automation, choose a trigger and action, then save it. The GUI writes through the same versioned command API used below.
 
-## automations.json Location
+To inspect the current workspace from the CLI:
 
-Automations are configured in `automations.json` at the root of your workspace:
-
-```
-~/.mortise/workspaces/{workspaceId}/automations.json
+```powershell
+mortise-cli --workspace <workspace-id> automation list
+mortise-cli --workspace <workspace-id> automation describe
 ```
 
-## Recommended CLI Commands
-
-```bash
-mortise automation list
-mortise automation get <id>
-mortise automation create --event UserPromptSubmit --prompt "..."
-mortise automation update <id> --json '{...}'
-mortise automation enable <id>
-mortise automation disable <id>
-mortise automation duplicate <id>
-mortise automation history [<id>] --limit 20
-mortise automation last-executed <id>
-mortise automation test <id> --match "..."
-mortise automation lint
-mortise automation validate
-```
-
-## Basic Structure
+To create a definition, save this current V3 document fragment as `automation.json`:
 
 ```json
 {
-  "version": 2,
-  "automations": {
-    "EventName": [
-      {
-        "name": "Optional display name",
-        "matcher": "regex-pattern",
-        "actions": [
-          { "type": "prompt", "prompt": "Check for updates and report status" }
-        ]
-      }
-    ]
-  }
-}
-```
-
-## Supported Events
-
-### App Events (triggered by Mortise Agent)
-
-| Event | Trigger | Match Value |
-|-------|---------|-------------|
-| `PermissionModeChange` | Permission mode changed | New mode name |
-| `SchedulerTick` | Runs every minute | Uses cron matching |
-
-### Agent Events
-
-| Event | Trigger | Match Value |
-|-------|---------|-------------|
-| `PreToolUse` | Before a tool executes | Tool name |
-| `PostToolUse` | After a tool executes successfully | Tool name |
-| `PostToolUseFailure` | After a tool execution fails | Tool name |
-| `Notification` | Notification received | - |
-| `UserPromptSubmit` | User submits a prompt | - |
-| `SessionStart` | Session starts | - |
-| `SessionEnd` | Session ends | - |
-| `Stop` | Agent stops | - |
-| `SubagentStart` | Subagent spawned | - |
-| `SubagentStop` | Subagent completes | - |
-| `PreCompact` | Before context compaction | - |
-| `PermissionRequest` | Permission requested | - |
-| `Setup` | Initial setup | - |
-
-## Action Types
-
-### Prompt Actions
-
-Send a prompt to Mortise Agent (creates a new session for scheduled prompts).
-
-```json
-{
-  "type": "prompt",
-  "prompt": "Run the @weather skill and summarize the forecast"
-}
-```
-
-| Property | Type | Default | Description |
-|----------|------|---------|-------------|
-| `type` | `"prompt"` | Required | Action type |
-| `prompt` | string | Required | Prompt text to send |
-| `provider` | string | Workspace default | Pi provider key (configured in AI Settings) |
-| `model` | string | Workspace default | Model ID for the created session |
-
-**Features:**
-- Use `@mentions` to reference skills
-- Environment variables are expanded (e.g., `$MORTISE_LABEL`)
-
-**Provider & Model:** Optionally specify which AI provider and model to use for the created session. If omitted, the global defaults are used.
-
-```json
-{
-  "type": "prompt",
-  "prompt": "Quick code review of recent changes",
-  "provider": "github-copilot",
-  "model": "gemini-2.5-flash"
-}
-```
-
-The `provider` value is a Pi provider key configured in AI Settings. The `model` value is a model ID supported by that provider. If either is invalid or unavailable, Mortise falls back to the global default. Both can be used independently or together.
-
-#### Prompt Delivery
-
-Mortise Automations is the only automation runtime. Prompt actions explicitly target a new Session, a fixed or event Session using `followUp` or `steer`, or an isolated Agent run. Extensions and external programs submit typed operations or CloudEvents to the Host; they do not own another scheduler, store, or history.
-
-### Webhook Actions
-
-Send an HTTP request to an external endpoint when an event fires. Useful for notifications (Slack, Discord), logging to external services, or triggering external workflows.
-
-```json
-{
-  "type": "webhook",
-  "url": "https://hooks.slack.com/services/${MORTISE_WH_SLACK_PATH}",
-  "method": "POST",
-  "body": {
-    "text": "Session ${MORTISE_SESSION_NAME} status changed to ${MORTISE_NEW_STATE}"
-  }
-}
-```
-
-| Property | Type | Default | Description |
-|----------|------|---------|-------------|
-| `type` | `"webhook"` | Required | Action type |
-| `url` | string | Required | Target URL (http or https) |
-| `method` | `"GET"` \| `"POST"` \| `"PUT"` \| `"PATCH"` \| `"DELETE"` | `"POST"` | HTTP method |
-| `headers` | `Record<string, string>` | `{}` | HTTP headers as key-value pairs |
-| `bodyFormat` | `"json"` \| `"form"` \| `"raw"` | `"json"` | Body serialization format |
-| `body` | object or string | - | Request body (omitted for GET requests) |
-| `auth` | object | - | Authentication shorthand (see below) |
-| `captureResponse` | boolean | `false` | Capture response body in result (truncated to 4KB) |
-
-> **URL validation:** Literal URLs are validated at config load time. Templated URLs (containing `$VAR`) are validated at runtime after variable expansion. Both must resolve to `http://` or `https://` — other protocols are rejected.
-
-**Body format:**
-- `json` (default) — Body is serialized as JSON. `Content-Type: application/json` is set automatically unless you override it in `headers`.
-- `form` — Body object keys are URL-encoded as `application/x-www-form-urlencoded`. Useful for OAuth token endpoints, Stripe, and legacy APIs. Each value supports `$VAR` expansion.
-- `raw` — Body is sent as a plain string. Set `Content-Type` in `headers` yourself.
-
-**Authentication:**
-
-Instead of manually constructing `Authorization` headers, you can use the `auth` shorthand:
-
-**Bearer token:**
-```json
-{
-  "type": "webhook",
-  "url": "https://api.example.com/events",
-  "auth": {
-    "type": "bearer",
-    "token": "${MORTISE_WH_API_TOKEN}"
-  },
-  "body": { "event": "$MORTISE_EVENT" }
-}
-```
-
-**Basic auth (username/password):**
-```json
-{
-  "type": "webhook",
-  "url": "https://legacy.example.com/webhook",
-  "auth": {
-    "type": "basic",
-    "username": "${MORTISE_WH_USER}",
-    "password": "${MORTISE_WH_PASS}"
-  }
-}
-```
-
-The `auth` field is applied before custom `headers`, so you can override the generated `Authorization` header if needed. All auth field values support `$VAR` expansion.
-
-**Response capture:** By default, webhook response bodies are discarded after reading (to release connections). Set `captureResponse: true` to capture the response body (truncated to 4KB). The captured body is included in the execution result and recorded in automation history (truncated to 500 chars).
-
-```json
-{
-  "type": "webhook",
-  "url": "https://api.example.com/status",
-  "method": "GET",
-  "captureResponse": true
-}
-```
-
-> **Note:** Response capture adds memory overhead proportional to the response size. Only enable it for endpoints where you need to inspect the response.
-
-**Variable expansion:** The `url`, `headers` values, `body`, and `auth` fields all support `$VAR` and `${VAR}` syntax for environment variable expansion. See [Environment Variables](#environment-variables) below.
-
-**Security:** Webhook actions only have access to `MORTISE_*` system variables and `MORTISE_WH_*` user-defined secrets. They do **not** have access to your full system environment (e.g., `$HOME`, `$PATH`, or other process variables).
-
-## Environment Variables
-
-Both prompt and webhook actions support variable expansion using `$VAR` or `${VAR}` syntax.
-
-### System Variables (MORTISE_*)
-
-These are automatically set by the automation system based on the triggering event:
-
-| Variable | Description | Available For |
-|----------|-------------|---------------|
-| `$MORTISE_EVENT` | Event name (e.g., `PreToolUse`) | All events |
-| `$MORTISE_EVENT_DATA` | Full event payload as JSON | All events |
-| `$MORTISE_SESSION_ID` | Session ID | Events with session context |
-| `$MORTISE_SESSION_NAME` | Session name | Events with session context |
-| `$MORTISE_WORKSPACE_ID` | Workspace ID | All events |
-
-**Per-event variables:**
-
-| Event | Variable | Description |
-|-------|----------|-------------|
-| `PermissionModeChange` | `$MORTISE_OLD_MODE`, `$MORTISE_NEW_MODE` | Previous and new permission mode |
-| `SchedulerTick` | `$MORTISE_LOCAL_TIME`, `$MORTISE_LOCAL_DATE` | Current time (`14:30`) and date (`2026-03-09`) |
-
-### User-Defined Webhook Secrets (MORTISE_WH_*)
-
-For webhook actions, you can define your own secrets by setting environment variables with the `MORTISE_WH_` prefix in your shell profile (e.g., `~/.zshrc`, `~/.bashrc`):
-
-```bash
-# In your shell profile
-export MORTISE_WH_SLACK_URL="https://hooks.slack.com/services/T.../B.../xxx"
-export MORTISE_WH_DISCORD_URL="https://discord.com/api/webhooks/123/abc"
-export MORTISE_WH_API_TOKEN="your-secret-token"
-```
-
-Then reference them in `automations.json`:
-
-```json
-{
-  "type": "webhook",
-  "url": "${MORTISE_WH_SLACK_URL}",
-  "method": "POST",
-  "body": { "text": "Hello from Mortise Agent!" }
-}
-```
-
-```json
-{
-  "type": "webhook",
-  "url": "https://api.example.com/events",
-  "headers": { "Authorization": "Bearer ${MORTISE_WH_API_TOKEN}" },
-  "body": { "event": "${MORTISE_EVENT}", "session": "${MORTISE_SESSION_NAME}" }
-}
-```
-
-This keeps secrets out of `automations.json` (which may be shared or committed to version control).
-
-> **Note:** Only variables prefixed with `MORTISE_WH_` are injected into webhook actions. Other environment variables (like `$HOME` or `$DATABASE_URL`) are not accessible to webhooks.
-
-> **Note:** Environment variables are not expanded during test runs (the "Test" button in the UI). Tests send the raw URL/body as configured.
-
-## Matcher Configuration
-
-### Display Name
-
-Use the optional `name` field to give an automation a human-readable display name. If omitted, the name is automatically derived from the first action.
-
-```json
-{
-  "name": "Morning Weather Report",
-  "cron": "0 8 * * *",
-  "actions": [
-    { "type": "prompt", "prompt": "Run the @weather skill" }
-  ]
-}
-```
-
-### Regex Matching (for most events)
-
-Use the `matcher` field to filter which events trigger your automations:
-
-```json
-{
-  "matcher": "^urgent$",
-  "actions": [
-    { "type": "prompt", "prompt": "An urgent label was added. Review the session and summarise the issue." }
-  ]
-}
-```
-
-If `matcher` is omitted, the automation triggers for all events of that type.
-
-### Cron Matching (for SchedulerTick)
-
-For `SchedulerTick` events, use cron expressions instead of regex:
-
-```json
-{
-  "cron": "0 9 * * 1-5",
-  "timezone": "America/New_York",
-  "actions": [
-    { "type": "prompt", "prompt": "Give me a morning briefing" }
-  ]
-}
-```
-
-**Cron format:** `minute hour day-of-month month day-of-week`
-
-| Field | Values |
-|-------|--------|
-| Minute | 0-59 |
-| Hour | 0-23 |
-| Day of month | 1-31 |
-| Month | 1-12 |
-| Day of week | 0-6 (0 = Sunday) |
-
-**Examples:**
-- `*/15 * * * *` - Every 15 minutes
-- `0 9 * * *` - Daily at 9:00 AM
-- `0 9 * * 1-5` - Weekdays at 9:00 AM
-- `30 14 1 * *` - 1st of each month at 2:30 PM
-
-**Timezone:** Use IANA timezone names (e.g., `Europe/Budapest`, `America/New_York`). Defaults to system timezone if not specified.
-
-## Conditions
-
-Conditions are optional filters that run **after** the matcher/cron matches but **before** actions fire. All conditions in the array must pass (implicit AND). If the array is empty or omitted, actions fire unconditionally.
-
-```json
-{
-  "cron": "0 9 * * *",
-  "timezone": "Europe/Budapest",
-  "conditions": [
+  "id": "automation_daily_summary_01",
+  "name": "Daily summary",
+  "enabled": true,
+  "triggers": [
     {
-      "condition": "time",
-      "weekday": ["mon", "tue", "wed", "thu", "fri"]
+      "id": "trigger_daily_summary_01",
+      "type": "time",
+      "schedule": {
+        "kind": "cron",
+        "expression": "0 9 * * 1-5",
+        "timezone": "Asia/Shanghai",
+        "misfire": "run-once"
+      }
     }
   ],
   "actions": [
-    { "type": "prompt", "prompt": "Good morning! Here's your daily briefing." }
-  ]
+    {
+      "id": "action_daily_summary_01",
+      "type": "prompt",
+      "prompt": "Summarize the current workspace activity.",
+      "target": { "kind": "new-session" }
+    }
+  ],
+  "runPolicy": {
+    "overlap": "queue-one",
+    "actionFailure": "stop"
+  },
+  "createdAt": "2026-07-21T00:00:00.000Z",
+  "updatedAt": "2026-07-21T00:00:00.000Z"
 }
 ```
 
-### Time Conditions
+Validate and create it:
 
-Check time-of-day and day-of-week in a given timezone.
-
-```json
-{
-  "condition": "time",
-  "after": "09:00",
-  "before": "17:00",
-  "weekday": ["mon", "tue", "wed", "thu", "fri"],
-  "timezone": "Europe/Budapest"
-}
+```powershell
+mortise-cli --workspace <workspace-id> automation validate @automation.json
+mortise-cli --workspace <workspace-id> automation create @automation.json --expected-revision <revision>
 ```
 
-| Property | Type | Description |
-|----------|------|-------------|
-| `after` | `"HH:MM"` | Start of time window (inclusive) |
-| `before` | `"HH:MM"` | End of time window (exclusive) |
-| `weekday` | `string[]` | Allowed days: `mon`, `tue`, `wed`, `thu`, `fri`, `sat`, `sun` |
-| `timezone` | string | IANA timezone. Falls back to matcher timezone, then system local |
+Use the revision returned by `automation list`. A stale revision returns a conflict; reload and apply the change again instead of overwriting concurrent work.
 
-**Overnight ranges:** If `after` is later than `before` (e.g., `"after": "22:00", "before": "06:00"`), the range wraps across midnight.
+## Commands
 
-### State Conditions
-
-Check fields from the event payload. Useful for filtering on specific transitions or values.
-
-```json
-{
-  "condition": "state",
-  "field": "permissionMode",
-  "from": "safe",
-  "to": "allow-all"
-}
+```text
+automation describe
+automation list
+automation get <id>
+automation validate <json|@file>
+automation create <json|@file> --expected-revision <n|null>
+automation update <json|@file> --expected-revision <n>
+automation delete <id> --expected-revision <n>
+automation set-enabled <id> <true|false> --expected-revision <n>
+automation run <id> [--trigger-id <id>]
+automation get-run <run-id>
+automation list-runs
+automation emit-event <json|@file>
+automation token path
+automation token rotate
 ```
 
-| Property | Type | Description |
-|----------|------|-------------|
-| `field` | string | Payload field name (for example, `permissionMode` or `sessionName`) |
-| `value` | any | Exact match |
-| `from` | any | Previous value (for transition events) |
-| `to` | any | New value (for transition events) |
-| `contains` | string | Array or string membership check |
-| `not_value` | any | Matches anything except this value |
+Mutating commands require a stable operation identity internally and compare-and-swap revision checks. Replaying the same operation is idempotent; reusing an operation identity with different content is rejected.
 
-**Transition fields:** For `permissionMode`, `from`/`to` automatically resolve to `oldMode`/`newMode`.
+## Triggers
 
-### Logical Composition
+### Cron
 
-Combine conditions with `and`, `or`, and `not`:
+Use a five- or six-field cron expression and an optional IANA timezone:
 
 ```json
 {
-  "condition": "and",
-  "conditions": [
-    { "condition": "time", "weekday": ["mon", "tue", "wed", "thu", "fri"] },
-    { "condition": "time", "after": "09:00", "before": "17:00" }
-  ]
-}
-```
-
-```json
-{
-  "condition": "or",
-  "conditions": [
-    { "condition": "state", "field": "permissionMode", "value": "allow-all" },
-    { "condition": "time", "after": "09:00", "before": "17:00" }
-  ]
-}
-```
-
-```json
-{
-  "condition": "not",
-  "conditions": [
-    { "condition": "time", "weekday": ["sat", "sun"] }
-  ]
-}
-```
-
-| Type | Behaviour |
-|------|-----------|
-| `and` | All sub-conditions must pass |
-| `or` | At least one sub-condition must pass |
-| `not` | None of the sub-conditions may pass |
-
-**Nesting depth:** Conditions can be nested up to 8 levels deep. A simplification warning is emitted at depth 4. Unknown condition types fail closed (evaluate to false).
-
-## Permission Mode
-
-The `permissionMode` field controls the permission level of sessions created by prompt actions.
-
-```json
-{
-  "cron": "*/10 * * * *",
-  "permissionMode": "allow-all",
-  "actions": [
-    { "type": "prompt", "prompt": "Check system health and log the results" }
-  ]
-}
-```
-
-**Permission modes:**
-- `safe` - Session runs in Explore mode (default)
-- `ask` - Session prompts for approval before write operations
-- `allow-all` - Session auto-approves all operations
-
-## Telegram Topic Routing
-
-When a Telegram supergroup is paired in **Settings → Messaging → Telegram**, set
-`telegramTopic` on a matcher to route its spawned sessions into a dedicated
-forum topic. The topic is created on first use and reused thereafter.
-
-```json
-{
-  "telegramTopic": "Urgent Alerts",
-  "actions": [
-    { "type": "prompt", "prompt": "Review the latest alert and summarize it." }
-  ]
-}
-```
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `telegramTopic` | string (1–128 chars) | Topic name. Created on first use, reused thereafter. Multiple matchers using the same value share one topic. |
-
-**Activation requirements** (all must hold; otherwise the field is silently ignored):
-
-- A Telegram supergroup is paired in Settings → Messaging → Telegram
-- The Telegram bot is connected
-- The bot has the **Manage Topics** admin permission
-
-Names are case-sensitive: `"Reports"` and `"reports"` create separate topics.
-
-### Setting up the Telegram supergroup
-
-If you haven't paired a supergroup yet:
-
-1. **Create / convert a supergroup with Topics enabled.** In Telegram, open the group → tap the group name → Edit (pencil icon) → toggle **Topics** on → Save. The group must be a forum supergroup; regular groups can't host topics.
-2. **Add the bot to the supergroup.** Group name → Add members → search for your bot's username → add.
-3. **Promote the bot to admin with "Manage Topics".** Group name → Edit → Administrators → Add Administrator → pick the bot → toggle on **Manage Topics** → Save. This is the step most people miss; without it, topic creation fails with `400: not enough rights to create a topic`.
-4. **Pair the supergroup.** In Mortise Agent: Settings → Messaging → Telegram → **Pair Supergroup**. Copy the 6-digit code, then in any topic of the supergroup type `/pair <code>`. The bot confirms and the Settings row updates with the group's title.
-
-Verify by checking the supergroup row in Settings shows the group title. If automation runs fail later, `~/.mortise/logs/messaging-gateway.log` will show `automation_topic_bind_failed` with the underlying Telegram error.
-
-## Complete Examples
-
-### Daily Weather Report
-
-```json
-{
-  "version": 2,
-  "automations": {
-    "SchedulerTick": [
-      {
-        "name": "Daily Weather Report",
-        "cron": "0 8 * * *",
-        "timezone": "Europe/Budapest",
-        "actions": [
-          { "type": "prompt", "prompt": "Run the @weather skill and give me today's forecast" }
-        ]
-      }
-    ]
+  "id": "trigger_weekday_report_01",
+  "type": "time",
+  "schedule": {
+    "kind": "cron",
+    "expression": "0 18 * * 1-5",
+    "timezone": "Europe/Berlin",
+    "misfire": "skip"
   }
 }
 ```
 
-### Weekday-Only AI News (with Conditions)
-
-Use a `time` condition to restrict a daily schedule to weekdays only:
+### Once
 
 ```json
 {
-  "version": 2,
-  "automations": {
-    "SchedulerTick": [
-      {
-        "name": "Morning AI news",
-        "cron": "0 9 * * *",
-        "timezone": "Europe/Budapest",
-        "conditions": [
-          {
-            "condition": "time",
-            "weekday": ["mon", "tue", "wed", "thu", "fri"],
-            "timezone": "Europe/Budapest"
-          }
-        ],
-        "actions": [
-          { "type": "prompt", "prompt": "Run the @ai-news skill and summarize today's AI developments" }
-        ]
-      }
-    ]
+  "id": "trigger_release_reminder_01",
+  "type": "time",
+  "schedule": {
+    "kind": "once",
+    "at": "2026-08-01T09:00:00.000Z",
+    "expiresAt": "2026-08-01T12:00:00.000Z",
+    "misfire": "run-once"
   }
 }
 ```
 
-### Permission Mode Gate (with Conditions)
-
-Only notify when permission mode changes specifically from `safe` to `allow-all`:
+### Interval
 
 ```json
 {
-  "version": 2,
-  "automations": {
-    "PermissionModeChange": [
-      {
-        "conditions": [
-          {
-            "condition": "state",
-            "field": "permissionMode",
-            "from": "safe",
-            "to": "allow-all"
-          }
-        ],
-        "actions": [
-          {
-            "type": "webhook",
-            "url": "${MORTISE_WH_SLACK_URL}",
-            "method": "POST",
-            "body": { "text": ":warning: Permission escalated from safe to allow-all in *${MORTISE_SESSION_NAME}*" }
-          }
-        ]
-      }
-    ]
+  "id": "trigger_health_check_01",
+  "type": "time",
+  "schedule": {
+    "kind": "interval",
+    "everyMs": 900000,
+    "anchorAt": "2026-07-21T00:00:00.000Z",
+    "misfire": "skip"
   }
 }
 ```
 
-### Permission Mode Change Notification
+### Event
 
 ```json
 {
-  "version": 2,
-  "automations": {
-    "PermissionModeChange": [
-      {
-        "matcher": "allow-all",
-        "actions": [
-          { "type": "prompt", "prompt": "The permission mode was changed to allow-all. Log the change and note any security implications." }
-        ]
-      }
-    ]
+  "id": "trigger_agent_failure_01",
+  "type": "event",
+  "source": "agent",
+  "eventType": "PostToolUseFailure",
+  "matcher": "build|test"
+}
+```
+
+Event sources are `mortise`, `agent`, `extension`, or `external`. The host assigns the trusted source kind; callers cannot self-promote an external event to a trusted Agent or Mortise event.
+
+External producers send CloudEvents 1.0 through the workspace ingress. Rotate the workspace token with `automation token rotate` and keep it out of prompts, logs, and definition bodies.
+
+## Prompt Actions
+
+Prompt delivery is explicit:
+
+- `new-session` creates a normal assistant-backed Session.
+- `session` targets `event-session` or a fixed Session and chooses `followUp` or `steer`.
+- `isolated-agent` runs without publishing a Session and may optionally notify a Session.
+
+Example fixed Session delivery:
+
+```json
+{
+  "id": "action_follow_up_01",
+  "type": "prompt",
+  "prompt": "Review the event payload and report the regression.",
+  "eventData": "append-json",
+  "target": {
+    "kind": "session",
+    "session": { "id": "session_01HXEXAMPLE" },
+    "delivery": "followUp"
   }
 }
 ```
 
-### Mixed Actions (Prompt + Webhook)
+Definitions containing a time trigger cannot use `event-session`, because no triggering Session is guaranteed to exist.
 
-A single automation can have both prompt and webhook actions. They execute in order.
+## Webhook Actions
 
 ```json
 {
-  "version": 2,
-  "automations": {
-    "PermissionModeChange": [
-      {
-        "name": "Permission Escalation: Notify and Review",
-        "matcher": "^allow-all$",
-        "actions": [
-          {
-            "type": "webhook",
-            "url": "${MORTISE_WH_SLACK_URL}",
-            "method": "POST",
-            "body": { "text": ":warning: Permission mode escalated for *${MORTISE_SESSION_NAME}*" }
-          },
-          {
-            "type": "prompt",
-            "prompt": "Review the permission escalation and summarize any security implications."
-          }
-        ]
-      }
-    ]
+  "id": "action_webhook_01",
+  "type": "webhook",
+  "url": "https://example.com/hooks/mortise",
+  "method": "POST",
+  "bodyFormat": "json",
+  "body": { "kind": "daily-summary" },
+  "captureResponse": true,
+  "auth": {
+    "type": "bearer",
+    "token": {
+      "provider": "mortise-secrets",
+      "id": "secret_webhook_token_01"
+    }
   }
 }
 ```
 
-### Form-Encoded Request (OAuth / Stripe)
+Secrets are references to Mortise secret storage, never literal passwords or tokens in a definition. Resource bundle export removes sensitive literal headers while retaining safe secret references.
 
-```json
-{
-  "version": 2,
-  "automations": {
-    "SchedulerTick": [
-      {
-        "name": "Refresh API Token",
-        "cron": "0 */6 * * *",
-        "actions": [
-          {
-            "type": "webhook",
-            "url": "https://auth.example.com/oauth/token",
-            "method": "POST",
-            "bodyFormat": "form",
-            "body": {
-              "grant_type": "client_credentials",
-              "client_id": "${MORTISE_WH_CLIENT_ID}",
-              "client_secret": "${MORTISE_WH_CLIENT_SECRET}"
-            }
-          }
-        ]
-      }
-    ]
-  }
-}
-```
+## Conditions
 
-### Webhook with Custom Headers
+Definitions may use `time`, `state`, and nested `and` / `or` / `not` conditions. Condition nesting is bounded. Invalid time values, unsafe regular expressions, unknown fields, and excessive nesting are rejected by the V3 schema.
 
-```json
-{
-  "version": 2,
-  "automations": {
-    "PostToolUse": [
-      {
-        "name": "Log to External API",
-        "actions": [
-          {
-            "type": "webhook",
-            "url": "https://api.example.com/mortise-events",
-            "method": "POST",
-            "headers": {
-              "Authorization": "Bearer ${MORTISE_WH_API_TOKEN}",
-              "X-Source": "mortise"
-            },
-            "body": {
-              "event": "${MORTISE_EVENT}",
-              "session_id": "${MORTISE_SESSION_ID}",
-              "payload": "${MORTISE_EVENT_DATA}"
-            }
-          }
-        ]
-      }
-    ]
-  }
-}
-```
+## Concurrency And Recovery
 
-## Validation
+- `overlap: "skip"` records and skips an occurrence while a run is active.
+- `overlap: "queue-one"` retains only the newest queued occurrence.
+- Restart recovery coalesces stale `queue-one` claims before execution.
+- `actionFailure: "stop"` stops at the first failed action.
+- `actionFailure: "continue"` runs remaining actions and records a partial result.
 
-Automations are validated when:
-1. The workspace is loaded
-2. You edit automations.json (via PreToolUse hook)
-3. You run `config_validate` with target `automations` or `all`
+Run claims and history are durable before background execution begins. Supported Mortise versions negotiate store capabilities; an incompatible writer becomes read-only instead of rewriting the store.
 
-**Using config_validate:**
+## Extensions
 
-Ask Mortise Agent to validate your automations configuration:
-
-```
-Validate my automations configuration
-```
-
-Or use the `config_validate` tool directly with `target: "automations"`.
-
-**Common validation errors:**
-- Invalid JSON syntax
-- Unknown event names
-- Empty actions array
-- Invalid cron expression
-- Invalid timezone
-- Invalid regex pattern
-- Potentially unsafe regex patterns (nested quantifiers)
-
-**To validate manually:**
-
-```bash
-# Check automations.json syntax
-cat automations.json | jq .
-```
-
-## Retry Behavior
-
-Webhook actions have two levels of automatic retry:
-
-### Immediate retry (transient failures)
-
-When a webhook fails with a server error (5xx), timeout, or connection error, it is automatically retried up to **2 times** with exponential backoff (1s → 2s → 4s). Client errors (4xx) are not retried — they indicate a configuration problem.
-
-### Deferred retry (extended outages)
-
-If all immediate retries fail, the webhook is added to a **persistent retry queue**. The queue retries at increasing intervals:
-
-| Attempt | Delay | Cumulative |
-|---------|-------|------------|
-| 1st deferred | 5 minutes | 5 min |
-| 2nd deferred | 30 minutes | 35 min |
-| 3rd deferred | 1 hour | ~1.5 hours |
-
-After the final deferred attempt fails, the webhook is marked as permanently failed in the history. Deferred retries survive app restarts.
-
-> **Note:** Only transient failures (5xx, timeouts, connection errors) are retried. Client errors (4xx) indicate a configuration problem and should be fixed in `automations.json`.
-
-> **Retry and rate limiting:** Retried webhook requests count toward the per-endpoint rate limit (30/min per origin). If a retry would exceed the limit, it is deferred to the next retry window.
-
-## Rate Limits
-
-To protect against runaway automations (e.g., an automation that indirectly triggers itself in a loop), the event bus enforces per-event-type rate limits:
-
-| Event | Max fires / minute |
-|-------|--------------------|
-| `SchedulerTick` | 60 (1/sec) |
-| All others (`PermissionModeChange`, `PreToolUse`, etc.) | 10 |
-
-When a limit is hit, further events of that type are **silently dropped** for the remainder of the 60-second window. A warning is logged. The window resets automatically.
-
-**Example:** If an event automation indirectly triggers itself, it will fire at most 10 times before being rate-limited.
+Extensions may declare event producers or invoke `automation.workspace/v1`. They do not own schedulers, definition stores, retry queues, histories, or fallback runtimes. Extension events enter through the host capability router and receive the same validation, identity, and workspace checks as built-in producers.
 
 ## Troubleshooting
 
-### Automation not firing
+```powershell
+mortise-cli --workspace <workspace-id> automation list
+mortise-cli --workspace <workspace-id> automation get <automation-id>
+mortise-cli --workspace <workspace-id> automation list-runs
+mortise-cli --workspace <workspace-id> automation get-run <run-id>
+```
 
-1. **Check event name** - Must be exact (e.g., `PreToolUse` not `pretooluse`)
-2. **Check matcher** - Regex must match the event value
-3. **Check cron** - For SchedulerTick, verify cron expression with an online tool
-4. **Check logs** - Look for `[automations]` or `[Scheduler]` in the logs
-
-### Prompt not creating session
-
-1. Check that the prompt is not empty
-2. Verify skill mentions reference valid skills
-
-### Webhook not working
-
-1. **Check URL** — Must be a valid `http://` or `https://` URL. Other protocols (ftp, ws, etc.) are rejected at runtime with a clear error.
-2. **Check env vars** — Ensure `MORTISE_WH_*` variables are set in your shell profile and Mortise Agent was restarted after adding them. URLs using `$VAR` templates are validated after variable expansion — if the variable is empty or unset, the URL will be invalid.
-3. **Use the Test button** — Tests connectivity to the URL (note: env vars are not expanded during test)
-4. **Check method** — Some endpoints require specific HTTP methods (POST, PUT, etc.)
-5. **Check response** — The automation history shows HTTP status codes for webhook executions
-
-### Retrying failed webhooks
-
-When a webhook execution fails (shown with a red indicator in the timeline), you can retry it:
-
-1. Open the automation's detail page
-2. In the "Recent Activity" timeline, failed webhook entries show a **Retry** button
-3. Click "Retry" to re-execute the webhook actions immediately
-4. The retry result is recorded as a new history entry
-
-> **Note:** Retries execute the webhook actions as currently configured. If you've changed the URL or headers since the original failure, the retry uses the updated configuration. Environment variables are not expanded during replay (same as the Test button).
-
-## Best Practices
-
-1. **Start simple** - Test with a basic prompt before building complex workflows
-2. **Use labels** - Tag scheduled sessions for easy filtering
-3. **Be specific** - Use matchers to avoid triggering on every event
-4. **Test cron** - Use [crontab.guru](https://crontab.guru/) to verify expressions
-5. **Keep secrets out of config** - Use `MORTISE_WH_*` env vars for webhook URLs and tokens instead of hardcoding them in automations.json
-6. **Combine actions** - Use both webhook and prompt actions in a single automation for notification + AI response workflows
+For a revision conflict, reload the definition and revision before retrying. For an unsupported or read-only result, inspect the returned capability version and upgrade the incompatible runtime rather than copying or editing the SQLite store.

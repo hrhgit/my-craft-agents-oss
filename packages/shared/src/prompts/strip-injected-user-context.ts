@@ -10,7 +10,7 @@ const LEADING_USER_DATE_CONTEXT_RE =
 const LEADING_LEGACY_CONTEXT_BLOCK_RE =
   /^\s*<(session_state|sources|source_issue)(?:\s[^>]*)?>[\s\S]*?<\/\1>\s*/i;
 
-export function stripLeadingCraftInjectedUserContext(content: string): string {
+export function stripLeadingMortiseInjectedUserContext(content: string): string {
   let stripped = false;
   let next = content;
 

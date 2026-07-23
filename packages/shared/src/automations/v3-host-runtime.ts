@@ -38,7 +38,7 @@ export class AutomationWorkspaceHostV3 {
     this.onChanged = options.onChanged
     this.onError = options.onError
     this.scheduler = new AutomationSchedulerV3({
-      getDefinitions: () => this.store.initializeOrMigrate().document.definitions,
+      getDefinitions: () => this.store.initialize().definitions,
       listRuns: automationId => this.store.listRuns({ automationId, limit: 10_000 }),
       onOccurrence: async (definition, trigger, occurrence) => {
         this.enqueueAcceptedRun(this.runtime.acceptTimeTrigger(definition, trigger, occurrence))
@@ -50,11 +50,11 @@ export class AutomationWorkspaceHostV3 {
   start(): void {
     if (this.started || this.stopped) return
     this.started = true
-    this.store.initializeOrMigrate()
     if (!this.store.isWritable()) {
       this.readOnly = true
       return
     }
+    this.store.initialize()
     this.store.recoverExpiredExecutions()
     this.recoverQueuedRuns()
     this.scheduler.start()
@@ -127,7 +127,17 @@ export class AutomationWorkspaceHostV3 {
       overlapByAutomation.set(run.automationId, group)
     }
     for (const runs of overlapByAutomation.values()) {
-      const newest = runs.sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0]
+      const [newest, ...older] = runs.sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      const completedAt = new Date().toISOString()
+      for (const stale of older) {
+        this.store.updateRun({
+          ...stale,
+          state: 'skipped',
+          reason: 'queue-one-coalesced',
+          completedAt,
+          actions: stale.actions.map(action => ({ ...action, state: 'skipped', completedAt })),
+        }, `op_recover_queue_one:${stale.runId}`)
+      }
       if (newest) this.enqueueAcceptedRun({ ...newest, reason: undefined })
     }
   }

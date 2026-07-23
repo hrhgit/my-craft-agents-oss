@@ -17,7 +17,7 @@ export function registerLayoutHandlers(server: RpcServer, deps: HandlerDeps): vo
   const windowManager = deps.windowManager
   if (!coordinator) return
 
-  server.handle(RPC_CHANNELS.layout.GET, (ctx, requestedWorkspaceId?: string, serverId?: string) => {
+  server.handle(RPC_CHANNELS.layout.GET, async (ctx, requestedWorkspaceId?: string, serverId?: string) => {
     const windowWorkspaceId = ctx.webContentsId != null
       ? windowManager?.getWorkspaceForWindow(ctx.webContentsId) ?? undefined
       : undefined
@@ -25,9 +25,11 @@ export function registerLayoutHandlers(server: RpcServer, deps: HandlerDeps): vo
       throw new Error(`Cannot read layout for workspace ${requestedWorkspaceId} from window ${windowWorkspaceId}`)
     }
     const workspaceId = requestedWorkspaceId ?? ctx.workspaceId ?? windowWorkspaceId ?? ''
-    return coordinator.getSnapshot(workspaceId, serverId)
+    const snapshot = coordinator.getSnapshot(workspaceId, serverId)
+    await coordinator.flush()
+    return snapshot
   })
-  server.handle(RPC_CHANNELS.layout.SAVE, (ctx, layout: AppLayout, expectedRevision?: number) => {
+  server.handle(RPC_CHANNELS.layout.SAVE, async (ctx, layout: AppLayout, expectedRevision?: number) => {
     const windowWorkspaceId = ctx.workspaceId
       ?? (ctx.webContentsId != null ? windowManager?.getWorkspaceForWindow(ctx.webContentsId) : undefined)
     if (windowWorkspaceId && layout.workspaceId !== windowWorkspaceId) {
@@ -39,15 +41,19 @@ export function registerLayoutHandlers(server: RpcServer, deps: HandlerDeps): vo
       if (writeContext.workspaceId !== layout.workspaceId) {
         throw new Error(`Cannot save layout for workspace ${layout.workspaceId} from window ${writeContext.workspaceId}`)
       }
-      return coordinator.saveWindowSnapshot(writeContext.layoutWindowId, layout, expectedRevision)
+      const saved = coordinator.saveWindowSnapshot(writeContext.layoutWindowId, layout, expectedRevision)
+      await coordinator.flush()
+      return saved
     }
-    return coordinator.saveSnapshot(layout, expectedRevision)
+    const saved = coordinator.saveSnapshot(layout, expectedRevision)
+    await coordinator.flush()
+    return saved
   })
-  const detach = (
+  const detach = async (
     webContentsId: number | null,
     bounds: LayoutWindow['bounds'] | undefined,
     updateLayout: (windowId: string, bounds: LayoutWindow['bounds']) => AppLayout,
-  ): AppLayout => {
+  ): Promise<AppLayout> => {
     if (!windowManager) throw new Error('Window manager is unavailable')
     if (webContentsId == null) throw new Error('A desktop window is required to detach layout content')
     const writeContext = windowManager.getLayoutWriteContext(webContentsId)
@@ -62,8 +68,10 @@ export function registerLayoutHandlers(server: RpcServer, deps: HandlerDeps): vo
       windowManager.createAuxiliaryWindow(windowId, workspaceId, webContentsId, resolvedBounds)
     } catch (error) {
       coordinator.redockWindow(windowId, workspaceId)
+      await coordinator.flush()
       throw error
     }
+    await coordinator.flush()
     return next
   }
 
@@ -81,7 +89,7 @@ export function registerLayoutHandlers(server: RpcServer, deps: HandlerDeps): vo
     return detach(ctx.webContentsId, bounds, (windowId, resolvedBounds) =>
       coordinator.detachGroup(workspaceId, groupId, windowId, resolvedBounds))
   })
-  server.handle(RPC_CHANNELS.layout.REDOCK_WINDOW, (ctx, windowId: string) => {
+  server.handle(RPC_CHANNELS.layout.REDOCK_WINDOW, async (ctx, windowId: string) => {
     const workspaceId = ctx.workspaceId
       ?? (ctx.webContentsId != null ? windowManager?.getWorkspaceForWindow(ctx.webContentsId) : undefined)
       ?? undefined
@@ -92,6 +100,8 @@ export function registerLayoutHandlers(server: RpcServer, deps: HandlerDeps): vo
         throw new Error('An auxiliary window can only redock itself')
       }
     }
-    return coordinator.redockWindow(windowId, workspaceId) ?? coordinator.getSnapshot(workspaceId ?? '')
+    const snapshot = coordinator.redockWindow(windowId, workspaceId) ?? coordinator.getSnapshot(workspaceId ?? '')
+    await coordinator.flush()
+    return snapshot
   })
 }

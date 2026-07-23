@@ -1,8 +1,8 @@
-import { existsSync, mkdirSync, realpathSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, parse } from "node:path";
 import { fauxAssistantMessage, registerFauxProvider } from "@mortise/pi-ai";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	type CreateAgentSessionRuntimeFactory,
 	createAgentSessionFromServices,
@@ -204,6 +204,58 @@ describe("AgentSessionRuntime characterization", () => {
 			{ type: "session_shutdown", reason: "resume", targetSessionFile: originalSessionFile },
 			{ type: "session_start", reason: "resume", previousSessionFile: secondSessionFile },
 		]);
+	});
+
+	it("flushes pending session writes before replacement invalidates the old runtime", async () => {
+		const { runtime } = await createRuntimeForTest(() => {});
+		await runtime.session.prompt("hello");
+		const previousFile = runtime.session.sessionFile!;
+		runtime.session.sessionManager.appendCustomEntry("before-replacement", { durable: true });
+
+		await runtime.newSession();
+
+		const persisted = readFileSync(previousFile, "utf8")
+			.trim()
+			.split("\n")
+			.map((line) => JSON.parse(line) as Record<string, any>);
+		expect(persisted).toContainEqual(
+			expect.objectContaining({ type: "custom", customType: "before-replacement", data: { durable: true } }),
+		);
+	});
+
+	it("flushes pending session writes during runtime shutdown", async () => {
+		const { runtime } = await createRuntimeForTest(() => {});
+		await runtime.session.prompt("hello");
+		const sessionFile = runtime.session.sessionFile!;
+		runtime.session.sessionManager.appendCustomEntry("before-shutdown", { durable: true });
+
+		await runtime.dispose();
+
+		const persisted = readFileSync(sessionFile, "utf8")
+			.trim()
+			.split("\n")
+			.map((line) => JSON.parse(line) as Record<string, any>);
+		expect(persisted).toContainEqual(
+			expect.objectContaining({ type: "custom", customType: "before-shutdown", data: { durable: true } }),
+		);
+	});
+
+	it("releases runtime resources when shutdown persistence fails", async () => {
+		const { runtime } = await createRuntimeForTest(() => {});
+		const failure = new Error("durability failed");
+		vi.spyOn(runtime.session.sessionManager, "flush").mockRejectedValueOnce(failure);
+		const sessionDispose = vi.spyOn(runtime.session, "dispose");
+		const networkDispose = vi.spyOn(runtime.services.networkManager, "dispose");
+		let invalidated = false;
+		runtime.setBeforeSessionInvalidate(() => {
+			invalidated = true;
+		});
+
+		await expect(runtime.dispose()).rejects.toBe(failure);
+
+		expect(invalidated).toBe(true);
+		expect(sessionDispose).toHaveBeenCalledOnce();
+		expect(networkDispose).toHaveBeenCalledOnce();
 	});
 
 	it("honors session_before_switch cancellation for new and resume", async () => {

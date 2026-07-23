@@ -7,9 +7,12 @@ const { validatePackagedLayout } = require('./afterPack.cjs') as {
   validatePackagedLayout: (layout: Record<string, string>) => void
 }
 const roots: string[] = []
+const originalBinaryRuntimeOverride = process.env.MORTISE_PI_BINARY_RUNTIME
 
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
+  if (originalBinaryRuntimeOverride === undefined) delete process.env.MORTISE_PI_BINARY_RUNTIME
+  else process.env.MORTISE_PI_BINARY_RUNTIME = originalBinaryRuntimeOverride
 })
 
 function createLayout() {
@@ -74,5 +77,29 @@ describe('packaged Electron layout', () => {
     writeFileSync(duplicate, 'fixture')
 
     expect(() => validatePackagedLayout(layout)).toThrow('Expected exactly one packaged Bun runtime')
+  })
+
+  it('rejects the legacy JS Pi runtime even when the old fallback environment variable is set', () => {
+    const layout = createLayout()
+    rmSync(layout.piExecutable, { force: true })
+    const legacyCli = join(layout.piRuntimeRoot, 'dist', 'cli.bundle.js')
+    const legacyPackage = join(layout.piRuntimeRoot, 'runtime_modules', '@mortise', 'pi-ai', 'package.json')
+    mkdirSync(dirname(legacyCli), { recursive: true })
+    mkdirSync(dirname(legacyPackage), { recursive: true })
+    writeFileSync(legacyCli, 'legacy fixture')
+    writeFileSync(legacyPackage, '{}')
+    process.env.MORTISE_PI_BINARY_RUNTIME = '0'
+
+    expect(() => validatePackagedLayout(layout)).toThrow('Packaged runtime asset missing')
+  })
+
+  it('rejects legacy JS candidates beside the compiled Pi runtime', () => {
+    const layout = createLayout()
+    const legacyCli = join(layout.piRuntimeRoot, 'dist', 'cli.full.bundle.js')
+    mkdirSync(dirname(legacyCli), { recursive: true })
+    writeFileSync(legacyCli, 'legacy fixture')
+    process.env.MORTISE_PI_BINARY_RUNTIME = '0'
+
+    expect(() => validatePackagedLayout(layout)).toThrow('Electron package contains legacy Pi runtime candidates')
   })
 })

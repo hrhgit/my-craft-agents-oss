@@ -92,6 +92,58 @@ function makeStore(): BindingStore {
 }
 
 describe('Commands', () => {
+  it('keeps /new ephemeral and publishes/binds on the first message', async () => {
+    const store = makeStore()
+    const published = makeSession('new-session', 'Draft name', Date.now())
+    let createSessionCalls = 0
+    let firstTurnCalls = 0
+    const manager = {
+      ...makeSessionManager([]),
+      createSession: async () => {
+        createSessionCalls++
+        throw new Error('ordinary empty Session creation is forbidden')
+      },
+      createAndSendFirstTurn: async (input: { beforePublish?: (session: Session) => Promise<void> | void }) => {
+        firstTurnCalls++
+        await input.beforePublish?.(published)
+        return { session: published, messageId: 'first-message' }
+      },
+    } as unknown as ISessionManager
+    const commands = new Commands(manager, store, 'ws1')
+    const adapter = makeAdapter('whatsapp', false)
+
+    await commands.handleCommand(adapter, makeMessage('/new Draft name'))
+    expect(createSessionCalls).toBe(0)
+    expect(firstTurnCalls).toBe(0)
+    expect(store.findByChannel('whatsapp', 'chan-1')).toBeUndefined()
+
+    await commands.handle(adapter, makeMessage('start the task'))
+    expect(firstTurnCalls).toBe(1)
+    expect(store.findByChannel('whatsapp', 'chan-1')?.sessionId).toBe('new-session')
+  })
+
+  it('retains the draft and leaves no binding when first-turn publication fails', async () => {
+    const store = makeStore()
+    let attempts = 0
+    const manager = {
+      ...makeSessionManager([]),
+      createAndSendFirstTurn: async () => {
+        attempts++
+        throw new Error('first-turn persistence failed')
+      },
+    } as unknown as ISessionManager
+    const commands = new Commands(manager, store, 'ws1')
+    const adapter = makeAdapter('whatsapp', false)
+
+    await commands.handleCommand(adapter, makeMessage('/new Retryable'))
+    await commands.handle(adapter, makeMessage('try once'))
+    await commands.handle(adapter, makeMessage('try again'))
+
+    expect(attempts).toBe(2)
+    expect(store.findByChannel('whatsapp', 'chan-1')).toBeUndefined()
+    expect(adapter.sent.filter(text => text.includes('first-turn persistence failed'))).toHaveLength(2)
+  })
+
   it('binds by numbered recent-session index on non-inline platforms', async () => {
     const sessions = [
       makeSession('sess-1', 'Old', 100),

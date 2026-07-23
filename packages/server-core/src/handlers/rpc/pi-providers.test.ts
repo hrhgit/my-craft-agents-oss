@@ -16,7 +16,6 @@ const reloadProviderRuntime = mock(async (_provider?: string) => {})
 
 mock.module('@mortise/shared/config', () => ({
   deletePiGlobalProvider: (key: string) => deleteGlobalProvider(key),
-  migratePiGlobalProviderApiKeysToAuth: () => ({ migrated: 0, removedFromModels: 0, changed: false }),
   readPiGlobalProviders: () => ({}),
   readPiGlobalSettings: () => ({}),
   savePiGlobalProvider: (key: string, provider: unknown, apiKey?: string) => saveGlobalProvider(key, provider, apiKey),

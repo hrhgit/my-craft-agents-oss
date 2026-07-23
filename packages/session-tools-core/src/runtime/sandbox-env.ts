@@ -4,10 +4,27 @@
 
 import { mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { BLOCKED_ENV_VARS, createSanitizedEnv } from '@mortise/shared/utils/env';
 import type { ScriptRuntimeLanguage } from './resolve-script-runtime.ts';
 
-export { BLOCKED_ENV_VARS, createSanitizedEnv };
+export const BLOCKED_ENV_VARS = [
+  'ANTHROPIC_API_KEY',
+  'CLAUDE_CODE_OAUTH_TOKEN',
+  'AWS_ACCESS_KEY_ID',
+  'AWS_SECRET_ACCESS_KEY',
+  'AWS_SESSION_TOKEN',
+  'GITHUB_TOKEN',
+  'GH_TOKEN',
+  'OPENAI_API_KEY',
+  'GOOGLE_API_KEY',
+  'STRIPE_SECRET_KEY',
+  'NPM_TOKEN',
+] as const;
+
+export function createSanitizedEnv(baseEnv: NodeJS.ProcessEnv = process.env): Record<string, string> {
+  const env = Object.fromEntries(Object.entries(baseEnv).filter((entry): entry is [string, string] => entry[1] !== undefined));
+  for (const key of BLOCKED_ENV_VARS) delete env[key];
+  return env;
+}
 
 export interface ScriptRuntimeEnvOptions {
   language: ScriptRuntimeLanguage;

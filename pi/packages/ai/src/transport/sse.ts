@@ -30,9 +30,7 @@ export async function* iterateSseMessages(
 
 	try {
 		while (true) {
-			if (options.signal?.aborted) {
-				throw createAbortError(options.signal.reason);
-			}
+			throwIfAborted(options.signal);
 
 			const { value, done } = await reader.read();
 			if (done) {
@@ -46,6 +44,7 @@ export async function* iterateSseMessages(
 				buffer = consumed.rest;
 				const event = decodeSseLine(consumed.line, state);
 				if (event) {
+					throwIfAborted(options.signal);
 					yield event;
 				}
 				consumed = consumeLine(buffer);
@@ -58,6 +57,7 @@ export async function* iterateSseMessages(
 			buffer = consumed.rest;
 			const event = decodeSseLine(consumed.line, state);
 			if (event) {
+				throwIfAborted(options.signal);
 				yield event;
 			}
 			consumed = consumeLine(buffer);
@@ -66,12 +66,14 @@ export async function* iterateSseMessages(
 		if (buffer.length > 0) {
 			const event = decodeSseLine(buffer, state);
 			if (event) {
+				throwIfAborted(options.signal);
 				yield event;
 			}
 		}
 
 		const trailingEvent = flushSseEvent(state);
 		if (trailingEvent) {
+			throwIfAborted(options.signal);
 			yield trailingEvent;
 		}
 	} finally {
@@ -84,6 +86,10 @@ export async function* iterateSseMessages(
 			reader.releaseLock();
 		} catch {}
 	}
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+	if (signal?.aborted) throw createAbortError(signal.reason);
 }
 
 export async function* iterateJsonSseMessages<T = Record<string, unknown>>(

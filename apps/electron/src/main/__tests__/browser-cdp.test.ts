@@ -479,6 +479,37 @@ describe('BrowserCDP', () => {
   })
 
   describe('detach', () => {
+    it('holds the command lease while attachment is still pending, then idle-detaches after completion', async () => {
+      jest.useFakeTimers()
+      const wc = createMockWebContents()
+      const cdp = new BrowserCDP(wc as any)
+
+      await cdp.getAccessibilitySnapshot()
+
+      let signalAttachStarted!: () => void
+      const attachStarted = new Promise<void>(resolve => { signalAttachStarted = resolve })
+      let releaseAttach!: () => void
+      const attachGate = new Promise<void>(resolve => { releaseAttach = resolve })
+      ;(cdp as any).ensureAttached = async () => {
+        signalAttachStarted()
+        await attachGate
+      }
+
+      const pending = cdp.getAccessibilitySnapshot()
+      await attachStarted
+
+      jest.advanceTimersByTime(5_000)
+      expect(wc.debugger.detach).not.toHaveBeenCalled()
+
+      releaseAttach()
+      await pending
+
+      jest.advanceTimersByTime(4_999)
+      expect(wc.debugger.detach).not.toHaveBeenCalled()
+      jest.advanceTimersByTime(1)
+      expect(wc.debugger.detach).toHaveBeenCalledTimes(1)
+    })
+
     it('does not idle-detach while a CDP command is still in flight', async () => {
       jest.useFakeTimers()
       let resolveLongCommand!: (value: { nodes: never[] }) => void

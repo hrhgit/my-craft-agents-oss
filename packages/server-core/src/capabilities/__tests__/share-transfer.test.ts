@@ -65,7 +65,7 @@ describe('session transfer capability', () => {
       status: 'success', output: { sourceSessionId: 'session-1', summary: 'Summary' },
     })
     expect(await router.invoke(request('session.transfer', 'import-summary', {
-      sourceSessionId: 'remote-session', summary: 'Safe summary', labels: ['imported'],
+      sourceSessionId: 'remote-session', summary: 'Safe summary',
     }))).toMatchObject({ status: 'success', output: { sessionId: 'created-session' } })
     expect(exportSummary).toHaveBeenCalledWith('session-1')
     expect(importSummary).toHaveBeenCalledWith('session-1', {
@@ -86,6 +86,18 @@ describe('session transfer capability', () => {
     expect(await router.invoke(request('session.transfer', 'import-summary', {
       sourceSessionId: 'remote', summary: 'ok', files: [{ path: 'secret' }],
     }))).toMatchObject({ status: 'failed' })
+    expect(await router.invoke({
+      ...request('session.transfer', 'import-summary', {
+        sourceSessionId: 'remote', summary: 'ok', labels: ['retired'],
+      }),
+      requestId: 'retired-labels',
+    })).toMatchObject({ status: 'failed' })
+    expect(await router.invoke({
+      ...request('session.transfer', 'import-summary', {
+        sourceSessionId: 'remote', summary: 'ok', sessionStatus: 'retired',
+      }),
+      requestId: 'retired-status',
+    })).toMatchObject({ status: 'failed' })
     expect(await router.invoke({
       ...request('session.transfer', 'import-summary', {
         sourceSessionId: 'remote', summary: 'x'.repeat(TRANSFER_SUMMARY_MAX_LENGTH + 1),

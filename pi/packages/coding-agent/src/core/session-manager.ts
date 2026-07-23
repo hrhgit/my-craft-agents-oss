@@ -16,7 +16,7 @@ import {
 	statSync,
 	writeFileSync,
 } from "fs";
-import { mkdir, readdir, readFile, stat, writeFile } from "fs/promises";
+import { access, mkdir, open, readdir, readFile, rename, rm, stat, writeFile } from "fs/promises";
 import { join, resolve } from "path";
 import lockfile from "proper-lockfile";
 import { createInterface } from "readline";
@@ -69,6 +69,8 @@ export interface SessionHeader {
 export interface NewSessionOptions {
 	id?: string;
 	parentSession?: string;
+	/** Stable creation time for explicit import/fixture materialization. */
+	timestamp?: string;
 }
 
 export interface SpawnChildSessionOptions {
@@ -86,8 +88,6 @@ export interface SpawnChildSessionOptions {
 	thinkingLevel?: ThinkingLevel;
 	/** Session display name */
 	name?: string;
-	/** Working directory (defaults to parent session cwd) */
-	workingDirectory?: string;
 }
 
 export interface SessionEntryBase {
@@ -514,11 +514,14 @@ export function getDefaultSessionDir(cwd: string, agentDir: string = getDefaultA
 
 const SESSION_CACHE_VERSION = 1;
 const SESSION_READ_BUFFER_SIZE = 1024 * 1024;
+const SESSION_TAIL_READ_BUFFER_SIZE = 64 * 1024;
 const SESSION_ENTRY_CACHE_MAX_FILE_BYTES = 8 * 1024 * 1024;
 const SESSION_FILE_LOCK_STALE_MS = 30_000;
 const SESSION_FILE_LOCK_RETRY_DELAY_MS = 25;
 const SESSION_FILE_LOCK_RETRY_COUNT = 1_400;
 const SESSION_FILE_LOCK_SLEEP_BUFFER = new Int32Array(new SharedArrayBuffer(4));
+const SESSION_WRITE_BATCH_BYTES = 256 * 1024;
+export const SESSION_PERSISTENCE_MAX_PENDING_ENTRIES = 1_024;
 const sessionEntriesMemoryCache = new Map<
 	string,
 	{ sourceMtimeMs: number; sourceSize: number; entries: FileEntry[] }
@@ -761,6 +764,22 @@ function acquireSessionFileLockSync(sessionFile: string): () => void {
 	throw (lastError as Error) ?? new Error(`Failed to acquire session file lock: ${sessionFile}`);
 }
 
+async function acquireSessionFileLock(sessionFile: string): Promise<() => Promise<void>> {
+	let lastError: unknown;
+	for (let attempt = 1; attempt <= SESSION_FILE_LOCK_RETRY_COUNT; attempt++) {
+		try {
+			return await lockfile.lock(sessionFile, { realpath: false, stale: SESSION_FILE_LOCK_STALE_MS });
+		} catch (error) {
+			if (!isLockConflict(error) || attempt === SESSION_FILE_LOCK_RETRY_COUNT) {
+				throw error;
+			}
+			lastError = error;
+			await new Promise<void>((resolveDelay) => setTimeout(resolveDelay, SESSION_FILE_LOCK_RETRY_DELAY_MS));
+		}
+	}
+	throw (lastError as Error) ?? new Error(`Failed to acquire session file lock: ${sessionFile}`);
+}
+
 function writeEntriesAtomically(filePath: string, entries: FileEntry[]): void {
 	const tempPath = `${filePath}.${process.pid}.${Date.now()}.${randomUUID().slice(0, 8)}.tmp`;
 	const fd = openSync(tempPath, "wx");
@@ -784,6 +803,67 @@ function writeEntriesAtomically(filePath: string, entries: FileEntry[]): void {
 	}
 }
 
+async function pathExists(filePath: string): Promise<boolean> {
+	try {
+		await access(filePath);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+async function writeEntriesAtomicallyAsync(filePath: string, entries: FileEntry[], entryCount: number): Promise<void> {
+	const tempPath = `${filePath}.${process.pid}.${Date.now()}.${randomUUID().slice(0, 8)}.tmp`;
+	const handle = await open(tempPath, "wx");
+	try {
+		await writeEntryRange(handle, entries, 0, entryCount);
+		await handle.close();
+		await rename(tempPath, filePath);
+	} catch (error) {
+		await handle.close().catch(() => {});
+		await rm(tempPath, { force: true }).catch(() => {});
+		throw error;
+	}
+}
+
+async function writeEntryRange(
+	handle: Awaited<ReturnType<typeof open>>,
+	entries: FileEntry[],
+	startIndex: number,
+	entryCount: number,
+): Promise<void> {
+	let batch = "";
+	let batchBytes = 0;
+	for (let index = startIndex; index < entryCount; index++) {
+		const line = `${JSON.stringify(entries[index])}\n`;
+		const lineBytes = Buffer.byteLength(line);
+		if (batchBytes > 0 && batchBytes + lineBytes > SESSION_WRITE_BATCH_BYTES) {
+			await handle.writeFile(batch);
+			batch = "";
+			batchBytes = 0;
+		}
+		batch += line;
+		batchBytes += lineBytes;
+	}
+	if (batchBytes > 0) {
+		await handle.writeFile(batch);
+	}
+}
+
+async function appendEntriesAsync(
+	filePath: string,
+	entries: FileEntry[],
+	startIndex: number,
+	entryCount: number,
+): Promise<void> {
+	const handle = await open(filePath, "a");
+	try {
+		await writeEntryRange(handle, entries, startIndex, entryCount);
+	} finally {
+		await handle.close();
+	}
+}
+
 function parseSessionEntryLine(line: string): FileEntry | null {
 	if (!line.trim()) return null;
 	try {
@@ -791,6 +871,51 @@ function parseSessionEntryLine(line: string): FileEntry | null {
 	} catch {
 		// Skip malformed lines
 		return null;
+	}
+}
+
+async function loadEntriesFromFileAsync(filePath: string): Promise<FileEntry[]> {
+	const content = await readFile(filePath, "utf8");
+	return content
+		.split("\n")
+		.map(parseSessionEntryLine)
+		.filter((entry): entry is FileEntry => entry !== null);
+}
+
+async function readEntryFromFileTail(filePath: string, entryId: string): Promise<SessionEntry | undefined> {
+	const handle = await open(filePath, "r");
+	try {
+		const fileSize = (await handle.stat()).size;
+		let position = fileSize;
+		let leadingFragment = Buffer.alloc(0);
+
+		while (position > 0) {
+			const readSize = Math.min(SESSION_TAIL_READ_BUFFER_SIZE, position);
+			position -= readSize;
+			const chunk = Buffer.allocUnsafe(readSize);
+			const { bytesRead } = await handle.read(chunk, 0, readSize, position);
+			const data = Buffer.concat([chunk.subarray(0, bytesRead), leadingFragment]);
+			let complete = data;
+
+			if (position > 0) {
+				const firstNewline = data.indexOf(0x0a);
+				if (firstNewline === -1) {
+					leadingFragment = data;
+					continue;
+				}
+				leadingFragment = data.subarray(0, firstNewline);
+				complete = data.subarray(firstNewline + 1);
+			}
+
+			const lines = complete.toString("utf8").split("\n");
+			for (let index = lines.length - 1; index >= 0; index--) {
+				const candidate = parseSessionEntryLine(lines[index]);
+				if (candidate?.type !== "session" && candidate?.id === entryId) return candidate;
+			}
+		}
+		return undefined;
+	} finally {
+		await handle.close();
 	}
 }
 
@@ -1124,6 +1249,21 @@ async function listSessionsFromDir(
  * Use buildSessionContext() to get the resolved message list for the LLM, which
  * handles compaction summaries and follows the path from root to current leaf.
  */
+export interface SessionDurabilityState {
+	queuedOperations: 0 | 1;
+	pendingEntries: number;
+	pendingRevisions: number;
+	backpressured: boolean;
+	failed: boolean;
+}
+
+export class SessionPersistenceBackpressureError extends Error {
+	constructor(limit: number) {
+		super(`Session persistence queue reached its ${limit}-entry backpressure limit`);
+		this.name = "SessionPersistenceBackpressureError";
+	}
+}
+
 export class SessionManager {
 	private sessionId: string = "";
 	private sessionFile: string | undefined;
@@ -1136,6 +1276,12 @@ export class SessionManager {
 	private labelsById: Map<string, string> = new Map();
 	private labelTimestampsById: Map<string, string> = new Map();
 	private leafId: string | null = null;
+	private persistedEntryCount = 0;
+	private requestedDurabilityRevision = 0;
+	private durableRevision = 0;
+	private rewriteRequested = false;
+	private persistenceLoop: Promise<void> | undefined;
+	private persistenceError: Error | undefined;
 
 	private constructor(
 		cwd: string,
@@ -1160,6 +1306,7 @@ export class SessionManager {
 
 	/** Switch to a different session file (used for resume and branching) */
 	setSessionFile(sessionFile: string): void {
+		this.assertPersistenceIdle("switch session files");
 		this.sessionFile = resolvePath(sessionFile);
 		if (existsSync(this.sessionFile)) {
 			this.withSessionFileLock(() => {
@@ -1173,6 +1320,7 @@ export class SessionManager {
 					this.sessionFile = explicitPath;
 					this.rewriteFileUnlocked();
 					this.flushed = true;
+					this.persistedEntryCount = this.fileEntries.length;
 					return;
 				}
 
@@ -1185,6 +1333,7 @@ export class SessionManager {
 
 				this._buildIndex();
 				this.flushed = true;
+				this.persistedEntryCount = this.fileEntries.length;
 			});
 		} else {
 			const explicitPath = this.sessionFile;
@@ -1194,11 +1343,13 @@ export class SessionManager {
 	}
 
 	newSession(options?: NewSessionOptions): string | undefined {
+		this.assertPersistenceIdle("start a new session");
 		if (options?.id !== undefined) {
 			assertValidSessionId(options.id);
 		}
 		this.sessionId = options?.id ?? createSessionId();
-		const timestamp = new Date().toISOString();
+		const timestamp = options?.timestamp ?? new Date().toISOString();
+		if (Number.isNaN(Date.parse(timestamp))) throw new Error(`Invalid Session timestamp: ${timestamp}`);
 		const header: SessionHeader = {
 			type: "session",
 			version: CURRENT_SESSION_VERSION,
@@ -1212,6 +1363,11 @@ export class SessionManager {
 		this.labelsById.clear();
 		this.leafId = null;
 		this.flushed = false;
+		this.persistedEntryCount = 0;
+		this.requestedDurabilityRevision = 0;
+		this.durableRevision = 0;
+		this.rewriteRequested = false;
+		this.persistenceError = undefined;
 
 		if (this.persist) {
 			const fileTimestamp = timestamp.replace(/[:.]/g, "-");
@@ -1258,9 +1414,107 @@ export class SessionManager {
 
 	private _rewriteFile(): void {
 		if (!this.persist || !this.sessionFile) return;
-		this.withSessionFileLock(() => {
-			this.rewriteFileUnlocked();
-		});
+		const hasAssistant = this.fileEntries.some((entry) =>
+			entry.type === "message" ? entry.message.role === "assistant" : false,
+		);
+		if (!this.flushed && !hasAssistant) return;
+		this.requestPersistence(true);
+	}
+
+	private assertPersistenceIdle(operation: string): void {
+		if (this.persistenceLoop || this.requestedDurabilityRevision !== this.durableRevision) {
+			throw new Error(`Cannot ${operation} while session persistence is pending; await flush() first`);
+		}
+	}
+
+	private requestPersistence(rewrite: boolean): void {
+		if (!this.persist || !this.sessionFile) return;
+		if (this.persistenceError) {
+			throw this.persistenceError;
+		}
+		this.requestedDurabilityRevision++;
+		this.rewriteRequested ||= rewrite;
+		this.ensurePersistenceLoop();
+	}
+
+	private ensurePersistenceLoop(): void {
+		if (this.persistenceLoop || this.persistenceError) return;
+		this.persistenceLoop = new Promise<void>((resolveStart) => setImmediate(resolveStart))
+			.then(() => this.drainPersistence())
+			.catch((error) => {
+				this.persistenceError = error instanceof Error ? error : new Error(String(error));
+			})
+			.finally(() => {
+				this.persistenceLoop = undefined;
+				if (!this.persistenceError && this.durableRevision < this.requestedDurabilityRevision) {
+					this.ensurePersistenceLoop();
+				}
+			});
+	}
+
+	private async drainPersistence(): Promise<void> {
+		while (this.durableRevision < this.requestedDurabilityRevision) {
+			const targetRevision = this.requestedDurabilityRevision;
+			const targetFile = this.sessionFile;
+			const targetEntries = this.fileEntries;
+			const targetEntryCount = targetEntries.length;
+			const startIndex = this.persistedEntryCount;
+			const rewrite = this.rewriteRequested || !this.flushed;
+			this.rewriteRequested = false;
+
+			if (!targetFile) {
+				this.durableRevision = targetRevision;
+				continue;
+			}
+
+			const release = await acquireSessionFileLock(targetFile);
+			try {
+				if (rewrite) {
+					if (!this.flushed && (await pathExists(targetFile))) {
+						const error = new Error(`Session file already exists: ${targetFile}`);
+						(error as NodeJS.ErrnoException).code = "EEXIST";
+						throw error;
+					}
+					await writeEntriesAtomicallyAsync(targetFile, targetEntries, targetEntryCount);
+				} else if (startIndex < targetEntryCount) {
+					await appendEntriesAsync(targetFile, targetEntries, startIndex, targetEntryCount);
+				}
+			} finally {
+				await release();
+			}
+
+			if (targetFile !== this.sessionFile || targetEntries !== this.fileEntries) {
+				throw new Error("Session changed while persistence was in progress");
+			}
+			this.flushed = true;
+			this.persistedEntryCount = targetEntryCount;
+			this.durableRevision = targetRevision;
+		}
+	}
+
+	/** Wait until every currently queued entry is readable from the canonical JSONL. */
+	async flush(): Promise<void> {
+		while (this.persistenceLoop) {
+			await this.persistenceLoop;
+		}
+		if (this.persistenceError) {
+			throw this.persistenceError;
+		}
+		if (this.durableRevision < this.requestedDurabilityRevision) {
+			this.ensurePersistenceLoop();
+			return this.flush();
+		}
+	}
+
+	getDurabilityState(): SessionDurabilityState {
+		const pendingEntries = Math.max(0, this.fileEntries.length - this.persistedEntryCount);
+		return {
+			queuedOperations: this.persistenceLoop ? 1 : 0,
+			pendingEntries,
+			pendingRevisions: Math.max(0, this.requestedDurabilityRevision - this.durableRevision),
+			backpressured: pendingEntries >= SESSION_PERSISTENCE_MAX_PENDING_ENTRIES,
+			failed: this.persistenceError !== undefined,
+		};
 	}
 
 	isPersisted(): boolean {
@@ -1287,36 +1541,37 @@ export class SessionManager {
 		return this.sessionFile;
 	}
 
+	/** Return an entry only when it can be read back from the canonical JSONL. */
+	async getPersistedEntry(entryId: string): Promise<SessionEntry | undefined> {
+		if (!this.persist || !this.sessionFile || !this.flushed) {
+			return undefined;
+		}
+
+		return readEntryFromFileTail(this.sessionFile, entryId);
+	}
+
 	_persist(entry: SessionEntry): void {
 		if (!this.persist || !this.sessionFile) return;
 
-		this.withSessionFileLock(() => {
-			const hasAssistant = this.fileEntries.some((e) => e.type === "message" && e.message.role === "assistant");
-			if (!hasAssistant) {
-				if (this.flushed) {
-					appendFileSync(this.sessionFile!, `${JSON.stringify(entry)}\n`);
-				} else {
-					// Mark as not flushed so when assistant arrives, all entries get written
-					this.flushed = false;
-				}
-				return;
-			}
-
-			if (!this.flushed) {
-				if (existsSync(this.sessionFile!)) {
-					const error = new Error(`Session file already exists: ${this.sessionFile}`);
-					(error as NodeJS.ErrnoException).code = "EEXIST";
-					throw error;
-				}
-				writeEntriesAtomically(this.sessionFile!, this.fileEntries);
-				this.flushed = true;
-			} else {
-				appendFileSync(this.sessionFile!, `${JSON.stringify(entry)}\n`);
-			}
-		});
+		const hasAssistant = this.fileEntries.some((candidate) =>
+			candidate.type === "message" ? candidate.message.role === "assistant" : false,
+		);
+		if (!hasAssistant) {
+			return;
+		}
+		this.requestPersistence(!this.flushed);
 	}
 
 	private _appendEntry(entry: SessionEntry): void {
+		if (this.persistenceError) {
+			throw this.persistenceError;
+		}
+		if (
+			this.persist &&
+			this.fileEntries.length - this.persistedEntryCount >= SESSION_PERSISTENCE_MAX_PENDING_ENTRIES
+		) {
+			throw new SessionPersistenceBackpressureError(SESSION_PERSISTENCE_MAX_PENDING_ENTRIES);
+		}
 		this.fileEntries.push(entry);
 		this.byId.set(entry.id, entry);
 		this.leafId = entry.id;
@@ -1559,13 +1814,109 @@ export class SessionManager {
 	}
 
 	/** Replace the opaque Mortise host metadata on the session header. */
-	setCraftMetadata(metadata: Record<string, unknown>): void {
+	setMortiseMetadata(metadata: Record<string, unknown>): void {
+		if (this.persistenceError) throw this.persistenceError;
 		const header = this.getHeader();
 		if (!header) {
 			throw new Error("Cannot update Mortise metadata: session header is missing");
 		}
 		header.mortise = { ...metadata };
 		this._rewriteFile();
+	}
+
+	/** Persist an explicitly hidden internal Session without weakening ordinary draft publication. */
+	async publishHiddenSession(): Promise<void> {
+		if (!this.persist || !this.sessionFile) return;
+		this.assertPersistenceIdle("publish a hidden Session");
+		const header = this.getHeader();
+		if (header?.mortise?.hidden !== true) {
+			throw new Error("Header-only publication is restricted to explicitly hidden Sessions");
+		}
+		const release = await acquireSessionFileLock(this.sessionFile);
+		try {
+			if (await pathExists(this.sessionFile)) {
+				const error = new Error(`Session file already exists: ${this.sessionFile}`);
+				(error as NodeJS.ErrnoException).code = "EEXIST";
+				throw error;
+			}
+			await writeEntriesAtomicallyAsync(this.sessionFile, this.fileEntries, this.fileEntries.length);
+		} finally {
+			await release();
+		}
+		this.flushed = true;
+		this.persistedEntryCount = this.fileEntries.length;
+		this.requestedDurabilityRevision = 0;
+		this.durableRevision = 0;
+	}
+
+	/**
+	 * Update host-owned projection fields against the latest canonical JSONL.
+	 * The lock-scoped reread prevents a cold metadata writer from replacing
+	 * entries appended by an active runtime after this manager was opened.
+	 */
+	async updateHostProjection(options: {
+		metadata?: Record<string, unknown>;
+		name?: string;
+		customType?: string;
+	}): Promise<void> {
+		if (!this.persist || !this.sessionFile) {
+			throw new Error("Cannot update an in-memory Session projection");
+		}
+		await this.flush();
+		const release = await acquireSessionFileLock(this.sessionFile);
+		let entries: FileEntry[] | undefined;
+		try {
+			const latest = await loadEntriesFromFileAsync(this.sessionFile);
+			const header = latest.find((entry): entry is SessionHeader => entry.type === "session");
+			if (!header) throw new Error("Cannot update Mortise metadata: session header is missing");
+			if (header.id !== this.sessionId) {
+				throw new Error(`Session identity changed while updating host projection: ${header.id}`);
+			}
+			if (options.metadata !== undefined) header.mortise = { ...options.metadata };
+
+			const ids = new Set(
+				latest.filter((entry): entry is SessionEntry => entry.type !== "session").map((entry) => entry.id),
+			);
+			let parentId = [...latest]
+				.reverse()
+				.find((entry): entry is SessionEntry => entry.type !== "session")?.id ?? null;
+			if (options.name !== undefined) {
+				const entry: SessionInfoEntry = {
+					type: "session_info",
+					id: generateId(ids),
+					parentId,
+					timestamp: new Date().toISOString(),
+					name: options.name,
+				};
+				latest.push(entry);
+				ids.add(entry.id);
+				parentId = entry.id;
+			}
+			if (options.metadata !== undefined && options.customType) {
+				latest.push({
+					type: "custom",
+					id: generateId(ids),
+					parentId,
+					timestamp: new Date().toISOString(),
+					customType: options.customType,
+					data: options.metadata,
+				});
+			}
+
+			await writeEntriesAtomicallyAsync(this.sessionFile, latest, latest.length);
+			entries = latest;
+		} finally {
+			await release();
+		}
+
+		this.fileEntries = entries!;
+		this._buildIndex();
+		this.flushed = true;
+		this.persistedEntryCount = entries!.length;
+		this.requestedDurabilityRevision = 0;
+		this.durableRevision = 0;
+		this.rewriteRequested = false;
+		this.persistenceError = undefined;
 	}
 
 	/**
@@ -1678,6 +2029,7 @@ export class SessionManager {
 	 * Returns the new session file path, or undefined if not persisting.
 	 */
 	createBranchedSession(leafId: string): string | undefined {
+		this.assertPersistenceIdle("create a branched session");
 		const previousSessionFile = this.sessionFile;
 		const path = this.getBranch(leafId);
 		if (path.length === 0) {
@@ -1732,6 +2084,11 @@ export class SessionManager {
 			this.fileEntries = [header, ...pathWithoutLabels, ...labelEntries];
 			this.sessionId = newSessionId;
 			this.sessionFile = newSessionFile;
+			this.persistedEntryCount = 0;
+			this.requestedDurabilityRevision = 0;
+			this.durableRevision = 0;
+			this.rewriteRequested = false;
+			this.persistenceError = undefined;
 			this._buildIndex();
 
 			// Only write the file now if it contains an assistant message.
@@ -1779,7 +2136,7 @@ export class SessionManager {
 	 * implementing session creation independently.
 	 *
 	 * The child session:
-	 * - Inherits the parent session's cwd by default (overridable via options.workingDirectory)
+	 * - Inherits the parent session's cwd
 	 * - Records lineage via parentSession (file path, consistent with forkFrom/createBranchedSession)
 	 *   and spawnedFrom (parent session ID) in the header
 	 * - Does NOT affect the parent session's leaf pointer (key difference from branch())
@@ -1795,9 +2152,7 @@ export class SessionManager {
 		parentSessionId: string,
 		options: SpawnChildSessionOptions,
 	): Promise<{ sessionId: string; sessionPath: string }> {
-		// Determine working directory (default: inherit from parent / this)
-		const workingDirectory = options.workingDirectory ?? this.cwd;
-		const resolvedWorkingDir = resolvePath(workingDirectory);
+		const resolvedWorkingDir = resolvePath(this.cwd);
 
 		// Determine session directory for the child (default: ~/.pi/agent/sessions/{encoded-cwd}/)
 		const childSessionDir = getDefaultSessionDir(resolvedWorkingDir);

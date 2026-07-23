@@ -2,6 +2,7 @@ import { describe, expect, it, mock } from 'bun:test'
 import { createDefaultAppLayout, type AppLayout } from '../../../../shared/app-layout'
 import {
   createCoordinatedLayoutSaveQueue,
+  createLayoutPersistenceCoordinator,
   recoverCoordinatedLayoutRetryFailure,
   runAuthoritativeLayoutMutation,
   saveCoordinatedWindowLayout,
@@ -13,6 +14,68 @@ function layout(revision: number): AppLayout {
 }
 
 describe('coordinated layout client', () => {
+  it('keeps capture and serialization out of 1,000 interaction hot-path updates', async () => {
+    let captures = 0
+    const persisted: number[] = []
+    const coordinator = createLayoutPersistenceCoordinator<number>({
+      idleDelayMs: 10,
+      persist: async value => {
+        captures += 1
+        JSON.stringify({ value, payload: 'x'.repeat(100_000) })
+        persisted.push(value)
+      },
+    })
+
+    const started = performance.now()
+    for (let value = 1; value <= 1_000; value += 1) coordinator.markDirty(value)
+    const hotPathDurationMs = performance.now() - started
+
+    expect(captures).toBe(0)
+    expect(persisted).toEqual([])
+    expect(hotPathDurationMs).toBeLessThan(50)
+    await coordinator.flush('interaction-end')
+    expect(captures).toBe(1)
+    expect(persisted).toEqual([1_000])
+  })
+
+  it('persists the latest state once at idle and makes it restart-readable', async () => {
+    const durable = new Map<string, string>()
+    let writes = 0
+    const coordinator = createLayoutPersistenceCoordinator<{ revision: number }>({
+      idleDelayMs: 1,
+      persist: async value => {
+        writes += 1
+        durable.set('layout', JSON.stringify(value))
+      },
+    })
+
+    for (let revision = 1; revision <= 100; revision += 1) coordinator.markDirty({ revision })
+    await Bun.sleep(10)
+    await coordinator.flush('window-close')
+
+    expect(writes).toBe(1)
+    expect(JSON.parse(durable.get('layout') ?? 'null')).toEqual({ revision: 100 })
+  })
+
+  it('flushes a newer interaction queued while persistence is in flight', async () => {
+    const persisted: number[] = []
+    let releaseFirst: (() => void) | undefined
+    const coordinator = createLayoutPersistenceCoordinator<number>({
+      persist: async value => {
+        persisted.push(value)
+        if (value === 1) await new Promise<void>(resolve => { releaseFirst = resolve })
+      },
+    })
+    coordinator.markDirty(1)
+    const firstFlush = coordinator.flush('interaction-end')
+    await Bun.sleep(0)
+    coordinator.markDirty(2)
+    const closeFlush = coordinator.flush('window-close')
+    releaseFirst?.()
+    await Promise.all([firstFlush, closeFlush])
+    expect(persisted).toEqual([1, 2])
+  })
+
   it('serializes writes and flushes both in-flight and queued work', async () => {
     const queue = createCoordinatedLayoutSaveQueue()
     const order: string[] = []

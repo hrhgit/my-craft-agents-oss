@@ -7,6 +7,8 @@ import { executeShellWithCapture } from "../../src/harness/utils/shell-output.ts
 import { createTempDir } from "./session-test-utils.ts";
 
 const chmodRestorePaths: string[] = [];
+const commandForShell = (posix: string, powershell: string): string =>
+	process.platform === "win32" ? powershell : posix;
 
 afterEach(async () => {
 	for (const path of chmodRestorePaths.splice(0)) {
@@ -194,9 +196,15 @@ describe("NodeExecutionEnv", () => {
 		const root = createTempDir();
 		const env = new NodeExecutionEnv({ cwd: root });
 		const result = getOrThrow(
-			await env.exec('printf \'%s:%s\' "$PWD" "$NODE_ENV_TEST"', {
-				env: { NODE_ENV_TEST: "ok" },
-			}),
+			await env.exec(
+				commandForShell(
+					'printf \'%s:%s\' "$PWD" "$NODE_ENV_TEST"',
+					"[Console]::Out.Write('{0}:{1}', (Get-Location).Path, $env:NODE_ENV_TEST)",
+				),
+				{
+					env: { NODE_ENV_TEST: "ok" },
+				},
+			),
 		);
 		expect(result).toEqual({ stdout: `${await realpath(root)}:ok`, stderr: "", exitCode: 0 });
 	});
@@ -207,14 +215,17 @@ describe("NodeExecutionEnv", () => {
 		let stdout = "";
 		let stderr = "";
 		const result = getOrThrow(
-			await env.exec("printf out; printf err >&2", {
-				onStdout: (chunk) => {
-					stdout += chunk;
+			await env.exec(
+				commandForShell("printf out; printf err >&2", "[Console]::Out.Write('out'); [Console]::Error.Write('err')"),
+				{
+					onStdout: (chunk) => {
+						stdout += chunk;
+					},
+					onStderr: (chunk) => {
+						stderr += chunk;
+					},
 				},
-				onStderr: (chunk) => {
-					stderr += chunk;
-				},
-			}),
+			),
 		);
 		expect(result).toEqual({ stdout: "out", stderr: "err", exitCode: 0 });
 		expect(stdout).toBe("out");

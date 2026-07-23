@@ -5,22 +5,17 @@
  * child-process bridge). Extension UI calls are forwarded to an external
  * consumer via a transport, instead of being rendered in a terminal.
  *
- * This mirrors the behaviour mortise implemented as `createBridgeUIContext`:
- * - notify / setWidget are forwarded as JSONL-style events via the transport
- * - select / confirm / input / editor return safe defaults (interactive
- *   dialogs are expected to be handled via the EventBus `remoteui:request`
- *   event + `transport.onRemoteUI`)
+ * - notifications are forwarded as serializable events
+ * - contribution and interaction methods report or return unavailable
  * - TUI-only methods (setStatus, setFooter, pasteToEditor, ...) are no-ops
  * - theme is a passthrough stub that strips ANSI styling
  */
 
-import type { Component, TUI } from "@mortise/pi-tui";
 import type { Theme } from "../../modes/interactive/theme/theme.ts";
 import type {
 	AutocompleteProviderFactory,
 	EditorFactory,
 	ExtensionUIContext,
-	ExtensionWidgetOptions,
 	WorkingIndicatorOptions,
 } from "./types.ts";
 
@@ -35,28 +30,11 @@ export interface HeadlessUITransport {
 	 * Send an extension UI event to the external consumer.
 	 *
 	 * Events are plain JSON-serialisable objects with a `type` discriminator.
-	 * The headless context emits `extension_notify` and `extension_widget`
-	 * events; the consumer handles them as it sees fit.
+	 * The headless context emits notifications; versioned GUI requires an RPC
+	 * host that advertises contribution or interaction capabilities.
 	 */
 	send(event: { type: string; [key: string]: unknown }): void;
-
-	/**
-	 * Optional handler for `remoteui:request` events.
-	 *
-	 * Extensions emit `remoteui:request` via the shared EventBus to request
-	 * interactive UI (select/confirm/input/editor dialogs). When the host
-	 * receives such a request (via `EventBus.on("remoteui:request", ...)`),
-	 * it can route it through this callback to resolve the request from the
-	 * external consumer.
-	 *
-	 * The headless UI context itself does not invoke this callback — the host
-	 * wires it up alongside the EventBus subscription.
-	 */
-	onRemoteUI?: (request: { id: string; [key: string]: unknown }) => Promise<unknown>;
 }
-
-/** Approximate terminal width used to render component factories headlessly. */
-const HEADLESS_RENDER_WIDTH = 120;
 
 /**
  * Create an {@link ExtensionUIContext} that bridges extension UI calls to an
@@ -90,14 +68,11 @@ export function createHeadlessUIContext(transport: HeadlessUITransport): Extensi
 		bg: (_name: string, text: string) => text,
 	} as unknown as Theme;
 
-	// No TUI is available in headless mode; factories receive undefined.
-	const stubTui = undefined as unknown as TUI;
-
 	const ctx: ExtensionUIContext = {
 		capabilities: {
 			kind: "none",
 			dialogs: false,
-			widgets: true,
+			widgets: false,
 			customComponents: false,
 			terminalInput: false,
 			editorControl: false,
@@ -121,44 +96,9 @@ export function createHeadlessUIContext(transport: HeadlessUITransport): Extensi
 			transport.send({ type: "extension_notify", message, notificationType: type, source: "headless" });
 		},
 
-		setWidget(key: string, content: unknown, options?: ExtensionWidgetOptions): void {
-			if (typeof content === "function") {
-				// Component factory mode: (tui, theme) => Component & { dispose?() }
-				try {
-					const factory = content as (tui: TUI, theme: Theme) => Component & { dispose?(): void };
-					const component = factory(stubTui, stubTheme);
-					if (component && typeof component.render === "function") {
-						const lines = component.render(HEADLESS_RENDER_WIDTH);
-						if (Array.isArray(lines)) {
-							transport.send({
-								type: "extension_widget",
-								key,
-								content: lines,
-								placement: options?.placement,
-								source: "headless",
-							});
-						}
-					}
-					// Clean up the factory-produced component if it has a dispose hook.
-					if (component && typeof component.dispose === "function") {
-						component.dispose();
-					}
-				} catch {
-					// Factory invocation failed; skip this widget update.
-				}
-			} else {
-				// Direct mode: string[] | undefined
-				transport.send({
-					type: "extension_widget",
-					key,
-					content: content as string[] | undefined,
-					placement: options?.placement,
-					source: "headless",
-				});
-			}
-		},
+		setWidget(): void {},
 
-		// ---- UI dialogs (deferred to remoteui:request; safe fallbacks here) ----
+		// ---- UI dialogs are unavailable without a versioned interaction host. ----
 		select(): Promise<string | undefined> {
 			return Promise.resolve(undefined);
 		},

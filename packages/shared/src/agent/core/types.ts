@@ -45,8 +45,8 @@ export interface PermissionManagerConfig {
   workspaceId: string;
   /** Session ID for mode state */
   sessionId: string;
-  /** Working directory for the session */
-  workingDirectory?: string;
+  /** Canonical workspace root for permission evaluation. */
+  workspaceRootPath: string;
   /** Plans folder path (writes to this folder are allowed in Explore mode) */
   plansFolderPath?: string;
   /** Data folder path (writes to this folder are allowed in Explore mode for transform_data output) */

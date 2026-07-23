@@ -9,51 +9,9 @@
  * Content blocks support both text and image, matching MCP CallToolResult.
  */
 
-/**
- * Text content block for tool responses
- */
-export interface TextContent {
-  type: 'text';
-  text: string;
-}
-
-/**
- * Image content block for tool responses (base64-encoded)
- */
-export interface ImageContent {
-  type: 'image';
-  data: string;
-  mimeType: string;
-}
-
-/**
- * Standard tool result type compatible with both SDK and MCP patterns.
- * Content supports text and image blocks.
- *
- * The `[x: string]: unknown` index signature is required for MCP SDK
- * `CallToolResult` compatibility (the SDK expects a loose object shape).
- */
-export interface ToolResult {
-  [x: string]: unknown;
-  content: Array<TextContent | ImageContent>;
-  /**
-   * Optional structured payload for MCP clients.
-   * Keep this as an object (not null) for compatibility with strict tool_result parsers.
-   */
-  structuredContent?: Record<string, unknown>;
-  isError?: boolean;
-}
-
-/**
- * Create a successful text response.
- */
-export function successResponse(text: string): ToolResult {
-  return {
-    content: [{ type: 'text', text }],
-    structuredContent: {},
-    isError: false,
-  };
-}
+export type { TextContent, ImageContent, ToolResult } from '@mortise/session-tools-core';
+export { successResponse, errorResponse, getResultText } from '@mortise/session-tools-core';
+import type { ToolResult } from '@mortise/session-tools-core';
 
 /**
  * Create an error response.
@@ -78,14 +36,6 @@ export function successResponse(text: string): ToolResult {
  * stripErrorTags() in packages/ui/src/components/chat/turn-utils.ts which
  * removes the prefix for clean UI display.
  */
-export function errorResponse(message: string): ToolResult {
-  return {
-    content: [{ type: 'text', text: `[ERROR] ${message}` }],
-    structuredContent: {},
-    isError: true,
-  };
-}
-
 /**
  * Create an MCP error response using the message verbatim (no prefix).
  *
@@ -113,7 +63,3 @@ export function mcpErrorResponse(message: string): ToolResult {
  * the block is missing or not text). Convenience helper for tests and
  * simple consumers that only need to read text content.
  */
-export function getResultText(result: ToolResult, index = 0): string {
-  const block = result.content[index];
-  return block?.type === 'text' ? block.text : '';
-}

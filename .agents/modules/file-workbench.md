@@ -27,7 +27,7 @@ collaborates_with: [universal-layout]
 validation:
   - { id: file-workbench-regression, kind: unit, command: "bun test packages/ui/src/components/markdown packages/ui/src/components/overlay apps/electron/src/renderer/components/right-workbench", description: "Run file preview and workbench regressions.", triggers: [owned-change], required: true, evidence: "Bun test exit status and output." }
   - { id: file-workbench-physical, kind: physical, command: "bun run test:ui-validation:electron", description: "Exercise file workbench behavior through the shared Developer Kit host.", triggers: [ui-change, release], required: false, evidence: "Developer Kit run output and retained UI evidence." }
-scope_digest: b54d3c602b2c80484bbdccd71fe029fed8782f98
+scope_digest: cb3fd7906d68fd706fd34e1621ae3eac63c6283f
 ---
 
 ## Purpose
@@ -58,4 +58,6 @@ Run file classification, raw HTML policy, rich block parity, workbench state, dr
 Untrusted file content can trigger unsafe links or resource loads; large files can block renderer responsiveness.
 
 ## Semantic history
+- 2026-07-22: Deferred PDF and Mermaid preview engines behind resilient lazy-loading boundaries with source-consistent rendering and layout-stable pending states.
+- 2026-07-21: Converged editable Markdown onto the official TipTap parser/serializer and removed the legacy dual-engine contract and dependency.
 - 2026-07-18: Moved files into workspace-scoped universal dock content with an internal navigator.

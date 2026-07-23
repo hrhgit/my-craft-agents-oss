@@ -48,6 +48,13 @@ export interface MortiseUiFixtureSession {
   permissionMode?: 'safe' | 'ask' | 'allow-all'
   hasUnread?: boolean
   hidden?: boolean
+  pendingPlanExecution?: {
+    planPath?: string
+    artifactId?: string
+    draftInputSnapshot?: string
+    awaitingCompaction: boolean
+    executionDispatched?: boolean
+  }
   messages?: MortiseUiFixtureMessage[]
   /** Paths are relative to the session sidecar and must start with a supported sidecar folder. */
   files?: MortiseUiFixtureFile[]
@@ -126,6 +133,16 @@ export const MORTISE_UI_FIXTURE_SCHEMA = {
                 permissionMode: { enum: [...PERMISSION_MODES] },
                 hasUnread: { type: 'boolean' },
                 hidden: { type: 'boolean' },
+                pendingPlanExecution: {
+                  type: 'object', additionalProperties: false, required: ['awaitingCompaction'],
+                  properties: {
+                    planPath: { type: 'string', minLength: 1, maxLength: 240 },
+                    artifactId: { type: 'string', pattern: IDENTIFIER_PATTERN },
+                    draftInputSnapshot: { type: 'string', maxLength: LIMITS.messageBytes },
+                    awaitingCompaction: { type: 'boolean' },
+                    executionDispatched: { type: 'boolean' },
+                  },
+                },
                 files: { type: 'array', maxItems: LIMITS.files, items: fileSchema },
                 messages: {
                   type: 'array', maxItems: LIMITS.messagesPerSession,
@@ -322,7 +339,7 @@ export function validateMortiseUiFixtureSpec(value: unknown): MortiseUiFixtureSp
     const sessions = rawSessions.map((rawSession, sessionIndex): MortiseUiFixtureSession => {
       const sessionPath = `${path}.sessions[${sessionIndex}]`
       const session = record(rawSession, sessionPath)
-      exactKeys(session, ['id', 'parentSessionId', 'name', 'createdAt', 'lastUsedAt', 'permissionMode', 'hasUnread', 'hidden', 'messages', 'files'], sessionPath)
+      exactKeys(session, ['id', 'parentSessionId', 'name', 'createdAt', 'lastUsedAt', 'permissionMode', 'hasUnread', 'hidden', 'pendingPlanExecution', 'messages', 'files'], sessionPath)
       const sessionId = identifier(session.id, `${sessionPath}.id`)
       if (sessionOwners.has(sessionId)) fail(`${sessionPath}.id`, `duplicates session ${sessionId}`)
       sessionOwners.set(sessionId, id)
@@ -344,6 +361,7 @@ export function validateMortiseUiFixtureSpec(value: unknown): MortiseUiFixtureSp
         permissionMode: optionalPermissionMode(session.permissionMode, `${sessionPath}.permissionMode`),
         hasUnread: optionalBoolean(session.hasUnread, `${sessionPath}.hasUnread`),
         hidden: optionalBoolean(session.hidden, `${sessionPath}.hidden`),
+        pendingPlanExecution: validatePendingPlanExecution(session.pendingPlanExecution, `${sessionPath}.pendingPlanExecution`),
         messages: messages.length ? messages : undefined,
         files: sessionFiles.length ? sessionFiles : undefined,
       })
@@ -506,6 +524,26 @@ function optionalPermissionMode(value: unknown, path: string): MortiseUiFixtureW
   if (value === undefined) return undefined
   if (typeof value !== 'string' || !PERMISSION_MODES.has(value)) fail(path, 'must be safe, ask, or allow-all')
   return value as MortiseUiFixtureWorkspace['permissionMode']
+}
+
+function validatePendingPlanExecution(
+  value: unknown,
+  path: string,
+): MortiseUiFixtureSession['pendingPlanExecution'] {
+  if (value === undefined) return undefined
+  const item = record(value, path)
+  exactKeys(item, ['planPath', 'artifactId', 'draftInputSnapshot', 'awaitingCompaction', 'executionDispatched'], path)
+  const planPath = optionalText(item.planPath, `${path}.planPath`, 240)
+  const artifactId = item.artifactId === undefined ? undefined : identifier(item.artifactId, `${path}.artifactId`)
+  if (!planPath && !artifactId) fail(path, 'must include planPath or artifactId')
+  if (typeof item.awaitingCompaction !== 'boolean') fail(`${path}.awaitingCompaction`, 'must be a boolean')
+  return compact({
+    planPath,
+    artifactId,
+    draftInputSnapshot: optionalText(item.draftInputSnapshot, `${path}.draftInputSnapshot`, LIMITS.messageBytes, true),
+    awaitingCompaction: item.awaitingCompaction,
+    executionDispatched: optionalBoolean(item.executionDispatched, `${path}.executionDispatched`),
+  })
 }
 
 function optionalEnum<const T extends readonly string[]>(value: unknown, path: string, values: T): T[number] | undefined {

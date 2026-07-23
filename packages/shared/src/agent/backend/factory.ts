@@ -123,7 +123,7 @@ export function createBackendFromResolvedContext(args: {
   const config: ResolvedBackendConfig = {
     ...coreConfig,
     provider: context.provider,
-    providerType: context.providerConfig?.baseUrl ? 'pi_compat' : getDefaultProviderType(context.provider),
+    providerType: context.providerConfig?.baseUrl ? 'pi_custom' : getDefaultProviderType(context.provider),
     authType: context.authType || getDefaultAuthType(context.provider),
     model: context.resolvedModel,
     providerKey: context.providerKey,
@@ -179,7 +179,7 @@ export function resolveBackendHostTooling(args: {
 // this assertion will fail and force a revisit of the routing decision.
 const _providerTypeExhaustiveCheck: Record<LlmProviderType, ModelProvider> = {
   pi: 'pi',
-  pi_compat: 'pi',
+  pi_custom: 'pi',
 };
 export const AGENT_PROVIDER: ModelProvider = 'pi';
 
@@ -351,7 +351,7 @@ export function createBackendFromProvider(
   const config: BackendConfig = {
     ...baseConfig,
     provider: AGENT_PROVIDER,
-    providerType: providerConfig.baseUrl ? 'pi_compat' : 'pi',
+    providerType: providerConfig.baseUrl ? 'pi_custom' : 'pi',
     authType: context.authType,
     providerKey: providerKey,
     model: context.resolvedModel,
@@ -458,11 +458,11 @@ export async function testBackendConnection(args: {
 
   try {
     const testModel = args.model;
-    const providerType = args.providerConfig?.baseUrl ? 'pi_compat' : getDefaultProviderType(runtimeProvider);
+    const providerType = args.providerConfig?.baseUrl ? 'pi_custom' : getDefaultProviderType(runtimeProvider);
     const piAuthProvider = args.providerKey ?? (args.provider === 'anthropic' ? 'anthropic' : undefined);
     const now = Date.now();
     const authType: LlmAuthType = (
-      providerType === 'pi_compat'
+      providerType === 'pi_custom'
     )
       ? 'api_key_with_endpoint'
       : 'api_key';

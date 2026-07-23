@@ -2,7 +2,7 @@
  * useAutomations
  *
  * Encapsulates all automations state management:
- * - Loading automations from automations.json
+ * - Loading Automations V3 definitions through the typed command surface
  * - Subscribing to live updates
  * - Test, toggle, duplicate, delete handlers
  * - Delete confirmation state
@@ -90,7 +90,7 @@ export function useAutomations(
     loadAndHydrate()
   }, [loadAndHydrate])
 
-  // Subscribe to live automations updates (when automations.json changes on disk)
+  // Subscribe to canonical store updates.
   useEffect(() => {
     if (!activeWorkspaceId) return
     const cleanup = window.electronAPI.onAutomationsChanged(() => { loadAndHydrate() })

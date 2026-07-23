@@ -23,6 +23,25 @@ export type ChannelMapEntry =
 
 export type ChannelMap = Record<string, ChannelMapEntry>
 
+export interface RendererTransportError {
+  name: string
+  message: string
+  code: string
+  data?: unknown
+}
+
+export function toRendererTransportError(error: unknown): unknown {
+  if (!error || typeof error !== 'object') return error
+  const candidate = error as { name?: unknown; message?: unknown; code?: unknown; data?: unknown }
+  if (typeof candidate.code !== 'string' || typeof candidate.message !== 'string') return error
+  return {
+    name: typeof candidate.name === 'string' ? candidate.name : 'Error',
+    message: candidate.message,
+    code: candidate.code,
+    ...(candidate.data === undefined ? {} : { data: candidate.data }),
+  } satisfies RendererTransportError
+}
+
 // ---------------------------------------------------------------------------
 // Proxy builder
 // ---------------------------------------------------------------------------
@@ -42,8 +61,15 @@ export function buildClientApi(
       fn = (cb: (...args: any[]) => void) => client.on(entry.channel, cb)
     } else {
       const invokeEntry = async (...args: any[]) => {
-        const result = await invokeMaybeChunked(client, entry.channel, args, entry.largeArgIndex, entry.timeoutMs)
-        return entry.transform ? entry.transform(result) : result
+        try {
+          const result = await invokeMaybeChunked(client, entry.channel, args, entry.largeArgIndex, entry.timeoutMs)
+          return entry.transform ? entry.transform(result) : result
+        } catch (error) {
+          // Electron contextBridge copies standard Error fields but drops
+          // custom transport properties. A plain record preserves code/data
+          // so renderer policy can distinguish typed actionable failures.
+          throw toRendererTransportError(error)
+        }
       }
       fn = (...args: any[]) => invokeSerializedIfNeeded(serializedInvokes, entry, args, () => invokeEntry(...args))
     }

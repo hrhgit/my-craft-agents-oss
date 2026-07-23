@@ -162,7 +162,7 @@ export function ExtensionInteractionComposer({ event, onRespond }: ExtensionInte
             className="inline-flex h-8 min-w-8 items-center justify-center gap-2 rounded-md bg-foreground px-3 text-xs font-medium text-background transition-[opacity,transform] hover:opacity-90 active:scale-[0.98] disabled:cursor-default disabled:opacity-25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
           >
             <ArrowUp className="h-3.5 w-3.5" />
-            <span>{request.submitLabel ?? t('remoteUI.submitAnswer')}</span>
+            <span>{request.submitLabel ?? t('extensionInteraction.submitAnswer')}</span>
           </button>
         </footer>
       </form>

@@ -20,6 +20,7 @@ import {
 import type { AppMenuProps } from './types'
 import { CrossfadeAvatar } from '@/components/ui/avatar'
 import { cn } from '@/lib/utils'
+import { hasPlatformCapability } from '@/lib/platform-capabilities'
 
 const SNAPPY_SPRING = { type: 'spring' as const, stiffness: 400, damping: 36, mass: 0.8 }
 const BACKDROP_FADE = { duration: 0.18 }
@@ -108,7 +109,10 @@ export function MobileAppMenu(props: AppMenuProps) {
   }, [])
 
   const pages = useMemo(
-    () => buildMobileMenuPages({ hasNewWindow: !!props.onNewWindow, isDebugMode }),
+    () => buildMobileMenuPages({
+      hasNewWindow: !!props.onNewWindow && hasPlatformCapability('browserWindows'),
+      isDebugMode: isDebugMode && hasPlatformCapability('nativeMenu'),
+    }),
     [props.onNewWindow, isDebugMode],
   )
 
@@ -361,7 +365,7 @@ function MobileWorkspacePage({
                 {item.hasUnread && <span className="h-2 w-2 shrink-0 rounded-full bg-accent" />}
                 {item.isActive && <Icons.Check className="h-4 w-4 shrink-0 text-foreground/55" />}
               </button>
-              {!item.isActive && !item.isDisconnected && (
+              {!item.isActive && !item.isDisconnected && hasPlatformCapability('nativeWindowLifecycle') && (
                 <button
                   type="button"
                   className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[6px] text-foreground/45 active:bg-foreground/10 active:text-foreground"

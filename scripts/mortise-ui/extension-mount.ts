@@ -26,7 +26,7 @@ interface LoadedExtensionPackage {
   entries: ExtensionEntry[]
 }
 
-export function mountMortiseUiExtensions(piAgentDir: string, sourcePaths: string[]): MortiseUiMountedExtension[] {
+export function mountMortiseUiExtensions(mortiseAgentDir: string, sourcePaths: string[]): MortiseUiMountedExtension[] {
   const packages = sourcePaths.map(loadExtensionPackage)
   const mountedIds = new Set<string>()
   for (const pkg of packages) {
@@ -37,7 +37,7 @@ export function mountMortiseUiExtensions(piAgentDir: string, sourcePaths: string
   }
 
   if (packages.length === 0) return []
-  const settingsPath = join(piAgentDir, 'settings.json')
+  const settingsPath = join(mortiseAgentDir, 'settings.json')
   const settings = readSettings(settingsPath)
   const existing = settings.extensions
   if (existing !== undefined && !Array.isArray(existing)) {

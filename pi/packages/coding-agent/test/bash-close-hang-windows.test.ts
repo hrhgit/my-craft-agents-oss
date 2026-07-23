@@ -78,7 +78,7 @@ describe.skipIf(process.platform !== "win32")("Windows child-process close handl
 	});
 
 	afterEach(() => {
-		rmSync(testDir, { recursive: true, force: true });
+		rmSync(testDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
 	});
 
 	it("executeBash resolves after the shell exits even if inherited stdio handles stay open", async () => {

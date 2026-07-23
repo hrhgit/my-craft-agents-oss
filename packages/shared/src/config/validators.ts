@@ -5,7 +5,7 @@
  * Used by agents to validate config changes before they take effect.
  *
  * Validates:
- * - config.json: Main app configuration
+ * - state.sqlite config/root: Main app configuration
  * - preferences.json: User preferences
  * - permissions.json: Permission rules for Explore mode
  * - tool-icons/tool-icons.json: CLI tool icon mappings
@@ -15,7 +15,13 @@ import { z } from 'zod';
 import { existsSync, readFileSync, readdirSync, statSync } from 'fs';
 import { join } from 'path';
 import { CONFIG_DIR } from './paths.ts';
+import {
+  GLOBAL_CONFIG_RECORD_KEY,
+  GLOBAL_CONFIG_RECORD_NAMESPACE,
+  getMortiseStateDatabasePath,
+} from './state-contract.ts';
 import { safeJsonParse, readJsonFileSync } from '../utils/files.ts';
+import { openMortiseSqliteDatabaseSync } from '../storage/sqlite-driver.ts';
 import { EntityColorSchema } from '../colors/validate.ts';
 import { THINKING_LEVEL_IDS } from '../agent/thinking-levels.ts';
 import { SUPPORTED_LANGUAGE_CODES } from '../i18n/languages.ts';
@@ -25,7 +31,7 @@ import type { LanguageCode } from '../i18n/languages.ts';
 // Config Directory
 // ============================================================
 
-const CONFIG_FILE = join(CONFIG_DIR, 'config.json');
+const CONFIG_DATABASE_FILE = getMortiseStateDatabasePath(CONFIG_DIR);
 const PREFERENCES_FILE = join(CONFIG_DIR, 'preferences.json');
 
 // ============================================================
@@ -51,7 +57,7 @@ export interface ValidationResult {
 // Zod Schemas
 // ============================================================
 
-// --- config.json ---
+// --- state.sqlite config/root ---
 
 const WorkspaceSchema = z.object({
   id: z.string().min(1),
@@ -68,9 +74,9 @@ export const StoredConfigSchema = z.object({
   activeSessionId: z.string().nullable(),
   // Legacy connection fields are intentionally not part of the validated shape.
   midStreamBehavior: z.enum(['steer', 'queue']).optional(),
-  defaultThinkingLevel: z.enum([...THINKING_LEVEL_IDS, 'think'] as [string, ...string[]]).transform(v => v === 'think' ? 'medium' : v).optional(),
+  defaultThinkingLevel: z.enum(THINKING_LEVEL_IDS).optional(),
   // Note: tokenDisplay, showCost, cumulativeUsage, defaultPermissionMode removed
-  // Permission mode and cyclable modes are now per-workspace in workspace config.json
+  // Permission mode and cyclable modes live in canonical workspace SQLite records.
 });
 
 // --- preferences.json ---
@@ -109,20 +115,20 @@ function zodErrorToIssues(error: z.ZodError, file: string): ValidationIssue[] {
 }
 
 /**
- * Validate config.json
+ * Validate the canonical global config record in state.sqlite.
  */
 export function validateConfig(): ValidationResult {
   const errors: ValidationIssue[] = [];
   const warnings: ValidationIssue[] = [];
+  const configRecordLabel = 'state.sqlite#config/root';
 
-  // Check if file exists
-  if (!existsSync(CONFIG_FILE)) {
+  if (!existsSync(CONFIG_DATABASE_FILE)) {
     return {
       valid: false,
       errors: [{
-        file: 'config.json',
+        file: configRecordLabel,
         path: '',
-        message: 'Config file does not exist',
+        message: 'Configuration database does not exist',
         severity: 'error',
         suggestion: 'Run setup to create initial configuration',
       }],
@@ -130,28 +136,48 @@ export function validateConfig(): ValidationResult {
     };
   }
 
-  // Parse JSON
   let content: unknown;
+  let database: ReturnType<typeof openMortiseSqliteDatabaseSync> | null = null;
   try {
-    const raw = readFileSync(CONFIG_FILE, 'utf-8');
-    content = safeJsonParse(raw);
+    database = openMortiseSqliteDatabaseSync(CONFIG_DATABASE_FILE);
+    const row = database.prepare(`
+      SELECT value_json
+      FROM mortise_records
+      WHERE namespace = ? AND record_key = ?
+    `).get<{ value_json: string }>(GLOBAL_CONFIG_RECORD_NAMESPACE, GLOBAL_CONFIG_RECORD_KEY);
+    if (!row) {
+      return {
+        valid: false,
+        errors: [{
+          file: configRecordLabel,
+          path: '',
+          message: 'Global configuration record does not exist',
+          severity: 'error',
+          suggestion: 'Run setup to create initial configuration',
+        }],
+        warnings: [],
+      };
+    }
+    content = JSON.parse(row.value_json) as unknown;
   } catch (e) {
     return {
       valid: false,
       errors: [{
-        file: 'config.json',
+        file: configRecordLabel,
         path: '',
-        message: `Invalid JSON: ${e instanceof Error ? e.message : 'Unknown error'}`,
+        message: `Unable to read configuration record: ${e instanceof Error ? e.message : 'Unknown error'}`,
         severity: 'error',
       }],
       warnings: [],
     };
+  } finally {
+    database?.close();
   }
 
   // Validate schema
   const result = StoredConfigSchema.safeParse(content);
   if (!result.success) {
-    errors.push(...zodErrorToIssues(result.error, 'config.json'));
+    errors.push(...zodErrorToIssues(result.error, configRecordLabel));
   } else {
     const config = result.data;
 
@@ -160,7 +186,7 @@ export function validateConfig(): ValidationResult {
       const activeExists = config.workspaces.some(w => w.id === config.activeWorkspaceId);
       if (!activeExists) {
         errors.push({
-          file: 'config.json',
+          file: configRecordLabel,
           path: 'activeWorkspaceId',
           message: `Active workspace ID '${config.activeWorkspaceId}' does not exist in workspaces array`,
           severity: 'error',
@@ -267,7 +293,6 @@ export function validateAll(workspaceRoot?: string): ValidationResult {
   // Include workspace-scoped validation if workspaceRoot is provided
   if (workspaceRoot) {
     results.push(validateAllSkills(workspaceRoot));
-    results.push(validateAutomations(workspaceRoot));
     results.push(validateAllPermissions(workspaceRoot));
   }
 
@@ -326,6 +351,7 @@ export function validateSlug(slug: string): ValidationResult {
 // ============================================================
 
 import matter from 'gray-matter';
+import { MORTISE_PROJECT_SKILLS_DIR } from './paths.ts';
 import { getWorkspaceSkillsPath } from '../workspaces/storage.ts';
 import { basename, extname } from 'path';
 
@@ -364,7 +390,7 @@ export function validateSkill(workspaceRoot: string, slug: string): ValidationRe
   const skillsDir = getWorkspaceSkillsPath(workspaceRoot);
   const skillDir = join(skillsDir, slug);
   const skillFile = join(skillDir, 'SKILL.md');
-  const file = `.pi/skills/${slug}/SKILL.md`;
+  const file = `${MORTISE_PROJECT_SKILLS_DIR}/${slug}/SKILL.md`;
 
   const errors: ValidationIssue[] = [];
   const warnings: ValidationIssue[] = [];
@@ -374,7 +400,7 @@ export function validateSkill(workspaceRoot: string, slug: string): ValidationRe
     return {
       valid: false,
       errors: [{
-        file: `.pi/skills/${slug}`,
+        file: `${MORTISE_PROJECT_SKILLS_DIR}/${slug}`,
         path: '',
         message: `Skill folder '${slug}' does not exist`,
         severity: 'error',
@@ -425,7 +451,7 @@ export function validateSkill(workspaceRoot: string, slug: string): ValidationRe
     const ext = extname(iconPath).toLowerCase();
     if (!['.svg', '.png', '.jpg', '.jpeg'].includes(ext)) {
       warnings.push({
-        file: `.pi/skills/${slug}/${basename(iconPath)}`,
+        file: `${MORTISE_PROJECT_SKILLS_DIR}/${slug}/${basename(iconPath)}`,
         path: '',
         message: `Unexpected icon format: ${ext}`,
         severity: 'warning',
@@ -435,7 +461,7 @@ export function validateSkill(workspaceRoot: string, slug: string): ValidationRe
   } else {
     const searchTerm = slug.replace(/-/g, ' ');
     warnings.push({
-      file: `.pi/skills/${slug}/`,
+      file: `${MORTISE_PROJECT_SKILLS_DIR}/${slug}/`,
       path: 'icon',
       message: 'No icon found',
       severity: 'warning',
@@ -459,7 +485,7 @@ export function validateSkill(workspaceRoot: string, slug: string): ValidationRe
  * @param slug - The skill slug (folder name), used for slug format validation
  */
 export function validateSkillContent(markdownContent: string, slug: string): ValidationResult {
-  const file = `.pi/skills/${slug}/SKILL.md`;
+  const file = `${MORTISE_PROJECT_SKILLS_DIR}/${slug}/SKILL.md`;
   const errors: ValidationIssue[] = [];
 
   // 1. Validate slug format
@@ -470,7 +496,7 @@ export function validateSkillContent(markdownContent: string, slug: string): Val
       .replace(/^-+|-+$/g, '')
       .replace(/-+/g, '-');
     errors.push({
-      file: `.pi/skills/${slug}`,
+      file: `${MORTISE_PROJECT_SKILLS_DIR}/${slug}`,
       path: 'slug',
       message: 'Slug must be lowercase alphanumeric with hyphens',
       severity: 'error',
@@ -537,7 +563,7 @@ export function validateAllSkills(workspaceRoot: string): ValidationResult {
       valid: true,
       errors: [],
       warnings: [{
-        file: '.pi/skills/',
+        file: `${MORTISE_PROJECT_SKILLS_DIR}/`,
         path: '',
         message: 'Skills directory does not exist (no skills configured)',
         severity: 'warning',
@@ -556,7 +582,7 @@ export function validateAllSkills(workspaceRoot: string): ValidationResult {
       valid: true,
       errors: [],
       warnings: [{
-        file: '.pi/skills/',
+        file: `${MORTISE_PROJECT_SKILLS_DIR}/`,
         path: '',
         message: 'No skills configured',
         severity: 'warning',
@@ -587,7 +613,6 @@ import {
   getWorkspacePermissionsPath,
   getAppPermissionsDir,
 } from '../agent/permissions-config.ts';
-import { validateAutomationsContent, validateAutomations, AUTOMATIONS_CONFIG_FILE } from '../automations/index.ts';
 
 /**
  * Internal: Validate a single permissions.json file
@@ -1172,7 +1197,7 @@ export function formatValidationResult(result: ValidationResult): string {
  * Result of detecting what type of config file a path corresponds to.
  */
 export interface ConfigFileDetection {
-  type: 'skill' | 'permissions' | 'tool-icons' | 'automations';
+  type: 'skill' | 'permissions' | 'tool-icons';
   /** Slug of the skill (if applicable) */
   slug?: string;
   /** Display file path for error messages */
@@ -1184,7 +1209,7 @@ export interface ConfigFileDetection {
  * Returns null if the path is not a recognized config file.
  *
  * Matches patterns:
- * - .../.pi/skills/{slug}/SKILL.md → skill definition
+ * - .../.mortise/skills/{slug}/SKILL.md → skill definition
  * - .../permissions.json → permission rules
  */
 export function detectConfigFileType(filePath: string, workspaceRootPath: string): ConfigFileDetection | null {
@@ -1201,15 +1226,10 @@ export function detectConfigFileType(filePath: string, workspaceRootPath: string
   // Get the relative path from workspace root (no leading slash since root ends with /)
   const relativePath = normalizedPath.slice(normalizedRoot.length);
 
-  // Match: .pi/skills/{slug}/SKILL.md
-  const skillMatch = relativePath.match(/^\.pi\/skills\/([^/]+)\/SKILL\.md$/);
+  // Match: .mortise/skills/{slug}/SKILL.md
+  const skillMatch = relativePath.match(/^\.mortise\/skills\/([^/]+)\/SKILL\.md$/);
   if (skillMatch) {
-    return { type: 'skill', slug: skillMatch[1], displayFile: `.pi/skills/${skillMatch[1]}/SKILL.md` };
-  }
-
-  // Match: automations config file
-  if (relativePath === AUTOMATIONS_CONFIG_FILE) {
-    return { type: 'automations', displayFile: relativePath };
+    return { type: 'skill', slug: skillMatch[1], displayFile: `${MORTISE_PROJECT_SKILLS_DIR}/${skillMatch[1]}/SKILL.md` };
   }
 
   // Match: permissions.json (workspace-level)
@@ -1259,8 +1279,6 @@ export function validateConfigFileContent(
   switch (detection.type) {
     case 'skill':
       return validateSkillContent(content, detection.slug || 'unknown');
-    case 'automations':
-      return validateAutomationsContent(content, detection.displayFile);
     case 'permissions':
       return validatePermissionsContent(content, detection.displayFile);
     case 'tool-icons':

@@ -44,7 +44,6 @@ owns:
   - apps/electron/scripts/**
   - apps/electron/resources/*
   - apps/electron/resources/bin/**
-  - apps/electron/resources/bridge-mcp-server/**
   - apps/electron/resources/icon.icon/**
   - apps/electron/resources/docs/permissions.md
   - apps/electron/resources/docs/themes.md
@@ -54,7 +53,6 @@ owns:
   - apps/electron/resources/themes/**
   - apps/electron/resources/tool-icons/**
   - packages/shared/src/docs/**
-  - packages/shared/src/release-notes/**
   - packages/shared/src/resources/**
   - packages/shared/src/version/**
   - packages/shared/src/interceptor-common.ts
@@ -69,6 +67,12 @@ owns:
   - packages/shared/tests/persistence-queue.test.ts
   - packages/shared/tests/session-validation.test.ts
   - docs/architecture/logging-candidates.json
+  - docs/architecture/legacy-cleanup-inventory.md
+  - docs/architecture/optimization-acceptance-checklist.md
+  - docs/architecture/optimization-completed-archive.md
+  - docs/architecture/optimization-task-packets.md
+  - docs/architecture/pi-session-sidecar-cleanup-manifest-*.md
+  - docs/architecture/user-data-cleanup-manifest-*.md
   - docs/architecture/red-line.md
   - docs/future-todo.md
   - scripts/build/**
@@ -124,7 +128,7 @@ validation:
   - { id: monorepo-contract, kind: contract, command: "bun run validate:monorepo", description: "Verify monorepo package and dependency contracts.", triggers: [contract-change], required: true, evidence: "Validation exit status and diagnostics." }
   - { id: production-bundles, kind: integration, command: "bun run validate:production-bundles", description: "Run the complete production Electron build consumed by packaging.", triggers: [ci-change, release], required: true, evidence: "Production main, workspace server, preload, renderer, and resource build exit status." }
   - { id: ci-integration, kind: integration, command: "bun run validate:ci", description: "Run the repository CI validation composition.", triggers: [release, ci-change], required: true, evidence: "CI validation exit status and output." }
-scope_digest: c0cc88cfb38acacd9068a359eb6ec2e12857e74e
+scope_digest: d09e687f7a32340c5b25fa46599073d7a5e718b9
 ---
 
 ## Purpose
@@ -155,7 +159,23 @@ Run the in-memory production Node bundle gate frequently, retain the complete pr
 Bundled binaries and lockfiles are large shared surfaces; concurrent regeneration can overwrite another build's artifacts.
 
 ## Semantic history
-- 2026-07-20: Layered production validation into a fast non-writing Node bundle gate, a complete Electron build in canonical CI, and target-platform installer commands outside ordinary cross-platform validation.
-- 2026-07-20: Removed the retired Data Sources bridge server and source-specific OAuth build inputs from application and server packaging while retaining the generic session MCP server.
-- 2026-07-18: Integrated Pi history and completed monorepo CI runtime setup.
-- 2026-07-19: Established independent Mortise product and release lineage.
+- 2026-07-23: Made external write delegation fail closed on invalid assignment worktrees: primary-supplied clean bases, dedicated worktrees, scoped final commits, clean handoffs, and pre-candidate raw performance baselines are now mandatory acceptance inputs.
+- 2026-07-23: Split the optimization program into an active-only ledger, concise grandfathered archive, and owner-bounded delegation packets with reproducible external evidence handoffs and primary architecture-comparison gates.
+- 2026-07-23: Recorded OPT-018 as the confirmed Mortise-only headless-runtime architecture: repository-local Pi will shed its independent TUI/CLI product surface while UI-neutral Agent and RPC semantics remain canonical.
+- 2026-07-23: Completed the Mortise-only data-root cutover in product documentation and regenerated the packaged Session MCP resource so shipped helpers resolve only `.mortise` roots; independent Pi retains `.pi` defaults.
+- 2026-07-23: Added a confirmation-gated exact-path manifest for removing Mortise Session sidecars from the independent Pi Session root without deleting Pi JSONL history.
+- 2026-07-23: Verified OPT-008 end to end with deterministic indexed search, bounded renderer metrics, current-build physical deep links, production bundles, and retained evidence.
+- 2026-07-23: Made incremental Session search delete through turn-owned segment keys, normalize NFKC by Unicode grapheme cluster for exact equivalent source ranges, and expose structural deletion diagnostics instead of timing-only complexity coverage.
+- 2026-07-23: Verified OPT-007 with asynchronous renderer/main layout coordinators, zero storage work on the interaction hot path, foreground narrow resize and drag evidence, and same-profile two-group restart recovery.
+- 2026-07-23: Verified OPT-006 after bounded async Pi Session and runtime/specialized log writers passed shutdown, backpressure, concurrency, rotation, event-loop responsiveness, and representative throughput evidence.
+- 2026-07-22: Recorded awaited compaction sidecar settlement and settlement-only recovery as automated OPT-005 evidence while retaining the physical five-timeline gate before verification.
+- 2026-07-22: Verified typed publication and existing-Session durability recovery through six isolated production-entry runs, including pre-accept retry, settlement-only recovery, retained baseline cleanup, and same-profile restart without duplicate canonical writes.
+- 2026-07-22: Verified draft-only first-turn Session publication with retained failure, same-profile restart, successful assistant-backed publication, and reload evidence from the production-entry Developer Host.
+- 2026-07-22: Added a canonical workspace package-graph gate that enumerates root workspaces, rejects runtime/build/source-import cycles and undeclared cross-package imports, and runs in CI build validation.
+- 2026-07-21: Declared audited export-only UI barrels side-effect-free for Rollup tree shaking and made production renderer builds enforce budgets against each HTML entry's complete transitive static dependency graph rather than individual chunk names.
+- 2026-07-21: Moved network-interceptor rich-tool configuration reads from the retired JSON cache to the shared SQLite-backed global configuration authority.
+- 2026-07-21: Added a production portability gate that rejects source-checkout paths in Session MCP bundles and staged Electron assets.
+- 2026-07-21: Updated packaged extension documentation to describe direct versioned contribution and interaction flows without widget or RemoteUI compatibility adapters.
+- 2026-07-21: Added a cross-platform Python 3 launcher for document-tool smoke tests so the canonical CI gate executes on Windows and Unix.
+- 2026-07-21: Made Electron production packaging stage and accept exactly one compiled, versioned Pi runtime; removed the environment-selected JS fallback and reject legacy JS candidates during asset and afterPack validation.
+- 2026-07-21: Finalized option A for all former Craft/upstream compatibility choices: canonical Mortise-only runtime and config behavior, no legacy artwork/config migration requirement, current-Mortise schema negotiation retained, and destructive user-data cleanup gated by a dated absolute-path manifest plus explicit confirmation.

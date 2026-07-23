@@ -12,9 +12,7 @@ export type MessageRole =
   | 'error'
   | 'status'
   | 'info'
-  | 'warning'
-  /** @deprecated Read compatibility only. New plans are assistant messages with artifact.kind=plan. */
-  | 'plan';
+  | 'warning';
 
 /**
  * Tool execution status
@@ -286,8 +284,6 @@ export interface Message {
     action?: 'retry' | 'settings' | 'reauth' | 'open_url';
     url?: string;
   }>;
-  // Plan-specific fields (for role='plan')
-  planPath?: string;  // Path to the plan markdown file
 }
 
 /**
@@ -349,8 +345,6 @@ export interface StoredMessage {
     action?: 'retry' | 'settings' | 'reauth' | 'open_url';
     url?: string;
   }>;
-  // Plan-specific fields (for role='plan')
-  planPath?: string;
   // Queued: user message that is waiting to be processed (persisted for recovery)
   isQueued?: boolean;
 }
@@ -505,7 +499,6 @@ export type AgentEvent =
   | { type: 'typed_error'; error: TypedError }
   | { type: 'complete'; usage?: AgentEventUsage }
   | { type: 'queue_overflow'; droppedEvents: number; maxQueueSize: number; message: string }
-  | { type: 'working_directory_changed'; workingDirectory: string }
   | { type: 'task_backgrounded'; toolUseId: string; taskId: string; intent?: string; turnId?: string }
   | { type: 'shell_backgrounded'; toolUseId: string; shellId: string; intent?: string; command?: string; turnId?: string }
   | { type: 'task_progress'; toolUseId: string; elapsedSeconds: number; turnId?: string }

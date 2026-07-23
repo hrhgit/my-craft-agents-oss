@@ -198,24 +198,30 @@ describe('turn grouping stability across reload', () => {
     expect(lastReload?.response?.text).toBe('Here are the results.')
   })
 
-  it('legacy plan messages reload as assistant artifacts, not Mortise plan turns', () => {
+  it('canonical plan artifacts survive reload as assistant messages', () => {
     const messages: Message[] = [
       createMessage('user', { content: 'Plan it' }),
-      createMessage('plan', {
+      createMessage('assistant', {
         content: '# Implementation Plan\n\n1. Do thing',
-        planPath: '/sessions/123/plans/plan.md',
+        artifact: {
+          schemaVersion: 1,
+          kind: 'plan',
+          artifactId: 'plan-1',
+          revision: 1,
+          state: 'ready',
+          review: { status: 'not_requested' },
+          checklist: [],
+          createdAt: 1,
+        },
       }),
       createMessage('user', { content: 'Looks good, execute' }),
       createMessage('assistant', { content: 'Done.', turnId: 'turn-6' }),
     ]
 
     const reloaded = simulatePersistAndReload(messages)
-    const legacyPlan = reloaded.find(m => m.artifact?.legacy)
-
-    expect(reloaded.some(m => m.role === 'plan')).toBe(false)
-    expect(legacyPlan?.role).toBe('assistant')
-    expect(legacyPlan?.planPath).toBe('/sessions/123/plans/plan.md')
-    expect(legacyPlan?.artifact).toMatchObject({ kind: 'plan', legacy: true })
+    const plan = reloaded.find(m => m.artifact?.artifactId === 'plan-1')
+    expect(plan?.role).toBe('assistant')
+    expect(plan?.artifact).toMatchObject({ kind: 'plan', state: 'ready' })
   })
 
   it('error turn: typed error fields survive reload', () => {

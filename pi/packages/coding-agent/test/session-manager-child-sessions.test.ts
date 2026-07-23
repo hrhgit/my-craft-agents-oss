@@ -1,6 +1,6 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { ENV_AGENT_DIR } from "../src/config.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
@@ -89,5 +89,25 @@ describe("SessionManager.listChildrenBySpawnedFrom", () => {
 			firstMessage: "child prompt",
 			spawnConfig: { model: "gpt-test", thinkingLevel: "low" },
 		});
+	});
+
+	it("always creates child sessions in the parent workspace", async () => {
+		previousAgentDir = process.env[ENV_AGENT_DIR];
+		tempAgentDir = mkdtempSync(join(tmpdir(), "pi-child-session-workspace-"));
+		process.env[ENV_AGENT_DIR] = tempAgentDir;
+		const parentWorkspace = join(tempAgentDir, "parent-workspace");
+		const retiredOverride = join(tempAgentDir, "retired-override");
+		const manager = SessionManager.create(parentWorkspace, join(tempAgentDir, "parent-sessions"));
+
+		const child = await manager.spawnChildSession("parent-session", {
+			prompt: "child prompt",
+			...({ workingDirectory: retiredOverride } as Record<string, string>),
+		});
+		const header = JSON.parse(readFileSync(child.sessionPath, "utf-8").split("\n")[0]!) as {
+			cwd: string;
+		};
+
+		expect(header.cwd).toBe(resolve(parentWorkspace));
+		expect(child.sessionPath).not.toContain("retired-override");
 	});
 });

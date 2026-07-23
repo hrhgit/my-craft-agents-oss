@@ -379,12 +379,6 @@ describe('getValidateSteps', () => {
     expect(names).toContain('sessions:branch send')
   })
 
-  it('includes webhook validation steps', () => {
-    const names = getValidateSteps().map((s) => s.name)
-    expect(names).toContain('webhook:test (RPC)')
-    expect(names).toContain('webhook:verify failure')
-  })
-
   it('creates its validation session through the first-turn transaction', () => {
     const steps = getValidateSteps()
     const createStep = steps.find((s) => s.name === 'sessions:createAndSendFirstTurn')

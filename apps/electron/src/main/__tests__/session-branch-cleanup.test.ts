@@ -4,8 +4,8 @@ import { rollbackFailedBranchCreation } from '@mortise/server-core/domain'
 describe('rollbackFailedBranchCreation', () => {
   it('cleans runtime and storage after preflight failure', async () => {
     let destroyed = false
-    let runtimeDeleted: string | null = null
-    let storageDeleted: string | null = null
+    const runtimeDeleted: string[] = []
+    const storageDeleted: string[] = []
     const managed = {
       agent: {
         destroy: () => { destroyed = true },
@@ -16,14 +16,14 @@ describe('rollbackFailedBranchCreation', () => {
       managed,
       workspaceRootPath: '/workspace',
       sessionId: 'child',
-      deleteFromRuntimeSessions: id => { runtimeDeleted = id },
-      deleteStoredSession: (_root, id) => { storageDeleted = id },
+      deleteFromRuntimeSessions: id => { runtimeDeleted.push(id) },
+      deleteStoredSession: (_root, id) => { storageDeleted.push(id) },
     })
 
     expect(destroyed).toBe(true)
     expect(managed.agent).toBeNull()
-    expect(runtimeDeleted).toBe('child')
-    expect(storageDeleted).toBe('child')
+    expect(runtimeDeleted).toEqual(['child'])
+    expect(storageDeleted).toEqual(['child'])
   })
 
   it('continues cleanup when agent or storage cleanup fails', async () => {

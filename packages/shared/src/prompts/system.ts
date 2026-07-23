@@ -532,8 +532,8 @@ Skills are reusable instruction sets that teach you specialized behaviors. Each 
 2. Follow the instructions in the file to complete the user's request
 
 Skills are stored at two active levels (checked in order):
-- Global: \`~/.pi/agent/skills/{slug}/SKILL.md\`
-- Project: \`{projectRoot}/.pi/skills/{slug}/SKILL.md\`
+- Global: \`~/.mortise/agent/skills/{slug}/SKILL.md\`
+- Project: \`{projectRoot}/.mortise/skills/{slug}/SKILL.md\`
 
 ## Project Context
 

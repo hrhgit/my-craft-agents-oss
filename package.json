@@ -33,6 +33,8 @@
     "test:ui-validation:stability": "bun run scripts/e2e/ui-validation/stability.ts",
     "test:ui-validation:runtime-contract": "bun run scripts/e2e/ui-validation/runtime-contract.ts",
     "test:ui-validation:surface-parity": "bun run scripts/e2e/ui-validation/surface-parity.ts",
+    "test:ui-validation:session-publication": "bun run scripts/e2e/ui-validation/session-publication.ts",
+    "test:ui-validation:session-settlement": "bun run scripts/e2e/ui-validation/session-settlement.ts",
     "mortise-ui": "bun run scripts/mortise-ui/cli.ts",
     "mortise-logs": "bun run scripts/mortise-logs/cli.ts",
     "test:mortise-logs": "bun test scripts/mortise-logs/__tests__",
@@ -62,8 +64,8 @@
     "test:shared:models-pi": "cd packages/shared && bun test tests/models-pi.test.ts",
     "test:shared:config": "cd packages/shared && bun test --isolate src/config/__tests__",
     "test:shared:all": "bun run test:shared:models-pi && bun run test:shared:config",
-    "test:doc-tools": "python3 -m unittest apps.electron.resources.scripts.tests.test_pdf_tool_smoke apps.electron.resources.scripts.tests.test_xlsx_tool_smoke apps.electron.resources.scripts.tests.test_docx_tool_smoke apps.electron.resources.scripts.tests.test_pptx_tool_smoke apps.electron.resources.scripts.tests.test_img_tool_smoke apps.electron.resources.scripts.tests.test_ical_tool_smoke apps.electron.resources.scripts.tests.test_doc_diff_smoke apps.electron.resources.scripts.tests.test_markitdown_smoke",
-    "test:build-validation": "bun test scripts/build/__tests__/production-bundle-validation.test.ts",
+    "test:doc-tools": "bun run scripts/build/run-doc-tool-tests.ts",
+    "test:build-validation": "bun test scripts/build/__tests__/production-bundle-validation.test.ts scripts/build/__tests__/workspace-package-graph.test.ts",
     "validate:production-node-bundles": "bun run scripts/build/validate-production-node-bundles.ts",
     "validate:dev": "bun run validate:production-node-bundles && bun run typecheck:all && bun run test:shared:all && bun run test:doc-tools",
     "validate:production-bundles": "bun run scripts/build/validate-production-bundles.ts",
@@ -233,7 +235,6 @@
     "shiki": "^3.19.0",
     "tailwind-merge": "^3.4.0",
     "tiptap-extension-code-block-shiki": "^1.0.0",
-    "tiptap-markdown": "^0.9.0",
     "zod": "^4.0.0"
   },
   "optionalDependencies": {

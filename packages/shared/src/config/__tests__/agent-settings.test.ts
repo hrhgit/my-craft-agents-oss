@@ -8,7 +8,8 @@ const MODULE_PATH = pathToFileURL(join(import.meta.dir, '..', 'agent-settings.ts
 
 function runEval(code: string): { output: string; piAgentDir: string } {
   const root = mkdtempSync(join(tmpdir(), 'mortise-agent-settings-'))
-  const piAgentDir = join(root, 'pi-agent')
+  const configDir = join(root, 'mortise')
+  const piAgentDir = join(configDir, 'agent')
   const result = Bun.spawnSync([
     process.execPath,
     '--eval',
@@ -16,7 +17,7 @@ function runEval(code: string): { output: string; piAgentDir: string } {
   ], {
     env: {
       ...process.env,
-      MORTISE_CONFIG_DIR: join(root, 'mortise'),
+      MORTISE_CONFIG_DIR: configDir,
       PI_CODING_AGENT_DIR: piAgentDir,
     },
     stdout: 'pipe',
@@ -77,7 +78,7 @@ describe('agent settings storage', () => {
     expect(piSettings.mortise.agent.disabledTools).toEqual(['write', 'pwsh'])
   })
 
-  it('migrates legacy session tool names in disabled-tool settings', () => {
+  it('does not migrate retired session tool prefixes in disabled-tool settings', () => {
     const { output } = runEval(`
       settings.updateMainAgentSettings({
         schemaVersion: 1,
@@ -90,7 +91,7 @@ describe('agent settings storage', () => {
         .filter((tool) => !tool.enabled)
         .map((tool) => tool.name)));
     `)
-    expect(JSON.parse(output)).toEqual(['config_validate'])
+    expect(JSON.parse(output)).toEqual(['mcp__session__config_validate'])
   })
 
   it('uses the native Pi markdown format for subagents', () => {
@@ -122,7 +123,7 @@ describe('agent settings storage', () => {
     expect(markdown).toContain('model: "default:2"')
   })
 
-  it('migrates legacy session tool names in subagent allowlists', () => {
+  it('does not migrate retired session tool prefixes in subagent allowlists', () => {
     const { output, piAgentDir } = runEval(`
       const saved = settings.upsertSubagent({
         schemaVersion: 1,
@@ -136,8 +137,8 @@ describe('agent settings storage', () => {
       });
       console.log(JSON.stringify(saved.tools));
     `)
-    expect(JSON.parse(output)).toEqual(['read', 'config_validate'])
-    expect(readFileSync(join(piAgentDir, 'agents', 'legacy-tools.md'), 'utf8')).toContain('tools: "read, config_validate"')
+    expect(JSON.parse(output)).toEqual(['read', 'mcp__session__config_validate'])
+    expect(readFileSync(join(piAgentDir, 'agents', 'legacy-tools.md'), 'utf8')).toContain('tools: "read, mcp__session__config_validate"')
   })
 
   it('rejects a rename that would overwrite another subagent', () => {

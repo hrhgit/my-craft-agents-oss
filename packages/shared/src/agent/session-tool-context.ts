@@ -26,7 +26,6 @@ import {
   validateAllPermissions,
   validateToolIcons,
 } from '../config/validators.ts';
-import { validateAutomations } from '../automations/index.ts';
 import { debug } from '../utils/debug.ts';
 import { getSessionPlansPath, getSessionPath, getSessionDataPath } from '../sessions/storage.ts';
 import { updatePreferences as updatePreferencesImpl } from '../config/preferences.ts';
@@ -41,8 +40,6 @@ export type { SessionToolContext, SessionToolCallbacks } from '@mortise/session-
 export interface SessionToolContextOptions {
   sessionId: string;
   workspacePath: string;
-  workingDirectory?: string;
-  getWorkingDirectory?: () => string | undefined;
   onPlanSubmitted: (planPath: string) => void;
 }
 
@@ -84,7 +81,6 @@ export function createSessionToolContext(options: SessionToolContextOptions): Se
     validateConfig: () => validateConfig(),
     validatePreferences: () => validatePreferences(),
     validatePermissions: (wsPath: string) => validateAllPermissions(wsPath),
-    validateAutomations: (wsPath: string) => validateAutomations(wsPath),
     validateToolIcons: () => validateToolIcons(),
     validateAll: (wsPath: string) => validateAll(wsPath),
     validateSkill: (wsPath: string, slug: string) => validateSkill(wsPath, slug),
@@ -94,8 +90,7 @@ export function createSessionToolContext(options: SessionToolContextOptions): Se
   const context: SessionToolContext = {
     sessionId,
     workspacePath,
-    get workingDirectory() { return options.getWorkingDirectory?.() ?? options.workingDirectory; },
-    get skillPaths() { return createPiSkillResolver(this.workingDirectory).getSkillPaths().map(e => e.dir); },
+    get skillPaths() { return createPiSkillResolver(workspacePath).getSkillPaths().map(e => e.dir); },
     get skillsPath() { return this.skillPaths?.[0] ?? ''; },
     plansFolderPath: getSessionPlansPath(workspacePath, sessionId),
     sessionPath: getSessionPath(workspacePath, sessionId),

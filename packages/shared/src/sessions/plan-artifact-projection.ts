@@ -141,7 +141,7 @@ export function applyPlanCustomMessageToStored(
     messages,
     input,
     projection,
-    candidate => candidate.type === 'assistant' || candidate.type === 'plan',
+    candidate => candidate.type === 'assistant',
     () => ({
       id: `plan-${input.id}`,
       type: 'assistant',
@@ -149,6 +149,5 @@ export function applyPlanCustomMessageToStored(
       timestamp: input.timestamp,
     }),
   );
-  if (message.type === 'plan') message.type = 'assistant';
   return { projection, message };
 }

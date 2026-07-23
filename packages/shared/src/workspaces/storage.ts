@@ -9,29 +9,38 @@
 import {
   existsSync,
   mkdirSync,
-  readFileSync,
   writeFileSync,
   readdirSync,
   rmSync,
   statSync,
 } from 'fs';
 import { join } from 'path';
-import { createHash, randomUUID } from 'crypto';
-import { atomicWriteFileSync, readJsonFileSync } from '../utils/files.ts';
-import { CONFIG_DIR, PI_SESSIONS_DIR, encodePiSessionCwd } from '../config/paths.ts';
+import { randomUUID } from 'crypto';
+import {
+  CONFIG_DIR,
+  MORTISE_PROJECT_SKILLS_DIR,
+  MORTISE_SESSIONS_DIR,
+  encodePiSessionCwd,
+} from '../config/paths.ts';
 import { loadConfigDefaults } from '../config/storage.ts';
 import { MultiWriterStore, type JsonValue } from '../storage/index.ts';
-import { parsePermissionMode, PERMISSION_MODE_ORDER } from '../agent/mode-types.ts';
+import { PERMISSION_MODE_ORDER, type PermissionMode } from '../agent/mode-types.ts';
 import type {
   WorkspaceConfig,
   CreateWorkspaceInput,
   LoadedWorkspace,
   WorkspaceSummary,
 } from './types.ts';
+import {
+  getWorkspaceConfigRecordIdentity,
+} from './state-contract.ts';
+export {
+  getWorkspaceConfigRecordIdentity,
+  normalizeWorkspaceRecordNamespace,
+  WORKSPACE_CONFIG_RECORD_KEY,
+} from './state-contract.ts';
 
 const DEFAULT_WORKSPACES_DIR = join(CONFIG_DIR, 'workspaces');
-const LEGACY_WORKSPACE_AI_DEFAULT_KEYS = ['provider', 'model', 'thinkingLevel'] as const;
-const RETIRED_WORKSPACE_ORGANIZATION_PATHS = ['labels', 'statuses', 'views.json'] as const;
 const WORKSPACE_STORE_FILE = join(CONFIG_DIR, 'state.sqlite');
 const WORKSPACE_SNAPSHOT = Symbol('mortiseWorkspaceSnapshot');
 const WORKSPACE_WRITER_VERSION = 1;
@@ -43,6 +52,68 @@ interface WorkspaceSnapshot {
 }
 
 type WorkspaceWithSnapshot = WorkspaceConfig & { [WORKSPACE_SNAPSHOT]?: WorkspaceSnapshot };
+
+const CURRENT_PERMISSION_MODES = new Set<PermissionMode>(PERMISSION_MODE_ORDER);
+const CURRENT_WORKSPACE_KEYS = new Set(['id', 'name', 'slug', 'defaults', 'createdAt', 'updatedAt']);
+const CURRENT_WORKSPACE_DEFAULT_KEYS = new Set([
+  'permissionMode',
+  'cyclablePermissionModes',
+  'colorTheme',
+]);
+
+function isCurrentPermissionMode(value: unknown): value is PermissionMode {
+  return typeof value === 'string' && CURRENT_PERMISSION_MODES.has(value as PermissionMode);
+}
+
+function parseCurrentWorkspaceConfig(value: unknown): WorkspaceConfig | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  if (
+    Object.keys(record).some(key => !CURRENT_WORKSPACE_KEYS.has(key))
+    || typeof record.id !== 'string'
+    || typeof record.name !== 'string'
+    || typeof record.slug !== 'string'
+    || typeof record.createdAt !== 'number' || !Number.isFinite(record.createdAt)
+    || typeof record.updatedAt !== 'number' || !Number.isFinite(record.updatedAt)
+  ) return null;
+
+  const projected: WorkspaceConfig = {
+    id: record.id,
+    name: record.name,
+    slug: record.slug,
+    createdAt: record.createdAt,
+    updatedAt: record.updatedAt,
+  };
+  if (record.defaults !== undefined) {
+    if (!record.defaults || typeof record.defaults !== 'object' || Array.isArray(record.defaults)) return null;
+    const rawDefaults = record.defaults as Record<string, unknown>;
+    if (Object.keys(rawDefaults).some(key => !CURRENT_WORKSPACE_DEFAULT_KEYS.has(key))) return null;
+    const defaults: NonNullable<WorkspaceConfig['defaults']> = {};
+    if (rawDefaults.permissionMode !== undefined) {
+      if (!isCurrentPermissionMode(rawDefaults.permissionMode)) return null;
+      defaults.permissionMode = rawDefaults.permissionMode;
+    }
+    if (rawDefaults.cyclablePermissionModes !== undefined) {
+      if (
+        !Array.isArray(rawDefaults.cyclablePermissionModes)
+        || rawDefaults.cyclablePermissionModes.length < 2
+        || !rawDefaults.cyclablePermissionModes.every(isCurrentPermissionMode)
+        || new Set(rawDefaults.cyclablePermissionModes).size !== rawDefaults.cyclablePermissionModes.length
+      ) return null;
+      defaults.cyclablePermissionModes = rawDefaults.cyclablePermissionModes;
+    }
+    if (rawDefaults.colorTheme !== undefined) {
+      if (typeof rawDefaults.colorTheme !== 'string') return null;
+      defaults.colorTheme = rawDefaults.colorTheme;
+    }
+    projected.defaults = defaults;
+  }
+  return projected;
+}
+
+function assertCurrentWorkspaceConfig(config: WorkspaceConfig): void {
+  if (!parseCurrentWorkspaceConfig(config)) throw new Error('Invalid current workspace configuration');
+}
 
 function getWorkspaceStore(): MultiWriterStore {
   if (!workspaceStore) {
@@ -60,19 +131,6 @@ export function closeWorkspaceStorage(): void {
   workspaceStore = null;
 }
 
-function workspaceRecordKey(rootPath: string): string {
-  return rootPath.replace(/\\/g, '/');
-}
-
-function workspaceHash(value: unknown): string {
-  return createHash('sha256').update(JSON.stringify(value)).digest('hex');
-}
-
-function materializeWorkspaceConfig(rootPath: string, config: WorkspaceConfig): void {
-  atomicWriteFileSync(join(rootPath, 'config.json'), JSON.stringify(config, null, 2));
-  atomicWriteFileSync(join(rootPath, '.mortise-config.sync'), JSON.stringify(config));
-}
-
 function attachWorkspaceSnapshot(config: WorkspaceConfig, snapshot: WorkspaceSnapshot): WorkspaceConfig {
   Object.defineProperty(config, WORKSPACE_SNAPSHOT, {
     configurable: true,
@@ -81,32 +139,6 @@ function attachWorkspaceSnapshot(config: WorkspaceConfig, snapshot: WorkspaceSna
     writable: true,
   });
   return config;
-}
-
-function removeRetiredWorkspaceOrganization(rootPath: string): void {
-  for (const relativePath of RETIRED_WORKSPACE_ORGANIZATION_PATHS) {
-    const target = join(rootPath, relativePath);
-    if (!existsSync(target)) continue;
-    try {
-      rmSync(target, { recursive: true });
-    } catch (error) {
-      console.warn(`[workspaces] Failed to remove retired organization path: ${target}`, error);
-    }
-  }
-}
-
-function removeLegacyWorkspaceAiDefaults(config: WorkspaceConfig): boolean {
-  if (!config.defaults) return false;
-
-  const defaults = config.defaults as unknown as Record<string, unknown>;
-  let removed = false;
-  for (const key of LEGACY_WORKSPACE_AI_DEFAULT_KEYS) {
-    if (key in defaults) {
-      delete defaults[key];
-      removed = true;
-    }
-  }
-  return removed;
 }
 
 // ============================================================
@@ -143,7 +175,7 @@ export function getWorkspacePath(workspaceId: string): string {
  * @param rootPath - Absolute path to workspace root folder
  */
 export function getWorkspaceSkillsPath(rootPath: string): string {
-  return join(rootPath, '.pi', 'skills');
+  return join(rootPath, MORTISE_PROJECT_SKILLS_DIR);
 }
 
 // ------------------------------------------------------------
@@ -161,26 +193,26 @@ export function getWorkspaceCwd(rootPath: string): string {
 }
 
 /**
- * Get the Pi sessions directory for a workspace root bucket.
+ * Get the Mortise sessions directory for a workspace root bucket.
  *
- * Returns `~/.pi/agent/sessions/{encoded-cwd}/` — the bucket where this
+ * Returns `~/.mortise/agent/sessions/{encoded-cwd}/` — the bucket where this
  * workspace's sessions live. The encoded cwd is always the workspace root.
  */
-export function getWorkspacePiSessionsDir(rootPath: string): string {
+export function getWorkspaceSessionsDir(rootPath: string): string {
   const encodedCwd = encodePiSessionCwd(getWorkspaceCwd(rootPath));
-  return join(PI_SESSIONS_DIR, encodedCwd);
+  return join(MORTISE_SESSIONS_DIR, encodedCwd);
 }
 
 /**
- * Count Pi sessions for a workspace by scanning
- * `~/.pi/agent/sessions/{encoded-workspace-root}/`.
+ * Count Mortise sessions for a workspace by scanning
+ * `~/.mortise/agent/sessions/{encoded-workspace-root}/`.
  *
  * Counts flat Pi tree JSONL files. Does not read headers, so corrupt files
  * that `listSessions` would skip are still counted here — the count is a close
  * approximation, not an exact match to the rendered list length.
  */
 export function countSessionsByCwd(rootPath: string): number {
-  const dir = getWorkspacePiSessionsDir(rootPath);
+  const dir = getWorkspaceSessionsDir(rootPath);
   if (!existsSync(dir)) return 0;
   try {
     let count = 0;
@@ -198,134 +230,47 @@ export function countSessionsByCwd(rootPath: string): number {
 // ============================================================
 
 /**
- * Load workspace config.json from a workspace folder
+ * Load the canonical workspace configuration from state.sqlite.
+ * Retired workspace-local JSON files are neither read nor modified.
  * @param rootPath - Absolute path to workspace root folder
  */
 export function loadWorkspaceConfig(rootPath: string): WorkspaceConfig | null {
-  const configPath = join(rootPath, 'config.json');
-  removeRetiredWorkspaceOrganization(rootPath);
-
   try {
     const store = getWorkspaceStore();
-    const key = workspaceRecordKey(rootPath);
-    const stored = store.getRecord(key, 'root');
-    let version: number;
-    let config: WorkspaceConfig;
-    if (stored) {
-      config = JSON.parse(JSON.stringify(stored.value)) as WorkspaceConfig;
-      version = stored.version;
-
-      // A pre-protocol backend may have edited the compatibility JSON. Import
-      // it only against the version observed here; a concurrent new writer
-      // then produces a conflict instead of silently overwriting its update.
-      if (existsSync(configPath)) {
-        try {
-          const fileConfig = readJsonFileSync<WorkspaceConfig>(configPath);
-          const syncPath = join(rootPath, '.mortise-config.sync');
-          const baseline = existsSync(syncPath)
-            ? JSON.parse(readFileSync(syncPath, 'utf8')) as WorkspaceConfig
-            : null;
-          if (baseline && workspaceHash(fileConfig) !== workspaceHash(baseline)
-            && workspaceHash(fileConfig) !== workspaceHash(config)) {
-            const imported = store.mutateRecord({
-              namespace: key,
-              key: 'root',
-              value: fileConfig as unknown as JsonValue,
-              expectedVersion: version,
-              operationId: `legacy-workspace-${workspaceHash(fileConfig)}`,
-            });
-            if (imported.status === 'applied') {
-              config = imported.value as unknown as WorkspaceConfig;
-              version = imported.version;
-            }
-          }
-        } catch {
-          // Keep the SQLite authority when the compatibility file is invalid.
-        }
-      }
-      materializeWorkspaceConfig(rootPath, config);
-    } else {
-      if (!existsSync(configPath)) return null;
-      config = readJsonFileSync<WorkspaceConfig>(configPath);
-      const imported = store.mutateRecord({
-        namespace: key,
-        key: 'root',
-        value: config as unknown as JsonValue,
-        expectedVersion: null,
-        operationId: `import-workspace-${workspaceHash(config)}`,
-      });
-      if (imported.status !== 'applied') return null;
-      config = imported.value as unknown as WorkspaceConfig;
-      version = imported.version;
-      materializeWorkspaceConfig(rootPath, config);
-    }
-
-    // Compatibility: accept canonical or legacy permission mode names on read
-    if (config.defaults?.permissionMode && typeof config.defaults.permissionMode === 'string') {
-      const parsed = parsePermissionMode(config.defaults.permissionMode);
-      config.defaults.permissionMode = parsed ?? undefined;
-    }
-
-    if (Array.isArray(config.defaults?.cyclablePermissionModes)) {
-      const normalized = config.defaults.cyclablePermissionModes
-        .map(mode => (typeof mode === 'string' ? parsePermissionMode(mode) : null))
-        .filter((mode): mode is NonNullable<typeof mode> => !!mode)
-        .filter((mode, index, arr) => arr.indexOf(mode) === index);
-
-      config.defaults.cyclablePermissionModes = normalized.length >= 2
-        ? normalized
-        : [...PERMISSION_MODE_ORDER];
-    }
-
-    if (removeLegacyWorkspaceAiDefaults(config)) {
-      config.updatedAt = Date.now();
-      try {
-        const normalized = store.mutateRecord({
-          namespace: key,
-          key: 'root',
-          value: config as unknown as JsonValue,
-          expectedVersion: version,
-          operationId: `normalize-workspace-${workspaceHash(config)}`,
-        });
-        if (normalized.status === 'applied') {
-          config = normalized.value as unknown as WorkspaceConfig;
-          version = normalized.version;
-          materializeWorkspaceConfig(rootPath, config);
-        }
-      } catch {
-        // Keep the cleaned in-memory config when a read-only workspace cannot be migrated.
-      }
-    }
-
-    return attachWorkspaceSnapshot(config, { version, value: config });
+    const identity = getWorkspaceConfigRecordIdentity(rootPath);
+    const stored = store.getRecord(identity.namespace, identity.key);
+    if (!stored) return null;
+    const config = parseCurrentWorkspaceConfig(JSON.parse(JSON.stringify(stored.value)));
+    if (!config) return null;
+    return attachWorkspaceSnapshot(config, { version: stored.version, value: config });
   } catch {
     return null;
   }
 }
 
 /**
- * Save workspace config.json to a workspace folder
+ * Save the canonical workspace configuration to state.sqlite.
  * @param rootPath - Absolute path to workspace root folder
  */
 export function saveWorkspaceConfig(rootPath: string, config: WorkspaceConfig): void {
+  assertCurrentWorkspaceConfig(config);
   if (!existsSync(rootPath)) {
     mkdirSync(rootPath, { recursive: true });
   }
 
   const storageConfig: WorkspaceConfig = {
     ...config,
-    defaults: config.defaults ? { ...config.defaults } : undefined,
+    ...(config.defaults ? { defaults: { ...config.defaults } } : {}),
     updatedAt: Date.now(),
   };
-  removeLegacyWorkspaceAiDefaults(storageConfig);
 
   const store = getWorkspaceStore();
-  const key = workspaceRecordKey(rootPath);
+  const identity = getWorkspaceConfigRecordIdentity(rootPath);
   const snapshot = (config as WorkspaceWithSnapshot)[WORKSPACE_SNAPSHOT];
-  const current = store.getRecord(key, 'root');
+  const current = store.getRecord(identity.namespace, identity.key);
   const result = store.mutateRecord({
-    namespace: key,
-    key: 'root',
+    namespace: identity.namespace,
+    key: identity.key,
     value: storageConfig as unknown as JsonValue,
     expectedVersion: snapshot?.version ?? current?.version ?? null,
     operationId: `workspace-config-${randomUUID()}`,
@@ -334,7 +279,6 @@ export function saveWorkspaceConfig(rootPath: string, config: WorkspaceConfig): 
     throw new Error(`Workspace configuration write conflicted for ${rootPath}`);
   }
   const persisted = result.value as unknown as WorkspaceConfig;
-  materializeWorkspaceConfig(rootPath, persisted);
   attachWorkspaceSnapshot(config, { version: result.version, value: persisted });
 }
 
@@ -353,9 +297,8 @@ export function loadWorkspace(rootPath: string): LoadedWorkspace | null {
   // Ensure plugin manifest exists (migration for existing workspaces)
   ensurePluginManifest(rootPath, config.name);
 
-  // M11: No longer create the legacy {rootPath}/skills/ directory here.
-  // Task 10 migrated skills to {cwd}/.pi/skills/ (Pi native path); creating
-  // the old folder misleads users into placing skills in the wrong location.
+  // Workspace skills are created on demand under {cwd}/.mortise/skills/.
+  // Do not create the retired {rootPath}/skills/ or Pi-owned .pi/skills paths.
 
   return {
     config,
@@ -463,19 +406,14 @@ export function createWorkspaceAtPath(
 
   // Create workspace directory structure.
   // No `sessions/` subdirectory is created — sessions are
-  // aggregated by cwd from `~/.pi/agent/sessions/{encoded-cwd}/` .
-  //  No `skills/` subdirectory is created — workspace-level skills
-  // migrated to `{projectRoot}/.pi/skills/`. The legacy `{rootPath}/skills/`
-  // directory is no longer read by anyone (F18 removed the last legacy
-  // workspace-skill fallback paths in pre-tool-use.ts and skill-validate.ts;
-  // the stale `loadWorkspaceSkills` reference previously documented here
-  // does not exist in the codebase).
+  // aggregated by cwd from `~/.mortise/agent/sessions/{encoded-cwd}/` .
+  // No `skills/` subdirectory is created. Workspace skills are created on
+  // demand under `{projectRoot}/.mortise/skills/`; retired root-level and
+  // Pi-owned project skill paths are not read or materialized.
   mkdirSync(rootPath, { recursive: true });
 
   // Save config
   saveWorkspaceConfig(rootPath, config);
-
-  removeRetiredWorkspaceOrganization(rootPath);
 
   // Initialize plugin manifest for SDK integration (enables skills, commands, agents)
   ensurePluginManifest(rootPath, name);
@@ -499,15 +437,16 @@ export function deleteWorkspaceFolder(rootPath: string): boolean {
 }
 
 /**
- * Check if a valid workspace exists at a path
+ * Check whether a workspace directory has a canonical SQLite record.
  * @param rootPath - Absolute path to check
  */
 export function isValidWorkspace(rootPath: string): boolean {
-  return existsSync(join(rootPath, 'config.json'));
+  if (!existsSync(rootPath)) return false;
+  return loadWorkspaceConfig(rootPath) !== null;
 }
 
 /**
- * Rename a workspace (updates config.json in the workspace folder)
+ * Rename a workspace in the canonical SQLite record.
  * @param rootPath - Absolute path to workspace root folder
  * @param newName - New display name
  */
@@ -525,7 +464,7 @@ export function renameWorkspaceFolder(rootPath: string, newName: string): boolea
 // ============================================================
 
 /**
- * Discover workspace folders in the default location that have valid config.json
+ * Discover workspace folders in the default location that have SQLite records.
  * Returns paths to valid workspaces found in ~/.mortise/workspaces/
  */
 export function discoverWorkspacesInDefaultLocation(): string[] {

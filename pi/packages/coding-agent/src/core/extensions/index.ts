@@ -8,7 +8,6 @@ export type { SourceInfo } from "../source-info.ts";
 export { createHeadlessUIContext, type HeadlessUITransport } from "./headless-ui-context.ts";
 export {
 	createExtensionRuntime,
-	discoverAndLoadExtensions,
 	loadExtensionFromFactory,
 	loadExtensions,
 } from "./loader.ts";

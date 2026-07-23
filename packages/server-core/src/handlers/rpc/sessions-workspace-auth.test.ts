@@ -28,7 +28,7 @@ class TestRpcServer implements RpcServer {
   }
 }
 
-function createDeps(): HandlerDeps {
+function createDeps(onInteraction?: (requestId: string, response: unknown) => boolean): HandlerDeps {
   const sessionManager = new Proxy({
     async getSession(sessionId: string) {
       return {
@@ -39,6 +39,9 @@ function createDeps(): HandlerDeps {
         messageCount: 0,
         lastMessageAt: Date.now(),
       }
+    },
+    respondToExtensionInteraction(_sessionId: string, requestId: string, response: unknown) {
+      return onInteraction?.(requestId, response) ?? true
     },
   }, {
     get(target, prop, receiver) {
@@ -95,7 +98,7 @@ const protectedCalls: Array<{ channel: string; args: unknown[] }> = [
   { channel: RPC_CHANNELS.sessions.CANCEL, args: ['session-1'] },
   { channel: RPC_CHANNELS.sessions.KILL_SHELL, args: ['session-1', 'shell-1'] },
   { channel: RPC_CHANNELS.sessions.RESPOND_TO_PERMISSION, args: ['session-1', 'request-1', true, true] },
-  { channel: RPC_CHANNELS.extensions.REMOTEUI_RESPONSE, args: ['session-1', 'request-1', null] },
+  { channel: RPC_CHANNELS.extensions.INTERACTION_RESPONSE, args: ['session-1', 'request-1', { schemaVersion: 1, status: 'cancelled', reason: 'user' }] },
   { channel: RPC_CHANNELS.extensions.COMMAND_INVOKE, args: ['session-1', 'command-1', {}] },
   { channel: RPC_CHANNELS.sessions.LIST_CHILD_SESSIONS, args: ['session-1'] },
   { channel: RPC_CHANNELS.sessions.COMMAND, args: ['session-1', { type: 'setPermissionMode', mode: 'allow-all' }] },
@@ -110,5 +113,27 @@ describe('session RPC workspace authorization', () => {
     expect(handler).toBeDefined()
 
     await expect(handler!(ctx, ...args)).rejects.toThrow('Session workspace mismatch')
+  })
+
+  it('rejects retired scalar interaction responses and forwards only valid V1 responses', async () => {
+    const received: unknown[] = []
+    const server = new TestRpcServer()
+    registerSessionsHandlers(server, createDeps((requestId, response) => {
+      received.push({ requestId, response })
+      return true
+    }))
+    const handler = server.handlers.get(RPC_CHANNELS.extensions.INTERACTION_RESPONSE)!
+    const trustedCtx = { ...ctx, workspaceId: 'workspace-b' }
+
+    await expect(handler(trustedCtx, 'session-1', 'request-1', null)).rejects.toThrow('Invalid extension interaction response')
+    expect(await handler(trustedCtx, 'session-1', 'request-1', {
+      schemaVersion: 1,
+      status: 'cancelled',
+      reason: 'user',
+    })).toBe(true)
+    expect(received).toEqual([{
+      requestId: 'request-1',
+      response: { schemaVersion: 1, status: 'cancelled', reason: 'user' },
+    }])
   })
 })

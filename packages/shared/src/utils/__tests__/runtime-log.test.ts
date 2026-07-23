@@ -59,6 +59,21 @@ function readEntries(configDir: string): RuntimeLogEnvelopeV1[] {
     .map((line) => JSON.parse(line) as RuntimeLogEnvelopeV1);
 }
 
+function readAllEntriesOldestFirst(configDir: string): RuntimeLogEnvelopeV1[] {
+  const logsDir = join(configDir, 'logs');
+  const names = readdirSync(logsDir)
+    .filter((name) => /^runtime\.log(?:\.[1-5])?$/.test(name))
+    .sort((left, right) => {
+      const generation = (name: string): number => Number(name.split('.').at(-1)) || 0;
+      return generation(right) - generation(left);
+    });
+  return names.flatMap((name) => readFileSync(join(logsDir, name), 'utf8')
+    .trim()
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as RuntimeLogEnvelopeV1));
+}
+
 describe('runtime log normalization', () => {
   test('normalizes errors, bigint and circular data without throwing', () => {
     const circular: Record<string, unknown> = { count: 42n };
@@ -119,7 +134,7 @@ describe('runtime log persistence', () => {
     const configDir = mkdtempSync(join(tmpdir(), 'mortise-runtime-log-'));
     try {
       await runChild(`
-        import { createRuntimeLogger, writeRuntimeLog } from ${JSON.stringify(runtimeLogModuleUrl)};
+        import { createRuntimeLogger, flushRuntimeLogs, writeRuntimeLog } from ${JSON.stringify(runtimeLogModuleUrl)};
         writeRuntimeLog('warn', {
           scope: 'legacy', event: 'legacy_event', message: 'legacy message',
           meta: { token: 'must-not-leak', value: 7 },
@@ -132,6 +147,7 @@ describe('runtime log persistence', () => {
           event: 'started', data: { ok: true },
           correlation: { requestId: 'request-1', runtimeId: 'runtime-call' },
         });
+        await flushRuntimeLogs();
       `, configDir);
 
       const [legacy, current] = readEntries(configDir);
@@ -171,13 +187,14 @@ describe('runtime log persistence', () => {
     const configDir = mkdtempSync(join(tmpdir(), 'mortise-runtime-log-concurrent-'));
     try {
       const writers = Array.from({ length: 4 }, (_, writer) => runChild(`
-        import { writeRuntimeLog } from ${JSON.stringify(runtimeLogModuleUrl)};
+        import { flushRuntimeLogs, writeRuntimeLog } from ${JSON.stringify(runtimeLogModuleUrl)};
         for (let index = 0; index < 40; index += 1) {
           writeRuntimeLog('info', {
             scope: 'concurrency', event: 'write',
             correlation: { requestId: '${writer}-' + index },
           });
         }
+        await flushRuntimeLogs();
       `, configDir));
       await Promise.all(writers);
 
@@ -190,16 +207,90 @@ describe('runtime log persistence', () => {
     }
   });
 
+  test('bounds a debug storm while retaining a later error record', async () => {
+    const configDir = mkdtempSync(join(tmpdir(), 'mortise-runtime-log-backpressure-'));
+    try {
+      await runChild(`
+        import {
+          flushRuntimeLogs,
+          getRuntimeLogQueueStats,
+          writeRuntimeLog,
+        } from ${JSON.stringify(runtimeLogModuleUrl)};
+        const enqueueStartedAt = Date.now();
+        for (let index = 0; index < 5_000; index += 1) {
+          writeRuntimeLog('debug', {
+            scope: 'backpressure', event: 'debug',
+            correlation: { requestId: String(index) },
+          });
+        }
+        writeRuntimeLog('error', { scope: 'backpressure', event: 'terminal_error' });
+        if (Date.now() - enqueueStartedAt > 1_500) {
+          throw new Error('runtime log enqueue blocked on filesystem throughput');
+        }
+        const beforeFlush = getRuntimeLogQueueStats();
+        if (beforeFlush.pending > 2_048 || beforeFlush.highWaterMark > 2_048 || beforeFlush.dropped.debug === 0) {
+          throw new Error('runtime log queue did not apply bounded backpressure');
+        }
+        await flushRuntimeLogs();
+        const afterFlush = getRuntimeLogQueueStats();
+        if (afterFlush.pending !== 0 || afterFlush.draining || afterFlush.failed !== 0) {
+          throw new Error('runtime log orderly flush did not settle cleanly');
+        }
+      `, configDir);
+
+      const entries = readEntries(configDir);
+      expect(entries.length).toBeLessThanOrEqual(2_048 + 32);
+      expect(entries.some(entry => entry.level === 'error' && entry.event === 'terminal_error')).toBe(true);
+    } finally {
+      removeTempDir(configDir);
+    }
+  }, 15_000);
+
+  test('keeps the event loop responsive while waiting for the cross-process lock', async () => {
+    const configDir = mkdtempSync(join(tmpdir(), 'mortise-runtime-log-responsive-'));
+    try {
+      await runChild(`
+        import { mkdirSync, writeFileSync } from 'node:fs';
+        import { dirname } from 'node:path';
+        import { lock } from 'proper-lockfile';
+        import {
+          flushRuntimeLogs,
+          getRuntimeLogFilePath,
+          getRuntimeLogQueueStats,
+          writeRuntimeLog,
+        } from ${JSON.stringify(runtimeLogModuleUrl)};
+        const path = getRuntimeLogFilePath();
+        mkdirSync(dirname(path), { recursive: true });
+        writeFileSync(path, '');
+        const release = await lock(path, { realpath: false, stale: 10_000 });
+        writeRuntimeLog('info', { scope: 'responsiveness', event: 'lock_wait' });
+        let flushSettled = false;
+        const flush = flushRuntimeLogs().then(() => { flushSettled = true; });
+        await new Promise(resolve => setTimeout(resolve, 50));
+        if (flushSettled || !getRuntimeLogQueueStats().draining) {
+          throw new Error('runtime log lock wait blocked the event loop or settled prematurely');
+        }
+        await release();
+        await flush;
+      `, configDir);
+
+      expect(readEntries(configDir).map((entry) => entry.event)).toEqual(['lock_wait']);
+    } finally {
+      removeTempDir(configDir);
+    }
+  }, 10_000);
+
   test('replaces an oversized entry with a bounded truncation marker', async () => {
     const configDir = mkdtempSync(join(tmpdir(), 'mortise-runtime-log-bounded-'));
     try {
       await runChild(`
-        import { writeRuntimeLog } from ${JSON.stringify(runtimeLogModuleUrl)};
+        import { flushRuntimeLogs, writeRuntimeLog } from ${JSON.stringify(runtimeLogModuleUrl)};
         const data = Object.fromEntries(Array.from(
           { length: 30 },
           (_, index) => ['field' + index, 'x'.repeat(16_000)],
         ));
         writeRuntimeLog('info', { scope: 'bounded', event: 'oversized', data });
+        await flushRuntimeLogs();
       `, configDir);
 
       const [entry] = readEntries(configDir);
@@ -220,11 +311,15 @@ describe('runtime log persistence', () => {
     writeFileSync(invalidConfigDir, 'file blocks the log directory');
     try {
       const result = await runChildResult(`
-        import { writeRuntimeLog } from ${JSON.stringify(runtimeLogModuleUrl)};
+        import { flushRuntimeLogs, getRuntimeLogQueueStats, writeRuntimeLog } from ${JSON.stringify(runtimeLogModuleUrl)};
         writeRuntimeLog('error', {
           scope: 'failure', event: 'cannot_write',
           message: 'Bearer must-not-leak-to-stderr',
         });
+        await flushRuntimeLogs();
+        if (getRuntimeLogQueueStats().failed !== 1) {
+          throw new Error('runtime log persistence failure was not counted');
+        }
         console.log('runtime-continued');
       `, invalidConfigDir);
 
@@ -241,14 +336,18 @@ describe('runtime log persistence', () => {
     const configDir = mkdtempSync(join(tmpdir(), 'mortise-runtime-log-rotation-'));
     try {
       await runChild(`
-        import { writeRuntimeLog } from ${JSON.stringify(runtimeLogModuleUrl)};
+        import { flushRuntimeLogs, writeRuntimeLog } from ${JSON.stringify(runtimeLogModuleUrl)};
         const data = Object.fromEntries(Array.from(
           { length: 14 },
           (_, index) => ['field' + index, 'x'.repeat(16_000)],
         ));
         for (let index = 0; index < 155; index += 1) {
-          writeRuntimeLog('info', { scope: 'rotation', event: 'large', data });
+          writeRuntimeLog('info', {
+            scope: 'rotation', event: 'large', data,
+            correlation: { requestId: String(index) },
+          });
         }
+        await flushRuntimeLogs();
       `, configDir);
 
       const names = readdirSync(join(configDir, 'logs')).sort();
@@ -258,6 +357,10 @@ describe('runtime log persistence', () => {
       }
       expect(names).not.toContain('runtime.log.6');
       expect(names.some((name) => name.endsWith('.lock'))).toBe(false);
+      const retainedIndexes = readAllEntriesOldestFirst(configDir)
+        .map((entry) => Number(entry.correlation?.requestId));
+      expect(retainedIndexes.at(-1)).toBe(154);
+      expect(retainedIndexes.every((value, index) => index === 0 || value > retainedIndexes[index - 1]!)).toBe(true);
     } finally {
       removeTempDir(configDir);
     }

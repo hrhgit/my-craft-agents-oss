@@ -1,6 +1,5 @@
 import { Cron } from 'croner'
 import { z } from 'zod'
-import { AutomationConditionSchema } from './schemas.ts'
 
 const OPAQUE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{11,255}$/
 const RISKY_REGEX = /(\([^)]*[+*][^)]*\)[+*{])|(\.\*){2,}|(\.\+){2,}|\([^)]*\|[^)]*\)[+*{]/
@@ -132,6 +131,33 @@ const WebhookActionV3Schema = z.object({
 }).strict()
 
 export const AutomationActionV3Schema = z.discriminatedUnion('type', [PromptActionV3Schema, WebhookActionV3Schema])
+
+const TimeConditionSchema = z.object({
+  condition: z.literal('time'),
+  after: z.string().optional(),
+  before: z.string().optional(),
+  weekday: z.array(z.string()).optional(),
+  timezone: z.string().optional(),
+}).strict()
+
+const StateConditionSchema = z.object({
+  condition: z.literal('state'),
+  field: z.string().min(1),
+  value: z.unknown().optional(),
+  from: z.unknown().optional(),
+  to: z.unknown().optional(),
+  contains: z.string().optional(),
+  not_value: z.unknown().optional(),
+}).strict()
+
+const AutomationConditionSchema: z.ZodType = z.lazy(() => z.union([
+  TimeConditionSchema,
+  StateConditionSchema,
+  z.object({
+    condition: z.enum(['and', 'or', 'not']),
+    conditions: z.array(AutomationConditionSchema),
+  }).strict(),
+]))
 
 function validateConditionTree(value: unknown, depth = 0): string | undefined {
   if (depth >= 8) return 'Condition nesting depth exceeds 8'

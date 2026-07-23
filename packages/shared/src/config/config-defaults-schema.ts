@@ -29,7 +29,7 @@ export interface ConfigDefaults {
     /**
      * Pi 扩展集成开关。
      * - enabled: 控制 pi 扩展相关 UI 组件的可见性。Pi RpcClient始终加载
-     *   全局 pi 扩展，此字段不影响子进程行为。默认 true。
+     *   Mortise Agent 扩展，此字段不影响子进程行为。默认 true。
      */
     piExtensions: PiExtensionSettings;
     /**

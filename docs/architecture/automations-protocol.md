@@ -6,7 +6,7 @@ Canonical document version: `3`
 
 Runtime event envelope: CloudEvents `1.0` structured content mode
 
-Last updated: 2026-07-20
+Last updated: 2026-07-23
 
 This document is the normative architecture and protocol specification for
 Mortise Automations. The terms MUST, MUST NOT, REQUIRED, SHOULD, SHOULD NOT,
@@ -264,10 +264,10 @@ normalized internal event type. `source` is assigned by the trusted adapter;
 external input cannot impersonate `mortise` or `agent`.
 
 `matcher`, when present, is a bounded regular expression evaluated against the
-adapter-defined `matchValue`. Existing Mortise/Agent adapters MUST preserve
-their documented match values during version 2 migration. External event
-triggers SHOULD match structured payload fields through conditions rather than
-stringifying arbitrary payloads into `matchValue`.
+adapter-defined `matchValue`. Mortise/Agent adapters MUST preserve their
+documented match values across supported current schema revisions. External
+event triggers SHOULD match structured payload fields through conditions rather
+than stringifying arbitrary payloads into `matchValue`.
 
 Conditions retain the current time, state, and logical `and`/`or`/`not`
 families. They evaluate against a normalized context containing CloudEvents
@@ -575,8 +575,10 @@ runs.
 
 Definitions, ingress events, run transitions, action transitions, and history
 are one host-owned logical store even if retention uses multiple physical
-tables or streams. `automations.json`, `.pi/schedule-prompts.json`, legacy
-trigger config, and extension runtime registries MUST NOT remain co-authoritative.
+tables or streams. Mortise runtime MUST use only its canonical `.mortise`
+storage. It MUST NOT read, create, import, alias, fall back to, or dual-write
+independent Pi `.pi` files, former `automations.json` files, legacy trigger
+config, or extension runtime registries.
 
 Definition mutations use compare-and-swap and operation identity:
 
@@ -657,15 +659,23 @@ A future remotely reachable event receiver requires a separate threat model,
 authentication design, replay window, and product decision. It is not implied
 by this version.
 
-## 11. Migration
+## 11. Offline Historical Conversion
 
-Migration is per workspace, atomic, idempotent, and auditable. The migration
-operation ID is deterministic from workspace identity, source format, and
-source content hash. The host builds and validates a complete version 3
-candidate before committing it. Failure leaves the old source untouched and
-does not start the version 3 scheduler.
+Mortise runtime and startup contain no legacy automation reader or importer.
+Historical conversion, when explicitly requested, is a separate offline
+operation that runs while Mortise is stopped, receives user-selected source
+files, and writes only a validated version 3 candidate through the canonical
+`.mortise` store transaction. It is not automatic discovery, first-open work,
+a fallback reader, or a bounded runtime migration window.
 
-### 11.1 Automations Document V2
+An offline converter MUST be atomic, idempotent, and auditable. Its operation
+ID is deterministic from workspace identity, source format, and source content
+hash. It validates a complete version 3 candidate before committing it. Failure
+leaves both the selected source and canonical store unchanged. Source paths and
+conversion mappings below are historical input descriptions only; they do not
+authorize Mortise runtime to inspect `.pi`.
+
+### 11.1 Historical Automations Document V2
 
 - Each event-map matcher becomes one version 3 definition.
 - The matcher ID is retained as the automation ID when collision-safe and
@@ -681,48 +691,47 @@ does not start the version 3 scheduler.
   blocks that definition instead of remaining inline.
 - Existing history is correlated through retained IDs or migration aliases.
 
-### 11.2 Legacy Scheduled Prompts
+### 11.2 Historical Scheduled Prompts
 
-`.pi/schedule-prompts.json` jobs map as follows:
+An explicitly selected independent Pi `schedule-prompts.json` file may be
+converted offline as follows:
 
 - cron, once, and interval become matching time triggers;
 - a job with a model becomes an isolated-Agent prompt action;
 - a job bound to an existing Session becomes a fixed Session follow-up action;
 - an unbound scheduled job becomes a new-Session prompt action;
-- a job bound to a missing Session is imported disabled with a migration
+- a job bound to a missing Session is converted as disabled with a conversion
   diagnostic and is never silently redirected;
-- legacy run count, last result, and next-run display data are imported only as
+- legacy run count, last result, and next-run display data are converted only as
   historical metadata, not scheduler truth.
 
-### 11.3 Legacy External Triggers
+### 11.3 Historical External Triggers
 
-Project `.pi/prompt-automation.json` triggers are imported into that workspace
-as `source: "external"` event definitions. Their follow-up/steer delivery is
-preserved when a valid event Session is available.
+An explicitly selected independent Pi `prompt-automation.json` file may be
+converted offline into `source: "external"` event definitions for one explicit
+Mortise workspace. Follow-up/steer delivery is retained only when a valid
+Session in that workspace is selected and validated.
 
-Global prompt-automation triggers are copied idempotently into every workspace
-registered at migration time. During a bounded migration window, the first
-open of a previously unvisited registered workspace performs the same
-idempotent import. After that window, legacy global ownership ends; subsequent
-global-file changes are ignored and never dual-written.
+There is no global fan-out, registered-workspace scan, first-open import, or
+subsequent source-file monitoring. The conversion report lists the selected
+source path, converted definition IDs, disabled definitions, conflicts, and
+diagnostics. The converter does not archive, move, rewrite, or delete the
+independent Pi source.
 
-The migration report lists source path, imported definition IDs, disabled
-definitions, conflicts, and diagnostics. Legacy files are archived only after
-the canonical commit and report are durable.
+### 11.4 Runtime Boundary
 
-### 11.4 Runtime Cutover
+The cutover is complete:
 
-After a workspace commits version 3:
+- V3 is the only Mortise scheduler, store, history, and idempotency authority;
+- the former scheduler, `delegatePromptAutomation` setting and fallback,
+  Mortise-target `prompt-automation` runtime, and migration readers are absent;
+- Mortise exposes only the unified UI, RPC, CLI, and authenticated ingress;
+- independent Pi remains independent and keeps its own `.pi` storage. Like any
+  external program, it may explicitly submit a typed event to authenticated
+  Mortise ingress, but Mortise never discovers or reads Pi files to do so.
 
-- the host stops the old scheduler before enabling version 3 claims;
-- the Mortise `delegatePromptAutomation` setting and fallback path have no
-  authority and are removed;
-- the Mortise-target `prompt-automation` runtime is removed;
-- Mortise exposes only the unified UI, RPC, CLI, and ingress;
-- standalone Pi may retain a compatibility client that submits to Mortise event
-  ingress, but it cannot retain a second Mortise scheduler or store.
-
-There is no supported dual-scheduler or dual-write steady state.
+There is no supported dual-scheduler, dual-write, runtime import, or legacy
+fallback state.
 
 ## 12. Validation And Acceptance
 
@@ -748,9 +757,10 @@ Contract acceptance requires automated coverage for:
 - webhook success, terminal failure, immediate/deferred retry, stable attempt
   identities, response truncation, secret redaction, and unknown-outcome crash
   recovery;
-- v2, scheduled-prompt, project-trigger, global-trigger, repeated migration,
-  missing Session, ID collision, corrupt source, and interrupted migration
-  fixtures;
+- offline V2, scheduled-prompt, and external-trigger conversion with explicit
+  source selection, repeated conversion, missing Session, ID collision, corrupt
+  source, interrupted conversion, and proof that runtime startup never probes
+  independent Pi paths;
 - history correlation and retention from event/occurrence through run, action,
   attempt, and linked Session.
 
@@ -766,52 +776,26 @@ contract tests. UI acceptance must exercise the real Automations workflow and
 semantic history through the supported Electron/WebUI surfaces in proportion
 to their platform capabilities.
 
-## 13. Phased Rollout And Rollback
+## 13. Cutover And Recovery
 
-### Phase 0: Contract
+The phased V3 rollout and its runtime migration window are closed. Production
+starts directly from the canonical V3 store and MUST NOT probe legacy or `.pi`
+sources in normal, recovery, downgrade, or rollback paths.
 
-Land versioned schemas, capability declarations, deterministic identity helpers,
-and migration fixtures without enabling version 3 execution.
+Recovery first fences V3 dispatch and inspects the canonical run ledger. It
+repairs or restores the supported `.mortise` store under its version and
+capability contracts. It MUST NOT restart a legacy scheduler, reconstruct one
+from historical files, or reverse dual-write, because doing so can repeat
+already claimed occurrences and external side effects.
 
-### Phase 1: Canonical Store
-
-Add revisioned definition storage and append-only run records. Read and validate
-legacy sources in shadow mode. Do not write legacy sources or run a second
-scheduler.
-
-### Phase 2: Per-Workspace Migration
-
-Atomically migrate one workspace, stop its legacy scheduler, and enable version
-3 claims behind a product feature gate. Compare scheduled occurrence and
-matcher diagnostics before widening rollout.
-
-### Phase 3: Unified Ingress And Actions
-
-Enable authenticated CloudEvents ingress, all prompt targets, and canonical
-webhook execution/history. Convert `pi-trigger` to a thin compatibility client.
-
-### Phase 4: Remove Separate Runtime
-
-Remove the Mortise-target `prompt-automation` extension, delegation setting,
-legacy runtime registry, duplicate UI, and old scheduler/store ownership.
-
-### Phase 5: Close Migration Window
-
-Stop global legacy import-on-first-open, retain read-only migration reports and
-archives for the documented retention period, and make version 3 the only
-writable Mortise format.
-
-Before a workspace cutover, rollback may disable version 3 and leave legacy
-execution unchanged. After a workspace has produced version 3 occurrence or
-run records, rollback MUST first fence all version 3 dispatch and inspect the
-run ledger. It MUST NOT simply restart the legacy scheduler, because that can
-repeat already claimed time occurrences and external side effects. Recovery
-uses the canonical store and migration report rather than reverse dual-write.
+An incompatible current Mortise backend follows capability fencing and becomes
+read-only where required. Offline historical conversion is independent of
+runtime recovery and cannot be invoked implicitly by opening a workspace.
 
 ## 14. Documentation Follow-Up
 
-Implementation rollout must later replace the current user guide sections that
-describe `SchedulerTick`, five-field-only cron, prompt actions that always
-create Sessions, and Pi prompt-automation delegation. CLI, external ingress,
-generated AsyncAPI, extension compatibility, and migration guidance must be
-derived from this contract rather than maintained as competing protocol text.
+User guides MUST describe the V3 runtime directly. They MUST NOT instruct
+Mortise to delegate to Pi prompt automation or place runtime inputs under
+`.pi`. CLI, external ingress, generated AsyncAPI, extension integration, and
+optional offline-conversion guidance must be derived from this contract rather
+than maintained as competing protocol text.

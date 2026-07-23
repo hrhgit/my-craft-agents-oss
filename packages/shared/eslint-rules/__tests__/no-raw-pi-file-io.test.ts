@@ -26,38 +26,38 @@ function runRule(code: string, filename = 'packages/shared/src/agent/unsafe.ts')
 
 describe('no-raw-pi-file-io', () => {
   it('flags static imports of sensitive Pi path constants', () => {
-    const messages = runRule("import { PI_SETTINGS_FILE } from '@mortise/shared/config/paths'")
+    const messages = runRule("import { MORTISE_SETTINGS_FILE } from '@mortise/shared/config/paths'")
 
     expect(messages).toHaveLength(1)
-    expect(messages[0]?.message).toContain('PI_SETTINGS_FILE')
+    expect(messages[0]?.message).toContain('MORTISE_SETTINGS_FILE')
   })
 
   it('flags require() loading the path constants module', () => {
-    const messages = runRule("const { PI_SETTINGS_FILE } = require('@mortise/shared/config/paths')")
+    const messages = runRule("const { MORTISE_SETTINGS_FILE } = require('@mortise/shared/config/paths')")
 
     expect(messages).toHaveLength(1)
     expect(messages[0]?.message).toContain('require()')
   })
 
   it('flags namespace imports of the path constants module', () => {
-    const messages = runRule("import * as paths from '@mortise/shared/config/paths'\nconsole.log(paths.PI_AUTH_FILE)")
+    const messages = runRule("import * as paths from '@mortise/shared/config/paths'\nconsole.log(paths.MORTISE_AUTH_FILE)")
 
     expect(messages).toHaveLength(1)
     expect(messages[0]?.message).toContain('namespace import')
   })
 
   it('flags default imports of the path constants module', () => {
-    const messages = runRule("import paths from '@mortise/shared/config/paths'\nconsole.log(paths.PI_AUTH_FILE)")
+    const messages = runRule("import paths from '@mortise/shared/config/paths'\nconsole.log(paths.MORTISE_AUTH_FILE)")
 
     expect(messages).toHaveLength(1)
     expect(messages[0]?.message).toContain('default import')
   })
 
   it('flags re-exporting sensitive Pi path constants', () => {
-    const messages = runRule("export { PI_AUTH_FILE } from '@mortise/shared/config/paths'")
+    const messages = runRule("export { MORTISE_AUTH_FILE } from '@mortise/shared/config/paths'")
 
     expect(messages).toHaveLength(1)
-    expect(messages[0]?.message).toContain('PI_AUTH_FILE')
+    expect(messages[0]?.message).toContain('MORTISE_AUTH_FILE')
   })
 
   it('flags export-all re-exports of the path constants module', () => {
@@ -88,16 +88,16 @@ describe('no-raw-pi-file-io', () => {
 
   it('allows sanctioned seam files to import sensitive Pi path constants', () => {
     const messages = runRule(
-      "import { PI_SESSIONS_DIR } from '../config/paths.ts'",
+      "import { MORTISE_SESSIONS_DIR } from '../config/paths.ts'",
       'packages/shared/src/sessions/storage.ts',
     )
 
     expect(messages).toHaveLength(0)
   })
 
-  it('allows pi-global-config only the PI_AGENT_DIR watcher seam', () => {
+  it('allows pi-global-config only the MORTISE_AGENT_DIR watcher seam', () => {
     const messages = runRule(
-      "import { PI_AGENT_DIR } from './paths'",
+      "import { MORTISE_AGENT_DIR } from './paths'",
       'packages/shared/src/config/pi-global-config.ts',
     )
 
@@ -106,19 +106,19 @@ describe('no-raw-pi-file-io', () => {
 
   it('blocks pi-global-config from reintroducing raw settings file access', () => {
     const messages = runRule(
-      "import { PI_SETTINGS_FILE } from './paths'",
+      "import { MORTISE_SETTINGS_FILE } from './paths'",
       'packages/shared/src/config/pi-global-config.ts',
     )
 
     expect(messages).toHaveLength(1)
-    expect(messages[0]?.message).toContain('PI_SETTINGS_FILE')
+    expect(messages[0]?.message).toContain('MORTISE_SETTINGS_FILE')
   })
 
   it('flags raw global Pi skills paths outside the migration seam', () => {
-    const messages = runRule("import { PI_SKILLS_DIR } from '@mortise/shared/config/paths'")
+    const messages = runRule("import { MORTISE_SKILLS_DIR } from '@mortise/shared/config/paths'")
 
     expect(messages).toHaveLength(1)
-    expect(messages[0]?.message).toContain('PI_SKILLS_DIR')
+    expect(messages[0]?.message).toContain('MORTISE_SKILLS_DIR')
   })
 
   it('flags private Pi hook env strings', () => {

@@ -753,6 +753,7 @@ Events are streamed to stdout as JSON lines during agent operation. Events do NO
 | `message_start` | Message begins |
 | `message_update` | Streaming update (text/thinking/toolcall deltas) |
 | `message_end` | Message completes |
+| `pi_user_message_persisted` | Canonical user entry is readable from the session JSONL; includes `clientMutationId`, `entryId`, and `sessionFile` |
 | `tool_execution_start` | Tool begins execution |
 | `tool_execution_update` | Tool execution progress (streaming output) |
 | `tool_execution_end` | Tool completes |
@@ -761,6 +762,7 @@ Events are streamed to stdout as JSON lines during agent operation. Events do NO
 | `compaction_end` | Compaction completes |
 | `auto_retry_start` | Auto-retry begins (after transient error) |
 | `auto_retry_end` | Auto-retry completes (success or final failure) |
+| `agent_settled` | Logical run and all retry/compaction post-processing have settled |
 | `extension_error` | Extension threw an error |
 
 ### agent_start
@@ -985,14 +987,11 @@ Emitted when an extension throws an error.
 
 ## Extension UI Protocol
 
-Extensions can request user interaction via `ctx.ui.select()`, `ctx.ui.confirm()`, etc. In RPC mode, these are translated into a request/response sub-protocol on top of the base command/event flow.
+Extensions request user input through the versioned interaction protocol. The convenience methods `ctx.ui.select()`, `confirm()`, `input()`, and `editor()` are authoring helpers: in RPC mode they all emit `method: "interact"` with an `ExtensionInteractionRequestV1`. Hosts respond with the matching `extension_ui_response` and an `ExtensionInteractionResponseV1`.
 
-There are two categories of extension UI methods:
+Likewise, `ctx.ui.setWidget()` is an authoring helper over the versioned contribution protocol. It emits `method: "contribution"` with an `upsert` or `remove` operation. RPC clients never receive method names such as `select`, `confirm`, `input`, `editor`, or `setWidget`.
 
-- **Dialog methods** (`select`, `confirm`, `input`, `editor`): emit an `extension_ui_request` on stdout and block until the client sends back an `extension_ui_response` on stdin with the matching `id`.
-- **Fire-and-forget methods** (`notify`, `setStatus`, `setWidget`, `setTitle`, `set_editor_text`): emit an `extension_ui_request` on stdout but do not expect a response. The client can display the information or ignore it.
-
-If a dialog method includes a `timeout` field, the agent-side will auto-resolve with a default value when the timeout expires. The client does not need to track timeouts.
+Interaction requests may include a `timeout` in milliseconds. Pi emits `extension_ui_cancel` with `method: "interact"` when the request is aborted, times out, or is cancelled by runtime lifecycle.
 
 Some `ExtensionUIContext` methods are not supported or degraded in RPC mode because they require direct TUI access:
 - `custom()` returns `undefined`
@@ -1004,77 +1003,39 @@ Some `ExtensionUIContext` methods are not supported or degraded in RPC mode beca
 - `getTheme()` returns `undefined`
 - `setTheme()` returns `{ success: false, error: "..." }`
 
-Note: `ctx.hasUI` is `true` in RPC mode because the dialog and fire-and-forget methods are functional via the extension UI sub-protocol.
+Note: `ctx.hasUI` is `true` when the host advertises the corresponding RPC UI capabilities.
 
 ### Extension UI Requests (stdout)
 
 All requests have `type: "extension_ui_request"`, a unique `id`, and a `method` field.
 
-#### select
-
-Prompt the user to choose from a list. Dialog methods with a `timeout` field include the timeout in milliseconds; the agent auto-resolves with `undefined` if the client doesn't respond in time.
+#### interact
 
 ```json
 {
   "type": "extension_ui_request",
   "id": "uuid-1",
-  "method": "select",
-  "title": "Allow dangerous command?",
-  "options": ["Allow", "Block"],
+  "extensionId": "example",
+  "method": "interact",
+  "request": {
+    "schemaVersion": 1,
+    "title": "Allow dangerous command?",
+    "fields": [{
+      "id": "selection",
+      "kind": "choice",
+      "label": "Allow dangerous command?",
+      "required": true,
+      "options": [
+        { "id": "option-1", "label": "Allow" },
+        { "id": "option-2", "label": "Block" }
+      ],
+      "minSelections": 1,
+      "maxSelections": 1
+    }]
+  },
   "timeout": 10000
 }
 ```
-
-Expected response: `extension_ui_response` with `value` (the selected option string) or `cancelled: true`.
-
-#### confirm
-
-Prompt the user for yes/no confirmation.
-
-```json
-{
-  "type": "extension_ui_request",
-  "id": "uuid-2",
-  "method": "confirm",
-  "title": "Clear session?",
-  "message": "All messages will be lost.",
-  "timeout": 5000
-}
-```
-
-Expected response: `extension_ui_response` with `confirmed: true/false` or `cancelled: true`.
-
-#### input
-
-Prompt the user for free-form text.
-
-```json
-{
-  "type": "extension_ui_request",
-  "id": "uuid-3",
-  "method": "input",
-  "title": "Enter a value",
-  "placeholder": "type something..."
-}
-```
-
-Expected response: `extension_ui_response` with `value` (the entered text) or `cancelled: true`.
-
-#### editor
-
-Open a multi-line text editor with optional prefilled content.
-
-```json
-{
-  "type": "extension_ui_request",
-  "id": "uuid-4",
-  "method": "editor",
-  "title": "Edit some text",
-  "prefill": "Line 1\nLine 2\nLine 3"
-}
-```
-
-Expected response: `extension_ui_response` with `value` (the edited text) or `cancelled: true`.
 
 #### notify
 
@@ -1108,22 +1069,26 @@ Set or clear a status entry in the footer/status bar. Fire-and-forget.
 
 Send `statusText: undefined` (or omit it) to clear the status entry for that key.
 
-#### setWidget
+#### contribution
 
-Set or clear a widget (block of text lines) displayed above or below the editor. Fire-and-forget.
+`ctx.ui.setWidget("my-ext", ["Line 1", "Line 2"])` emits a text contribution. Passing `undefined` emits `operation: "remove"` for the same contribution ID.
 
 ```json
 {
   "type": "extension_ui_request",
-  "id": "uuid-7",
-  "method": "setWidget",
-  "widgetKey": "my-ext",
-  "widgetLines": ["--- My Widget ---", "Line 1", "Line 2"],
-  "widgetPlacement": "aboveEditor"
+  "id": "uuid-2",
+  "extensionId": "example",
+  "method": "contribution",
+  "operation": "upsert",
+  "revision": 1,
+  "contribution": {
+    "schemaVersion": 1,
+    "id": "my-ext",
+    "surface": "composer.above",
+    "content": { "type": "text", "text": "Line 1\nLine 2" }
+  }
 }
 ```
-
-Send `widgetLines: undefined` (or omit it) to clear the widget. The `widgetPlacement` field is `"aboveEditor"` (default) or `"belowEditor"`. Only string arrays are supported in RPC mode; component factories are ignored.
 
 #### setTitle
 
@@ -1153,27 +1118,28 @@ Set the text in the input editor. Fire-and-forget.
 
 ### Extension UI Responses (stdin)
 
-Responses are sent for dialog methods only (`select`, `confirm`, `input`, `editor`). The `id` must match the request.
-
-#### Value response (select, input, editor)
+Responses are sent only for `interact`. The `id`, `extensionId`, `runtimeId`, `sessionId`, and optional `clientId` must match the request route. The answer shape must match every requested field.
 
 ```json
-{"type": "extension_ui_response", "id": "uuid-1", "value": "Allow"}
+{
+  "type": "extension_ui_response",
+  "id": "uuid-1",
+  "extensionId": "example",
+  "runtimeId": "default",
+  "sessionId": "session-id",
+  "interaction": {
+    "schemaVersion": 1,
+    "status": "submitted",
+    "answers": [{
+      "fieldId": "selection",
+      "kind": "choice",
+      "selectedOptionIds": ["option-1"]
+    }]
+  }
+}
 ```
 
-#### Confirmation response (confirm)
-
-```json
-{"type": "extension_ui_response", "id": "uuid-2", "confirmed": true}
-```
-
-#### Cancellation response (any dialog)
-
-Dismiss any dialog method. The extension receives `undefined` (for select/input/editor) or `false` (for confirm).
-
-```json
-{"type": "extension_ui_response", "id": "uuid-3", "cancelled": true}
-```
+Cancellation uses `interaction: { "schemaVersion": 1, "status": "cancelled", "reason": "user" }`.
 
 ## Error Handling
 

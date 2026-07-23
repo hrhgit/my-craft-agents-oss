@@ -1,6 +1,5 @@
 import * as React from 'react'
 import { useTranslation } from "react-i18next"
-import { Command as CommandPrimitive } from 'cmdk'
 import { AnimatePresence, motion } from 'motion/react'
 import { toast } from 'sonner'
 import {
@@ -15,11 +14,9 @@ import {
   Sparkles,
   X,
 } from 'lucide-react'
-import { Icon_Home, Icon_Folder, Spinner } from '@mortise/ui'
+import { Spinner } from '@mortise/ui'
 
 import * as storage from '@/lib/local-storage'
-import { useDirectoryPicker } from '@/hooks/useDirectoryPicker'
-import { ServerDirectoryBrowser } from '@/components/ServerDirectoryBrowser'
 import { Button } from '@/components/ui/button'
 import {
   InlineSlashCommand,
@@ -51,17 +48,15 @@ import {
   StyledDropdownMenuSubTrigger,
   StyledDropdownMenuSubContent,
 } from '@/components/ui/styled-dropdown'
-import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover'
 import { cn } from '@/lib/utils'
 import { coerceInputText } from '@/lib/input-text'
-import { isMac, PATH_SEP, getPathBasename } from '@/lib/platform'
+import { isMac } from '@/lib/platform'
 import { applySmartTypography } from '@/lib/smart-typography'
 import { AttachmentPreview } from '../AttachmentPreview'
 import { ImageSupportWarningBanner } from './ImageSupportWarningBanner'
 import { ANTHROPIC_MODELS, getModelShortName, getModelDisplayName, type ModelDefinition } from '@config/models'
 import { piProviderModelSupportsImages } from '@mortise/shared/config/pi-provider-models'
 import { useOptionalAppShellContext } from '@/context/AppShellContext'
-import { CompactWorkingDirectorySelector } from '@/components/ui/CompactWorkingDirectorySelector'
 import { ProviderIcon } from '@/components/icons/ProviderIcon'
 import { FreeFormInputContextBadge } from './FreeFormInputContextBadge'
 import { derivePickerMode } from './picker-mode'
@@ -81,10 +76,10 @@ import { ToolbarStatusSlot } from './ToolbarStatusSlot'
 import { shouldHandleScopedInputEvent } from './input-event-guards'
 import { clearPendingFocusForSession, consumePendingFocusForSession } from './focus-input-events'
 import {
-  getRecentWorkingDirs,
-  addRecentWorkingDir,
-} from './working-directory-history'
-import { useWorkingDirectoryState } from './use-working-directory-state'
+  shouldRestoreComposerSubmission,
+  snapshotComposerSubmission,
+  type ComposerSubmissionAttempt,
+} from './composer-submission'
 import { CompactPermissionModeSelector } from './CompactPermissionModeSelector'
 import { CompactModelSelector } from './CompactModelSelector'
 import {
@@ -108,7 +103,6 @@ function formatFollowUpChipText(text: string, fallback: string, maxLength = 50):
     ? `${normalized.slice(0, maxLength - 1).trimEnd()}…`
     : normalized
 }
-
 function ContextUsageRing({
   contextStatus,
   currentModel,
@@ -235,7 +229,7 @@ export interface FreeFormInputProps {
   /** Whether the session is currently processing */
   isProcessing?: boolean
   /** Callback when message is submitted (skillSlugs from @mentions) */
-  onSubmit: (message: string, attachments?: FileAttachment[], skillSlugs?: string[], midStreamSendIntent?: MidStreamSendIntent) => void
+  onSubmit: (attempt: ComposerSubmissionAttempt) => Promise<boolean>
   /** Callback to stop processing. Pass silent=true to skip "Response interrupted" message */
   onStop?: (silent?: boolean) => void
   /** External ref for the input */
@@ -274,14 +268,12 @@ export interface FreeFormInputProps {
   skills?: LoadedSkill[]
   /** Workspace ID for loading skill icons */
   workspaceId?: string
-  /** Current working directory path */
-  workingDirectory?: string
-  /** Callback when working directory changes */
-  onWorkingDirectoryChange?: (path: string) => void
-  /** Session folder path (for "Reset to Session Root" option) */
-  sessionFolderPath?: string
+  /** Canonical workspace root used for file and skill resolution. */
+  workspaceRoot?: string
   /** Session ID for scoping session-bound events */
   sessionId?: string
+  /** Stable non-session scope used only for composer validation semantics. */
+  semanticScopeId?: string
   /** Disable send action (for tutorial guidance) */
   disableSend?: boolean
   /** Whether the session is empty (no messages yet) - affects context badge prominence */
@@ -365,10 +357,9 @@ export function FreeFormInput({
   onFocusChange,
   skills = [],
   workspaceId,
-  workingDirectory,
-  onWorkingDirectoryChange,
-  sessionFolderPath,
+  workspaceRoot,
   sessionId,
+  semanticScopeId,
   disableSend = false,
   isEmptySession = false,
   contextStatus,
@@ -532,14 +523,31 @@ export function FreeFormInput({
   // Performance optimization: Always use internal state for typing to avoid parent re-renders
   // Sync FROM parent on mount/change (for restoring drafts)
   // Sync TO parent on blur/submit (debounced persistence)
-  const [input, setInput] = React.useState(() => coerceInputText(inputValue))
-  const [attachments, setAttachments] = React.useState<FileAttachment[]>(attachmentsValue ?? [])
+  const initialInput = coerceInputText(inputValue)
+  const initialAttachments = attachmentsValue ?? []
+  const [input, setInputState] = React.useState(initialInput)
+  const [attachments, setAttachmentsState] = React.useState<FileAttachment[]>(initialAttachments)
+  const composerTextRef = React.useRef(initialInput)
+  const attachmentsRef = React.useRef<FileAttachment[]>(initialAttachments)
+  const composerRevisionRef = React.useRef(0)
+
+  const setInput = React.useCallback((next: React.SetStateAction<string>) => {
+    const value = typeof next === 'function' ? next(composerTextRef.current) : next
+    if (value === composerTextRef.current) return
+    composerTextRef.current = value
+    composerRevisionRef.current += 1
+    setInputState(value)
+  }, [])
+
+  const setAttachments = React.useCallback((next: React.SetStateAction<FileAttachment[]>) => {
+    const value = typeof next === 'function' ? next(attachmentsRef.current) : next
+    if (value === attachmentsRef.current || (value.length === 0 && attachmentsRef.current.length === 0)) return
+    attachmentsRef.current = value
+    composerRevisionRef.current += 1
+    setAttachmentsState(value)
+  }, [])
 
   // Ref to track current attachments for use in event handlers (avoids stale closure issues)
-  const attachmentsRef = React.useRef<FileAttachment[]>([])
-  React.useEffect(() => {
-    attachmentsRef.current = attachments
-  }, [attachments])
 
   // Seed from parent when `attachmentsValue` changes (e.g., switching sessions).
   // `skipPersistRef` tells the save effect below that the next `attachments` change
@@ -557,7 +565,7 @@ export function FreeFormInput({
     prevAttachmentsRefsKey.current = attachmentsRefsKey
     skipPersistRef.current = true
     setAttachments(attachmentsValue)
-  }, [attachmentsValue, attachmentsRefsKey])
+  }, [attachmentsValue, attachmentsRefsKey, setAttachments])
 
   // Persist user-initiated attachment changes back to the parent. The parent stores
   // refs (path + name) and debounces the disk write, so we fire eagerly on every
@@ -825,36 +833,20 @@ export function FreeFormInput({
       })
       return
     }
-    if (commandId === 'compact' && !isProcessing) onSubmit('/compact', undefined)
+    if (commandId === 'compact' && !isProcessing) {
+      void onSubmit(snapshotComposerSubmission({
+        composerText: '/compact',
+        message: '/compact',
+      }))
+    }
   }, [isProcessing, onSubmit, triggerExtensionCommand])
 
-  // Handle folder selection from slash command menu
-  const handleSlashFolderSelect = React.useCallback((path: string) => {
-    if (onWorkingDirectoryChange) {
-      setRecentFolders(addRecentWorkingDir(path, workspaceId))
-      onWorkingDirectoryChange(path)
-    }
-  }, [onWorkingDirectoryChange, workspaceId])
-
-  // Get recent folders and home directory for slash menu and mention menu
-  const [recentFolders, setRecentFolders] = React.useState<string[]>([])
-  const [homeDir, setHomeDir] = React.useState<string>('')
-
-  React.useEffect(() => {
-    setRecentFolders(getRecentWorkingDirs(workspaceId))
-    window.electronAPI?.getHomeDir?.().then((dir: string) => {
-      if (dir) setHomeDir(dir)
-    })
-  }, [workspaceId])
-
-  // Inline slash command hook (modes, features, and folders)
+  // Inline slash command hook (modes and extension features)
   const inlineSlash = useInlineSlashCommand({
     inputRef: richInputRef,
     onSelectCommand: handleSlashCommand,
-    onSelectFolder: handleSlashFolderSelect,
+    onSelectFolder: () => undefined,
     activeCommands,
-    recentFolders: onWorkingDirectoryChange ? recentFolders : [],
-    homeDir,
     extraSections: extensionSections,
   })
 
@@ -865,7 +857,7 @@ export function FreeFormInput({
   const inlineMention = useInlineMention({
     inputRef: richInputRef,
     skills,
-    basePath: workingDirectory,
+    basePath: workspaceRoot,
     onSelect: handleMentionSelect,
     // Use workspace slug (not UUID) for SDK skill qualification
     workspaceId: workspaceSlug,
@@ -1132,12 +1124,14 @@ export function FreeFormInput({
 
     const attachmentSnapshot = attachments
 
-    onSubmit(
-      input.trim(),
-      attachmentSnapshot.length > 0 ? attachmentSnapshot : undefined,
-      mentions.skills.length > 0 ? mentions.skills : undefined,
+    const attempt = snapshotComposerSubmission({
+      composerText: input,
+      message: input.trim(),
+      attachments: attachmentSnapshot,
+      skillSlugs: mentions.skills,
       midStreamSendIntent,
-    )
+    })
+    const completion = onSubmit(attempt)
     setInput('')
     setAttachments([])
     // Clear draft immediately (cancel any pending debounced sync)
@@ -1145,6 +1139,36 @@ export function FreeFormInput({
     onInputChange?.('')
     onAttachmentsChange?.([])
     prevInputValueRef.current = ''
+    const clearedRevision = composerRevisionRef.current
+
+    void completion.then(accepted => {
+      if (accepted) return
+      if (!shouldRestoreComposerSubmission({
+        clearedRevision,
+        currentRevision: composerRevisionRef.current,
+        currentText: composerTextRef.current,
+        currentAttachmentCount: attachmentsRef.current.length,
+      })) return
+      setInput(attempt.composerText)
+      setAttachments(attempt.attachments?.map(attachment => ({ ...attachment })) ?? [])
+      onInputChange?.(attempt.composerText)
+      onAttachmentsChange?.(attempt.attachments?.map(attachment => ({ ...attachment })) ?? [])
+      prevInputValueRef.current = attempt.composerText
+    }).catch(() => {
+      // ChatDisplay converts send rejection into an unaccepted completion. Keep
+      // this guard for alternate consumers that reject directly.
+      if (!shouldRestoreComposerSubmission({
+        clearedRevision,
+        currentRevision: composerRevisionRef.current,
+        currentText: composerTextRef.current,
+        currentAttachmentCount: attachmentsRef.current.length,
+      })) return
+      setInput(attempt.composerText)
+      setAttachments(attempt.attachments?.map(attachment => ({ ...attachment })) ?? [])
+      onInputChange?.(attempt.composerText)
+      onAttachmentsChange?.(attempt.attachments?.map(attachment => ({ ...attachment })) ?? [])
+      prevInputValueRef.current = attempt.composerText
+    })
 
     // Restore focus after state updates
     requestAnimationFrame(() => {
@@ -1152,7 +1176,7 @@ export function FreeFormInput({
     })
 
     return true
-  }, [input, attachments, followUpItems, disabled, disableSend, extensionCommands, triggerExtensionCommand, onInputChange, onAttachmentsChange, onSubmit, skills, onWorkingDirectoryChange, homeDir])
+  }, [input, attachments, followUpItems, disabled, disableSend, extensionCommands, triggerExtensionCommand, onInputChange, onAttachmentsChange, onSubmit, setAttachments, setInput, skills])
 
   // Listen for mortise:submit-input events (simulate pressing the Send button)
   React.useEffect(() => {
@@ -1335,9 +1359,9 @@ export function FreeFormInput({
   }, [followUpLayoutKey])
 
   const hasContent = input.trim() || attachments.length > 0 || followUpItems.length > 0
-  const semanticSessionId = sessionId?.replace(/[^A-Za-z0-9._:-]/g, '_')
-  const inputSemanticProps = useUiSemanticNode(semanticSessionId ? {
-    id: `composer.${semanticSessionId}.input`,
+  const semanticComposerScopeId = (sessionId ?? semanticScopeId)?.replace(/[^A-Za-z0-9._:-]/g, '_')
+  const inputSemanticProps = useUiSemanticNode(semanticComposerScopeId ? {
+    id: `composer.${semanticComposerScopeId}.input`,
     role: 'textbox',
     name: t('chatInput.placeholder.typeMessage'),
     value: input,
@@ -1350,8 +1374,8 @@ export function FreeFormInput({
       handleInputChange(action === 'clear' ? '' : payload.value ?? '')
     },
   } : null)
-  const sendSemanticProps = useUiSemanticNode(semanticSessionId ? {
-    id: `composer.${semanticSessionId}.${isProcessing ? 'stop' : 'send'}`,
+  const sendSemanticProps = useUiSemanticNode(semanticComposerScopeId ? {
+    id: `composer.${semanticComposerScopeId}.${isProcessing ? 'stop' : 'send'}`,
     role: 'button',
     name: isProcessing ? t('chat.stopResponse') : t('shortcuts.sendMessage'),
     state: { disabled: isProcessing ? false : !hasContent || disabled || disableSend, busy: isProcessing },
@@ -1365,7 +1389,7 @@ export function FreeFormInput({
 
   // Pre-flight image-support check: warn when staged images would be silently
   // stripped by Pi SDK because the active custom-endpoint model is text-only.
-  // Gate on pi_compat — built-in catalogs (anthropic/pi) are owned by the SDK
+  // Gate on pi_custom — built-in catalogs (anthropic/pi) are owned by the SDK
   // and we can't repair them from the UI here.
   const hasStagedImages = attachments.some(a => a.type === 'image' || a.mimeType?.startsWith('image/'))
   const showVisionWarning =
@@ -1415,7 +1439,7 @@ export function FreeFormInput({
           isSearching={inlineMention.isSearching}
         />
 
-        {/* Pre-flight image-support warning — only for pi_compat connections
+        {/* Pre-flight image-support warning — only for pi_custom connections
             where the renderer can both detect text-only models and offer to
             flip the per-model supportsImages override on the spot. */}
         {showVisionWarning && effectiveProviderDetails && (
@@ -1605,15 +1629,6 @@ export function FreeFormInput({
               contextStatus={contextStatus}
             />
           )}
-          {onWorkingDirectoryChange && (
-            <CompactWorkingDirectorySelector
-              workingDirectory={workingDirectory}
-              onWorkingDirectoryChange={onWorkingDirectoryChange}
-              sessionFolderPath={sessionFolderPath}
-              isEmptySession={false}
-              workspaceId={workspaceId}
-            />
-          )}
           </div>
           )}
 
@@ -1643,16 +1658,6 @@ export function FreeFormInput({
             />
           )}
 
-          {/* 3. Working Directory Selector Badge */}
-          {onWorkingDirectoryChange && (
-            <WorkingDirectoryBadge
-              workingDirectory={workingDirectory}
-              onWorkingDirectoryChange={onWorkingDirectoryChange}
-              sessionFolderPath={sessionFolderPath}
-              isEmptySession={isEmptySession}
-              workspaceId={workspaceId}
-            />
-          )}
           </div>
           )}
 
@@ -1727,7 +1732,7 @@ export function FreeFormInput({
                 </div>
               ) : pickerMode === 'locked-single' && providerDefaultModel ? (
                 (() => {
-                  // Single-model pi_compat connection on a non-empty session (or
+                  // Single-model pi_custom connection on a non-empty session (or
                   // when there's only one connection, so no switcher to show).
                   // Model row is disabled (locked to this session); vision toggle
                   // remains interactive.
@@ -2060,7 +2065,10 @@ export function FreeFormInput({
 
             const handleCompactClick = () => {
               if (!isProcessing) {
-                onSubmit('/compact', [])
+                void onSubmit(snapshotComposerSubmission({
+                  composerText: '/compact',
+                  message: '/compact',
+                }))
               }
             }
 
@@ -2121,217 +2129,5 @@ export function FreeFormInput({
         </div>
       </div>
     </form>
-  )
-}
-
-/**
- * Format path for display, with home directory shortened
- */
-function formatPathForDisplay(path: string | undefined, homeDir: string): string {
-  if (!path) return ''
-  let displayPath = path
-  if (homeDir && path.startsWith(homeDir)) {
-    const relativePath = path.slice(homeDir.length)
-    // Remove leading separator if present, show root separator if empty
-    displayPath = relativePath.startsWith(PATH_SEP)
-      ? relativePath.slice(1)
-      : (relativePath || PATH_SEP)
-  }
-  return `in ${displayPath}`
-}
-
-/**
- * WorkingDirectoryBadge - Context badge for selecting working directory
- * Uses cmdk for filterable folder list when there are more than 5 recent folders.
- */
-function WorkingDirectoryBadge({
-  workingDirectory,
-  onWorkingDirectoryChange,
-  sessionFolderPath,
-  isEmptySession = false,
-  workspaceId,
-}: {
-  workingDirectory?: string
-  onWorkingDirectoryChange: (path: string) => void
-  sessionFolderPath?: string
-  isEmptySession?: boolean
-  workspaceId?: string
-}) {
-  const { t } = useTranslation()
-  const [popoverOpen, setPopoverOpen] = React.useState(false)
-  const inputRef = React.useRef<HTMLInputElement>(null)
-  const closePopover = React.useCallback(() => setPopoverOpen(false), [])
-
-  const {
-    homeDir,
-    gitBranch,
-    filter,
-    setFilter,
-    sortedRecent: filteredRecent,
-    hasFolder,
-    folderName,
-    showReset,
-    showFilter,
-    handleSelectRecent,
-    handleReset,
-    handleRemoveRecent,
-    handleChooseFolder,
-    serverBrowser: {
-      showServerBrowser,
-      serverBrowserMode,
-      cancelServerBrowser,
-      confirmServerBrowser,
-    },
-  } = useWorkingDirectoryState({
-    workingDirectory,
-    onWorkingDirectoryChange,
-    sessionFolderPath,
-    workspaceId,
-    isOpen: popoverOpen,
-    onClose: closePopover,
-  })
-
-  // Autofocus the filter input on popover open. Lives in the consumer (not
-  // the hook) because the compact drawer surface has no autofocus.
-  React.useEffect(() => {
-    if (popoverOpen && showFilter) {
-      const timer = setTimeout(() => {
-        inputRef.current?.focus()
-      }, 0)
-      return () => clearTimeout(timer)
-    }
-  }, [popoverOpen, showFilter])
-
-  // Styles matching todo-filter-menu.tsx for consistency
-  const MENU_CONTAINER_STYLE = 'min-w-[200px] max-w-[400px] overflow-hidden rounded-[8px] bg-background text-foreground shadow-modal-small p-0'
-  const MENU_LIST_STYLE = 'max-h-[200px] overflow-y-auto p-1 [&_[cmdk-list-sizer]]:space-y-px'
-  const MENU_ITEM_STYLE = 'flex cursor-pointer select-none items-center gap-2 rounded-[6px] px-3 py-1.5 text-[13px] outline-none'
-
-  return (
-    <>
-    <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>
-      <PopoverTrigger asChild>
-        <span className="shrink min-w-0 overflow-hidden">
-          <FreeFormInputContextBadge
-            icon={<Icon_Home className="h-4 w-4" />}
-            label={folderName ?? 'Work in Folder'}
-            isExpanded={isEmptySession}
-            hasSelection={hasFolder}
-            showChevron={true}
-            isOpen={popoverOpen}
-            tooltip={
-              hasFolder ? (
-                <span className="flex flex-col gap-0.5">
-                  <span className="font-medium">{t("chat.workingDirectory")}</span>
-                  <span className="text-xs opacity-70">{formatPathForDisplay(workingDirectory, homeDir)}</span>
-                  {gitBranch && <span className="text-xs opacity-70">{t("chat.onBranch", { branch: gitBranch })}</span>}
-                </span>
-              ) : t("chat.chooseWorkingDirectory")
-            }
-          />
-        </span>
-      </PopoverTrigger>
-      <PopoverContent side="top" align="start" sideOffset={8} className={MENU_CONTAINER_STYLE}>
-        <CommandPrimitive shouldFilter={showFilter}>
-          {/* Filter input - only shown when more than 5 recent folders */}
-          {showFilter && (
-            <div className="border-b border-border/50 px-3 py-2">
-              <CommandPrimitive.Input
-                ref={inputRef}
-                value={filter}
-                onValueChange={setFilter}
-                placeholder={t("chat.filterFolders")}
-                className="w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground/50 placeholder:select-none"
-              />
-            </div>
-          )}
-
-          <CommandPrimitive.List className={MENU_LIST_STYLE}>
-            {/* Current Folder Display - shown at top with checkmark */}
-            {hasFolder && (
-              <CommandPrimitive.Item
-                value={`current-${workingDirectory}`}
-                className={cn(MENU_ITEM_STYLE, 'pointer-events-none bg-foreground/5')}
-                disabled
-              >
-                <Icon_Folder className="h-4 w-4 shrink-0 text-muted-foreground" />
-                <span className="flex-1 min-w-0 truncate">
-                  <span>{folderName}</span>
-                  <span className="text-muted-foreground ml-1.5">{formatPathForDisplay(workingDirectory, homeDir)}</span>
-                </span>
-                <Check className="h-4 w-4 shrink-0" />
-              </CommandPrimitive.Item>
-            )}
-
-            {/* Separator after current folder */}
-            {hasFolder && filteredRecent.length > 0 && (
-              <div className="h-px bg-border my-1 mx-1" />
-            )}
-
-            {/* Recent Directories - filterable (current directory already filtered out via filteredRecent) */}
-            {filteredRecent.map((path) => {
-              const recentFolderName = getPathBasename(path) || 'Folder'
-              return (
-                <CommandPrimitive.Item
-                  key={path}
-                  value={`${recentFolderName} ${path}`}
-                  onSelect={() => handleSelectRecent(path)}
-                  className={cn(MENU_ITEM_STYLE, 'group/item data-[selected=true]:bg-foreground/5')}
-                >
-                  <Icon_Folder className="h-4 w-4 shrink-0 text-muted-foreground" />
-                  <span className="flex-1 min-w-0 truncate">
-                    <span>{recentFolderName}</span>
-                    <span className="text-muted-foreground ml-1.5">{formatPathForDisplay(path, homeDir)}</span>
-                  </span>
-                  <button
-                    type="button"
-                    onClick={(e) => handleRemoveRecent(e, path)}
-                    data-touch-reveal="true"
-                    className="shrink-0 h-3 w-3 rounded-[3px] flex items-center justify-center opacity-0 group-hover/item:opacity-100 text-muted-foreground hover:text-foreground hover:bg-foreground/10 transition-all"
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
-                </CommandPrimitive.Item>
-              )
-            })}
-
-            {/* Empty state when filtering */}
-            {showFilter && (
-              <CommandPrimitive.Empty className="py-3 text-center text-sm text-muted-foreground">
-                {t('chat.noFoldersFound')}
-              </CommandPrimitive.Empty>
-            )}
-          </CommandPrimitive.List>
-
-          {/* Bottom actions - always visible, outside scrollable area */}
-          <div className="border-t border-border/50 p-1">
-            <button
-              type="button"
-              onClick={handleChooseFolder}
-              className={cn(MENU_ITEM_STYLE, 'w-full hover:bg-foreground/5')}
-            >
-              {t('chat.chooseFolder')}
-            </button>
-            {showReset && (
-              <button
-                type="button"
-                onClick={handleReset}
-                className={cn(MENU_ITEM_STYLE, 'w-full hover:bg-foreground/5')}
-              >
-                {t('common.reset')}
-              </button>
-            )}
-          </div>
-        </CommandPrimitive>
-      </PopoverContent>
-    </Popover>
-    <ServerDirectoryBrowser
-      open={showServerBrowser}
-      mode={serverBrowserMode}
-      onSelect={confirmServerBrowser}
-      onCancel={cancelServerBrowser}
-      initialPath={workingDirectory}
-    />
-    </>
   )
 }

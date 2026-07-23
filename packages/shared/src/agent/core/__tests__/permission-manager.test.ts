@@ -25,7 +25,7 @@ describe('PermissionManager', () => {
     permissionManager = new PermissionManager({
       workspaceId: 'test-workspace',
       sessionId: TEST_SESSION_ID,
-      workingDirectory: '/test/workspace',
+      workspaceRootPath: '/test/workspace',
       plansFolderPath: '/test/workspace/plans',
     });
   });
@@ -179,11 +179,9 @@ describe('PermissionManager', () => {
   });
 
   describe('Context Management', () => {
-    it('should update working directory', () => {
-      permissionManager.updateWorkingDirectory('/new/path');
-      // Verify internally by checking the permissions context is updated
+    it('should keep the workspace root as its permission boundary', () => {
       const context = permissionManager.getPermissionsContext();
-      expect(context.workspaceRootPath).toBe('/new/path');
+      expect(context.workspaceRootPath).toBe('/test/workspace');
     });
 
     it('should update plans folder path', () => {

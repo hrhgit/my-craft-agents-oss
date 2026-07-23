@@ -1,4 +1,4 @@
-import { type AssistantMessage, type AssistantMessageEvent, EventStream, getModel } from "@mortise/pi-ai";
+import { type AssistantMessage, type AssistantMessageEvent, EventStream, type Model } from "@mortise/pi-ai";
 import { describe, expect, it } from "vitest";
 import { Agent } from "../src/index.ts";
 
@@ -47,6 +47,19 @@ function createDeferred(): {
 	return { promise, resolve };
 }
 
+const CUSTOM_MODEL = {
+	id: "custom-test-model",
+	name: "Custom test model",
+	api: "openai-responses",
+	provider: "test",
+	baseUrl: "https://example.invalid",
+	reasoning: false,
+	input: ["text"],
+	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+	contextWindow: 128_000,
+	maxTokens: 16_384,
+} satisfies Model<"openai-responses">;
+
 describe("Agent", () => {
 	it("should create an agent instance with default state", () => {
 		const agent = new Agent();
@@ -64,17 +77,16 @@ describe("Agent", () => {
 	});
 
 	it("should create an agent instance with custom initial state", () => {
-		const customModel = getModel("openai", "gpt-4o-mini");
 		const agent = new Agent({
 			initialState: {
 				systemPrompt: "You are a helpful assistant.",
-				model: customModel,
+				model: CUSTOM_MODEL,
 				thinkingLevel: "low",
 			},
 		});
 
 		expect(agent.state.systemPrompt).toBe("You are a helpful assistant.");
-		expect(agent.state.model).toBe(customModel);
+		expect(agent.state.model).toBe(CUSTOM_MODEL);
 		expect(agent.state.thinkingLevel).toBe("low");
 	});
 
@@ -250,9 +262,8 @@ describe("Agent", () => {
 		expect(agent.state.systemPrompt).toBe("Custom prompt");
 
 		// Test setModel
-		const newModel = getModel("google", "gemini-2.5-flash");
-		agent.state.model = newModel;
-		expect(agent.state.model).toBe(newModel);
+		agent.state.model = CUSTOM_MODEL;
+		expect(agent.state.model).toBe(CUSTOM_MODEL);
 
 		// Test setThinkingLevel
 		agent.state.thinkingLevel = "high";

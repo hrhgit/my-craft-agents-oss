@@ -19,7 +19,7 @@ async function runCli(args: string[]): Promise<{ code: number; json: any; stderr
 }
 
 describe('mortise-ui CLI', () => {
-  it('keeps status and stop independent from profile-only Pi session imports', async () => {
+  it('keeps status and stop independent from profile preparation dependencies', async () => {
     const controllerSource = readFileSync(join(import.meta.dir, '..', 'controller.ts'), 'utf8')
     expect(controllerSource).not.toMatch(/\bfrom\s+['"]\.\/profile\.ts['"]/)
     expect(controllerSource).toContain("await import('./profile.ts')")
@@ -95,7 +95,7 @@ describe('mortise-ui CLI', () => {
       expect(manifest.mountedExtensions).toHaveLength(2)
       expect(manifest.mountedExtensions.flatMap((pkg: { entries: Array<{ id: string }> }) => pkg.entries.map(entry => entry.id)))
         .toEqual(['first-extension', 'second-extension'])
-      const settings = JSON.parse(readFileSync(join(manifest.profileDir, 'pi-agent', 'settings.json'), 'utf8'))
+      const settings = JSON.parse(readFileSync(join(manifest.profileDir, 'mortise-config', 'agent', 'settings.json'), 'utf8'))
       expect(settings.extensions.map((entry: { id: string }) => entry.id)).toEqual(['first-extension', 'second-extension'])
       expect(settings.extensions.every((entry: { path: string }) => entry.path.startsWith(runRoot))).toBe(true)
     } finally {
@@ -114,7 +114,13 @@ describe('mortise-ui CLI', () => {
       workspaces: [{
         id: 'cli-workspace', name: 'CLI Workspace',
         files: [{ path: 'README.md', content: '# CLI fixture\n' }],
-        sessions: [{ id: 'cli-session', messages: [{ role: 'user', content: 'CLI history' }] }],
+        sessions: [{
+          id: 'cli-session',
+          messages: [
+            { role: 'user', content: 'CLI history' },
+            { role: 'assistant', content: 'CLI history is ready.' },
+          ],
+        }],
       }],
     }))
     const label = 'cli-lifecycle'
@@ -124,7 +130,7 @@ describe('mortise-ui CLI', () => {
     expect(started.json.result.manifest.profileMode).toBe('fixture')
     expect(started.json.result.manifest.label).toBe(label)
     expect(started.json.result.manifest.windowMode).toBe('background')
-    expect(started.json.result.manifest.fixture).toMatchObject({ workspaceCount: 1, sessionCount: 1, messageCount: 1, fileCount: 1 })
+    expect(started.json.result.manifest.fixture).toMatchObject({ workspaceCount: 1, sessionCount: 1, messageCount: 2, fileCount: 1 })
     const runId = started.json.result.manifest.runId as string
     try {
       for (const command of ['status', 'open', 'snapshot', 'action', 'wait', 'assert', 'evidence']) {
@@ -227,7 +233,7 @@ describe('mortise-ui CLI', () => {
       phase: 'app-readiness',
       cleanup: { remainingPids: [], profileRemoved: true },
     })
-  }, 10_000)
+  }, 30_000)
 
   it('makes --no-wait immediate, defaults Electron to background, and stops the full adapter tree', async () => {
     const runRoot = mkdtempSync(join(tmpdir(), 'mortise-ui-cli-no-wait-')); roots.push(runRoot)

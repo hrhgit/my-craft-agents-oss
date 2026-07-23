@@ -36,7 +36,7 @@ import type { Readable } from "node:stream";
 import ignore from "ignore";
 import { minimatch } from "minimatch";
 import { satisfies } from "semver";
-import { CONFIG_DIR_NAME, VERSION } from "../config.ts";
+import { VERSION, getProjectConfigDir } from "../config.ts";
 import { spawnProcess, spawnProcessSync } from "../utils/child-process.ts";
 import { type GitSource, parseGitUrl } from "../utils/git.ts";
 import { canonicalizePath, isLocalPath, markPathIgnoredByCloudSync, resolvePath } from "../utils/paths.ts";
@@ -137,6 +137,7 @@ export interface PackageManager {
 interface PackageManagerOptions {
 	cwd: string;
 	agentDir: string;
+	projectConfigDir?: string;
 	settingsManager: SettingsManager;
 	extensionTarget?: ExtensionTarget;
 	hostVersions?: Partial<Record<ExtensionTarget, string>>;
@@ -354,7 +355,7 @@ function assertValidExtensionUI(value: unknown, context: string): asserts value 
 						? ["options"]
 						: field.type === "model-reference"
 							? []
-						: [];
+							: [];
 		if (!hasOnlyKeys(field, [...commonKeys, ...typeKeys]))
 			throw new Error(`${context}: extension setting field contains unknown fields`);
 		if (typeof field.key !== "string" || !/^[A-Za-z][A-Za-z0-9._-]{0,127}$/.test(field.key) || keys.has(field.key))
@@ -362,14 +363,17 @@ function assertValidExtensionUI(value: unknown, context: string): asserts value 
 		keys.add(field.key);
 		if (typeof field.label !== "string" || field.label.length === 0 || field.label.length > 256)
 			throw new Error(`${context}: extension setting label is invalid`);
-		if (!["boolean", "string", "textarea", "number", "select", "model", "model-reference"].includes(String(field.type)))
+		if (
+			!["boolean", "string", "textarea", "number", "select", "model", "model-reference"].includes(String(field.type))
+		)
 			throw new Error(`${context}: extension setting type is invalid`);
 		if (field.type === "boolean" && typeof field.default !== "boolean")
 			throw new Error(`${context}: boolean settings require a default`);
 		if (
 			field.type === "model-reference" &&
 			field.default !== undefined &&
-			(typeof field.default !== "string" || !/^current-session$|^default:[1-9]\d*$|^model:[^/]+\/.+$/.test(field.default))
+			(typeof field.default !== "string" ||
+				!/^current-session$|^default:[1-9]\d*$|^model:[^/]+\/.+$/.test(field.default))
 		)
 			throw new Error(`${context}: model-reference default is invalid`);
 		if (
@@ -1122,6 +1126,7 @@ function applyPatterns(allPaths: string[], patterns: string[], baseDir: string):
 export class DefaultPackageManager implements PackageManager {
 	private cwd: string;
 	private agentDir: string;
+	private projectConfigDir: string;
 	private settingsManager: SettingsManager;
 	private extensionTarget: ExtensionTarget;
 	private hostVersions: Record<ExtensionTarget, string>;
@@ -1132,6 +1137,7 @@ export class DefaultPackageManager implements PackageManager {
 	constructor(options: PackageManagerOptions) {
 		this.cwd = resolvePath(options.cwd);
 		this.agentDir = resolvePath(options.agentDir);
+		this.projectConfigDir = options.projectConfigDir ?? getProjectConfigDir();
 		this.settingsManager = options.settingsManager;
 		this.extensionTarget = options.extensionTarget ?? DEFAULT_EXTENSION_TARGET;
 		this.hostVersions = {
@@ -1251,7 +1257,7 @@ export class DefaultPackageManager implements PackageManager {
 		await this.resolvePackageSources(packageSources, accumulator, onMissing);
 
 		const globalBaseDir = this.agentDir;
-		const projectBaseDir = join(this.cwd, CONFIG_DIR_NAME);
+		const projectBaseDir = join(this.cwd, this.projectConfigDir);
 
 		for (const resourceType of RESOURCE_TYPES) {
 			const target = this.getTargetMap(accumulator, resourceType);
@@ -2281,7 +2287,7 @@ export class DefaultPackageManager implements PackageManager {
 			return this.getTemporaryDir("npm");
 		}
 		if (scope === "project") {
-			return join(this.cwd, CONFIG_DIR_NAME, "npm");
+			return join(this.cwd, this.projectConfigDir, "npm");
 		}
 		return join(this.agentDir, "npm");
 	}
@@ -2321,7 +2327,7 @@ export class DefaultPackageManager implements PackageManager {
 			return join(this.getTemporaryDir("npm"), "node_modules", source.name);
 		}
 		if (scope === "project") {
-			return join(this.cwd, CONFIG_DIR_NAME, "npm", "node_modules", source.name);
+			return join(this.cwd, this.projectConfigDir, "npm", "node_modules", source.name);
 		}
 		return join(this.agentDir, "npm", "node_modules", source.name);
 	}
@@ -2348,7 +2354,7 @@ export class DefaultPackageManager implements PackageManager {
 			return this.getTemporaryDir(`git-${source.host}`, source.path);
 		}
 		if (scope === "project") {
-			return join(this.cwd, CONFIG_DIR_NAME, "git", source.host, source.path);
+			return join(this.cwd, this.projectConfigDir, "git", source.host, source.path);
 		}
 		return join(this.agentDir, "git", source.host, source.path);
 	}
@@ -2358,7 +2364,7 @@ export class DefaultPackageManager implements PackageManager {
 			return undefined;
 		}
 		if (scope === "project") {
-			return join(this.cwd, CONFIG_DIR_NAME, "git");
+			return join(this.cwd, this.projectConfigDir, "git");
 		}
 		return join(this.agentDir, "git");
 	}
@@ -2373,7 +2379,7 @@ export class DefaultPackageManager implements PackageManager {
 
 	private getBaseDirForScope(scope: SourceScope): string {
 		if (scope === "project") {
-			return join(this.cwd, CONFIG_DIR_NAME);
+			return join(this.cwd, this.projectConfigDir);
 		}
 		if (scope === "user") {
 			return this.agentDir;

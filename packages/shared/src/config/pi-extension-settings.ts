@@ -2,7 +2,7 @@
  * Pi 扩展设置（mortise GUI 专属字段）
  *
  * Task 7 瘦身后：本文件只保留 mortise GUI 专属的开关类字段。
- * 以下字段位于 `~/.pi/agent/settings.json` 的 `extensionConfig.<id>.*` 命名空间：
+ * 以下字段位于 Mortise Agent root 的 `settings.json.extensionConfig.<id>.*` 命名空间：
  * - `extensionConfig.<id>.enabled`（扩展启停）
  * - `extensionConfig.subagent.defaultModel`
  * - `extensionConfig.trace-audit.model` / `extensionConfig.trace-audit.concurrency`
@@ -168,7 +168,7 @@ export type PiExtensionReloadResult =
  * 见文件顶部说明。
  */
 export interface PiExtensionSettings {
-  /** 全局 pi 扩展 UI 可见性总开关。不影响子进程扩展加载（子进程始终加载全局 pi 扩展）。 */
+  /** Mortise Agent 扩展 UI 可见性总开关。不影响子进程扩展加载。 */
   enabled: boolean;
   /** 测试覆盖用的 agentDir；生产路径永不传入。 */
   managedAgentDir?: string;

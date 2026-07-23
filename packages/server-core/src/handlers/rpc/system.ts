@@ -2,7 +2,7 @@ import { resolve } from 'path'
 import { join } from 'path'
 import { homedir } from 'os'
 import { execSync } from 'child_process'
-import { RPC_CHANNELS } from '@mortise/shared/protocol'
+import { CodedError, RPC_CHANNELS } from '@mortise/shared/protocol'
 import { getWorkspaceByNameOrId, getGitBashPath, setGitBashPath, clearGitBashPath } from '@mortise/shared/config'
 import { classifyExternalUrl, formatBlockedUrlError } from '@mortise/shared/utils/url-safety'
 import { isUsableGitBashPath, validateGitBashPath } from '@mortise/server-core/services'
@@ -10,9 +10,9 @@ import { validateFilePath, getWorkspaceAllowedDirs } from '@mortise/server-core/
 import type { RpcServer } from '@mortise/server-core/transport'
 import type { HandlerDeps } from '../handler-deps'
 import {
-  requestClientOpenExternal,
-  requestClientOpenPath,
-  requestClientShowInFolder,
+  CLIENT_OPEN_EXTERNAL,
+  CLIENT_OPEN_PATH,
+  CLIENT_SHOW_IN_FOLDER,
   requestClientOpenFileDialog,
 } from '@mortise/server-core/transport'
 
@@ -139,6 +139,71 @@ function assertLocalWorkspace(ctx: { workspaceId: string | null }, action: strin
   if (ws?.remoteServer) {
     throw new Error(`${action} is not available for remote workspaces`)
   }
+}
+
+function unsupportedNativeAction(action: string): CodedError {
+  return new CodedError(
+    'CAPABILITY_UNAVAILABLE',
+    `${action} is unavailable because neither the requesting client nor this platform implements it`,
+  )
+}
+
+async function openExternal(
+  server: RpcServer,
+  deps: HandlerDeps,
+  clientId: string,
+  url: string,
+): Promise<void> {
+  if (server.hasClientCapability(clientId, CLIENT_OPEN_EXTERNAL)) {
+    await server.invokeClient(clientId, CLIENT_OPEN_EXTERNAL, url)
+    return
+  }
+  if (deps.platform.openExternal) {
+    await deps.platform.openExternal(url)
+    return
+  }
+  throw unsupportedNativeAction('Open URL')
+}
+
+async function openPath(
+  server: RpcServer,
+  deps: HandlerDeps,
+  clientId: string,
+  path: string,
+): Promise<void> {
+  if (server.hasClientCapability(clientId, CLIENT_OPEN_PATH)) {
+    const result = await server.invokeClient(clientId, CLIENT_OPEN_PATH, path) as { error?: string } | undefined
+    if (result?.error) throw new Error(result.error)
+    return
+  }
+  if (deps.platform.openPath) {
+    await deps.platform.openPath(path)
+    return
+  }
+  throw unsupportedNativeAction('Open file')
+}
+
+async function showInFolder(
+  server: RpcServer,
+  deps: HandlerDeps,
+  clientId: string,
+  path: string,
+): Promise<void> {
+  if (server.hasClientCapability(clientId, CLIENT_SHOW_IN_FOLDER)) {
+    await server.invokeClient(clientId, CLIENT_SHOW_IN_FOLDER, path)
+    return
+  }
+  if (deps.platform.showItemInFolder) {
+    deps.platform.showItemInFolder(path)
+    return
+  }
+  throw unsupportedNativeAction('Show in folder')
+}
+
+function rethrowNativeActionError(prefix: string, error: unknown): never {
+  if ((error as { code?: unknown } | null)?.code === 'CAPABILITY_UNAVAILABLE') throw error
+  const message = error instanceof Error ? error.message : 'Unknown error'
+  throw new Error(`${prefix}: ${message}`)
 }
 
 export function registerSystemCoreHandlers(server: RpcServer, deps: HandlerDeps): void {
@@ -298,23 +363,15 @@ export function registerSystemCoreHandlers(server: RpcServer, deps: HandlerDeps)
         // For links requiring window management (e.g. window=focused/full), or
         // unknown deep-link shapes, fall back to the client protocol handler.
         deps.platform.logger.info('[OPEN_URL] Falling back to client openExternal for mortise:// URL')
-        const deepLinkResult = await requestClientOpenExternal(server, ctx.clientId, url)
-        if (!deepLinkResult.opened) {
-          deps.platform.logger.error(`[OPEN_URL] Client capability failed: ${deepLinkResult.error}`)
-          throw new Error(`Cannot open URL on client: ${deepLinkResult.error}`)
-        }
+        await openExternal(server, deps, ctx.clientId, url)
         return
       }
 
-      const result = await requestClientOpenExternal(server, ctx.clientId, url)
-      if (!result.opened) {
-        deps.platform.logger.error(`[OPEN_URL] Client capability failed: ${result.error}`)
-        throw new Error(`Cannot open URL on client: ${result.error}`)
-      }
+      await openExternal(server, deps, ctx.clientId, url)
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error'
       deps.platform.logger.error('openUrl error:', message)
-      throw new Error(`Failed to open URL: ${message}`)
+      rethrowNativeActionError('Failed to open URL', error)
     }
   })
 
@@ -325,12 +382,11 @@ export function registerSystemCoreHandlers(server: RpcServer, deps: HandlerDeps)
       const expanded = path.startsWith('~') ? path.replace(/^~/, homedir()) : path
       const absolutePath = resolve(expanded)
       const safePath = await validateFilePath(absolutePath, getWorkspaceAllowedDirs(ctx.workspaceId))
-      const result = await requestClientOpenPath(server, ctx.clientId, safePath)
-      if (result.error) throw new Error(result.error)
+      await openPath(server, deps, ctx.clientId, safePath)
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error'
       deps.platform.logger.error('openFile error:', message)
-      throw new Error(`Failed to open file: ${message}`)
+      rethrowNativeActionError('Failed to open file', error)
     }
   })
 
@@ -340,11 +396,11 @@ export function registerSystemCoreHandlers(server: RpcServer, deps: HandlerDeps)
       const expanded = path.startsWith('~') ? path.replace(/^~/, homedir()) : path
       const absolutePath = resolve(expanded)
       const safePath = await validateFilePath(absolutePath, getWorkspaceAllowedDirs(ctx.workspaceId))
-      await requestClientShowInFolder(server, ctx.clientId, safePath)
+      await showInFolder(server, deps, ctx.clientId, safePath)
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error'
       deps.platform.logger.error('showInFolder error:', message)
-      throw new Error(`Failed to show in folder: ${message}`)
+      rethrowNativeActionError('Failed to show in folder', error)
     }
   })
 }

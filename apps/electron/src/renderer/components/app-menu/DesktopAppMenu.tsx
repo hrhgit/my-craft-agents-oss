@@ -2,6 +2,7 @@ import { useEffect, useState } from "react"
 import { useTranslation } from "react-i18next"
 import * as Icons from "lucide-react"
 import { isMac } from "@/lib/platform"
+import { hasPlatformCapability } from "@/lib/platform-capabilities"
 import { useActionLabel } from "@/actions"
 import {
   DropdownMenu,
@@ -148,6 +149,8 @@ export function DesktopAppMenu({
 }: AppMenuProps) {
   const { t } = useTranslation()
   const [isDebugMode, setIsDebugMode] = useState(false)
+  const nativeMenuAvailable = hasPlatformCapability('nativeMenu')
+  const nativeWindowAvailable = hasPlatformCapability('nativeWindowLifecycle')
 
   const newChatHotkey = useActionLabel('app.newChat').hotkey
   const newWindowHotkey = useActionLabel('app.newWindow').hotkey
@@ -188,8 +191,8 @@ export function DesktopAppMenu({
         <StyledDropdownMenuSeparator />
 
         {renderMenuSection(EDIT_MENU, actionHandlers, t)}
-        {renderMenuSection(VIEW_MENU, actionHandlers, t)}
-        {renderMenuSection(WINDOW_MENU, actionHandlers, t)}
+        {nativeMenuAvailable && renderMenuSection(VIEW_MENU, actionHandlers, t)}
+        {nativeWindowAvailable && renderMenuSection(WINDOW_MENU, actionHandlers, t)}
 
         <StyledDropdownMenuSeparator />
 
@@ -247,15 +250,18 @@ export function DesktopAppMenu({
           </StyledDropdownMenuSubContent>
         </DropdownMenuSub>
 
-        {isDebugMode && renderDebugSubmenu(t)}
+        {isDebugMode && nativeMenuAvailable && renderDebugSubmenu(t)}
 
-        <StyledDropdownMenuSeparator />
-
-        <StyledDropdownMenuItem onClick={() => window.electronAPI.menuQuit()}>
-          <Icons.LogOut className="h-3.5 w-3.5" />
-          {t(ROOT_MENU.quit.labelKey)}
-          {quitHotkey && <DropdownMenuShortcut className="pl-6">{quitHotkey}</DropdownMenuShortcut>}
-        </StyledDropdownMenuItem>
+        {nativeMenuAvailable && (
+          <>
+            <StyledDropdownMenuSeparator />
+            <StyledDropdownMenuItem onClick={() => window.electronAPI.menuQuit()}>
+              <Icons.LogOut className="h-3.5 w-3.5" />
+              {t(ROOT_MENU.quit.labelKey)}
+              {quitHotkey && <DropdownMenuShortcut className="pl-6">{quitHotkey}</DropdownMenuShortcut>}
+            </StyledDropdownMenuItem>
+          </>
+        )}
       </StyledDropdownMenuContent>
     </DropdownMenu>
   )

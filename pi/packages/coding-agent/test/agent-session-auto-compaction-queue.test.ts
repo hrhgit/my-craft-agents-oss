@@ -234,7 +234,7 @@ describe("AgentSession auto-compaction queue resume", () => {
 		expect(runAutoCompactionSpy).not.toHaveBeenCalled();
 	});
 
-	it("should trigger threshold compaction for error messages using last successful usage", async () => {
+	it("should not trigger threshold compaction from stale usage after an error response", async () => {
 		const model = session.model!;
 
 		// A successful assistant message with high token usage (near context limit)
@@ -276,7 +276,8 @@ describe("AgentSession auto-compaction queue resume", () => {
 			timestamp: Date.now() + 1000,
 		};
 
-		// Put both messages into agent state so estimateContextTokens can find the successful one
+		// A prior successful response must not make a later failed response look
+		// like a fresh threshold crossing.
 		session.agent.state.messages = [
 			{ role: "user", content: [{ type: "text", text: "hello" }], timestamp: Date.now() - 1000 },
 			successfulAssistant,
@@ -301,7 +302,7 @@ describe("AgentSession auto-compaction queue resume", () => {
 
 		await checkCompaction(errorAssistant);
 
-		expect(runAutoCompactionSpy).toHaveBeenCalledWith("threshold", false);
+		expect(runAutoCompactionSpy).not.toHaveBeenCalled();
 	});
 
 	it("should not trigger threshold compaction for error messages when no prior usage exists", async () => {

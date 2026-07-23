@@ -22,7 +22,7 @@ import type { ThinkingLevel } from "@mortise/pi-agent-core";
 import { getModels, getProviders } from "@mortise/pi-ai";
 import type { Api, Model } from "@mortise/pi-ai/types";
 import lockfile from "proper-lockfile";
-import { CONFIG_DIR_NAME, getAgentDir, getModelsPath, getSettingsPath } from "../config.ts";
+import { getAgentDir, getModelsPath, getProjectConfigDir, getSettingsPath } from "../config.ts";
 import { parseFrontmatter } from "../utils/frontmatter.ts";
 import { stripJsonComments } from "../utils/json.ts";
 import type { AuthCredential, AuthStatus } from "./auth-storage.ts";
@@ -197,12 +197,6 @@ export interface HostGlobalConfig {
 	settings: Settings;
 	providersForDisplay: HostGlobalProviderForDisplay[];
 	mortiseConnections: unknown[];
-}
-
-export interface HostApiKeyMigrationResult {
-	migrated: number;
-	removedFromModels: number;
-	changed: boolean;
 }
 
 export interface HostSessionProjection {
@@ -552,14 +546,13 @@ export function getModelCatalog(args: { provider?: string } = {}): HostModelCata
 
 export function normalizeHostThinkingLevel(level: string | undefined): HostThinkingLevel | undefined {
 	if (level === undefined) return undefined;
-	const normalized = level === "max" ? "xhigh" : level;
-	if (!VALID_THINKING_LEVELS.includes(normalized as HostThinkingLevel)) {
+	if (!VALID_THINKING_LEVELS.includes(level as HostThinkingLevel)) {
 		throw new HostFacadeError(
 			"invalid_input",
 			`Invalid thinking level: ${level}. Expected one of ${VALID_THINKING_LEVELS.join(", ")}.`,
 		);
 	}
-	return normalized as HostThinkingLevel;
+	return level as HostThinkingLevel;
 }
 
 export function maskApiKey(key: string | undefined): string {
@@ -576,19 +569,19 @@ export function readGlobalProviders(): Record<string, HostGlobalProvider> {
 	return readGlobalModelsFile().providers ?? {};
 }
 
-export function readCraftLlmConnections<T = unknown>(): T[] {
+export function readMortiseLlmConnections<T = unknown>(): T[] {
 	const connections = readGlobalModelsFile().mortiseConnections;
 	return Array.isArray(connections) ? (connections as T[]) : [];
 }
 
-export function writeCraftLlmConnections(connections: unknown[]): void {
+export function writeMortiseLlmConnections(connections: unknown[]): void {
 	withJsonFileLock(modelsPath(), MODELS_FILE_FALLBACK, normalizeModelsFile, (file) => {
 		file.providers ??= {};
 		file.mortiseConnections = connections;
 	});
 }
 
-export function upsertCraftLlmConnection(connection: { slug: string; [key: string]: unknown }): void {
+export function upsertMortiseLlmConnection(connection: { slug: string; [key: string]: unknown }): void {
 	withJsonFileLock(modelsPath(), MODELS_FILE_FALLBACK, normalizeModelsFile, (file) => {
 		const connections = Array.isArray(file.mortiseConnections) ? file.mortiseConnections : [];
 		const index = connections.findIndex((item) => {
@@ -601,7 +594,7 @@ export function upsertCraftLlmConnection(connection: { slug: string; [key: strin
 	});
 }
 
-export function deleteCraftLlmConnection(slug: string): boolean {
+export function deleteMortiseLlmConnection(slug: string): boolean {
 	return withJsonFileLock(modelsPath(), MODELS_FILE_FALLBACK, normalizeModelsFile, (file) => {
 		const connections = Array.isArray(file.mortiseConnections) ? file.mortiseConnections : [];
 		const next = connections.filter((item) => {
@@ -680,54 +673,9 @@ export function deleteGlobalApiKey(provider: string): void {
 	createAuthStorage().remove(provider);
 }
 
-function shouldPreserveExistingAuthCredential(value: AuthCredential | undefined): boolean {
-	if (!value) return false;
-	if (value.type !== "api_key") return true;
-	return typeof value.key === "string" && value.key.trim().length > 0;
-}
-
-export function migrateGlobalProviderApiKeysToAuth(): HostApiKeyMigrationResult {
-	const legacyApiKeys = new Map<string, string>();
-	withJsonFileLock(modelsPath(), MODELS_FILE_FALLBACK, normalizeModelsFile, (file) => {
-		for (const [key, provider] of Object.entries(file.providers ?? {})) {
-			const apiKey = normalizeApiKeyInput((provider as HostGlobalProvider & { apiKey?: string }).apiKey);
-			if (apiKey) legacyApiKeys.set(key, apiKey);
-		}
-		return false;
-	});
-
-	if (legacyApiKeys.size === 0) {
-		return { migrated: 0, removedFromModels: 0, changed: false };
-	}
-
-	const authStorage = createAuthStorage();
-	let migrated = 0;
-	for (const [key, apiKey] of legacyApiKeys) {
-		if (shouldPreserveExistingAuthCredential(authStorage.get(key))) continue;
-		authStorage.set(key, { type: "api_key", key: apiKey });
-		migrated++;
-	}
-
-	let removedFromModels = 0;
-	withJsonFileLock(modelsPath(), MODELS_FILE_FALLBACK, normalizeModelsFile, (file) => {
-		for (const provider of Object.values(file.providers ?? {})) {
-			if (!Object.hasOwn(provider, "apiKey")) continue;
-			delete (provider as HostGlobalProvider & { apiKey?: unknown }).apiKey;
-			removedFromModels++;
-		}
-	});
-
-	return {
-		migrated,
-		removedFromModels,
-		changed: migrated > 0 || removedFromModels > 0,
-	};
-}
-
 export function saveGlobalProvider(args: { key: string; provider: HostGlobalProvider; apiKey?: string }): void {
 	assertProviderKey(args.key);
-	const legacyApiKey = normalizeApiKeyInput((args.provider as HostGlobalProvider & { apiKey?: string }).apiKey);
-	const nextApiKey = normalizeApiKeyInput(args.apiKey) ?? legacyApiKey;
+	const nextApiKey = normalizeApiKeyInput(args.apiKey);
 	if (nextApiKey) {
 		setGlobalApiKey(args.key, nextApiKey);
 	}
@@ -796,7 +744,12 @@ export async function setGlobalModelDefaultSlot(args: {
 		throw new HostFacadeError("invalid_input", `Invalid model default slot: ${args.slot}`);
 	}
 	if (args.slot === 1) {
-		await setGlobalDefault({ provider: args.provider, model: args.model, thinkingLevel: args.thinkingLevel, cwd: args.cwd });
+		await setGlobalDefault({
+			provider: args.provider,
+			model: args.model,
+			thinkingLevel: args.thinkingLevel,
+			cwd: args.cwd,
+		});
 		return;
 	}
 	const thinkingLevel = normalizeHostThinkingLevel(args.thinkingLevel);
@@ -809,7 +762,8 @@ export async function setGlobalModelDefaultSlot(args: {
 	});
 	await settings.flush();
 	const errors = settings.drainErrors();
-	if (errors.length > 0) throw new HostFacadeError("config_write", errors.map((item) => item.error.message).join("; "));
+	if (errors.length > 0)
+		throw new HostFacadeError("config_write", errors.map((item) => item.error.message).join("; "));
 }
 
 export async function removeGlobalModelDefaultSlot(slot: HostModelDefaultSlot, cwd?: string): Promise<void> {
@@ -820,7 +774,8 @@ export async function removeGlobalModelDefaultSlot(slot: HostModelDefaultSlot, c
 	settings.removeModelDefaultSlot(slot);
 	await settings.flush();
 	const errors = settings.drainErrors();
-	if (errors.length > 0) throw new HostFacadeError("config_write", errors.map((item) => item.error.message).join("; "));
+	if (errors.length > 0)
+		throw new HostFacadeError("config_write", errors.map((item) => item.error.message).join("; "));
 }
 
 export async function setDefaultThinkingLevel(level: string, cwd?: string): Promise<void> {
@@ -923,24 +878,24 @@ export async function deleteShellGuiEntry(name: string): Promise<void> {
 	}
 }
 
-export function setCraftCredential(slug: string, credential: unknown): void {
-	createAuthStorage().setCraftCredential(slug, credential as AuthCredential);
+export function setMortiseCredential(slug: string, credential: unknown): void {
+	createAuthStorage().setMortiseCredential(slug, credential as AuthCredential);
 }
 
-export function getCraftCredential(slug: string): unknown {
-	return createAuthStorage().getCraftCredential(slug);
+export function getMortiseCredential(slug: string): unknown {
+	return createAuthStorage().getMortiseCredential(slug);
 }
 
-export function deleteCraftCredential(slug: string): void {
-	createAuthStorage().deleteCraftCredential(slug);
+export function deleteMortiseCredential(slug: string): void {
+	createAuthStorage().deleteMortiseCredential(slug);
 }
 
-export function listCraftCredentialSlugs(): string[] {
-	return createAuthStorage().listCraftSlugs();
+export function listMortiseCredentialSlugs(): string[] {
+	return createAuthStorage().listMortiseSlugs();
 }
 
-export function deleteAllCraftCredentials(): void {
-	createAuthStorage().deleteAllCraftCredentials();
+export function deleteAllMortiseCredentials(): void {
+	createAuthStorage().deleteAllMortiseCredentials();
 }
 
 function toSessionProjection(manager: SessionManager): HostSessionProjection {
@@ -983,7 +938,7 @@ export function createSessionProjection(args: {
 		if (args.metadata !== undefined && !isPlainRecord(args.metadata)) {
 			throw new HostFacadeError("invalid_input", "Mortise session metadata must be an object.");
 		}
-		manager.setCraftMetadata(args.metadata ?? {});
+		manager.setMortiseMetadata(args.metadata ?? {});
 		return toSessionProjection(manager);
 	} catch (error) {
 		if (error instanceof HostFacadeError) throw error;
@@ -991,28 +946,26 @@ export function createSessionProjection(args: {
 	}
 }
 
-export function setCraftSessionMetadata(args: {
+export async function setMortiseSessionMetadata(args: {
 	sessionPath: string;
 	sessionDir?: string;
 	cwdOverride?: string;
 	name?: string;
 	metadata?: unknown;
 	customType?: string;
-}): HostSessionProjection {
+}): Promise<HostSessionProjection> {
 	try {
 		const manager = SessionManager.open(args.sessionPath, args.sessionDir, args.cwdOverride);
-		if (args.name !== undefined) {
-			manager.appendSessionInfo(args.name);
-		}
 		if (args.metadata !== undefined) {
 			if (!isPlainRecord(args.metadata)) {
 				throw new HostFacadeError("invalid_input", "Mortise session metadata must be an object.");
 			}
-			manager.setCraftMetadata(args.metadata);
-			if (args.customType) {
-				manager.appendCustomEntry(args.customType, args.metadata);
-			}
 		}
+		await manager.updateHostProjection({
+			name: args.name,
+			metadata: args.metadata,
+			customType: args.customType,
+		});
 		return toSessionProjection(manager);
 	} catch (error) {
 		throw new HostFacadeError("session", error instanceof Error ? error.message : String(error));
@@ -1077,15 +1030,18 @@ export async function findSessionProjectionById(args: {
 interface HostSkillsArgs {
 	cwd?: string;
 	agentDir?: string;
+	projectConfigDir?: string;
 	skillPaths?: string[];
 }
 
-function getDefaultSkillRoots(args: { cwd?: string; agentDir?: string } = {}): { user: string; project: string } {
+function getDefaultSkillRoots(
+	args: { cwd?: string; agentDir?: string; projectConfigDir?: string } = {},
+): { user: string; project: string } {
 	const cwd = args.cwd ?? process.cwd();
 	const agentDir = args.agentDir ?? getAgentDir();
 	return {
 		user: join(agentDir, "skills"),
-		project: join(cwd, CONFIG_DIR_NAME, "skills"),
+		project: join(cwd, args.projectConfigDir ?? getProjectConfigDir(), "skills"),
 	};
 }
 
@@ -1147,13 +1103,14 @@ function dedupeHostSkillsBySlug(skills: HostSkillSummary[]): HostSkillSummary[] 
 }
 
 async function createHostResourceLoader(
-	args: { cwd?: string; agentDir?: string; extensionTarget?: "pi" | "mortise" } = {},
+	args: { cwd?: string; agentDir?: string; projectConfigDir?: string; extensionTarget?: "pi" | "mortise" } = {},
 ) {
 	const cwd = args.cwd ?? process.cwd();
 	const agentDir = args.agentDir ?? getAgentDir();
 	const loader = new DefaultResourceLoader({
 		cwd,
 		agentDir,
+		projectConfigDir: args.projectConfigDir,
 		extensionTarget: args.extensionTarget ?? "mortise",
 	});
 	await loader.reload({ phase: "full" });
@@ -1163,12 +1120,18 @@ async function createHostResourceLoader(
 export function listSkillsSync(args: HostSkillsArgs = {}): HostSkillsResult {
 	const cwd = args.cwd ?? process.cwd();
 	const agentDir = args.agentDir ?? getAgentDir();
-	const skillRoots = getSkillRoots({ cwd, agentDir, skillPaths: args.skillPaths });
-	const defaultRoots = getDefaultSkillRoots({ cwd, agentDir });
+	const skillRoots = getSkillRoots({
+		cwd,
+		agentDir,
+		projectConfigDir: args.projectConfigDir,
+		skillPaths: args.skillPaths,
+	});
+	const defaultRoots = getDefaultSkillRoots({ cwd, agentDir, projectConfigDir: args.projectConfigDir });
 	try {
 		const result = loadSkills({
 			cwd,
 			agentDir,
+			projectConfigDir: args.projectConfigDir,
 			// Host shells need project-local skills to override global skills, and
 			// Mortise keeps old sync helpers keyed by directory slug rather than
 			// frontmatter display name. Use explicit roots so Pi remains the parser
@@ -1203,6 +1166,7 @@ export async function resolveSkill(args: {
 	name: string;
 	cwd?: string;
 	agentDir?: string;
+	projectConfigDir?: string;
 	skillPaths?: string[];
 }): Promise<HostResolvedSkill | null> {
 	const result = await listSkills(args);
@@ -1253,7 +1217,7 @@ function summarizeExtension(extension: Extension): HostExtensionSummary {
 }
 
 export async function getExtensions(
-	args: { cwd?: string; agentDir?: string; extensionTarget?: "pi" | "mortise" } = {},
+	args: { cwd?: string; agentDir?: string; projectConfigDir?: string; extensionTarget?: "pi" | "mortise" } = {},
 ): Promise<HostExtensionsResult> {
 	try {
 		const loader = await createHostResourceLoader(args);
@@ -1277,7 +1241,7 @@ export async function getExtensions(
 }
 
 export async function getExtensionCatalog(
-	args: { cwd?: string; agentDir?: string; extensionTarget?: "pi" | "mortise" } = {},
+	args: { cwd?: string; agentDir?: string; projectConfigDir?: string; extensionTarget?: "pi" | "mortise" } = {},
 ): Promise<HostExtensionsResult> {
 	const cwd = args.cwd ?? process.cwd();
 	const agentDir = args.agentDir ?? getAgentDir();
@@ -1286,7 +1250,8 @@ export async function getExtensionCatalog(
 		const packageManager = new DefaultPackageManager({
 			cwd,
 			agentDir,
-			settingsManager: SettingsManager.create(cwd, agentDir),
+			projectConfigDir: args.projectConfigDir,
+			settingsManager: SettingsManager.create(cwd, agentDir, args.projectConfigDir),
 			extensionTarget: target,
 		});
 		const resolved = await packageManager.resolve();

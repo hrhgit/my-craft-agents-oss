@@ -984,7 +984,6 @@ function PlannerBoard() {
                   content={selectedTask.notes}
                   onUpdate={(md) => updateTaskNotes(selectedTask.id, md)}
                   placeholder="Add notes..."
-                  markdownEngine="official"
                   className="text-sm leading-relaxed text-foreground/75"
                 />
 

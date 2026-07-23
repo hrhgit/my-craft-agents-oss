@@ -381,10 +381,7 @@ export function extractOverlayData(activity: ActivityItem): OverlayData | null {
 }
 
 function normalizeToolCommandName(toolName?: string): string {
-  const raw = toolName || 'tool'
-  if (raw.startsWith('mcp__session__')) return raw.slice('mcp__session__'.length)
-  if (raw.startsWith('mcp__workspace__')) return raw.slice('mcp__workspace__'.length)
-  return raw
+  return toolName || 'tool'
 }
 
 function formatCliValue(value: unknown): string {

@@ -26,7 +26,6 @@ export interface SessionMeta {
   lastMessageAt?: number
   isProcessing?: boolean
   lastReadMessageId?: string
-  workingDirectory?: string
   /** Shared viewer URL (if shared via viewer) */
   sharedUrl?: string
   /** Shared session ID in viewer (for revoke) */
@@ -68,13 +67,12 @@ export interface SessionMeta {
 }
 
 /**
- * Find the last final (non-intermediate) assistant or plan message ID
+ * Find the last final (non-intermediate) assistant message ID.
  */
 function findLastFinalMessageId(messages: Message[]): string | undefined {
   for (let i = messages.length - 1; i >= 0; i--) {
     const msg = messages[i]
-    // Include plan messages as final responses (they're AI-generated content)
-    if ((msg.role === 'assistant' || msg.role === 'plan') && !msg.isIntermediate) {
+    if (msg.role === 'assistant' && !msg.isIntermediate) {
       return msg.id
     }
   }
@@ -96,16 +94,8 @@ export function extractSessionMeta(session: Session): SessionMeta {
     ...rawSessionFields
   } = session
 
-  // Imported legacy payloads may still carry retired organization metadata.
-  const sessionFields = { ...rawSessionFields } as typeof rawSessionFields & Record<string, unknown>
-  delete sessionFields.sessionStatus
-  delete sessionFields.labels
-  delete sessionFields.isFlagged
-  delete sessionFields.isArchived
-  delete sessionFields.archivedAt
-
   return {
-    ...sessionFields,
+    ...rawSessionFields,
     lastFinalMessageId: sessionLastFinal ?? findLastFinalMessageId(messages),
     messageCount: messageCount ?? messages.length ?? 0,
     isAsyncOperationOngoing,

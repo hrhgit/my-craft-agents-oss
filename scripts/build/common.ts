@@ -20,6 +20,7 @@ import { builtinModules } from 'module';
 import { join, dirname, relative, resolve, sep } from 'path';
 import { createHash } from 'crypto';
 import { assertNoUiValidationProductionRuntime } from './ui-validation-boundary';
+import { assertNoSourceRootReferences } from './bundle-portability';
 
 export type Platform = 'darwin' | 'win32' | 'linux';
 export type Arch = 'x64' | 'arm64';
@@ -978,14 +979,10 @@ function stagePiBinaryRuntime(config: BuildConfig, runtimeRoot: string): void {
 
 export function copyPiRuntime(config: BuildConfig): void {
   const runtimeRoot = join(config.electronDir, 'dist', 'resources', 'pi-runtime');
-  // Windows defaults to the compiled runtime to avoid installing thousands of
-  // small node_modules files. Set MORTISE_PI_BINARY_RUNTIME=0 for emergency
-  // fallback to the legacy JS runtime while keeping other platforms unchanged.
-  if (config.platform === 'win32' && process.env.MORTISE_PI_BINARY_RUNTIME !== '0') {
-    stagePiBinaryRuntime(config, runtimeRoot);
-    return;
-  }
-  stagePiRuntime(config, runtimeRoot);
+  // Electron production packages have one runtime shape: the compiled,
+  // versioned Pi executable. The JS staging function remains an explicit
+  // headless/server build input and cannot be selected by Electron packaging.
+  stagePiBinaryRuntime(config, runtimeRoot);
 }
 
 /**
@@ -1030,7 +1027,9 @@ export function buildMcpServers(config: BuildConfig): void {
   if (!existsSync(sessionOut)) {
     throw new Error(`Session MCP server output not found at ${sessionOut}`);
   }
-  assertNoUiValidationProductionRuntime(readFileSync(sessionOut, 'utf8'), 'session-mcp-server/index.js');
+  const sessionServerSource = readFileSync(sessionOut, 'utf8');
+  assertNoUiValidationProductionRuntime(sessionServerSource, 'session-mcp-server/index.js');
+  assertNoSourceRootReferences(sessionServerSource, 'session-mcp-server/index.js', rootDir);
 }
 
 /**

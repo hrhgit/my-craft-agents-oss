@@ -116,7 +116,7 @@
 		"generate-image-models": "node scripts/generate-image-models.ts",
 		"build": "npm run generate-models && npm run generate-image-models && tsgo -p tsconfig.build.json",
 		"build:workspace": "tsgo -p tsconfig.build.json",
-		"test": "vitest --run",
+		"test": "vitest --run --maxWorkers=4",
 		"prepublishOnly": "npm run clean && npm run build"
 	},
 	"dependencies": {

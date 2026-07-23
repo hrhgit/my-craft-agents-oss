@@ -10,6 +10,8 @@ import {
 
 export interface WebSemanticDescriptor {
   selector: string
+  /** Canonical identity of the resolved DOM element, independent of locator spelling. */
+  identity?: string
   source?: 'dom' | 'accessibility' | 'business'
   semanticId?: string
   testId?: string
@@ -159,31 +161,50 @@ export function buildWebSemanticSnapshot(args: {
   descriptors: WebSemanticDescriptor[]
   route?: UiValidationRoute
   focusedSelector?: string
-}): { snapshot: SemanticSnapshot; descriptorsByNodeId: Map<string, WebSemanticDescriptor> } {
+}): { snapshot: SemanticSnapshot; descriptorsByNodeId: Map<string, WebSemanticDescriptor>; decisionFingerprint: string } {
   const descriptorsByNodeId = new Map<string, WebSemanticDescriptor>()
   const selectorToNodeId = new Map<string, string>()
+  const selectorToIdentity = new Map<string, string>()
   const preferred = new Map<string, WebSemanticDescriptor>()
   for (const descriptor of args.descriptors) {
-    const current = preferred.get(descriptor.selector)
+    const identity = descriptor.identity ?? descriptor.selector
+    selectorToIdentity.set(descriptor.selector, identity)
+    let preferredKey = identity
+    let current = preferred.get(preferredKey)
+    if (current && descriptorSource(current) === descriptorSource(descriptor)) {
+      let duplicate = 2
+      while (preferred.has(`${identity}\0duplicate:${duplicate}`)) duplicate += 1
+      preferredKey = `${identity}\0duplicate:${duplicate}`
+      current = undefined
+    }
     if (!current) {
-      preferred.set(descriptor.selector, descriptor)
+      preferred.set(preferredKey, descriptor)
       continue
     }
     const currentPriority = descriptorPriority(current)
     const nextPriority = descriptorPriority(descriptor)
-    if (nextPriority > currentPriority) {
-      preferred.set(descriptor.selector, {
-        ...current,
-        ...descriptor,
-        states: { ...current.states, ...descriptor.states },
-        ...(descriptor.bounds ?? current.bounds ? { bounds: descriptor.bounds ?? current.bounds } : {}),
-      })
-    }
+    const authoritative = nextPriority > currentPriority ? descriptor : current
+    const supporting = nextPriority > currentPriority ? current : descriptor
+    preferred.set(preferredKey, {
+      ...supporting,
+      ...authoritative,
+      identity,
+      states: { ...supporting.states, ...authoritative.states },
+      ...(authoritative.bounds ?? supporting.bounds ? { bounds: authoritative.bounds ?? supporting.bounds } : {}),
+    })
   }
-  for (const descriptor of preferred.values()) {
-    const nodeId = semanticNodeId(descriptor)
+  for (const [identity, descriptor] of preferred) {
+    const baseNodeId = semanticNodeId(descriptor)
+    let nodeId = baseNodeId
+    let duplicate = 2
+    while (descriptorsByNodeId.has(nodeId)) nodeId = `${baseNodeId}.duplicate.${duplicate++}`
     descriptorsByNodeId.set(nodeId, descriptor)
+    selectorToNodeId.set(identity, nodeId)
     selectorToNodeId.set(descriptor.selector, nodeId)
+  }
+  for (const [selector, identity] of selectorToIdentity) {
+    const nodeId = selectorToNodeId.get(identity)
+    if (nodeId) selectorToNodeId.set(selector, nodeId)
   }
   const nodes = [...descriptorsByNodeId].map(([nodeId, descriptor]) => ({
     ref: `r${args.revision}:${nodeId}`,
@@ -210,13 +231,54 @@ export function buildWebSemanticSnapshot(args: {
       nodes,
     },
     descriptorsByNodeId,
+    decisionFingerprint: semanticDecisionFingerprint(nodes, args.route, focusedNodeId),
   }
+}
+
+export class WebSemanticRevisionClock {
+  private fingerprint: string | undefined
+  private currentRevision = 0
+
+  get revision(): number { return this.currentRevision }
+
+  observe(fingerprint: string): number {
+    if (fingerprint !== this.fingerprint) {
+      this.fingerprint = fingerprint
+      this.currentRevision += 1
+    }
+    return this.currentRevision
+  }
+}
+
+function semanticDecisionFingerprint(nodes: SemanticNode[], route: UiValidationRoute | undefined, focusedNodeId: string | undefined): string {
+  return JSON.stringify({
+    route,
+    focusedNodeId,
+    nodes: nodes.map(node => {
+      const passiveContainer = (node.actions?.length ?? 0) === 0
+        && ['region', 'generic', 'group', 'form', 'tabpanel'].includes(node.role)
+      return {
+        nodeId: node.nodeId,
+        semanticId: node.semanticId,
+        testId: node.testId,
+        role: node.role,
+        ...(!passiveContainer ? { name: node.name, value: node.value, description: node.description } : {}),
+        states: node.states,
+        actions: node.actions,
+        actionModes: node.actionModes,
+      }
+    }).sort((left, right) => left.nodeId.localeCompare(right.nodeId)),
+  })
 }
 
 function descriptorPriority(descriptor: WebSemanticDescriptor): number {
   if (descriptor.source === 'business' || descriptor.semanticId) return 3
   if (descriptor.source === 'accessibility') return 2
   return 1
+}
+
+function descriptorSource(descriptor: WebSemanticDescriptor): NonNullable<WebSemanticDescriptor['source']> {
+  return descriptor.source ?? (descriptor.semanticId ? 'business' : 'dom')
 }
 
 function webActionsForRole(role: string, disabled: boolean): NonNullable<SemanticNode['actions']> {

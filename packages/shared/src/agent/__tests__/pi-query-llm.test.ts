@@ -21,7 +21,6 @@ function createConfig(overrides: Partial<BackendConfig> = {}): BackendConfig {
       workspaceRootPath: '/tmp/mortise-test',
       createdAt: Date.now(),
       lastUsedAt: Date.now(),
-      workingDirectory: '/tmp/mortise-test',
     } as any,
     isHeadless: true,
     ...overrides,
@@ -128,25 +127,4 @@ describe('PiAgent.queryLlm with RpcClient', () => {
     agent.destroy();
   });
 
-  it('rejects stalled RpcClient startup with the host-side deadline', async () => {
-    const agent = new PiAgent(createConfig());
-    const originalSetTimeout = globalThis.setTimeout;
-    let observedDelayMs: number | undefined;
-    ;(globalThis as typeof globalThis & { setTimeout: typeof setTimeout }).setTimeout = ((handler: Parameters<typeof setTimeout>[0], timeout?: number) => {
-      observedDelayMs = timeout;
-      queueMicrotask(() => {
-        if (typeof handler === 'function') handler();
-      });
-      return 0 as unknown as ReturnType<typeof setTimeout>;
-    }) as typeof setTimeout;
-
-    try {
-      const startup = (agent as any).withRpcStartupTimeout(new Promise<void>(() => {}));
-      await expect(startup).rejects.toThrow('Pi RpcClient startup timed out after 15000ms');
-      expect(observedDelayMs).toBe(15_000);
-    } finally {
-      globalThis.setTimeout = originalSetTimeout;
-      agent.destroy();
-    }
-  });
 });

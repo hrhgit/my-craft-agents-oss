@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AnthropicMessagesCompat, Api, Context, Model, OpenAICompletionsCompat } from "@mortise/pi-ai";
-import { getApiProvider } from "@mortise/pi-ai";
+import { getApiProvider } from "@mortise/pi-ai/api-registry";
 import { getOAuthProvider } from "@mortise/pi-ai/oauth";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
@@ -918,21 +918,19 @@ describe("ModelRegistry", () => {
 			expect(registry.getProviderDisplayName("oauth-provider")).toBe("OAuth Provider");
 		});
 
-		test("registerProvider warns and temporarily treats uppercase apiKey as an env reference", async () => {
+		test("registerProvider treats an uppercase apiKey as a literal", async () => {
 			const originalEnv = process.env.CUSTOM_NAME;
 			process.env.CUSTOM_NAME = "legacy-env-key";
-			const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 
 			try {
 				const registry = ModelRegistry.create(authStorage, modelsJsonPath);
 
-				registry.registerProvider("legacy-provider", {
+				registry.registerProvider("literal-provider", {
 					...providerConfig("https://provider.test/v1", [{ id: "demo-model" }], "openai-completions"),
 					apiKey: "CUSTOM_NAME",
 				});
 
-				expect(await registry.getApiKeyForProvider("legacy-provider")).toBe("legacy-env-key");
-				expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('Pass "$CUSTOM_NAME" instead'));
+				expect(await registry.getApiKeyForProvider("literal-provider")).toBe("CUSTOM_NAME");
 			} finally {
 				if (originalEnv === undefined) {
 					delete process.env.CUSTOM_NAME;

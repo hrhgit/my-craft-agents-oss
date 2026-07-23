@@ -40,3 +40,10 @@
 
 - 对已经在 Mortise GUI 中实现的能力，在用户输入 `/` 时屏蔽对应的斜杠命令，不再重复提供两套操作入口。
 - 只有尚未提供 GUI 入口的能力，才继续通过斜杠命令操作。
+
+## 8. Mortise 命名收敛
+
+- 清理 Mortise 自有层和用户界面中残留的 `Pi` 命名，包括迁移已结束后仍存在的“迁移的 Pi 扩展”等过时文案。
+- 将 Mortise 自有的 provider、extension、RPC、projection 和 UI 类型、文件及 API 名称收敛为 Mortise、Agent 或 Runtime 语义。
+- 允许嵌入式 Pi Agent Loop 的适配边界暂时保留 `Pi` 实现名称；是否进一步重命名 `@mortise/pi-*`、`PI_CODING_AGENT_*` 和嵌入式 fork，需要单独评估协议、扩展 SDK 和打包影响。
+- 该清理不得重新引入 `.pi` 数据路径、运行时兼容或双写。

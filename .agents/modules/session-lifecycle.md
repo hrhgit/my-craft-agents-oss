@@ -16,8 +16,8 @@ related: [packages/shared/src/agent/**, apps/electron/src/renderer/pages/ChatPag
 depends_on: [workspace-state, pi-agent-engine]
 collaborates_with: [conversation-ui]
 validation:
-  - { id: session-lifecycle-regression, kind: unit, command: "bun test packages/shared/src/sessions packages/server-core/src/sessions apps/electron/src/renderer/lib/__tests__/drafts.test.ts", description: "Run session lifecycle and draft regressions.", triggers: [owned-change], required: true, evidence: "Bun test exit status and output." }
-scope_digest: edcfd9fea7cbcbcd93362a39c265ce1de97ae911
+  - { id: session-lifecycle-regression, kind: unit, command: "bun test packages/shared/src/sessions packages/shared/tests/persistence-queue.test.ts packages/server-core/src/sessions packages/server-core/src/handlers/rpc/sessions apps/electron/src/renderer/lib/__tests__/drafts.test.ts", description: "Run session lifecycle, durability queue, projection, Session RPC, and draft regressions.", triggers: [owned-change], required: true, evidence: "Bun test exit status and output." }
+scope_digest: 75f3e7aadd03514531b879fec1bc5ca04c9b1c41
 ---
 
 ## Purpose
@@ -48,9 +48,23 @@ Run session storage, persistence queue, projection, send durability, and draft t
 Publishing metadata or projection before Pi's assistant-backed JSONL exists can create visible phantom sessions; event ordering can make a running session appear terminated.
 
 ## Semantic history
-- 2026-07-21: Routed queued mid-stream delivery through Pi-native follow-up when available, retaining the Host FIFO only as an unsupported-backend fallback, and settled abort-terminal completion as interrupted.
-- 2026-07-20: Reserved the legacy empty-session RPC for hidden and branch internals; ordinary conversations must enter the assistant-backed first-turn publication transaction.
-- 2026-07-20: Added canonical automation prompt delivery through assistant-backed Session publication, exact same-workspace follow-up/steer targets, and isolated non-Session completion.
-- 2026-07-20: Replaced persisted deferred sessions with an internal provisional first-turn lifecycle published only after Pi's first assistant message.
-- 2026-07-12: Unified Pi session projection across Electron and WebUI.
-- 2026-07-18: Hardened persistence queues for concurrent writes.
+- 2026-07-23: Moved Mortise Session storage to the Mortise-owned Agent root without importing or falling back to independent Pi Session history.
+- 2026-07-23: Made canonical Session metadata and Mortise overlay writes fully async; cold metadata updates now merge against the latest lock-scoped Pi JSONL so concurrent active appends survive, ordinary drafts remain fileless until first-assistant publication, and only explicitly hidden Sessions may publish header-only state.
+- 2026-07-22: Made compaction completion sidecar persistence an awaited part of turn settlement; Host completion cannot overtake it, persistent failures retain a settlement-only retry, and pending-plan memory stays aligned with durable state.
+- 2026-07-22: Made Pi projection settlement choose recoverable displaced-file replacement up front for existing Windows sidecars so a pending rename-over-existing cannot block completion, with durable preparation and deterministic artifact cleanup; also removed duplicate awaited remote browser cleanup.
+- 2026-07-22: Made post-accept turn settlement a single-flight retryable durability boundary with a payload-free retry command, typed failure event, and same-Host snapshot projection; metadata/projection failures keep the Session non-ready, cannot re-enter generic chat cleanup, and block completion, queued replay, and later sends until settlement succeeds.
+- 2026-07-22: Made canonical metadata/overlay writes reject swallowed failures and signature mismatches, and delayed ordinary Session send acceptance until Pi confirms its canonical user-message write with a typed terminal retry outcome when that boundary is not reached.
+- 2026-07-22: Marked injected Session backend construction as provisional or ordinary so one-shot validation backends cannot consume first-turn leases for persisted Session runtimes.
+- 2026-07-22: Added a constructor-injected Session backend factory boundary so source-development validation can exercise the real first-turn transaction with a deterministic backend while production remains on the canonical shared factory.
+- 2026-07-22: Removed the obsolete `listActiveSessions` alias and Session bundle re-exports of shared file primitives; callers now use `listSessions`, while bundle file types and limits remain owned by shared utilities.
+- 2026-07-21: Session interaction responses now accept only validated Extension Interaction V1 payloads; nullable scalar responses and legacy cancellation reasons are rejected at RPC ingress.
+- 2026-07-21: Isolated pre-message runtime persistence tests from the real user Pi session store so module validation cannot mutate active data.
+- 2026-07-21: Closed a false-success path where rejected canonical headers were treated as durable metadata writes; critical flush now fails with a typed persistence error.
+- 2026-07-21: Unified new Pi transcript filenames and headers on `mortiseId`; `sdkSessionId` remains backend resume metadata and no longer creates files the canonical locator cannot rediscover.
+- 2026-07-21: Made first-turn metadata/projection durability failures typed, retryable request outcomes with an explicit terminal unpublished attempt, routed provisional shutdown through abandonment, and covered real directory/rename faults.
+- 2026-07-21: Rejected retired Session metadata at the tree JSONL boundary, removed header-scan filename fallback and provider-lock migration, and removed the old metadata-picker alias.
+- 2026-07-21: Removed legacy plan-role, id-only Session bundle, and thinking-level restore compatibility; file-backed plan submissions now expose canonical assistant messages carrying `PlanArtifactV1` while retaining `planPath` as the active execution target.
+- 2026-07-21: Routed Session `showInFinder` through an advertised requesting-client capability or the injected platform, with a typed unavailable error instead of false success.
+- 2026-07-21: Removed persisted and runtime `session.workingDirectory` authority; Session storage and SessionManager now derive paths only from the workspace root and reject the removed field with a typed contract error.
+- 2026-07-21: Made turn settlement await metadata and projection durability before emitting UI completion or starting queued replay, with explicit ordering regression coverage.
+- 2026-07-21: Added real `createAndSendFirstTurn` fault injection for metadata and projection durability, and made abandonment discard failed projection retries so persistent disk errors cannot leave provisional artifacts.

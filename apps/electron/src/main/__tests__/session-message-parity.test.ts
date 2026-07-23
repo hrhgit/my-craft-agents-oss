@@ -64,7 +64,6 @@ function createFullMessage(): Message {
     errorDetails: ['DNS lookup failed'],
     errorOriginal: 'ENOTFOUND',
     errorCanRetry: true,
-    planPath: '/plans/plan.md',
     isQueued: false,
   }
 }
@@ -105,7 +104,6 @@ describe('messageToStored/storedToMessage round-trip', () => {
       'isError', 'attachments', 'badges', 'annotations',
       'isIntermediate', 'turnId', 'infoLevel',
       'errorCode', 'errorTitle', 'errorDetails', 'errorOriginal', 'errorCanRetry',
-      'planPath',
       'isQueued',
     ].sort()
 
@@ -149,7 +147,6 @@ describe('messageToStored/storedToMessage round-trip', () => {
     expect(restored.errorDetails).toEqual(original.errorDetails)
     expect(restored.errorOriginal).toBe(original.errorOriginal)
     expect(restored.errorCanRetry).toBe(original.errorCanRetry)
-    expect(restored.planPath).toBe(original.planPath)
     expect(restored.isQueued).toBe(original.isQueued)
   })
 
@@ -166,22 +163,14 @@ describe('messageToStored/storedToMessage round-trip', () => {
     }
   })
 
-  it('legacy stored plan messages normalize to assistant artifacts', () => {
-    const restored = storedToMessage({
+  it('rejects removed stored plan messages', () => {
+    expect(() => storedToMessage({
       id: 'legacy-plan',
       type: 'plan',
       content: '# Legacy plan',
       timestamp: 1700000000000,
       planPath: '/sessions/123/plans/plan.md',
-    })
-
-    expect(restored.role).toBe('assistant')
-    expect(restored.planPath).toBe('/sessions/123/plans/plan.md')
-    expect(restored.artifact).toMatchObject({
-      kind: 'plan',
-      artifactId: 'legacy-legacy-plan',
-      legacy: true,
-    })
+    } as unknown as StoredMessage)).toThrow('role "plan" was removed')
   })
 
   it('transient fields are excluded from StoredMessage', () => {
@@ -291,7 +280,7 @@ describe('persistence pipeline filtering', () => {
     // Mirror: persistSession filter
     const filtered = messages.filter(m => m.role !== 'status')
 
-    expect(filtered).toHaveLength(6)
+    expect(filtered).toHaveLength(5)
     expect(filtered.map(m => m.role)).not.toContain('status')
     expect(filtered.map(m => m.role)).toContain('user')
     expect(filtered.map(m => m.role)).toContain('assistant')

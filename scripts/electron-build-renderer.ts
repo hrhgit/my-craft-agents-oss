@@ -5,6 +5,7 @@
 import { spawn } from "bun";
 import { existsSync, rmSync } from "fs";
 import { join } from "path";
+import { assertRendererEntryBudgets } from "./build/renderer-entry-budget.ts";
 
 const ROOT_DIR = join(import.meta.dir, "..");
 const ELECTRON_DIR = join(ROOT_DIR, "apps/electron");
@@ -24,4 +25,15 @@ const proc = spawn({
 });
 
 const exitCode = await proc.exited;
-process.exit(exitCode);
+if (exitCode !== 0) process.exit(exitCode);
+
+try {
+  for (const graph of assertRendererEntryBudgets(rendererDir)) {
+    console.log(
+      `[renderer-entry-budget] ${graph.html}: ${graph.totalBytes} bytes across ${graph.chunks.length} static chunks`,
+    );
+  }
+} catch (error) {
+  console.error(error instanceof Error ? error.message : error);
+  process.exit(1);
+}

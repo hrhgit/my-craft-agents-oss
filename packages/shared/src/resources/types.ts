@@ -2,13 +2,13 @@
  * Resource Bundle Types
  *
  * Portable format for exporting/importing workspace resources
- * (skills and automations) between workspaces.
+ * (skills and canonical Automations V3 definitions) between workspaces.
  *
  * Follows the same bundle pattern as session export/import.
  */
 
 import type { BundleFile } from '../utils/bundle-files.ts'
-import type { AutomationMatcher } from '../automations/types.ts'
+import type { AutomationDefinitionV3 } from '../automations/v3-types.ts'
 
 // ============================================================
 // Bundle Format
@@ -20,7 +20,7 @@ import type { AutomationMatcher } from '../automations/types.ts'
  */
 export interface ResourceBundle {
   /** Bundle format version */
-  version: 1
+  version: 2
   /** When the bundle was created (Unix timestamp ms) */
   exportedAt: number
   /** Informational: name of the workspace this was exported from */
@@ -28,8 +28,7 @@ export interface ResourceBundle {
   /** The exported resources */
   resources: {
     skills?: SkillBundleEntry[]
-    /** Per-automation entries (sanitized — webhook auth stripped) */
-    automations?: AutomationBundleEntry[]
+    automations?: AutomationDefinitionV3[]
   }
 }
 
@@ -43,21 +42,6 @@ export interface SkillBundleEntry {
   slug: string
   /** All non-hidden regular files in the skill directory */
   files: BundleFile[]
-}
-
-/**
- * An automation in the bundle.
- * Matcher config is sanitized (webhook auth stripped).
- */
-export interface AutomationBundleEntry {
-  /** Automation ID (6-char hex from automations.json) */
-  id: string
-  /** Display name (denormalized from matcher.name — metadata only, not used for identity) */
-  name?: string
-  /** Event type this automation is registered under */
-  event: string
-  /** The full matcher config (sanitized — webhook auth stripped) */
-  matcher: AutomationMatcher
 }
 
 // ============================================================

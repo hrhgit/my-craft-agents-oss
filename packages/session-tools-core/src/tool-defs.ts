@@ -34,7 +34,7 @@ import { handleListMessagingChannels, handleUnbindMessagingChannel } from './han
 // ============================================================
 
 export const ConfigValidateSchema = z.object({
-  target: z.enum(['config', 'preferences', 'permissions', 'automations', 'tool-icons', 'all'])
+  target: z.enum(['config', 'preferences', 'permissions', 'tool-icons', 'all'])
     .describe('Which config file(s) to validate'),
 });
 
@@ -93,7 +93,6 @@ export const SpawnSessionSchema = z.object({
   permissionMode: z.enum(['safe', 'ask', 'allow-all']).optional().describe('Permission mode for the new session'),
   thinkingLevel: z.enum(['off', 'low', 'medium', 'high', 'xhigh', 'max']).optional()
     .describe('Reasoning level for the new session. Silently ignored on non-reasoning models (e.g. gpt-4o, gemini-2.5-flash). Omit to inherit the global default.'),
-  workingDirectory: z.string().optional().describe('Deprecated and ignored. New sessions run from the workspace root; create or switch workspace to use another folder.'),
   attachments: z.array(z.object({
     path: z.string().describe('Absolute file path on disk'),
     name: z.string().optional().describe('Display name (defaults to file basename)'),
@@ -136,16 +135,15 @@ export const UnbindMessagingChannelSchema = z.object({
 export const TOOL_DESCRIPTIONS = {
   config_validate: `Validate Mortise Agent configuration files.
 
-Use this after editing configuration files to check for errors before they take effect.
+Use this to check current Mortise configuration state before it takes effect.
 Returns structured validation results with errors, warnings, and suggestions.
 
 **Targets:**
-- \`config\`: Validates config.json (workspaces, model, settings)
+- \`config\`: Validates the canonical SQLite configuration record when the host provides that capability
 - \`preferences\`: Validates preferences.json
 - \`permissions\`: Validates permissions.json files
-- \`automations\`: Validates automations.json configuration
 - \`tool-icons\`: Validates tool-icons.json
-- \`all\`: Validates all configuration files`,
+- \`all\`: Validates the canonical SQLite configuration record and all file-backed configuration`,
 
   skill_validate: `Validate a skill's SKILL.md file.
 
@@ -253,7 +251,7 @@ Use this to delegate tasks to parallel sessions — research, analysis, drafts, 
 Call with help=true first to discover available providers and models.
 When spawning, the 'prompt' parameter is required.
 
-Optional overrides: \`provider\`, \`model\`, \`permissionMode\`, and \`thinkingLevel\`. Omitted AI fields inherit from the spawning session or the global default; workspace-scoped fields retain their workspace defaults. \`workingDirectory\` is accepted only for backward compatibility and is ignored; create or switch workspace to use another folder.
+Optional overrides: \`provider\`, \`model\`, \`permissionMode\`, and \`thinkingLevel\`. Omitted AI fields inherit from the spawning session or the global default; workspace-scoped fields retain their workspace defaults. Create or switch workspace to run from another folder.
 
 \`thinkingLevel\` is silently ignored on non-reasoning models (e.g. gpt-4o, gemini-2.5-flash) — the SDK drops the reasoning param rather than erroring. Use it when you want to force deeper reasoning on a supported model, or set it to \`off\` when spawning a session that doesn't need to think.
 
@@ -395,32 +393,25 @@ export function getSessionBackendToolNames(options?: SessionToolFilterOptions): 
   return new Set(getSessionToolDefs(options).filter(d => d.executionMode === 'backend').map(d => d.name));
 }
 
-export interface SessionToolNameOptions extends SessionToolFilterOptions {
-  /** Optional compatibility prefix for protocol adapters. Runtime host tools use no prefix. */
-  prefix?: string;
-}
-
 /**
  * Return session tool names that are allowed in Explore/Safe mode.
  */
-export function getSessionSafeAllowedToolNames(options?: SessionToolNameOptions): Set<string> {
-  const prefix = options?.prefix ?? '';
+export function getSessionSafeAllowedToolNames(options?: SessionToolFilterOptions): Set<string> {
   return new Set(
     getSessionToolDefs(options)
       .filter(def => def.safeMode === 'allow')
-      .map(def => `${prefix}${def.name}`)
+      .map(def => def.name)
   );
 }
 
 /**
  * Return session tool names that are blocked in Explore/Safe mode.
  */
-export function getSessionSafeBlockedToolNames(options?: SessionToolNameOptions): Set<string> {
-  const prefix = options?.prefix ?? '';
+export function getSessionSafeBlockedToolNames(options?: SessionToolFilterOptions): Set<string> {
   return new Set(
     getSessionToolDefs(options)
       .filter(def => def.safeMode === 'block')
-      .map(def => `${prefix}${def.name}`)
+      .map(def => def.name)
   );
 }
 
@@ -431,23 +422,13 @@ export function getSessionSafeBlockedToolNames(options?: SessionToolNameOptions)
 /** Set of session tool names for quick membership checks. */
 export const SESSION_TOOL_NAMES = new Set(SESSION_TOOL_DEFS.map(d => d.name));
 
-/** Legacy model-facing prefix retained only for stored-session compatibility. */
-export const LEGACY_SESSION_TOOL_PREFIX = 'mcp__session__';
-
-/** Older non-MCP namespace accepted in persisted events from transitional builds. */
-export const LEGACY_DIRECT_SESSION_TOOL_PREFIX = 'session__';
-
 /**
- * Resolve a model-facing or persisted tool name to its canonical session-tool name.
- * New runtimes register canonical names directly; prefixes are compatibility input only.
+ * Resolve an exact canonical session-tool name.
+ *
+ * Former `mcp__session__*` and `session__*` aliases are intentionally rejected.
  */
 export function normalizeSessionToolName(toolName: string): string | null {
-  const normalized = toolName.startsWith(LEGACY_SESSION_TOOL_PREFIX)
-    ? toolName.slice(LEGACY_SESSION_TOOL_PREFIX.length)
-    : toolName.startsWith(LEGACY_DIRECT_SESSION_TOOL_PREFIX)
-      ? toolName.slice(LEGACY_DIRECT_SESSION_TOOL_PREFIX.length)
-      : toolName;
-  return SESSION_TOOL_NAMES.has(normalized) ? normalized : null;
+  return SESSION_TOOL_NAMES.has(toolName) ? toolName : null;
 }
 
 export function isSessionToolName(toolName: string): boolean {
@@ -490,15 +471,12 @@ export interface JsonSchemaToolDef {
 /**
  * Convert session tool definitions to JSON Schema format.
  *
- * @param opts.prefix - Optional prefix for protocol adapters. Pi host tools use canonical names.
  * @param opts.includeDeveloperFeedback - Include experimental feedback tool in output
  * @returns Array of tool definitions with JSON Schema inputSchema
  */
 export function getToolDefsAsJsonSchema(opts?: {
-  prefix?: string;
   includeDeveloperFeedback?: boolean;
 }): JsonSchemaToolDef[] {
-  const prefix = opts?.prefix || '';
   const defs = getSessionToolDefs({ includeDeveloperFeedback: opts?.includeDeveloperFeedback });
 
   return defs.map(def => {
@@ -509,7 +487,7 @@ export function getToolDefsAsJsonSchema(opts?: {
     delete jsonSchema.$schema;
     delete jsonSchema.additionalProperties;
     return {
-      name: prefix + def.name,
+      name: def.name,
       description: def.description,
       inputSchema: jsonSchema,
     };

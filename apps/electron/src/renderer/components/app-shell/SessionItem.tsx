@@ -117,7 +117,7 @@ export function SessionItem({
           item={item}
           onRename={() => ctx.onRenameClick(item.id, title)}
           onMarkUnread={() => ctx.onMarkUnread(item.id)}
-          onOpenInNewWindow={() => ctx.onOpenInNewWindow(item)}
+          onOpenInNewWindow={ctx.onOpenInNewWindow ? () => ctx.onOpenInNewWindow?.(item) : undefined}
           onSendToWorkspace={ctx.onSendToWorkspace ? () => ctx.onSendToWorkspace!([item.id]) : undefined}
           hasRemoteWorkspaces={hasRemoteWorkspaces}
           onDelete={() => ctx.onDelete(item.id)}
@@ -135,7 +135,7 @@ export function SessionItem({
           hasRemoteWorkspaces={hasRemoteWorkspaces}
           onRename={() => ctx.onRenameClick(item.id, title)}
           onMarkUnread={() => ctx.onMarkUnread(item.id)}
-          onOpenInNewWindow={() => ctx.onOpenInNewWindow(item)}
+          onOpenInNewWindow={ctx.onOpenInNewWindow ? () => ctx.onOpenInNewWindow?.(item) : undefined}
           onSendToWorkspace={ctx.onSendToWorkspace ? () => ctx.onSendToWorkspace!([item.id]) : undefined}
           onDelete={() => ctx.onDelete(item.id)}
         />
@@ -210,7 +210,7 @@ export function SessionItem({
           } as React.CSSProperties}
           title={`Matches found (${nextHotkey} next, ${prevHotkey} prev)`}
         >
-          {chatMatchCount}
+          {chatMatchCount}{isActiveSession && activeMatch?.hasMore ? '+' : ''}
         </span>
       ) : item.lastMessageAt ? (
         <span className="text-[11px] text-foreground/40 whitespace-nowrap">

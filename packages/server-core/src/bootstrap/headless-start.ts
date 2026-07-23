@@ -17,6 +17,14 @@ interface ModelRefreshServiceLike {
   stopAll?(): void
 }
 
+export interface ServerRuntimeContext<TSessionManager, THandlerDeps> {
+  sessionManager: TSessionManager
+  deps: THandlerDeps
+  platform: PlatformServices
+  server: RpcServer
+  serverHandlerContext: ServerHandlerContext
+}
+
 export interface ServerBootstrapOptions<TSessionManager, THandlerDeps> {
   serverToken?: string
   rpcHost?: string
@@ -31,9 +39,11 @@ export interface ServerBootstrapOptions<TSessionManager, THandlerDeps> {
   }) => THandlerDeps
   registerAllRpcHandlers: (server: RpcServer, deps: THandlerDeps, serverCtx: ServerHandlerContext) => void
   initializeSessionManager: (sessionManager: TSessionManager) => Promise<void>
+  initializeRuntime?: (context: ServerRuntimeContext<TSessionManager, THandlerDeps>) => Promise<void> | void
+  cleanupRuntime?: (context: ServerRuntimeContext<TSessionManager, THandlerDeps>) => Promise<void> | void
   setSessionEventSink: (sessionManager: TSessionManager, sink: EventSink) => void
   /**
-   * Optional hook called right after the WS RPC server starts listening. Use
+   * Optional hook called before the WS RPC server starts listening. Use
    * this to plumb the server into the SessionManager (e.g. `sm.setRpcServer(server)`)
    * so the remote-bridge code path for `client:browser:invoke` activates.
    */
@@ -81,6 +91,17 @@ export interface ServerInstance<TSessionManager> {
   serverHandlerContext: ServerHandlerContext
   stop: () => Promise<void>
 }
+
+type BootstrapPhase =
+  | 'lock-acquired'
+  | 'session-initializing'
+  | 'runtime-initializing'
+  | 'model-refresh-starting'
+  | 'listener-binding'
+  | 'ready'
+  | 'rolling-back'
+  | 'stopping'
+  | 'stopped'
 
 // ---------------------------------------------------------------------------
 // Token entropy validation
@@ -204,8 +225,8 @@ function parseLockContent(raw: string): LockPayload | null {
 
 /**
  * Detect a live PID that no longer represents the process which wrote a lock.
- * Legacy locks have no processStartedAt, so a process created after the lock
- * was written is definitively a reused PID while older processes remain
+ * When processStartedAt could not be captured, a process created after the
+ * lock was written is definitively a reused PID while older processes remain
  * ambiguous and are treated as active by the caller.
  */
 export function isProcessIdentityMismatch(
@@ -267,17 +288,6 @@ export function acquireServerLock(logger: PlatformServices['logger'], lockFile: 
   void logger
   withFileLockSync(`${lockFile}.registry`, () => {
     const existing = existsSync(lockFile) ? parseLockContent(readFileSync(lockFile, 'utf8')) : null
-    // A pre-protocol backend cannot participate in multi-writer persistence.
-    // Keep the compatibility sentinel so it is fenced until upgraded.
-    if (existing && existing.protocolVersion !== SERVER_REGISTRY_PROTOCOL && registrationIsLive(existing)) {
-      throw new Error(
-        `Another legacy server instance is already running (PID ${existing.pid}). Upgrade that backend before sharing this config directory.`
-      )
-    }
-    if (existing && existing.protocolVersion !== SERVER_REGISTRY_PROTOCOL) {
-      try { unlinkSync(lockFile) } catch { /* stale legacy sentinel */ }
-    }
-
     const directory = registrationDirectory(lockFile)
     mkdirSync(directory, { recursive: true })
     for (const filePath of registrationFiles(lockFile)) {
@@ -384,132 +394,179 @@ export async function bootstrapServer<TSessionManager, THandlerDeps>(
 
   bootstrapConfigArtifacts(platform)
   ensureGlobalConfigExists(platform)
-  const serverLockFile = resolveServerLockFile(options.serverLockName)
-  acquireServerLock(platform.logger, serverLockFile)
-
-  const modelRefreshService = options.initModelRefreshService()
-  const sessionManager = options.createSessionManager()
-
   const rpcHost = options.rpcHost ?? process.env.MORTISE_RPC_HOST ?? '127.0.0.1'
   const rpcPortRaw = options.rpcPort ?? parseInt(process.env.MORTISE_RPC_PORT ?? '9100', 10)
   if (!Number.isFinite(rpcPortRaw) || rpcPortRaw < 0 || rpcPortRaw > 65535) {
     throw new Error(`Invalid RPC port: ${rpcPortRaw}`)
   }
   const rpcPort = Math.trunc(rpcPortRaw)
+  const serverLockFile = resolveServerLockFile(options.serverLockName)
+  acquireServerLock(platform.logger, serverLockFile)
 
-  const wsServer = new WsRpcServer({
-    host: rpcHost,
-    port: rpcPort,
-    requireAuth: true,
-    validateToken: async (t) => {
-      if (typeof t !== 'string') return false
-      // Constant-time comparison to mitigate timing attacks against the server token.
-      // Length check is not timing-safe, but leaking length info is low risk.
-      const a = Buffer.from(t)
-      const b = Buffer.from(serverToken)
-      return a.length === b.length && timingSafeEqual(a, b)
-    },
-    validateSessionCookie: options.validateSessionCookie,
-    authorizeWorkspace: options.authorizeWorkspace ?? ((request) => (
-      !request.workspaceId || Boolean(getWorkspaceByNameOrId(request.workspaceId))
-    )),
-    serverId: options.serverId ?? 'headless',
-    serverVersion: options.serverVersion,
-    tls: options.tls,
-    httpHandler: options.httpHandler,
-    onClientConnected: options.onClientConnected,
-    onClientDisconnected: (clientId) => {
-      options.cleanupClientResources?.(clientId)
-      // Best-effort: notify SM so it can drop browser-host pins for this client.
-      // Duck-typed because TSessionManager is generic at the bootstrap layer.
-      const smWithDisconnect = sessionManager as unknown as { onClientDisconnected?: (id: string) => void }
-      if (typeof smWithDisconnect.onClientDisconnected === 'function') {
+  let modelRefreshService: ModelRefreshServiceLike | null = null
+  let sessionManager: TSessionManager | null = null
+  let wsServer: WsRpcServer | null = null
+  let deps: THandlerDeps | null = null
+  let serverHandlerContext: ServerHandlerContext | null = null
+  let modelRefreshStartAttempted = false
+  let runtimeInitializationAttempted = false
+  let phase: BootstrapPhase = 'lock-acquired'
+  let teardownPromise: Promise<void> | null = null
+
+  const teardown = (mode: 'rollback' | 'stop'): Promise<void> => {
+    if (teardownPromise) return teardownPromise
+
+    phase = mode === 'rollback' ? 'rolling-back' : 'stopping'
+    teardownPromise = (async () => {
+      if (mode === 'stop' && wsServer) {
         try {
-          smWithDisconnect.onClientDisconnected(clientId)
-        } catch {
-          // Cleanup hook failures must not break the transport.
+          wsServer.push('server:shuttingDown', { to: 'all' }, {
+            reason: 'shutdown',
+            graceMs: 2000,
+            timestamp: Date.now(),
+          })
+          await new Promise(resolve => setTimeout(resolve, 2000))
+        } catch (error) {
+          platform.logger.error('[bootstrap] Failed to send shutdown notification:', error)
         }
       }
-    },
-  })
 
-  await wsServer.listen()
+      try {
+        if (modelRefreshStartAttempted) modelRefreshService?.stopAll?.()
+      } catch (error) {
+        platform.logger.error(`[bootstrap] Failed to ${mode === 'rollback' ? 'roll back' : 'stop'} model refresh service:`, error)
+      }
 
-  options.bindRpcServer?.(sessionManager, wsServer)
+      try {
+        if (runtimeInitializationAttempted && sessionManager && deps && wsServer && serverHandlerContext) {
+          await options.cleanupRuntime?.({ sessionManager, deps, platform, server: wsServer, serverHandlerContext })
+        }
+      } catch (error) {
+        platform.logger.error(`[bootstrap] Failed to ${mode === 'rollback' ? 'roll back' : 'clean up'} application runtime:`, error)
+      }
 
-  const deps = options.createHandlerDeps({
-    sessionManager,
-    platform,
-  })
+      try {
+        if (sessionManager) await options.cleanupSessionManager?.(sessionManager)
+      } catch (error) {
+        platform.logger.error(`[bootstrap] Failed to ${mode === 'rollback' ? 'roll back' : 'clean up'} session manager:`, error)
+      }
 
-  const startedAt = Date.now()
-  const serverHandlerContext: ServerHandlerContext = {
-    getConnectedClientCount: () => wsServer.getConnectedClientCount(),
-    serverId: options.serverId ?? 'headless',
-    startedAt,
+      try {
+        wsServer?.close()
+      } catch (error) {
+        platform.logger.error(`[bootstrap] Failed to ${mode === 'rollback' ? 'roll back' : 'close'} RPC server:`, error)
+      } finally {
+        releaseServerLock(serverLockFile)
+        phase = 'stopped'
+      }
+    })()
+
+    return teardownPromise
   }
 
-  options.registerAllRpcHandlers(wsServer, deps, serverHandlerContext)
+  try {
+    modelRefreshService = options.initModelRefreshService()
+    sessionManager = options.createSessionManager()
 
-  options.setSessionEventSink(sessionManager, wsServer.push.bind(wsServer))
+    wsServer = new WsRpcServer({
+      host: rpcHost,
+      port: rpcPort,
+      requireAuth: true,
+      validateToken: async (t) => {
+        if (typeof t !== 'string') return false
+        // Constant-time comparison to mitigate timing attacks against the server token.
+        // Length check is not timing-safe, but leaking length info is low risk.
+        const a = Buffer.from(t)
+        const b = Buffer.from(serverToken)
+        return a.length === b.length && timingSafeEqual(a, b)
+      },
+      validateSessionCookie: options.validateSessionCookie,
+      authorizeWorkspace: options.authorizeWorkspace ?? ((request) => (
+        !request.workspaceId || Boolean(getWorkspaceByNameOrId(request.workspaceId))
+      )),
+      serverId: options.serverId ?? 'headless',
+      serverVersion: options.serverVersion,
+      tls: options.tls,
+      httpHandler: options.httpHandler,
+      onClientConnected: options.onClientConnected,
+      onClientDisconnected: (clientId) => {
+        options.cleanupClientResources?.(clientId)
+        // Best-effort: notify SM so it can drop browser-host pins for this client.
+        // Duck-typed because TSessionManager is generic at the bootstrap layer.
+        const smWithDisconnect = sessionManager as unknown as { onClientDisconnected?: (id: string) => void }
+        if (typeof smWithDisconnect.onClientDisconnected === 'function') {
+          try {
+            smWithDisconnect.onClientDisconnected(clientId)
+          } catch {
+            // Cleanup hook failures must not break the transport.
+          }
+        }
+      },
+    })
 
-  await options.initializeSessionManager(sessionManager)
+    options.bindRpcServer?.(sessionManager, wsServer)
 
-  modelRefreshService.startAll()
+    deps = options.createHandlerDeps({
+      sessionManager,
+      platform,
+    })
 
-  platform.logger.info(`Mortise Agent server listening on ${wsServer.protocol}://${rpcHost}:${wsServer.port}`)
-
-  let stopped = false
-  const stop = async (): Promise<void> => {
-    if (stopped) return
-    stopped = true
-
-    platform.logger.info('Shutting down...')
-
-    // Notify connected clients before closing connections
-    try {
-      wsServer.push('server:shuttingDown', { to: 'all' }, {
-        reason: 'shutdown',
-        graceMs: 2000,
-        timestamp: Date.now(),
-      })
-      // Brief drain period so clients receive the notification
-      await new Promise(resolve => setTimeout(resolve, 2000))
-    } catch (error) {
-      platform.logger.error('[bootstrap] Failed to send shutdown notification:', error)
+    const startedAt = Date.now()
+    serverHandlerContext = {
+      getConnectedClientCount: () => wsServer!.getConnectedClientCount(),
+      serverId: options.serverId ?? 'headless',
+      startedAt,
     }
 
-    try {
-      modelRefreshService.stopAll?.()
-    } catch (error) {
-      platform.logger.error('[bootstrap] Failed to stop model refresh service:', error)
+    options.registerAllRpcHandlers(wsServer, deps, serverHandlerContext)
+
+    options.setSessionEventSink(sessionManager, wsServer.push.bind(wsServer))
+
+    phase = 'session-initializing'
+    await options.initializeSessionManager(sessionManager)
+
+    runtimeInitializationAttempted = true
+    phase = 'runtime-initializing'
+    await options.initializeRuntime?.({
+      sessionManager,
+      deps,
+      platform,
+      server: wsServer,
+      serverHandlerContext,
+    })
+
+    modelRefreshStartAttempted = true
+    phase = 'model-refresh-starting'
+    modelRefreshService.startAll()
+
+    // Listening is the readiness commit point. No client can observe a
+    // partially registered RPC surface or an uninitialized SessionManager.
+    phase = 'listener-binding'
+    await wsServer.listen()
+    phase = 'ready'
+
+    platform.logger.info(`Mortise Agent server listening on ${wsServer.protocol}://${rpcHost}:${wsServer.port}`)
+
+    const stop = async (): Promise<void> => {
+      if (phase === 'stopped') return
+      platform.logger.info('Shutting down...')
+      await teardown('stop')
     }
 
-    try {
-      await options.cleanupSessionManager?.(sessionManager)
-    } catch (error) {
-      platform.logger.error('[bootstrap] Failed to clean up session manager:', error)
+    return {
+      platform,
+      sessionManager: sessionManager!,
+      wsServer: wsServer!,
+      host: rpcHost,
+      port: wsServer!.port,
+      protocol: wsServer!.protocol,
+      token: serverToken,
+      serverHandlerContext,
+      stop,
     }
-
-    try {
-      wsServer.close()
-    } catch (error) {
-      platform.logger.error('[bootstrap] Failed to close WS server:', error)
-    }
-
-    releaseServerLock(serverLockFile)
-  }
-
-  return {
-    platform,
-    sessionManager,
-    wsServer,
-    host: rpcHost,
-    port: wsServer.port,
-    protocol: wsServer.protocol,
-    token: serverToken,
-    serverHandlerContext,
-    stop,
+  } catch (error) {
+    await teardown('rollback')
+    throw error
   }
 }
 

@@ -4,14 +4,18 @@
  * Helper functions for creating standardized tool responses.
  * Used by both Claude and Codex implementations.
  *
- * errorResponse and successResponse are re-exported from the canonical
- * implementation in @mortise/shared/agent (tool-result.ts).
+ * This package owns the canonical response contract consumed by shared.
  */
 
-import type { TextContent } from './types.ts';
+import type { TextContent, ToolResult } from './types.ts';
 
-// Re-export canonical response helpers from @mortise/shared/agent
-export { errorResponse, successResponse } from '@mortise/shared/agent';
+export function successResponse(text: string): ToolResult {
+  return { content: [{ type: 'text', text }], structuredContent: {}, isError: false };
+}
+
+export function errorResponse(message: string): ToolResult {
+  return { content: [{ type: 'text', text: `[ERROR] ${message}` }], structuredContent: {}, isError: true };
+}
 
 /**
  * Create a text content block

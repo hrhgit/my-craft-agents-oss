@@ -13,6 +13,7 @@ import {
   type Platform,
 } from "./build/common.ts";
 import { assertNoUiValidationProductionInputs, assertNoUiValidationProductionRuntime, isUiValidationBuildEnabled } from "./build/ui-validation-boundary.ts";
+import { assertNoSourceRootReferences } from "./build/bundle-portability.ts";
 
 const ROOT_DIR = join(import.meta.dir, "..");
 const ELECTRON_DIR = join(ROOT_DIR, "apps/electron");
@@ -199,7 +200,9 @@ async function buildSessionServer(): Promise<void> {
     process.exit(exitCode);
   }
   if (!uiValidationBuild) {
-    assertNoUiValidationProductionRuntime(readFileSync(SESSION_SERVER_OUTPUT, "utf8"), "session-mcp-server/index.js");
+    const sessionServerSource = readFileSync(SESSION_SERVER_OUTPUT, "utf8");
+    assertNoUiValidationProductionRuntime(sessionServerSource, "session-mcp-server/index.js");
+    assertNoSourceRootReferences(sessionServerSource, "session-mcp-server/index.js", ROOT_DIR);
   }
 
   // Verify output exists

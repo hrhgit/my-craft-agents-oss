@@ -2,6 +2,7 @@ import { describe, expect, it, mock } from 'bun:test'
 import type { PiProjectionSnapshotV1 } from '@mortise/shared/protocol'
 import {
   SessionManager,
+  createSubmittedPlanMessage,
   createManagedSession,
   getPiProjectionRecoveryMessages,
 } from './SessionManager.ts'
@@ -27,6 +28,28 @@ const artifact = {
 }
 
 describe('Pi projection transcript boundary', () => {
+  it('projects file-backed plan submission as a canonical assistant artifact', () => {
+    const message = createSubmittedPlanMessage('session-1', '/tmp/plan.md', '# Plan', 3)
+
+    expect(message).toMatchObject({
+      role: 'assistant',
+      content: '# Plan',
+      timestamp: 3,
+      planPath: '/tmp/plan.md',
+      artifact: {
+        schemaVersion: 1,
+        kind: 'plan',
+        revision: 1,
+        state: 'ready',
+        review: { status: 'not_requested' },
+        checklist: [],
+        createdAt: 3,
+        finalizedAt: 3,
+      },
+    })
+    expect(message.artifact?.artifactId).toMatch(/^plan-/)
+  })
+
   it('does not append a plan Message for managed sessions', async () => {
     const manager = new SessionManager()
     ;(manager as unknown as { persistSession: () => void }).persistSession = () => {}

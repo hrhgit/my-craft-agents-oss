@@ -917,7 +917,8 @@ export class WsRpcServer implements RpcServer {
       const message = err instanceof Error ? err.message : String(err)
       const rawCode = (err as { code?: unknown } | null)?.code
       const code: TransportErrorCode = isTransportErrorCode(rawCode) ? rawCode : 'HANDLER_ERROR'
-      this.sendResponseError(client.ws, id, channel, code, message)
+      const data = (err as { data?: unknown } | null)?.data
+      this.sendResponseError(client.ws, id, channel, code, message, data)
     } finally {
       if (timeout) clearTimeout(timeout)
       this.activeRequests.delete(id)
@@ -1091,13 +1092,13 @@ export class WsRpcServer implements RpcServer {
   /** Handler/request errors — sent as type:'response' with error field. */
   private sendResponseError(
     ws: WebSocket, id: string, channel: string | undefined,
-    code: TransportErrorCode, message: string,
+    code: TransportErrorCode, message: string, data?: unknown,
   ): void {
     const envelope: MessageEnvelope = {
       id,
       type: 'response',
       channel,
-      error: { code, message },
+      error: { code, message, ...(data !== undefined ? { data } : {}) },
     }
     this.safeSend(ws, serializeEnvelope(envelope), {
       kind: 'response',

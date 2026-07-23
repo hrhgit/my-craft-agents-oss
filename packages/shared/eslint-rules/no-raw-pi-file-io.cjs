@@ -1,9 +1,9 @@
 /**
  * ESLint Rule: no-raw-pi-file-io
  *
- * Mortise is a GUI shell over Pi. Pi owns ~/.pi/agent storage. Host/shared code
- * must not casually read/write Pi's raw files by importing path constants like
- * PI_SETTINGS_FILE or PI_SESSIONS_DIR. Use Pi's public APIs (SettingsManager,
+ * Mortise owns ~/.mortise/agent storage for its embedded Pi runtime. Host/shared
+ * code must not casually read/write those raw files by importing path constants like
+ * MORTISE_SETTINGS_FILE or MORTISE_SESSIONS_DIR. Use Pi's public APIs (SettingsManager,
  * AuthStorage, SessionManager, RpcClient) or one of the documented seam helpers.
  *
  * This rule intentionally focuses on imports of the sensitive path constants:
@@ -16,17 +16,16 @@
 const path = require('node:path')
 
 const SENSITIVE_PI_PATH_EXPORTS = new Set([
-  'PI_AGENT_DIR',
-  'PI_MODELS_FILE',
-  'PI_SETTINGS_FILE',
-  'PI_AUTH_FILE',
-  'PI_SKILLS_DIR',
-  'PI_SESSIONS_DIR',
+  'MORTISE_AGENT_DIR',
+  'MORTISE_MODELS_FILE',
+  'MORTISE_SETTINGS_FILE',
+  'MORTISE_AUTH_FILE',
+  'MORTISE_SKILLS_DIR',
+  'MORTISE_SESSIONS_DIR',
 ])
 
 const PRIVATE_PI_ENV_STRINGS = new Set([
   'PI_HOST_HOOKS_MODULE',
-  'PI_FETCH_INTERCEPTOR_MODULE',
   'AWS_BEDROCK_FORCE_HTTP1',
   'ANTHROPIC_DEFAULT_HAIKU_MODEL',
 ])
@@ -37,9 +36,9 @@ const ALLOW_ALL_SENSITIVE_EXPORTS = Symbol('allow-all-sensitive-pi-paths')
 // a seam cannot quietly grow from a watcher/helper into raw settings/auth I/O.
 const ALLOWED_PATH_EXPORTS_BY_FILE_ENDING = new Map([
   ['src/config/paths.ts', ALLOW_ALL_SENSITIVE_EXPORTS],
-  ['src/config/pi-global-config.ts', new Set(['PI_AGENT_DIR'])],
-  ['src/sessions/storage.ts', new Set(['PI_SESSIONS_DIR'])],
-  ['src/workspaces/storage.ts', new Set(['PI_SESSIONS_DIR'])],
+  ['src/config/pi-global-config.ts', new Set(['MORTISE_AGENT_DIR'])],
+  ['src/sessions/storage.ts', new Set(['MORTISE_SESSIONS_DIR'])],
+  ['src/workspaces/storage.ts', new Set(['MORTISE_SESSIONS_DIR'])],
 ])
 
 function normalizeFilename(filename) {
@@ -64,15 +63,15 @@ module.exports = {
     type: 'problem',
     docs: {
       description:
-        'Disallow raw imports of Pi storage path constants outside sanctioned seams. Use Pi public APIs or documented helpers.',
+        'Disallow raw imports of Mortise Agent storage path constants outside sanctioned seams. Use typed APIs or documented helpers.',
       category: 'Best Practices',
       recommended: true,
     },
     messages: {
       noRawPiPath:
-        'Do not import {{name}} outside the sanctioned Pi storage seams. Pi owns ~/.pi/agent storage; use Pi public APIs (SettingsManager/AuthStorage/SessionManager/RpcClient) or add a documented red-line allowlist entry.',
+        'Do not import {{name}} outside the sanctioned Mortise Agent storage seams. Use typed APIs (SettingsManager/AuthStorage/SessionManager/RpcClient) or add a documented red-line allowlist entry.',
       noRawPiPathModule:
-        'Do not load Pi storage path constants via {{kind}} outside the sanctioned Pi storage seams. Pi owns ~/.pi/agent storage; use Pi public APIs or documented helpers.',
+        'Do not load Mortise Agent storage path constants via {{kind}} outside the sanctioned storage seams. Use typed APIs or documented helpers.',
       noPrivatePiEnv:
         'Do not reference Pi private env/hook string "{{name}}" from Mortise shared code. Expose a typed Pi API/RPC capability instead.',
     },

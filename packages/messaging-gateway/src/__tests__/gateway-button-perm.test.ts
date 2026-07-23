@@ -206,46 +206,6 @@ function pressFor(buttonId: string, overrides: Partial<ButtonPress> = {}): Butto
 }
 
 describe('MessagingGateway — perm: button (#726)', () => {
-  it('uses Pi projection and always ignores legacy transcript events', async () => {
-    const h = await makeHarness()
-    const binding = h.gateway.getBindingStore().findBySession('sess-A')[0]!
-    h.gateway.getBindingStore().updateBindingConfig(binding.id, { responseMode: 'streaming' })
-
-    h.gateway.onSessionEvent(
-      'session:event',
-      { to: 'workspace', workspaceId: 'ws-test' },
-      { type: 'text_complete', sessionId: 'sess-A', text: 'legacy-before-projection' } as SessionEvent,
-    )
-
-    h.gateway.onSessionEvent(
-      'session:piProjectionEvent',
-      { to: 'workspace', workspaceId: 'ws-test' },
-      {
-        schemaVersion: 1,
-        eventId: 'runtime-1:1',
-        seq: 1,
-        sessionId: 'sess-A',
-        runtimeId: 'runtime-1',
-        entityId: 'content:turn-1',
-        entityType: 'content_block',
-        entityVersion: 1,
-        kind: 'assistant_text',
-        payload: { role: 'assistant', text: 'Pi-native answer', streaming: false },
-      },
-    )
-    h.gateway.onSessionEvent(
-      'session:event',
-      { to: 'workspace', workspaceId: 'ws-test' },
-      { type: 'text_complete', sessionId: 'sess-A', text: 'Pi-native answer' } as SessionEvent,
-    )
-    await Promise.resolve()
-    await Promise.resolve()
-
-    const sends = h.adapter.calls.filter((call) => call.kind === 'sendText')
-    expect(sends).toHaveLength(1)
-    expect(sends[0]?.text).toBe('Pi-native answer')
-  })
-
   it('happy path: clears keyboard, calls respondToPermission once, posts ✅ Allowed', async () => {
     const h = await makeHarness()
     await registerPrompt(h.gateway, { requestId: 'req-1' })
@@ -288,20 +248,28 @@ describe('MessagingGateway — perm: button (#726)', () => {
     const h = await makeHarness()
     await registerPrompt(h.gateway, { requestId: 'req-1' })
 
-    // Desktop resolves first → agent moves on, emitting a tool_start. The
-    // gateway sweep on this event drops the entry and clears the keyboard.
+    // Desktop resolves first and Pi publishes the canonical prompt result.
     h.gateway.onSessionEvent(
-      'session:event',
+      'session:piProjectionEvent',
       { to: 'workspace', workspaceId: 'ws-test' },
-      { type: 'tool_start', sessionId: 'sess-A', toolName: 'Bash' } as SessionEvent,
+      {
+        schemaVersion: 1,
+        eventId: 'runtime-1:1',
+        seq: 1,
+        sessionId: 'sess-A',
+        runtimeId: 'runtime-1',
+        entityId: 'prompt:req-1',
+        entityType: 'prompt',
+        entityVersion: 1,
+        kind: 'prompt_resolved',
+        payload: { requestId: 'req-1' },
+      },
     )
     await Promise.resolve()
     await Promise.resolve()
 
     expect(h.adapter.clearButtons).toHaveBeenCalledTimes(1)
 
-    // Snapshot how many texts the renderer's progress bubble already posted
-    // for the tool_start event, so we can isolate the press-side ack count.
     const ackCountBeforePress = h.adapter.calls.filter((c) => c.kind === 'sendText').length
 
     // User now taps the (already-cleared) Telegram button.
@@ -311,8 +279,6 @@ describe('MessagingGateway — perm: button (#726)', () => {
     expect(h.sessionManager.respondToPermission).not.toHaveBeenCalled()
 
     // No ack message — we don't lie about an action that didn't take effect.
-    // Compare against the pre-press snapshot so the renderer's own progress
-    // bubble for tool_start doesn't contaminate the assertion.
     const sendTexts = h.adapter.calls.filter((c) => c.kind === 'sendText')
     expect(sendTexts).toHaveLength(ackCountBeforePress)
     expect(sendTexts.some((c) => /Allowed|Denied/.test(c.text ?? ''))).toBe(false)
@@ -368,7 +334,7 @@ describe('MessagingGateway — perm: button (#726)', () => {
     expect(acks).toHaveLength(0)
   })
 
-  it('non-permission-request events do NOT sweep entries from other sessions', async () => {
+  it('prompt resolution does not sweep entries from other sessions', async () => {
     const h = await makeHarness()
 
     // Register a second session bound to a different chat with its own prompt.
@@ -383,11 +349,22 @@ describe('MessagingGateway — perm: button (#726)', () => {
     await registerPrompt(h.gateway, { sessionId: 'sess-A', requestId: 'req-A' })
     await registerPrompt(h.gateway, { sessionId: 'sess-B', requestId: 'req-B' })
 
-    // Event for sess-A only — must not touch sess-B's keyboard.
+    // Resolution for sess-A only must not touch sess-B's keyboard.
     h.gateway.onSessionEvent(
-      'session:event',
+      'session:piProjectionEvent',
       { to: 'workspace', workspaceId: 'ws-test' },
-      { type: 'tool_start', sessionId: 'sess-A', toolName: 'Bash' } as SessionEvent,
+      {
+        schemaVersion: 1,
+        eventId: 'runtime-A:1',
+        seq: 1,
+        sessionId: 'sess-A',
+        runtimeId: 'runtime-A',
+        entityId: 'prompt:req-A',
+        entityType: 'prompt',
+        entityVersion: 1,
+        kind: 'prompt_resolved',
+        payload: { requestId: 'req-A' },
+      },
     )
     await Promise.resolve()
     await Promise.resolve()

@@ -2,7 +2,7 @@
  * Session Storage
  *
  * Workspace-scoped session CRUD operations.
- * Sessions are stored at ~/.pi/agent/sessions/{encoded-cwd}/{timestamp}_{sessionId}.jsonl
+ * Sessions are stored at ~/.mortise/agent/sessions/{encoded-cwd}/{timestamp}_{sessionId}.jsonl
  * (Pi tree JSONL v3 format).
  * Mortise sidecar directories next to those flat Pi JSONL files contain:
  * - attachments/ (file attachments)
@@ -33,16 +33,14 @@ import type {
   SessionTokenUsage,
   SessionHeader,
 } from './types.ts';
+import { RemovedSessionFieldError } from './types.ts';
 import type { Plan } from '../agent/plan-types.ts';
 import { debug } from '../utils/debug.ts';
 import { readSessionHeader, readSessionJsonl } from './jsonl.ts';
 import { sessionPersistenceQueue } from './persistence-queue.ts';
-import { PI_SESSIONS_DIR, encodePiSessionCwd } from '../config/paths.ts';
-import { readTreeSessionAsStoredSession, readTreeSessionHeader, readTreeSessionMetadata, writeTreeSessionCraftMetadata, writeTreeSessionCraftMetadataAsync } from './tree-jsonl.ts';
-import {
-  createSessionProjection as createPiSessionProjection,
-  findSessionProjectionById as findPiHostSessionProjectionById,
-} from '@mortise/pi-coding-agent/host-facade';
+import { MORTISE_SESSIONS_DIR, encodePiSessionCwd } from '../config/paths.ts';
+import { materializeStoredSessionViaPiSessionManager, readTreeSessionAsStoredSession, readTreeSessionHeader, readTreeSessionMetadata, writeTreeSessionMortiseMetadataAsync } from './tree-jsonl.ts';
+import { findSessionProjectionById as findPiHostSessionProjectionById } from '@mortise/pi-coding-agent/host-facade';
 
 let sharedPiSessionsDirOverride: string | undefined;
 
@@ -58,13 +56,13 @@ export function setSharedPiSessionsDirForTests(dir: string | undefined): void {
 }
 
 function getPiSessionsRoot(): string {
-  return sharedPiSessionsDirOverride ?? PI_SESSIONS_DIR;
+  return sharedPiSessionsDirOverride ?? MORTISE_SESSIONS_DIR;
 }
 
 /**
  * Session storage root is always under the Pi sessions directory.
  */
-function getSessionStorageRootPath(workspaceRootPath: string, _workingDirectory?: string): string {
+function getSessionStorageRootPath(workspaceRootPath: string): string {
   return join(getPiSessionsRoot(), encodePiSessionCwd(workspaceRootPath));
 }
 
@@ -89,10 +87,9 @@ export function buildPiSessionFileName(sessionId: string, createdAt?: number): s
 export function getPiNativeSessionFilePath(
   workspaceRootPath: string,
   sessionId: string,
-  workingDirectory?: string,
   createdAt?: number,
 ): string {
-  return join(getPiNativeSessionDir(workspaceRootPath, workingDirectory), buildPiSessionFileName(sessionId, createdAt));
+  return join(getPiNativeSessionDir(workspaceRootPath), buildPiSessionFileName(sessionId, createdAt));
 }
 
 function findSharedPiSessionFileInDir(cwdPath: string, sessionId: string): string | null {
@@ -110,22 +107,13 @@ function findSharedPiSessionFileInDir(cwdPath: string, sessionId: string): strin
     ));
     if (directMatch) return join(cwdPath, directMatch.name);
 
-    // Legacy/imported filenames may not carry the Mortise ID. Preserve support by
-    // reading first-line headers only after all cheap filename matches fail.
-    for (const entry of entries) {
-      const filePath = join(cwdPath, entry.name);
-      const header = readTreeSessionHeader(filePath);
-      if (header?.id === sessionId || header?.mortise?.id === sessionId) {
-        return filePath;
-      }
-    }
   } catch {
     // Ignore and fall back to another lookup path.
   }
   return null;
 }
 
-function findSharedPiSessionFile(sessionId: string, workspaceRootPath?: string, _workingDirectory?: string): string | null {
+function findSharedPiSessionFile(sessionId: string, workspaceRootPath?: string): string | null {
   const root = getPiSessionsRoot();
   if (!existsSync(root)) return null;
 
@@ -165,7 +153,7 @@ function sameWorkspacePath(a: string | undefined, b: string): boolean {
   }
 }
 
-function listCraftSessionDirs(workspaceRootPath: string): Array<{ sessionId: string; sessionDir: string; jsonlFile: string }> {
+function listMortiseSessionDirs(workspaceRootPath: string): Array<{ sessionId: string; sessionDir: string; jsonlFile: string }> {
   const root = getPiSessionsRoot();
   if (!existsSync(root)) return [];
   const result: Array<{ sessionId: string; sessionDir: string; jsonlFile: string }> = [];
@@ -221,8 +209,8 @@ function listCraftSessionDirs(workspaceRootPath: string): Array<{ sessionId: str
 /**
  * Ensure sessions directory exists for a workspace
  */
-export function ensureSessionsDir(workspaceRootPath: string, workingDirectory?: string): string {
-  const dir = getSessionStorageRootPath(workspaceRootPath, workingDirectory);
+export function ensureSessionsDir(workspaceRootPath: string): string {
+  const dir = getSessionStorageRootPath(workspaceRootPath);
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true });
   }
@@ -238,24 +226,24 @@ export function ensureSessionsDir(workspaceRootPath: string, workingDirectory?: 
  * SECURITY: Uses sanitizeSessionId() as defense-in-depth to prevent path traversal.
  * Callers should still validate sessionId before calling this function.
  */
-export function getSessionPath(workspaceRootPath: string, sessionId: string, workingDirectory?: string): string {
+export function getSessionPath(workspaceRootPath: string, sessionId: string): string {
   // The Mortise sidecar is owned by the workspace/cwd bucket, not by a specific
   // timestamped transcript filename. Keep this path calculation pure: callers
   // use it on hot metadata paths where scanning the Pi directory once per
   // session would turn a list operation into synchronous O(n^2) filesystem I/O.
-  const bucketPath = getSessionStorageRootPath(workspaceRootPath, workingDirectory);
+  const bucketPath = getSessionStorageRootPath(workspaceRootPath);
   return getSharedPiSidecarPathForFile(join(bucketPath, 'session.jsonl'), sessionId);
 }
 
 /**
  * Get path to a session's Pi tree JSONL file.
  *
- * Always returns a path under `~/.pi/agent/sessions/{encoded-cwd}/`.
+ * Always returns a path under `~/.mortise/agent/sessions/{encoded-cwd}/`.
  */
-export function getSessionFilePath(workspaceRootPath: string, sessionId: string, workingDirectory?: string, createdAt?: number): string {
-  const sharedPiFile = findSharedPiSessionFile(sessionId, workspaceRootPath, workingDirectory);
+export function getSessionFilePath(workspaceRootPath: string, sessionId: string, createdAt?: number): string {
+  const sharedPiFile = findSharedPiSessionFile(sessionId, workspaceRootPath);
   if (sharedPiFile) return sharedPiFile;
-  return getPiNativeSessionFilePath(workspaceRootPath, sessionId, workingDirectory, createdAt);
+  return getPiNativeSessionFilePath(workspaceRootPath, sessionId, createdAt);
 }
 
 /**
@@ -266,8 +254,8 @@ export function getSessionFilePath(workspaceRootPath: string, sessionId: string,
  * after a side-effecting mkdir). Use this in read-only contexts (search,
  * listing, existence checks) to avoid creating empty bucket directories.
  */
-export function tryGetSessionFilePath(workspaceRootPath: string, sessionId: string, workingDirectory?: string): string | null {
-  const sharedPiFile = findSharedPiSessionFile(sessionId, workspaceRootPath, workingDirectory);
+export function tryGetSessionFilePath(workspaceRootPath: string, sessionId: string): string | null {
+  const sharedPiFile = findSharedPiSessionFile(sessionId, workspaceRootPath);
   if (sharedPiFile) return sharedPiFile;
   // Mirror getPiNativeSessionFilePath logic but without mkdir side effect.
   const dir = join(getPiSessionsRoot(), encodePiSessionCwd(workspaceRootPath));
@@ -278,7 +266,7 @@ export function tryGetSessionFilePath(workspaceRootPath: string, sessionId: stri
 /**
  * Get the native Pi session directory for a cwd when shared Pi storage is on.
  */
-export function getPiNativeSessionDir(workspaceRootPath: string, _workingDirectory?: string): string {
+export function getPiNativeSessionDir(workspaceRootPath: string): string {
   const dir = join(getPiSessionsRoot(), encodePiSessionCwd(workspaceRootPath));
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true });
@@ -292,29 +280,6 @@ export function getPiNativeSessionDir(workspaceRootPath: string, _workingDirecto
  * Pi creates the projection/header; Mortise only sends the UI metadata overlay
  * through the Pi facade and returns the projection path.
  */
-export function ensureSharedPiTreeSessionFile(session: StoredSession): string {
-  const sessionFile = getSessionFilePath(
-    session.workspaceRootPath,
-    session.mortiseId,
-    session.workingDirectory,
-    session.createdAt,
-  );
-  if (existsSync(sessionFile)) {
-    writeTreeSessionCraftMetadata(sessionFile, session);
-    return sessionFile;
-  }
-
-  const cwd = resolve(expandPath(session.workspaceRootPath));
-  const projection = createPiSessionProjection({
-    cwd,
-    sessionDir: getPiNativeSessionDir(session.workspaceRootPath, session.workingDirectory),
-    id: session.sdkSessionId || session.mortiseId,
-  });
-  const createdSessionFile = projection.path ?? sessionFile;
-  writeTreeSessionCraftMetadata(createdSessionFile, session);
-  return createdSessionFile;
-}
-
 /**
  * Async variant for persistence queue hot paths.
  */
@@ -325,34 +290,30 @@ export async function ensureSharedPiTreeSessionFileAsync(
   const sessionFile = getSessionFilePath(
     session.workspaceRootPath,
     session.mortiseId,
-    session.workingDirectory,
     session.createdAt,
   );
   if (existsSync(sessionFile)) {
-    await writeTreeSessionCraftMetadataAsync(sessionFile, session, {
+    await writeTreeSessionMortiseMetadataAsync(sessionFile, session, {
       lastWrittenHeaderSignature: options.lastWrittenHeaderSignature,
     });
     return sessionFile;
   }
 
   const cwd = resolve(expandPath(session.workspaceRootPath));
-  const projection = createPiSessionProjection({
+  await materializeStoredSessionViaPiSessionManager(
+    sessionFile,
+    getPiNativeSessionDir(session.workspaceRootPath),
     cwd,
-    sessionDir: getPiNativeSessionDir(session.workspaceRootPath, session.workingDirectory),
-    id: session.sdkSessionId || session.mortiseId,
-  });
-  const createdSessionFile = projection.path ?? sessionFile;
-  await writeTreeSessionCraftMetadataAsync(createdSessionFile, session, {
-    lastWrittenHeaderSignature: options.lastWrittenHeaderSignature,
-  });
-  return createdSessionFile;
+    session,
+  );
+  return sessionFile;
 }
 
 /**
  * Ensure session directory exists with all subdirectories
  */
-export function ensureSessionDir(workspaceRootPath: string, sessionId: string, workingDirectory?: string): string {
-  const sessionDir = getSessionPath(workspaceRootPath, sessionId, workingDirectory);
+export function ensureSessionDir(workspaceRootPath: string, sessionId: string): string {
+  const sessionDir = getSessionPath(workspaceRootPath, sessionId);
   if (!existsSync(sessionDir)) {
     mkdirSync(sessionDir, { recursive: true });
   }
@@ -418,7 +379,7 @@ export function getSessionDownloadsPath(workspaceRootPath: string, sessionId: st
  * Get existing session IDs for collision detection
  */
 function getExistingSessionIds(workspaceRootPath: string): Set<string> {
-  return new Set(listCraftSessionDirs(workspaceRootPath).map(entry => entry.sessionId));
+  return new Set(listMortiseSessionDirs(workspaceRootPath).map(entry => entry.sessionId));
 }
 
 /**
@@ -441,13 +402,15 @@ export async function createSession(
   workspaceRootPath: string,
   options?: {
     name?: string;
-    workingDirectory?: string;
     permissionMode?: SessionHeader['permissionMode'];
     model?: string;
     provider?: string;
     hidden?: boolean;
   }
 ): Promise<SessionHeader> {
+  if (options && Object.prototype.hasOwnProperty.call(options, 'workingDirectory')) {
+    throw new RemovedSessionFieldError('workingDirectory');
+  }
   ensureSessionsDir(workspaceRootPath);
 
   const now = Date.now();
@@ -456,9 +419,6 @@ export async function createSession(
   // Create session directory with all subdirectories (plans, attachments)
   ensureSessionDir(workspaceRootPath, sessionId);
 
-  // Complete-unification semantics: workspace root is the only execution cwd
-  // and the only session bucket owner.
-  const workingDirectory = workspaceRootPath;
   const sdkCwd = workspaceRootPath;
 
   const session: SessionHeader = {
@@ -467,7 +427,6 @@ export async function createSession(
     name: options?.name,
     createdAt: now,
     lastUsedAt: now,
-    workingDirectory,
     sdkCwd,
     permissionMode: options?.permissionMode,
     model: options?.model,
@@ -524,19 +483,6 @@ export function loadSession(workspaceRootPath: string, sessionId: string): Store
   if (existsSync(jsonlPath)) {
     const session = readSessionJsonl(jsonlPath);
     if (session) {
-      const legacy = session as StoredSession & {
-        llmConnection?: string;
-        connectionLocked?: boolean;
-        providerLocked?: boolean;
-      };
-      if (!session.provider && legacy.llmConnection) {
-        session.provider = legacy.llmConnection.startsWith('pi-')
-          ? legacy.llmConnection.slice(3)
-          : legacy.llmConnection;
-      }
-      delete legacy.llmConnection;
-      delete legacy.connectionLocked;
-      delete legacy.providerLocked;
       end();
       return session;
     }
@@ -553,15 +499,15 @@ export function loadSession(workspaceRootPath: string, sessionId: string): Store
  * Uses JSONL header for fast loading (only reads first line of each file).
  *
  * Sessions are aggregated by the workspace's cwd —
- * {@link listCraftSessionDirs} already restricts the scan to the matching
- * `~/.pi/agent/sessions/{encoded-cwd}/` bucket, so every session found here
+ * {@link listMortiseSessionDirs} already restricts the scan to the matching
+ * `~/.mortise/agent/sessions/{encoded-cwd}/` bucket, so every session found here
  * belongs to this workspace's cwd view by construction (no per-header
  * workspaceRootPath filtering needed). Multiple workspaces pointing at the
  * same cwd see the same list.
  */
 export function listSessions(workspaceRootPath: string): SessionHeader[] {
   const span = perf.span('session.listSessions');
-  const sessionDirs = listCraftSessionDirs(workspaceRootPath);
+  const sessionDirs = listMortiseSessionDirs(workspaceRootPath);
   span.mark('readdir');
   const sessions: SessionHeader[] = [];
 
@@ -612,20 +558,18 @@ function headerToMetadata(
 ): SessionHeader | null {
   try {
     // Count plan files for this session
-    // listCraftSessionDirs already resolved the sidecar directory. Reusing it
+    // listMortiseSessionDirs already resolved the sidecar directory. Reusing it
     // avoids rescanning the whole workspace bucket once per session.
     const planCount = listPlanFilesInDirectory(
       sessionDir ? join(sessionDir, 'plans') : getSessionPlansPath(workspaceRootPath, header.mortiseId),
     ).length;
 
-    const workingDir = workspaceRootPath;
     const sdkCwd = header.sdkCwd ? expandPath(header.sdkCwd) : workspaceRootPath;
 
     return {
       ...header,
       workspaceRootPath,
       planCount: planCount > 0 ? planCount : undefined,
-      workingDirectory: workingDir,
       sdkCwd,
     } as SessionHeader;
   } catch (error) {
@@ -670,7 +614,7 @@ export async function deleteSession(workspaceRootPath: string, sessionId: string
  * Get or create the latest visible session for a workspace.
  */
 export async function getOrCreateLatestSession(workspaceRootPath: string): Promise<SessionHeader> {
-  const sessions = listActiveSessions(workspaceRootPath);
+  const sessions = listSessions(workspaceRootPath);
   if (sessions.length > 0 && sessions[0]) {
     const latest = sessions[0];
     return {
@@ -699,7 +643,6 @@ export async function updateSessionMetadata(
     | 'name'
     | 'lastReadMessageId'
     | 'hasUnread'
-    | 'workingDirectory'
     | 'sdkCwd'
     | 'permissionMode'
     | 'sharedUrl'
@@ -708,11 +651,13 @@ export async function updateSessionMetadata(
     | 'provider'
   >>
 ): Promise<void> {
+  if (Object.prototype.hasOwnProperty.call(updates, 'workingDirectory')) {
+    throw new RemovedSessionFieldError('workingDirectory');
+  }
   const session = loadSession(workspaceRootPath, sessionId);
   if (!session) return;
 
   if (updates.name !== undefined) session.name = updates.name;
-  if (updates.workingDirectory !== undefined) session.workingDirectory = workspaceRootPath;
   if (updates.sdkCwd !== undefined) session.sdkCwd = updates.sdkCwd;
   if (updates.permissionMode !== undefined) session.permissionMode = updates.permissionMode;
   if ('lastReadMessageId' in updates) session.lastReadMessageId = updates.lastReadMessageId;
@@ -818,17 +763,6 @@ export function getPendingPlanExecution(
     ...session.pendingPlanExecution,
     executionDispatched: session.pendingPlanExecution.executionDispatched === true,
   };
-}
-
-// ============================================================
-// Session Filtering
-// ============================================================
-
-/**
- * Compatibility alias retained while callers converge on the unified list.
- */
-export function listActiveSessions(workspaceRootPath: string): SessionHeader[] {
-  return listSessions(workspaceRootPath);
 }
 
 // ============================================================

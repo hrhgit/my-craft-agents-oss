@@ -32,6 +32,7 @@ import {
   SettingsInput,
 } from '@/components/settings'
 import { useUpdateChecker } from '@/hooks/useUpdateChecker'
+import { hasPlatformCapability } from '@/lib/platform-capabilities'
 
 export const meta: DetailsPageMeta = {
   navigator: 'settings',
@@ -111,7 +112,8 @@ export default function AppSettingsPage() {
   const [isSavingProxy, setIsSavingProxy] = useState(false)
 
   // Auto-update state (Check Now / Update Ready only shown in Electron, not WebUI)
-  const isElectron = window.electronAPI.getRuntimeEnvironment() === 'electron'
+  const autoUpdateAvailable = hasPlatformCapability('autoUpdate')
+  const powerSaveBlockerAvailable = hasPlatformCapability('powerSaveBlocker')
   const updateChecker = useUpdateChecker()
   const [isCheckingForUpdates, setIsCheckingForUpdates] = useState(false)
 
@@ -130,7 +132,7 @@ export default function AppSettingsPage() {
     try {
       const [notificationsOn, keepAwakeOn, browserToolOn, proxySettings] = await Promise.all([
         window.electronAPI.getNotificationsEnabled(),
-        window.electronAPI.getKeepAwakeWhileRunning(),
+        powerSaveBlockerAvailable ? window.electronAPI.getKeepAwakeWhileRunning() : Promise.resolve(false),
         window.electronAPI.getBrowserToolEnabled(),
         window.electronAPI.getNetworkProxySettings(),
       ])
@@ -143,7 +145,7 @@ export default function AppSettingsPage() {
     } catch (error) {
       console.error('Failed to load settings:', error)
     }
-  }, [])
+  }, [powerSaveBlockerAvailable])
 
   useEffect(() => {
     loadSettings()
@@ -219,16 +221,18 @@ export default function AppSettingsPage() {
               </SettingsSection>
 
               {/* Power */}
-              <SettingsSection title={t("settings.power.title")}>
-                <SettingsCard>
-                  <SettingsToggle
-                    label={t("settings.power.keepScreenAwake")}
-                    description={t("settings.power.keepScreenAwakeDesc")}
-                    checked={keepAwakeEnabled}
-                    onCheckedChange={handleKeepAwakeEnabledChange}
-                  />
-                </SettingsCard>
-              </SettingsSection>
+              {powerSaveBlockerAvailable && (
+                <SettingsSection title={t("settings.power.title")}>
+                  <SettingsCard>
+                    <SettingsToggle
+                      label={t("settings.power.keepScreenAwake")}
+                      description={t("settings.power.keepScreenAwakeDesc")}
+                      checked={keepAwakeEnabled}
+                      onCheckedChange={handleKeepAwakeEnabledChange}
+                    />
+                  </SettingsCard>
+                </SettingsSection>
+              )}
 
               {/* Tools */}
               <SettingsSection title={t("settings.tools.title")}>
@@ -316,7 +320,7 @@ export default function AppSettingsPage() {
                       <span className="text-muted-foreground">
                         {updateChecker.updateInfo?.currentVersion ?? t("common.loading")}
                       </span>
-                      {isElectron && updateChecker.isDownloading && updateChecker.updateInfo?.latestVersion && (
+                      {autoUpdateAvailable && updateChecker.isDownloading && updateChecker.updateInfo?.latestVersion && (
                         <div className="flex items-center gap-2 text-muted-foreground text-sm">
                           <Spinner className="w-3 h-3" />
                           <span>{t("settings.about.downloading", { version: updateChecker.updateInfo.latestVersion, percent: updateChecker.downloadProgress })}</span>
@@ -324,7 +328,7 @@ export default function AppSettingsPage() {
                       )}
                     </div>
                   </SettingsRow>
-                  {isElectron && (
+                  {autoUpdateAvailable && (
                     <SettingsRow label={t("settings.about.checkForUpdates")}>
                       <Button
                         variant="outline"
@@ -343,7 +347,7 @@ export default function AppSettingsPage() {
                       </Button>
                     </SettingsRow>
                   )}
-                  {isElectron && updateChecker.isReadyToInstall && updateChecker.updateInfo?.latestVersion && (
+                  {autoUpdateAvailable && updateChecker.isReadyToInstall && updateChecker.updateInfo?.latestVersion && (
                     <SettingsRow label={t("settings.about.updateReady")}>
                       <Button
                         size="sm"

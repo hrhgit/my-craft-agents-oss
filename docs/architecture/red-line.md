@@ -1,9 +1,8 @@
 # The Red Line: bottom layer vs scaffolding
 
-Mortise is a shell around the Pi agent backend. The goal is a single
-unified base — Pi owns the agent runtime, session/credential/config storage,
-provider/model registry, tool execution, network layer, system prompt, and
-extension system. Mortise owns the host UI and workflow scaffolding on top.
+Mortise embeds the Pi agent backend. Pi owns agent-runtime semantics and the
+typed storage implementations; Mortise owns its product data root, host UI,
+and workflow scaffolding. Independent Pi and Mortise use distinct user roots.
 
 This document defines the boundary that keeps "Pi as the base, Mortise as the
 shell" honest. It is enforced by ESLint (see the `no-restricted-syntax` and
@@ -12,17 +11,17 @@ and by code review.
 
 ## Bottom layer — owned by Pi, unified into Pi
 
-These concerns live in the monorepo's `pi/` subtree (`@mortise/pi-*`)
-and their source of truth is `~/.pi/agent/`. Mortise
+These concerns live in the monorepo's `pi/` subtree (`@mortise/pi-*`). Mortise
+binds the runtime to `~/.mortise/agent/`; independent Pi keeps `~/.pi/agent/`. Mortise
 must not reimplement them, must not monkey-patch their internals, and must not
 import them outside the sanctioned seam (see below).
 
 - Agent runtime: `AgentSession`, prompt/steer/follow-up, thinking levels,
   compaction, branch/fork/clone, abort, retry.
-- Session storage: JSONL tree format, `~/.pi/agent/sessions/{encoded-cwd}/`,
+- Session storage: JSONL tree format, `~/.mortise/agent/sessions/{encoded-cwd}/`,
   the cwd→bucket encoding.
-- Credential storage: `~/.pi/agent/auth.json` (plaintext, 0600).
-- Config storage: `~/.pi/agent/models.json`, `settings.json`
+- Credential storage: `~/.mortise/agent/auth.json` (plaintext, 0600).
+- Config storage: `~/.mortise/agent/models.json`, `settings.json`
   (`shellGui.*`, `extensionConfig.*`, `mortise.agent.*` namespaces).
 - Provider/model registry and discovery.
 - Tool definitions and execution (built-in tools, custom tools, proxy tools).
@@ -58,7 +57,7 @@ Scaffolding code talks to Pi through exactly two channels:
 2. **Pi host facade** — typed public helpers exported by
    `@mortise/pi-coding-agent` for global config, credentials, session
    projection/fork, skills, and extensions. Mortise must not reimplement Pi file
-   locking or raw `~/.pi/agent/*.json` read-modify-write logic.
+   locking or raw `~/.mortise/agent/*.json` read-modify-write logic.
 
 ## The sanctioned seam
 
@@ -111,15 +110,15 @@ where Mortise is preserving its own opaque metadata.
 - `packages/shared/src/config/pi-global-config.ts` — compatibility shell around
   Pi host facade for global providers/defaults,
   `mortise.agent.*`, `shellGui.*`, and `extensionConfig.*`. Its only raw Pi path
-  constant is `PI_AGENT_DIR`, used to watch for external Pi config changes; it
-  must not import `PI_SETTINGS_FILE`, `PI_MODELS_FILE`, or `PI_AUTH_FILE`.
+  constant is `MORTISE_AGENT_DIR`, used to watch for external runtime config changes; it
+  must not import `MORTISE_SETTINGS_FILE`, `MORTISE_MODELS_FILE`, or `MORTISE_AUTH_FILE`.
 - `packages/shared/src/pi/pi-skill-resolver.ts` and
   `packages/shared/src/skills/storage.ts` — synchronous UI/server seams over
   Pi's skill listing facade. Mortise may validate slugs and render metadata, but
   skill discovery/parsing stays in Pi.
 - `packages/shared/src/sessions/storage.ts` — workspace-scoped session sidecar
   helpers plus Pi projection creation/lookup facade calls. It may import
-  `PI_SESSIONS_DIR` only to compute the current workspace bucket.
+  `MORTISE_SESSIONS_DIR` only to compute the current workspace bucket.
 - `packages/shared/src/sessions/tree-jsonl.ts` — uses Pi `SessionManager` for
   JSONL entry projection and Pi's `setCraftSessionMetadata` facade for Mortise's
   opaque UI metadata. It may keep lightweight first-line/projection readers but
@@ -130,13 +129,13 @@ where Mortise is preserving its own opaque metadata.
 
 ### Raw Pi path constants
 
-`mortise-shared/no-raw-pi-file-io` blocks new imports of Pi storage path constants
+`mortise-shared/no-raw-pi-file-io` blocks new imports of Mortise Agent storage path constants
 outside this list:
 
 - `packages/shared/src/config/paths.ts` — defines the path constants.
-- `packages/shared/src/config/pi-global-config.ts` — `PI_AGENT_DIR` only, for
+- `packages/shared/src/config/pi-global-config.ts` — `MORTISE_AGENT_DIR` only, for
   config-change watching until Pi exposes a typed subscription.
-- `packages/shared/src/sessions/storage.ts` — `PI_SESSIONS_DIR` only, to compute
+- `packages/shared/src/sessions/storage.ts` — `MORTISE_SESSIONS_DIR` only, to compute
   workspace bucket paths and delegate creation/lookup to Pi projection facades.
 - `packages/shared/src/workspaces/storage.ts` — read-only session bucket
   projection for workspace/session routing.

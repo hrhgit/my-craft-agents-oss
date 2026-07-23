@@ -27,6 +27,7 @@ function register(overrides: {
       calls.push(['redock', windowId, workspaceId])
       return layout
     },
+    flush: async () => { calls.push(['flush']) },
   }
   const windowManager = {
     getWorkspaceForWindow: (webContentsId: number) => [42, 43, 44].includes(webContentsId) ? 'ws-a' : null,
@@ -53,9 +54,9 @@ function register(overrides: {
 }
 
 describe('layout handlers', () => {
-  it('detaches one tab and creates its auxiliary window with resolved bounds', () => {
+  it('detaches one tab and creates its auxiliary window with resolved bounds', async () => {
     const { handlers, calls, bounds } = register()
-    handlers.get(RPC_CHANNELS.layout.DETACH_TAB)!(
+    await handlers.get(RPC_CHANNELS.layout.DETACH_TAB)!(
       { clientId: 'client', workspaceId: 'ws-a', webContentsId: 42 },
       'tab-a',
       { x: 5, y: 6, width: 700, height: 500 },
@@ -68,37 +69,38 @@ describe('layout handlers', () => {
     expect(calls[2]?.slice(2)).toEqual(['ws-a', 42, bounds])
   })
 
-  it('redocks the tab when auxiliary window creation fails', () => {
+  it('redocks the tab when auxiliary window creation fails', async () => {
     const { handlers, calls } = register({
       createAuxiliaryWindow: () => { throw new Error('window failed') },
     })
 
-    expect(() => handlers.get(RPC_CHANNELS.layout.DETACH_TAB)!(
+    await expect(handlers.get(RPC_CHANNELS.layout.DETACH_TAB)!(
       { clientId: 'client', workspaceId: 'ws-a', webContentsId: 42 },
       'tab-a',
-    )).toThrow('window failed')
-    expect(calls.at(-1)?.slice(0, 2)).toEqual(['redock', calls[1]?.[3]])
+    )).rejects.toThrow('window failed')
+    expect(calls.at(-2)?.slice(0, 2)).toEqual(['redock', calls[1]?.[3]])
+    expect(calls.at(-1)).toEqual(['flush'])
   })
 
-  it('merges saves into the trusted primary or auxiliary layout window', () => {
+  it('merges saves into the trusted primary or auxiliary layout window', async () => {
     const { handlers, calls } = register()
-    handlers.get(RPC_CHANNELS.layout.SAVE)!({ webContentsId: 42, workspaceId: 'ws-a' }, { workspaceId: 'ws-a' }, 3)
-    handlers.get(RPC_CHANNELS.layout.SAVE)!({ webContentsId: 44, workspaceId: 'ws-a' }, { workspaceId: 'ws-a' }, 4)
+    await handlers.get(RPC_CHANNELS.layout.SAVE)!({ webContentsId: 42, workspaceId: 'ws-a' }, { workspaceId: 'ws-a' }, 3)
+    await handlers.get(RPC_CHANNELS.layout.SAVE)!({ webContentsId: 44, workspaceId: 'ws-a' }, { workspaceId: 'ws-a' }, 4)
     expect(calls.filter(call => call[0] === 'saveWindow')).toEqual([
       ['saveWindow', 'primary'],
       ['saveWindow', 'aux-one'],
     ])
   })
 
-  it('rejects layout writes and detaches from secondary session windows', () => {
+  it('rejects layout writes and detaches from secondary session windows', async () => {
     const { handlers } = register()
-    expect(() => handlers.get(RPC_CHANNELS.layout.SAVE)!(
+    await expect(handlers.get(RPC_CHANNELS.layout.SAVE)!(
       { webContentsId: 43, workspaceId: 'ws-a' },
       { workspaceId: 'ws-a' },
-    )).toThrow('not a layout writer')
-    expect(() => handlers.get(RPC_CHANNELS.layout.DETACH_TAB)!(
+    )).rejects.toThrow('not a layout writer')
+    await expect(handlers.get(RPC_CHANNELS.layout.DETACH_TAB)!(
       { webContentsId: 43, workspaceId: 'ws-a' },
       'tab-a',
-    )).toThrow('Only the primary layout window')
+    )).rejects.toThrow('Only the primary layout window')
   })
 })

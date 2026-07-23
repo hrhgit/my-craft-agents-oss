@@ -1,10 +1,12 @@
 import { describe, it, expect } from 'bun:test';
+import { resolve } from 'node:path';
 import { buildDarwinSandboxProfile } from './filesystem-isolation.ts';
 
 describe('buildDarwinSandboxProfile', () => {
   it('includes session subpath write allow', () => {
     const profile = buildDarwinSandboxProfile('/tmp/mortise-session');
-    expect(profile).toContain('(allow file-write* (subpath "/tmp/mortise-session"))');
+    const expectedPath = resolve('/tmp/mortise-session').replace(/\\/g, '\\\\');
+    expect(profile).toContain(`(allow file-write* (subpath "${expectedPath}"))`);
     expect(profile).not.toContain('(deny network*)');
   });
 

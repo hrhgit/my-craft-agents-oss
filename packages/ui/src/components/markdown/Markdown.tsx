@@ -14,7 +14,6 @@ import { MarkdownSpreadsheetBlock } from './MarkdownSpreadsheetBlock'
 import { MarkdownHtmlBlock } from './MarkdownHtmlBlock'
 import { MarkdownImageBlock } from './MarkdownImageBlock'
 import { MarkdownLatexBlock } from './MarkdownLatexBlock'
-import { MarkdownPdfBlock } from './MarkdownPdfBlock'
 import { MarkdownDocBlock } from './MarkdownDocBlock'
 import { preprocessLinks } from './linkify'
 import { resolveMarkdownLinkTarget } from './link-target'
@@ -29,6 +28,7 @@ import {
   markdownPreviewBlockAllowsRawHtml,
   markdownRawHtmlPolicy,
 } from './raw-html-policy'
+import { DeferredPdfBlock } from './DeferredPdfBlock'
 
 /**
  * Names of preview-block code-fence types that recursive `Markdown` callers
@@ -308,7 +308,7 @@ function createComponents(
           }
           // PDF preview blocks → inline first page with expand to full viewer
           if (match?.[1] === 'pdf-preview' && isPreviewEnabled('pdf-preview')) {
-            return wrapBlock('pdf-preview', code, <MarkdownPdfBlock code={code} className="my-2" />, props.node?.position)
+            return wrapBlock('pdf-preview', code, <DeferredPdfBlock code={code} />, props.node?.position)
           }
           // Image preview blocks → inline image with expand to full viewer
           if (match?.[1] === 'image-preview' && isPreviewEnabled('image-preview')) {
@@ -452,7 +452,7 @@ function createComponents(
         }
         // PDF preview blocks → inline first page with expand to full viewer
         if (match?.[1] === 'pdf-preview' && isPreviewEnabled('pdf-preview')) {
-          return wrapBlock('pdf-preview', code, <MarkdownPdfBlock code={code} className="my-2" />, props.node?.position)
+          return wrapBlock('pdf-preview', code, <DeferredPdfBlock code={code} />, props.node?.position)
         }
         // Image preview blocks → inline image with expand to full viewer
         if (match?.[1] === 'image-preview' && isPreviewEnabled('image-preview')) {

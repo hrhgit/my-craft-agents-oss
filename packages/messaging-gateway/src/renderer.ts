@@ -3,7 +3,7 @@
  *
  * Three modes selected per binding via `BindingConfig.responseMode`:
  *
- *   - `streaming` (legacy): on Telegram, posts on first `text_delta` and
+ *   - `streaming`: on Telegram, posts on first `text_delta` and
  *     edits every ~editIntervalMs as tokens arrive; each `text_complete`
  *     finalises the current message, so one agent run with multiple turns
  *     produces multiple messages. On platforms without editing, accumulates
@@ -250,7 +250,7 @@ export class Renderer {
   }
 
   // ---------------------------------------------------------------------------
-  // Mode: streaming (legacy behaviour — unchanged)
+  // Mode: streaming
   // ---------------------------------------------------------------------------
 
   private async handleStreaming(

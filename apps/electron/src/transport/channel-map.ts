@@ -185,7 +185,7 @@ export const CHANNEL_MAP = {
   getPiProviderBaseUrl: invoke(RPC_CHANNELS.pi.GET_PROVIDER_BASE_URL),
   getPiProviderModels: invoke(RPC_CHANNELS.pi.GET_PROVIDER_MODELS),
 
-  // Pi global config (~/.pi/agent/) — pure Pi + custom provider mode
+  // Pi global config (~/.mortise/agent/) — pure Pi + custom provider mode
   getPiGlobalProviders: invoke(RPC_CHANNELS.pi.GET_GLOBAL_PROVIDERS),
   getPiGlobalSettings: invoke(RPC_CHANNELS.pi.GET_GLOBAL_SETTINGS),
   getPiGlobalProvider: invoke(RPC_CHANNELS.pi.GET_GLOBAL_PROVIDER),
@@ -313,7 +313,7 @@ export const CHANNEL_MAP = {
   getBrowserToolEnabled: invoke(RPC_CHANNELS.tools.GET_BROWSER_TOOL_ENABLED),
   setBrowserToolEnabled: invoke(RPC_CHANNELS.tools.SET_BROWSER_TOOL_ENABLED),
 
-  // Pi Extensions 集成开关（控制全局 pi 扩展加载与 automation 委托）
+  // Mortise 扩展集成开关（控制 Mortise Agent 扩展加载与 automation 委托）
   getPiExtensionSettings: invoke(RPC_CHANNELS.piExtensions.GET_SETTINGS),
   setPiExtensionSettings: invoke(RPC_CHANNELS.piExtensions.SET_SETTINGS),
   updatePiExtensionSettings: invoke(RPC_CHANNELS.piExtensions.UPDATE_SETTINGS),
@@ -323,9 +323,9 @@ export const CHANNEL_MAP = {
   getPiExtensionStates: invoke(RPC_CHANNELS.piExtensions.GET_EXTENSION_STATES),
   setPiExtensionEnabled: invoke(RPC_CHANNELS.piExtensions.SET_EXTENSION_ENABLED),
 
-  // Pi 扩展事件桥接：监听 extension_* / remoteui_request 事件，回传 remoteui 响应
+  // Pi extension event bridge and versioned interaction responses.
   onExtensionEvent: listener(RPC_CHANNELS.extensions.EVENT),
-  sendRemoteUIResponse: invoke(RPC_CHANNELS.extensions.REMOTEUI_RESPONSE),
+  respondToExtensionInteraction: invoke(RPC_CHANNELS.extensions.INTERACTION_RESPONSE),
   invokeExtensionCommand: invoke(RPC_CHANNELS.extensions.COMMAND_INVOKE),
   getExtensionCommands: invoke(RPC_CHANNELS.extensions.GET_COMMANDS),
 
@@ -386,15 +386,7 @@ export const CHANNEL_MAP = {
   // LLM Connections
 
   // Automations
-  getAutomations: invoke(RPC_CHANNELS.automations.GET),
   automationCommand: invoke(RPC_CHANNELS.automations.COMMAND),
-  testAutomation: invoke(RPC_CHANNELS.automations.TEST),
-  setAutomationEnabled: invoke(RPC_CHANNELS.automations.SET_ENABLED),
-  duplicateAutomation: invoke(RPC_CHANNELS.automations.DUPLICATE),
-  deleteAutomation: invoke(RPC_CHANNELS.automations.DELETE),
-  getAutomationHistory: invoke(RPC_CHANNELS.automations.GET_HISTORY),
-  getAutomationLastExecuted: invoke(RPC_CHANNELS.automations.GET_LAST_EXECUTED),
-  replayAutomation: invoke(RPC_CHANNELS.automations.REPLAY),
   onAutomationsChanged: listener(RPC_CHANNELS.automations.CHANGED),
 
   // Resources (cross-workspace export/import)

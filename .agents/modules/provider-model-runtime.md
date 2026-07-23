@@ -16,7 +16,7 @@ collaborates_with: [app-settings-security]
 validation:
   - { id: provider-model-regression, kind: unit, command: "npm --prefix pi test --workspace @mortise/pi-ai", description: "Run provider and model runtime regressions.", triggers: [owned-change], required: true, evidence: "Workspace test exit status and output." }
   - { id: mortise-pi-model-contract, kind: contract, command: "bun test packages/shared/tests/models-pi.test.ts", description: "Verify the Mortise-to-Pi model contract.", triggers: [contract-change], required: true, evidence: "Contract test exit status and output." }
-scope_digest: cd19bd414413fd3ee88aa8724925f1cef527e43a
+scope_digest: d3fcb9c266507da06875e3865aca591ec8125af7
 ---
 
 ## Purpose
@@ -47,5 +47,6 @@ Run Pi AI tests plus Mortise model and provider configuration tests.
 Provider wire formats and model identifiers drift independently; generated catalogs can hide compatibility regressions.
 
 ## Semantic history
+- 2026-07-21: Regenerated the canonical 1,046-model catalog from the repository generator, fixed abort checks at every buffered SSE yield boundary, and bounded provider test workers for deterministic Windows validation.
 - 2026-07-13: Migrated Mortise provider configuration to the Pi model representation.
 - 2026-07-19: Reset product-owned package and version lineage to Mortise.

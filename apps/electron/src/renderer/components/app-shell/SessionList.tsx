@@ -65,7 +65,7 @@ interface SessionListProps {
   /** Session-level pending prompt marker (permission/admin approval) */
   hasPendingPrompt?: (sessionId: string) => boolean
   /** DOM-verified match info for the active session (from ChatDisplay) */
-  activeChatMatchInfo?: { sessionId: string | null; count: number; isHighlighting?: boolean }
+  activeChatMatchInfo?: { sessionId: string | null; count: number; hasMore?: boolean; isHighlighting?: boolean }
 }
 
 // Note: uses date-fns format for non-today/yesterday dates; Today/Yesterday translated at render time
@@ -137,20 +137,8 @@ export function SessionList({
   ])
 
   const readCollapsedGroupsForScope = useCallback((scopeSuffix: string): Set<string> => {
-    const scopedRaw = storage.getRaw(KEYS.collapsedSessionGroups, scopeSuffix)
-    if (scopedRaw !== null) {
-      try {
-        const parsed = JSON.parse(scopedRaw)
-        return new Set(Array.isArray(parsed) ? parsed : [])
-      } catch {
-        return new Set()
-      }
-    }
-
-    // Legacy fallback: previous versions used a single global key with no scope suffix.
-    // Use as migration source only when this scope has never been written.
-    const legacy = storage.get<string[]>(KEYS.collapsedSessionGroups, [])
-    return new Set(legacy)
+    const storedGroups = storage.get<unknown>(KEYS.collapsedSessionGroups, [], scopeSuffix)
+    return new Set(Array.isArray(storedGroups) ? storedGroups.filter(group => typeof group === 'string') : [])
   }, [])
 
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => readCollapsedGroupsForScope(collapseScopeSuffix))
@@ -482,7 +470,6 @@ export function SessionList({
 
   // --- Context value (shared across all SessionItems) ---
   const handleFocusZone = useCallback(() => focusZone('navigator', { intent: 'click', moveFocus: false }), [focusZone])
-  const handleOpenInNewWindow = useCallback((item: SessionMeta) => onOpenInNewWindow?.(item), [onOpenInNewWindow])
   const resolvedSearchQuery = isSearchMode ? highlightQuery : searchQuery
 
   const listContext = useMemo((): SessionListContextValue => ({
@@ -490,7 +477,7 @@ export function SessionList({
     onMarkUnread,
     onDelete,
     onSelectSessionById: handleSelectSessionById,
-    onOpenInNewWindow: handleOpenInNewWindow,
+    onOpenInNewWindow,
     onSendToWorkspace: (ids: string[]) => setSendToWorkspace(ids),
     onFocusZone: handleFocusZone,
     onKeyDown: handleKeyDown,
@@ -503,7 +490,7 @@ export function SessionList({
     hasPendingPrompt,
   }), [
     handleRenameClick, onMarkUnread, onDelete,
-    handleSelectSessionById, handleOpenInNewWindow, setSendToWorkspace, handleFocusZone, handleKeyDown,
+    handleSelectSessionById, onOpenInNewWindow, setSendToWorkspace, handleFocusZone, handleKeyDown,
     focusedSessionId, selectionStore.state.selected, isMultiSelectActive,
     sessionOptions, contentSearchResults, activeChatMatchInfo, hasPendingPrompt,
   ])

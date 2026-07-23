@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import type { ThinkingLevel } from "@mortise/pi-agent-core";
 import type { Model } from "@mortise/pi-ai/types";
-import { getAgentDir } from "../config.ts";
+import { getAgentDir, getProjectConfigDir } from "../config.ts";
 import { resolvePath } from "../utils/paths.ts";
 import { AuthStorage } from "./auth-storage.ts";
 import { applyExtensionFlagValues } from "./extension-flags.ts";
@@ -35,6 +35,7 @@ export interface AgentSessionRuntimeDiagnostic {
 export interface CreateAgentSessionServicesOptions {
 	cwd: string;
 	agentDir?: string;
+	projectConfigDir?: string;
 	authStorage?: AuthStorage;
 	settingsManager?: SettingsManager;
 	modelRegistry?: ModelRegistry;
@@ -75,6 +76,7 @@ export interface CreateAgentSessionFromServicesOptions {
 export interface AgentSessionServices {
 	cwd: string;
 	agentDir: string;
+	projectConfigDir: string;
 	authStorage: AuthStorage;
 	settingsManager: SettingsManager;
 	modelRegistry: ModelRegistry;
@@ -115,14 +117,16 @@ export async function createAgentSessionServices(
 	const servicesStartedAt = performance.now();
 	const cwd = resolvePath(options.cwd);
 	const agentDir = options.agentDir ? resolvePath(options.agentDir) : getAgentDir();
+	const projectConfigDir = options.projectConfigDir ?? getProjectConfigDir();
 	const authStorage = options.authStorage ?? AuthStorage.create(join(agentDir, "auth.json"));
-	const settingsManager = options.settingsManager ?? SettingsManager.create(cwd, agentDir);
+	const settingsManager = options.settingsManager ?? SettingsManager.create(cwd, agentDir, projectConfigDir);
 	const modelRegistry = options.modelRegistry ?? ModelRegistry.create(authStorage, join(agentDir, "models.json"));
 	const networkManager = new NetworkManager(settingsManager);
 	const resourceLoader = new DefaultResourceLoader({
 		...(options.resourceLoaderOptions ?? {}),
 		cwd,
 		agentDir,
+		projectConfigDir,
 		settingsManager,
 	});
 	const objectsReadyAt = performance.now();
@@ -170,6 +174,7 @@ export async function createAgentSessionServices(
 	return {
 		cwd,
 		agentDir,
+		projectConfigDir,
 		authStorage,
 		settingsManager,
 		modelRegistry,

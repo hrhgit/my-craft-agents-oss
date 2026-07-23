@@ -2,16 +2,16 @@
  * Tests for Skills Storage
  *
  * Verifies the unified two-tier skill loading system (Pi native paths):
- * 1. Global skills: ~/.pi/agent/skills/ (lowest priority)
- * 2. Project skills: {projectRoot}/.pi/skills/ (highest priority)
+ * 1. Global skills: ~/.mortise/agent/skills/ (lowest priority)
+ * 2. Project skills: {projectRoot}/.mortise/skills/ (highest priority)
  *
  * skillExists() uses active Pi tiers (project > global) — when no workspace
  * config exists, projectRoot falls back to workspaceRoot, so it searches
- * {workspaceRoot}/.pi/skills/ (NOT {workspaceRoot}/skills/).
+ * {workspaceRoot}/.mortise/skills/ (NOT {workspaceRoot}/skills/).
  *
  * Uses real temp directories to test actual filesystem operations.
  *
- * Note: The global skills directory (~/.pi/agent/skills/) is a module-level
+ * Note: The global skills directory (~/.mortise/agent/skills/) is a module-level
  * constant that cannot be mocked reliably when tests run in parallel with
  * other test files. The loadAllSkills tests account for any pre-existing
  * global skills by capturing a baseline count and validating relative to it.
@@ -37,7 +37,7 @@ let workspaceRoot: string;
 let projectRoot: string;
 
 // The real Pi global skills directory — we cannot mock this reliably.
-const REAL_GLOBAL_SKILLS_DIR = join(homedir(), '.pi', 'agent', 'skills');
+const REAL_GLOBAL_SKILLS_DIR = join(homedir(), '.mortise', 'agent', 'skills');
 
 // ============================================================
 // Helpers
@@ -96,9 +96,9 @@ function getExistingGlobalSlugs(): Set<string> {
   }
 }
 
-/** Project skills directory under the unified Pi layout: {projectRoot}/.pi/skills/ */
+/** Project skills directory under the unified Pi layout: {projectRoot}/.mortise/skills/ */
 function getProjectSkillsDir(): string {
-  return join(projectRoot, '.pi', 'skills');
+  return join(projectRoot, '.mortise', 'skills');
 }
 
 // ============================================================
@@ -198,7 +198,7 @@ describe('loadSkill', () => {
 // ============================================================
 // Tests: loadAllSkills (two-tier loading: global + project)
 //
-// These tests account for pre-existing global skills at ~/.pi/agent/skills/.
+// These tests account for pre-existing global skills at ~/.mortise/agent/skills/.
 // We capture a baseline and verify our test skills appear with correct sources.
 // The legacy {workspaceRoot}/skills/ path is NOT read by loadAllSkills.
 // ============================================================
@@ -405,13 +405,13 @@ describe('loadAllSkills', () => {
 //
 // skillExists(workspaceRoot, slug) reads workspace config to resolve projectRoot.
 // In these tests no workspace config exists, so projectRoot falls back to
-// workspaceRoot — meaning project tier is searched at {workspaceRoot}/.pi/skills/.
+// workspaceRoot — meaning project tier is searched at {workspaceRoot}/.mortise/skills/.
 // ============================================================
 
 describe('skillExists', () => {
   it('should return true for existing skill with SKILL.md', () => {
-    // No workspace config → projectRoot = workspaceRoot, project tier at {workspaceRoot}/.pi/skills/
-    createSkill(join(workspaceRoot, '.pi', 'skills'), 'exists-skill');
+    // No workspace config → projectRoot = workspaceRoot, project tier at {workspaceRoot}/.mortise/skills/
+    createSkill(join(workspaceRoot, '.mortise', 'skills'), 'exists-skill');
     expect(skillExists(workspaceRoot, 'exists-skill')).toBe(true);
   });
 
@@ -420,7 +420,7 @@ describe('skillExists', () => {
   });
 
   it('should return false for directory without SKILL.md', () => {
-    createEmptySkillDir(join(workspaceRoot, '.pi', 'skills'), 'empty');
+    createEmptySkillDir(join(workspaceRoot, '.mortise', 'skills'), 'empty');
     expect(skillExists(workspaceRoot, 'empty')).toBe(false);
   });
 });

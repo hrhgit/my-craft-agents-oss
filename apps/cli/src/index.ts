@@ -15,13 +15,11 @@ import { invokeAutomationIngressToken, invokeAutomationWorkspace } from './autom
 import { subscribeToConversationStream } from './conversation-stream.ts'
 import {
   asExtensionInteractionRequest,
-  asRemoteUIRequest,
+  asExtensionInteractionTermination,
   handleExtensionInteractionInteractive,
   handleExtensionInteractionNonInteractive,
-  handleRemoteUIInteractive,
-  handleRemoteUINonInteractive,
-  type RemoteUIResponder,
-} from './remote-ui.ts'
+  type ExtensionInteractionResponder,
+} from './extension-interactions.ts'
 
 // ---------------------------------------------------------------------------
 // Arg parsing
@@ -50,7 +48,7 @@ export interface CliArgs {
   model: string
   apiKey: string
   baseUrl: string
-  // RemoteUI 交互模式：false=自动取消（默认），true=终端渲染对话框
+  // Extension interaction mode: false=auto-cancel, true=render in the terminal.
   interactive: boolean
 }
 
@@ -760,7 +758,7 @@ function resolveOptionalApiKey(provider: string, explicit: string): string | und
 }
 
 export function resolveCustomEndpointCliSetup(provider: string, baseUrl: string, explicitKey: string): {
-  providerType: 'pi_compat'
+  providerType: 'pi_custom'
   authType: 'none' | 'api_key_with_endpoint'
   customEndpoint: { api: 'anthropic-messages' | 'openai-completions' }
   defaultModel: string
@@ -780,7 +778,7 @@ export function resolveCustomEndpointCliSetup(provider: string, baseUrl: string,
     resolveApiKey(provider, explicitKey)
   }
   return {
-    providerType: 'pi_compat',
+    providerType: 'pi_custom',
     authType: branch.authType,
     customEndpoint,
     defaultModel: provider === 'anthropic' ? 'claude-sonnet-4-6' : 'gpt-4o',
@@ -838,9 +836,13 @@ async function cmdRun(args: CliArgs): Promise<void> {
   // 交互对话框进行中时为 true — 此时 SIGINT 由 readline 处理（取消当前请求），
   // onSignal 应跳过，避免误取消整个会话并退出进程。
   let inInteractiveDialog = false
-  // F6: 串行化 remoteui:request 处理——同一时刻只处理一个对话框，
+  // Serialize interaction requests so only one readline owns stdin at a time.
   // 避免多个 readline 同时绑定 stdin 导致输入乱码。
   let dialogQueue: Promise<void> = Promise.resolve()
+  const interactionControllers = new Map<string, AbortController>()
+  const maxPendingInteractions = 128
+  const interactionKey = (value: { sessionId: string; runtimeId: string; extensionId: string; requestId: string }) =>
+    `${value.sessionId}\0${value.runtimeId}\0${value.extensionId}\0${value.requestId}`
   // extensions:EVENT 订阅取消器（在 cleanup 中调用）
   let unsubExtensions: (() => void) | undefined
   // F29: idempotency guard — cleanup can be invoked concurrently by the
@@ -854,6 +856,8 @@ async function cmdRun(args: CliArgs): Promise<void> {
     if (cleaned) return
     cleaned = true
     unsubExtensions?.()
+    for (const controller of interactionControllers.values()) controller.abort()
+    interactionControllers.clear()
     if (sessionId && client?.isConnected && !args.noCleanup) {
       await client.invoke('sessions:delete', sessionId).catch(() => {})
     }
@@ -877,46 +881,62 @@ async function cmdRun(args: CliArgs): Promise<void> {
   try {
     await client.connect()
 
-    // 订阅 pi 扩展事件频道（remoteui:request 等）。
+    // Subscribe to versioned Pi extension interactions.
     // 服务端通过 eventSink(extensions:event, { to: 'workspace' }, event) 广播，
     // 客户端经 window:switchWorkspace 绑定到工作区后即可接收。
     unsubExtensions = client.on(RPC_CHANNELS.extensions.EVENT, (event: unknown) => {
-      const interactionRequest = asExtensionInteractionRequest(event)
-      const remoteUIRequest = asRemoteUIRequest(event)
-      const request = interactionRequest ?? remoteUIRequest
-      if (!request) return
+      const termination = asExtensionInteractionTermination(event)
+      if (termination) {
+        const key = interactionKey(termination)
+        interactionControllers.get(key)?.abort()
+        interactionControllers.delete(key)
+        return
+      }
 
-      // F6: 串行化处理——将每个 remoteui:request 排入 Promise 链，
-      // 确保同一时刻只处理一个对话框，避免多个 readline 同时绑定 stdin。
+      const interactionRequest = asExtensionInteractionRequest(event)
+      if (!interactionRequest) return
+      const key = interactionKey(interactionRequest)
+      if (interactionControllers.has(key)) return
+
+      const respond: ExtensionInteractionResponder = async (sid, rid, response) => {
+        await client!.invoke(
+          RPC_CHANNELS.extensions.INTERACTION_RESPONSE,
+          sid,
+          rid,
+          response,
+        )
+      }
+      if (interactionControllers.size >= maxPendingInteractions) {
+        void respond(interactionRequest.sessionId, interactionRequest.requestId, {
+          schemaVersion: 1,
+          status: 'cancelled',
+          reason: 'host-disconnected',
+        }).catch(error => {
+          process.stderr.write(`[ExtensionInteraction] Capacity cancellation failed: ${error instanceof Error ? error.message : String(error)}\n`)
+        })
+        return
+      }
+      const controller = new AbortController()
+      interactionControllers.set(key, controller)
+
       dialogQueue = dialogQueue
         .then(async () => {
+          if (controller.signal.aborted) return
           inInteractiveDialog = args.interactive
           try {
-            const respond: RemoteUIResponder = async (sid, rid, payload, reason) => {
-              await client!.invoke(
-                RPC_CHANNELS.extensions.REMOTEUI_RESPONSE,
-                sid,
-                rid,
-                payload,
-                reason,
-              )
-            }
             const log = (m: string) => process.stderr.write(m + '\n')
-            if (interactionRequest && args.interactive) {
-              await handleExtensionInteractionInteractive(interactionRequest, respond, log)
-            } else if (interactionRequest) {
-              await handleExtensionInteractionNonInteractive(interactionRequest, respond, log)
-            } else if (args.interactive) {
-              await handleRemoteUIInteractive(remoteUIRequest!, respond, log)
+            if (args.interactive) {
+              await handleExtensionInteractionInteractive(interactionRequest, respond, log, controller.signal)
             } else {
-              await handleRemoteUINonInteractive(remoteUIRequest!, respond, log)
+              await handleExtensionInteractionNonInteractive(interactionRequest, respond, log)
             }
           } catch (e) {
             process.stderr.write(
-              `[RemoteUI] Handler error: ${e instanceof Error ? e.message : String(e)}\n`,
+              `[ExtensionInteraction] Handler error: ${e instanceof Error ? e.message : String(e)}\n`,
             )
           } finally {
             inInteractiveDialog = false
+            if (interactionControllers.get(key) === controller) interactionControllers.delete(key)
           }
         })
         .catch(() => {}) // 防止链断裂影响后续请求
@@ -1354,7 +1374,7 @@ export function getValidateSteps(): ValidateStep[] {
       fn: async (client, ctx) => {
         if (!ctx.createdSessionId || !ctx.workspaceRootPath) return 'skipped (no session or workspace)'
         ctx.createdSkillSlug = '__cli-validate-skill'
-        const skillDir = `${ctx.workspaceRootPath}/.pi/skills/${ctx.createdSkillSlug}`
+        const skillDir = `${ctx.workspaceRootPath}/.mortise/skills/${ctx.createdSkillSlug}`
         // Use bash to create the skill file deterministically
         return await waitForSendEvents(client, ctx.createdSessionId,
           `Use the Bash tool to run this exact command:
@@ -1393,81 +1413,6 @@ SKILLEOF`, 90_000, true, undefined, ctx.onEvent)
         if (!ctx.workspaceId || !ctx.createdSkillSlug) return 'skipped (no skill)'
         await client.invoke('skills:delete', ctx.workspaceId, ctx.createdSkillSlug)
         return `deleted skill: ${ctx.createdSkillSlug}`
-      },
-    },
-    // ----- Webhook validation -----
-    {
-      name: 'webhook:test (RPC)',
-      fn: async (client, ctx) => {
-        if (!ctx.workspaceId) return 'skipped (no workspace)'
-        const r = (await client.invoke('automations:test', {
-          workspaceId: ctx.workspaceId,
-          actions: [{
-            type: 'webhook',
-            url: 'http://127.0.0.1:19999/validate-test',
-            method: 'GET',
-          }],
-        })) as any
-        const result = r?.actions?.[0]
-        if (result?.success) throw new Error('Expected webhook to fail (nothing listening)')
-        if (!result?.error && result?.statusCode !== 0) throw new Error('Expected error or statusCode 0 in result')
-        return `correctly failed: ${(result.error ?? `statusCode=${result.statusCode}`).slice(0, 80)}`
-      },
-    },
-    {
-      name: 'webhook:verify failure',
-      fn: async (client, ctx) => {
-        if (!ctx.workspaceRootPath) return 'skipped (no workspace root)'
-        const { readFile } = await import('fs/promises')
-        const historyPath = `${ctx.workspaceRootPath}/automations-history.jsonl`
-
-        const start = Date.now()
-        const deadline = start + 15_000
-        let delay = 200
-
-        let lastLineCount = 0
-        let lastWebhookCount = 0
-        let lastSummary = 'no entries'
-
-        while (Date.now() < deadline) {
-          const content = await readFile(historyPath, 'utf-8').catch(() => '')
-          const lines = content.trim().split('\n').filter(Boolean)
-          lastLineCount = lines.length
-
-          const entries = lines
-            .map((l) => {
-              try {
-                return JSON.parse(l)
-              } catch {
-                return null
-              }
-            })
-            .filter(Boolean) as Array<Record<string, unknown>>
-
-          const webhookEntries = entries.filter((e) => !!e.webhook)
-          lastWebhookCount = webhookEntries.length
-
-          if (webhookEntries.length > 0) {
-            const recentThreshold = Date.now() - 120_000
-            const recentFailed = webhookEntries.find((e: any) =>
-              !e.ok && e.ts > recentThreshold && e.webhook?.method === 'POST'
-            ) as any
-            if (recentFailed) {
-              return `webhook failure recorded: method=${recentFailed.webhook.method}, url=${recentFailed.webhook.url?.slice(0, 50)}`
-            }
-
-            const latest = webhookEntries[webhookEntries.length - 1] as any
-            lastSummary = `latest: ok=${String(latest?.ok)} method=${String(latest?.webhook?.method ?? 'n/a')} ts=${String(latest?.ts ?? 'n/a')}`
-          }
-
-          await new Promise((r) => setTimeout(r, delay))
-          delay = Math.min(Math.round(delay * 1.8), 1500)
-        }
-
-        const waitedMs = Date.now() - start
-        throw new Error(
-          `No recent failed POST webhook history entry after ${waitedMs}ms (lines=${lastLineCount}, webhookEntries=${lastWebhookCount}, ${lastSummary})`,
-        )
       },
     },
     {
@@ -1724,9 +1669,9 @@ Commands:
                          --output-format     text or stream-json (default: text)
                          --no-cleanup        Keep session after completion
                          --server-entry      Path to server/index.ts
-                         --interactive       Render pi extension remoteui:request dialogs
-                                             in the terminal (select/editor). Default:
-                                             auto-cancel with reason "non-interactive".
+                         --interactive       Render versioned extension interactions
+                                             in the terminal. Default: return a
+                                             structured host-disconnected cancellation.
   ping                   Verify connectivity (clientId + latency)
   health                 Check credential store health
   versions               Show server runtime versions

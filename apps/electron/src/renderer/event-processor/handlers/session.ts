@@ -10,6 +10,7 @@ import type {
   ProcessResult,
   CompleteEvent,
   ErrorEvent,
+  SessionFailureEvent,
   TypedErrorEvent,
   NameChangedEvent,
   PermissionRequestEvent,
@@ -21,7 +22,6 @@ import type {
   InterruptedEvent,
   TitleGeneratedEvent,
   AsyncOperationEvent,
-  WorkingDirectoryChangedEvent,
   PermissionModeChangedEvent,
   SessionModelChangedEvent,
   ProviderChangedEvent,
@@ -91,12 +91,32 @@ export function handleComplete(
         ...session,
         messages: updatedMessages,
         isProcessing: false,
+        pendingFailure: undefined,
         currentStatus: undefined,  // Clear any lingering status
         // Update tokenUsage from complete event (for real-time context counter updates)
         tokenUsage: event.tokenUsage ?? session.tokenUsage,
         // Update hasUnread flag from main process (state machine for NEW badge)
         // Only update if explicitly provided - undefined means "don't change"
         ...(event.hasUnread !== undefined && { hasUnread: event.hasUnread }),
+      },
+      streaming: null,
+    },
+    effects: [],
+  }
+}
+
+/** Preserve an accepted turn while only its host-owned settlement is retryable. */
+export function handleSessionFailure(
+  state: SessionState,
+  event: SessionFailureEvent,
+): ProcessResult {
+  return {
+    state: {
+      session: {
+        ...state.session,
+        isProcessing: true,
+        currentStatus: undefined,
+        pendingFailure: event.error,
       },
       streaming: null,
     },
@@ -371,24 +391,6 @@ export function handleAsyncOperation(
         ...session,
         isAsyncOperationOngoing: event.isOngoing,
       },
-      streaming,
-    },
-    effects: [],
-  }
-}
-
-/**
- * Handle working_directory_changed - update session working directory (user-initiated via UI)
- */
-export function handleWorkingDirectoryChanged(
-  state: SessionState,
-  event: WorkingDirectoryChangedEvent
-): ProcessResult {
-  const { session, streaming } = state
-
-  return {
-    state: {
-      session: { ...session, workingDirectory: event.workingDirectory },
       streaming,
     },
     effects: [],

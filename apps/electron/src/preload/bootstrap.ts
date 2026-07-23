@@ -41,6 +41,7 @@ import { RPC_CHANNELS } from '@mortise/shared/protocol'
 import type { ElectronAPI } from '../shared/types'
 import type { WorkspaceRoute } from '../shared/app-layout'
 import { PRELOAD_LOCAL_CHANNELS } from '../shared/ipc-channels'
+import { publishElectronPlatformCapabilities } from '../shared/platform-capabilities'
 import type { UiValidationRendererStateBatch } from '../shared/ui-validation-state-bridge'
 import { allowsInsecureTlsFromEnvironment, shouldRejectUnauthorizedTls } from '../shared/remote-tls'
 
@@ -438,6 +439,7 @@ client.handleCapability(CLIENT_BROWSER_INVOKE, async (req: BrowserCapabilityRequ
 // ---------------------------------------------------------------------------
 
 const api = buildClientApi(client, CHANNEL_MAP, (ch) => client.isChannelAvailable(ch))
+publishElectronPlatformCapabilities(api)
 function getWorkspaceApi(route: WorkspaceRoute): ElectronAPI {
   const key = `${encodeURIComponent(route.serverId)}::${encodeURIComponent(route.workspaceId)}`
   const existing = workspaceApis.get(key)

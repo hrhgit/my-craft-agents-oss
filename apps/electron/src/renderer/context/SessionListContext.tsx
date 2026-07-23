@@ -9,7 +9,7 @@ export interface SessionListContextValue {
   onMarkUnread: (sessionId: string) => void
   onDelete: (sessionId: string, skipConfirmation?: boolean) => Promise<boolean>
   onSelectSessionById: (sessionId: string) => void
-  onOpenInNewWindow: (item: SessionMeta) => void
+  onOpenInNewWindow?: (item: SessionMeta) => void
   onSendToWorkspace?: (sessionIds: string[]) => void
   onFocusZone: () => void
   onKeyDown: (e: React.KeyboardEvent, item: SessionMeta) => void
@@ -23,7 +23,7 @@ export interface SessionListContextValue {
   sessionOptions?: Map<string, SessionOptions>
   contentSearchResults: Map<string, ContentSearchResult>
   /** DOM-verified match info for the active session (count, highlighting state) */
-  activeChatMatchInfo?: { sessionId: string | null; count: number; isHighlighting?: boolean }
+  activeChatMatchInfo?: { sessionId: string | null; count: number; hasMore?: boolean; isHighlighting?: boolean }
   /** Whether a session currently has a pending permission/admin prompt */
   hasPendingPrompt?: (sessionId: string) => boolean
 }

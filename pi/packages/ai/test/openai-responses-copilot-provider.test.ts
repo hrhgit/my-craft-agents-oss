@@ -26,9 +26,10 @@ async function captureOpenAIResponseHeaders(
 	model: Model<"openai-responses"> = getModel("openai", "gpt-5.4"),
 ): Promise<{ sessionId: string | null; clientRequestId: string | null }> {
 	const captured = { sessionId: null as string | null, clientRequestId: null as string | null };
-	vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
-		captured.sessionId = getHeader(init?.headers, "session_id");
-		captured.clientRequestId = getHeader(init?.headers, "x-client-request-id");
+	vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+		const requestHeaders = input instanceof Request ? input.headers : undefined;
+		captured.sessionId = getHeader(init?.headers ?? requestHeaders, "session_id");
+		captured.clientRequestId = getHeader(init?.headers ?? requestHeaders, "x-client-request-id");
 		return new Response("data: [DONE]\n\n", {
 			status: 200,
 			headers: { "content-type": "text/event-stream" },

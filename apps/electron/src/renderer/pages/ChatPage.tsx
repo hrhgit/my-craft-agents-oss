@@ -29,9 +29,9 @@ import { deriveSessionMessagesLoadState, formatSessionLoadFailure } from '@/lib/
 import { ensureSessionMessagesLoadedAtom, sessionMetaMapAtom } from '@/atoms/sessions'
 import { piProjectionAtomFamily } from '@/atoms/pi-projection'
 import { getSessionTitle } from '@/utils/session'
-import type { MidStreamSendIntent } from '@mortise/shared/protocol'
 import { MORTISE_DOCS_URL } from '@mortise/shared/branding'
 import { useWorkspaceElectronApi, useWorkspaceRoute } from '@/context/WorkspaceElectronApiContext'
+import { createFocusedHandleBinding, createFocusedMatchReporter } from './chat-search-focus-binding'
 
 export interface ChatPageProps {
   sessionId: string
@@ -77,6 +77,15 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
     onChatMatchInfoChange,
     isFocusedPanel,
   } = useAppShellContext()
+  const ownsChatSearch = isFocusedPanel !== false
+  const focusedChatDisplayRef = React.useMemo(
+    () => createFocusedHandleBinding(chatDisplayRef, ownsChatSearch),
+    [chatDisplayRef, ownsChatSearch],
+  )
+  const focusedMatchInfoReporter = React.useMemo(
+    () => createFocusedMatchReporter(onChatMatchInfoChange, ownsChatSearch),
+    [onChatMatchInfoChange, ownsChatSearch],
+  )
 
   // Use the unified session options hook for clean access
   const {
@@ -264,9 +273,6 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
     return piGlobalSettings.defaultModel ?? ''
   }, [session?.model, providerUnavailable, piGlobalSettings.defaultModel])
 
-  // Compatibility DTO field; complete-unification keeps it equal to the
-  // workspace root, which is the authoritative base for relative paths.
-  const workingDirectory = session?.workingDirectory
   const activeWorkspace = React.useMemo(
     () => workspaces.find((w) => w.id === activeWorkspaceId) || null,
     [workspaces, activeWorkspaceId]
@@ -274,12 +280,11 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
 
   const handleOpenFile = React.useCallback(
     async (path: string) => {
-      // Resolve bare relative paths against the workspace root. workingDirectory
-      // is retained only for old DTO compatibility and should match the root.
+      // Resolve bare relative paths against the selected workspace root.
       const resolved = (() => {
         if (path.startsWith('/') || path.startsWith('~/')) return path
 
-        const baseDir = activeWorkspace?.rootPath || workingDirectory
+        const baseDir = activeWorkspace?.rootPath
         if (!baseDir) return path
 
         const cleanedBase = baseDir.replace(/\/+$/, '')
@@ -317,7 +322,7 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
 
       onOpenFile(resolved)
     },
-    [onOpenFile, activeWorkspace?.rootPath, workingDirectory, electronApi, t]
+    [onOpenFile, activeWorkspace?.rootPath, electronApi, t]
   )
 
   const handleOpenUrl = React.useCallback(
@@ -584,7 +589,6 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
         lastMessageAt: sessionMeta.lastMessageAt || 0,
         messages: [],
         isProcessing: sessionMeta.isProcessing || false,
-        workingDirectory: sessionMeta.workingDirectory,
       }
 
       return (
@@ -593,9 +597,9 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
             <PanelHeader  title={displayTitle} titleMenu={titleMenu} compactTitleMenu={compactTitleMenu} leadingAction={leadingAction} centerButton={sideTasksStatusButton} actions={headerActions} trailingAction={panelHeaderTrailingAction} isTitleBusy={isAsyncOperationOngoing} />
             <div className="flex-1 flex flex-col min-h-0">
               <ChatDisplay
-                ref={chatDisplayRef}
+                ref={focusedChatDisplayRef}
                 session={skeletonSession}
-                onSendMessage={() => {}}
+                onSendMessage={async () => false}
                 onOpenFile={handleOpenFile}
                 onOpenUrl={handleOpenUrl}
                 currentModel={effectiveModel}
@@ -614,11 +618,11 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
                 onAttachmentsChange={handleAttachmentsChange}
                 skills={skills}
                 workspaceId={activeWorkspaceId || undefined}
-                workingDirectory={sessionMeta.workingDirectory}
+                workspaceRoot={activeWorkspace?.rootPath}
                 messagesLoading={messageLoadState.messagesLoading}
                 searchQuery={sessionListSearchQuery}
                 isSearchModeActive={isSearchModeActive}
-                onMatchInfoChange={onChatMatchInfoChange}
+                onMatchInfoChange={focusedMatchInfoReporter}
                 providerUnavailable={providerUnavailable}
                 compactMode={!!isCompactMode}
                 enableCompactModelPicker={!!isCompactMode}
@@ -656,13 +660,22 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
         <PanelHeader  title={displayTitle} titleMenu={titleMenu} compactTitleMenu={compactTitleMenu} leadingAction={leadingAction} centerButton={sideTasksStatusButton} actions={headerActions} trailingAction={panelHeaderTrailingAction} isTitleBusy={isAsyncOperationOngoing} />
         <div className="flex-1 flex flex-col min-h-0">
           <ChatDisplay
-            ref={chatDisplayRef}
+            ref={focusedChatDisplayRef}
             session={session}
-            onSendMessage={(message, attachments, skillSlugs, midStreamSendIntent: MidStreamSendIntent | undefined) => {
-              if (session) {
-                onSendMessage(session.id, message, attachments, skillSlugs, undefined, midStreamSendIntent)
-              }
-            }}
+            onSendMessage={attempt => session
+              ? onSendMessage(
+                session.id,
+                attempt.message,
+                attempt.attachments,
+                attempt.skillSlugs,
+                undefined,
+                attempt.midStreamSendIntent,
+                attempt.attemptId,
+              )
+              : Promise.resolve(false)}
+            onRetrySettlement={() => electronApi
+              .sessionCommand(sessionId, { type: 'retrySettlement' })
+              .then(() => undefined)}
             onOpenFile={handleOpenFile}
             onOpenUrl={handleOpenUrl}
             currentModel={effectiveModel}
@@ -681,12 +694,12 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
             onAttachmentsChange={handleAttachmentsChange}
             skills={skills}
             workspaceId={activeWorkspaceId || undefined}
-            workingDirectory={workingDirectory}
+            workspaceRoot={activeWorkspace?.rootPath}
             sessionFolderPath={session?.sessionFolderPath}
             messagesLoading={messageLoadState.messagesLoading}
             searchQuery={sessionListSearchQuery}
             isSearchModeActive={isSearchModeActive}
-            onMatchInfoChange={onChatMatchInfoChange}
+            onMatchInfoChange={focusedMatchInfoReporter}
             providerUnavailable={providerUnavailable}
             compactMode={!!isCompactMode}
             enableCompactModelPicker={!!isCompactMode}

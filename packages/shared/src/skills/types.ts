@@ -30,8 +30,8 @@ export interface SkillMetadata {
  * Source of a loaded skill.
  *
  * 实际生效层级（见 storage.ts getActiveSkillsTiers）：
- * - 'global'  — ~/.pi/agent/skills/（Pi 全局）
- * - 'project' — {projectRoot}/.pi/skills/（项目级，优先级高于 global）
+ * - 'global'  — ~/.mortise/agent/skills/（Pi 全局）
+ * - 'project' — {projectRoot}/.mortise/skills/（项目级，优先级高于 global）
  */
 export type SkillSource = 'global' | 'project';
 

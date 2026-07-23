@@ -7,6 +7,7 @@ import {
   resolveWebTarget,
   routeFromParams,
   waitForWebCondition,
+  WebSemanticRevisionClock,
 } from '../web-adapter-core.ts'
 
 describe('mortise-ui web adapter semantics', () => {
@@ -67,6 +68,85 @@ describe('mortise-ui web adapter semantics', () => {
       role: 'button', name: 'Save', bounds: { x: 10, y: 20, width: 80, height: 30 },
       states: { focused: true, disabled: false },
     })
+  })
+
+  it('reconciles different selectors that resolve to the same DOM identity', () => {
+    const result = buildWebSemanticSnapshot({
+      revision: 12,
+      descriptors: [
+        { source: 'dom', selector: '[data-testid="settings"]', identity: 'body > button:nth-child(1)', role: 'button', name: 'Settings' },
+        { source: 'accessibility', selector: 'body > button:nth-child(1)', identity: 'body > button:nth-child(1)', role: 'button', name: 'Settings' },
+        { source: 'business', selector: '[data-mortise-semantic-id="navigation.nav_settings"]', identity: 'body > button:nth-child(1)', semanticId: 'navigation.nav_settings', role: 'button', name: 'Settings', actions: ['click'] },
+      ],
+    })
+    expect(result.snapshot.nodes).toHaveLength(1)
+    expect(result.snapshot.nodes[0]).toMatchObject({ semanticId: 'navigation.nav_settings', role: 'button', name: 'Settings' })
+    expect(resolveWebTarget({ role: 'button', name: 'Settings' }, result.snapshot, result.descriptorsByNodeId).descriptor.selector)
+      .toBe('[data-mortise-semantic-id="navigation.nav_settings"]')
+  })
+
+  it('keeps genuinely distinct controls ambiguous even when role and name match', () => {
+    const result = buildWebSemanticSnapshot({
+      revision: 13,
+      descriptors: [
+        { selector: '#first', identity: 'body > button:nth-child(1)', role: 'button', name: 'Open' },
+        { selector: '#second', identity: 'body > button:nth-child(2)', role: 'button', name: 'Open' },
+      ],
+    })
+    expect(result.snapshot.nodes).toHaveLength(2)
+    expect(() => resolveWebTarget({ role: 'button', name: 'Open' }, result.snapshot, result.descriptorsByNodeId))
+      .toThrow(UiValidationError)
+  })
+
+  it('preserves same-source duplicate semantic IDs as an explicit ambiguity', () => {
+    const result = buildWebSemanticSnapshot({
+      revision: 14,
+      descriptors: [
+        { source: 'business', selector: '[data-mortise-semantic-id="duplicate"]', semanticId: 'duplicate', role: 'button', name: 'Duplicate', actions: ['click'] },
+        { source: 'business', selector: '[data-mortise-semantic-id="duplicate"]', semanticId: 'duplicate', role: 'button', name: 'Duplicate', actions: ['click'] },
+      ],
+    })
+    expect(result.snapshot.nodes).toHaveLength(2)
+    expect(new Set(result.snapshot.nodes.map(node => node.nodeId)).size).toBe(2)
+    expect(() => resolveWebTarget({ semanticId: 'duplicate' }, result.snapshot, result.descriptorsByNodeId))
+      .toThrow(UiValidationError)
+  })
+
+  it('advances revisions only for decision-relevant merged semantic changes', () => {
+    const clock = new WebSemanticRevisionClock()
+    const snapshot = (placeholder: string, semanticName = 'Message') => buildWebSemanticSnapshot({
+      revision: clock.revision,
+      descriptors: [
+        { source: 'dom', selector: '#composer', identity: 'body > textarea', role: 'textbox', name: placeholder },
+        { source: 'business', selector: '[data-mortise-semantic-id="composer.s1.input"]', identity: 'body > textarea', semanticId: 'composer.s1.input', role: 'textbox', name: semanticName, actions: ['fill'] },
+      ],
+    })
+    const initial = snapshot('Ask anything')
+    expect(clock.observe(initial.decisionFingerprint)).toBe(1)
+    const placeholderOnly = snapshot('Rotating suggestion')
+    expect(clock.observe(placeholderOnly.decisionFingerprint)).toBe(1)
+    const renamed = snapshot('Rotating suggestion', 'Prompt')
+    expect(clock.observe(renamed.decisionFingerprint)).toBe(2)
+  })
+
+  it('does not invalidate refs for rotating descendant text in passive containers', () => {
+    const clock = new WebSemanticRevisionClock()
+    const snapshot = (tip: string) => buildWebSemanticSnapshot({
+      revision: clock.revision,
+      descriptors: [
+        { source: 'business', selector: '#dock', semanticId: 'workspace.unified-dock', role: 'region', name: `Workspace ${tip}`, actions: [] },
+        { source: 'business', selector: '#settings', semanticId: 'navigation.nav_settings', role: 'button', name: 'Settings', actions: ['click'] },
+      ],
+    })
+    expect(clock.observe(snapshot('Use Shift + Tab').decisionFingerprint)).toBe(1)
+    expect(clock.observe(snapshot('Press Ctrl + .').decisionFingerprint)).toBe(1)
+    expect(clock.observe(buildWebSemanticSnapshot({
+      revision: clock.revision,
+      descriptors: [
+        { source: 'business', selector: '#dock', semanticId: 'workspace.unified-dock', role: 'region', name: 'Workspace Press Ctrl + .', actions: [] },
+        { source: 'business', selector: '#settings', semanticId: 'navigation.nav_settings', role: 'button', name: 'Preferences', actions: ['click'] },
+      ],
+    }).decisionFingerprint)).toBe(2)
   })
 
   it('normalizes bounded AX state and redacts sensitive AX values', () => {

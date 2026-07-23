@@ -5,12 +5,11 @@
  * Uses recursive directory watching for simplicity and reliability.
  *
  * Watched paths:
- * - ~/.mortise/config.json - Main app configuration
  * - ~/.mortise/preferences.json - User preferences
  * - ~/.mortise/theme.json - App-level theme overrides
  * - ~/.mortise/themes/*.json - Preset theme files (app-level)
  * - ~/.mortise/workspaces/{slug}/ - Workspace directory (recursive)
- *   - .pi/skills/{slug}/SKILL.md, icon.*
+ *   - .mortise/skills/{slug}/SKILL.md, icon.*
  *   - permissions.json
  */
 
@@ -19,26 +18,23 @@ import { createHash } from 'crypto';
 import { join, dirname, basename, relative } from 'path';
 import { platform } from 'os';
 import type { FSWatcher } from 'fs';
-import { CONFIG_DIR } from './paths.ts';
+import { CONFIG_DIR, MORTISE_PROJECT_DIR, MORTISE_PROJECT_SKILLS_DIR } from './paths.ts';
 import { debug } from '../utils/debug.ts';
 import { expandPath } from '../utils/paths.ts';
 import { readJsonFileSync } from '../utils/files.ts';
 import { perf } from '../utils/perf.ts';
-import { loadStoredConfig, type StoredConfig } from './storage.ts';
 import { readPiGlobalAuth, readPiGlobalProviders, readPiGlobalSettings, watchPiGlobalModelsFile, type PiGlobalProvider } from './pi-global-config.ts';
 import {
-  validateConfig,
   validatePreferences,
   type ValidationResult,
 } from './validators.ts';
 import { permissionsConfigCache, getAppPermissionsDir } from '../agent/permissions-config.ts';
-import { getWorkspacePath, getWorkspaceSkillsPath, getWorkspacePiSessionsDir } from '../workspaces/storage.ts';
+import { getWorkspacePath, getWorkspaceSkillsPath, getWorkspaceSessionsDir } from '../workspaces/storage.ts';
 import type { LoadedSkill } from '../skills/types.ts';
 import { loadSkill, loadAllSkills, invalidateSkillsCache, skillNeedsIconDownload, downloadSkillIcon } from '../skills/storage.ts';
 import { readSessionHeader } from '../sessions/jsonl.ts';
 import { getSessionFilePath } from '../sessions/storage.ts';
 import type { SessionHeader } from '../sessions/types.ts';
-import { AUTOMATIONS_CONFIG_FILE } from '../automations/constants.ts';
 import { loadAppTheme, loadPresetThemes, loadPresetTheme, getAppThemesDir } from './storage.ts';
 import type { ThemeOverrides, PresetTheme } from './theme.ts';
 
@@ -62,7 +58,6 @@ export function _getActiveWatchers(): ReadonlyMap<string, string> {
 // Constants
 // ============================================================
 
-const CONFIG_FILE = join(CONFIG_DIR, 'config.json');
 const PREFERENCES_FILE = join(CONFIG_DIR, 'preferences.json');
 
 // Debounce delay in milliseconds
@@ -97,8 +92,6 @@ export interface UserPreferences {
  * Callbacks for config changes
  */
 export interface ConfigWatcherCallbacks {
-  /** Called when config.json changes */
-  onConfigChange?: (config: StoredConfig) => void;
   /** Called when preferences.json changes */
   onPreferencesChange?: (prefs: UserPreferences) => void;
   /** Called when Pi providers, credentials, or their defaults change. */
@@ -115,10 +108,6 @@ export interface ConfigWatcherCallbacks {
   onDefaultPermissionsChange?: () => void;
   /** Called when workspace permissions.json changes */
   onWorkspacePermissionsChange?: (workspaceId: string) => void;
-
-  // Automations callbacks
-  /** Called when automations.json changes */
-  onAutomationsConfigChange?: (workspaceId: string) => void;
 
   // Session callbacks
   /** Called when a session's JSONL header is modified externally. */
@@ -245,9 +234,9 @@ export class ConfigWatcher {
     this.watchWorkspaceDir();
     span.mark('watchWorkspaceDir');
 
-    // Watch Pi sessions bucket for this workspace's cwd (sessions live
-    // under ~/.pi/agent/sessions/{encoded-cwd}/, outside the workspace dir)
-    this.watchPiSessionsDir();
+    // Watch Mortise sessions bucket for this workspace's cwd (sessions live
+    // under ~/.mortise/agent/sessions/{encoded-cwd}/, outside the workspace dir)
+    this.watchSessionsDir();
     span.mark('watchPiSessionsDir');
 
     // Watch app-level themes directory
@@ -332,7 +321,7 @@ export class ConfigWatcher {
   }
 
   /**
-   * Watch global config files (config.json, preferences.json)
+   * Watch file-backed global preferences and theme overrides.
    */
   private watchGlobalConfigs(): void {
     // Ensure config directory exists
@@ -341,13 +330,11 @@ export class ConfigWatcher {
     }
 
     try {
-      // Watch the config directory for changes to config.json, preferences.json, and theme.json
+      // SQLite-backed application config is observed at the owning service boundary.
       const watcher = watch(CONFIG_DIR, (eventType, filename) => {
         if (!filename) return;
 
-        if (filename === 'config.json') {
-          this.debounce('config.json', () => this.handleConfigChange());
-        } else if (filename === 'preferences.json') {
+        if (filename === 'preferences.json') {
           this.debounce('preferences.json', () => this.handlePreferencesChange());
         } else if (filename === 'theme.json') {
           this.debounce('app-theme', () => this.handleAppThemeChange());
@@ -403,34 +390,34 @@ export class ConfigWatcher {
   }
 
   /**
-   * Watch the Pi sessions bucket for this workspace's cwd.
+   * Watch the Mortise sessions bucket for this workspace's cwd.
    *
-     * Session files live under `~/.pi/agent/sessions/{encoded-cwd}/`.
+     * Session files live under `~/.mortise/agent/sessions/{encoded-cwd}/`.
    * The workspace watcher above can't see these files, so a separate watcher
    * is needed to detect external metadata changes (for example, name) made
-   * by other instances or the Pi CLI.
+   * by other Mortise instances.
    */
-  private watchPiSessionsDir(): void {
-    let piSessionsDir: string;
+  private watchSessionsDir(): void {
+    let sessionsDir: string;
     try {
-      piSessionsDir = getWorkspacePiSessionsDir(this.workspaceDir);
+      sessionsDir = getWorkspaceSessionsDir(this.workspaceDir);
     } catch {
-      debug('[ConfigWatcher] Could not resolve Pi sessions dir for workspace:', this.workspaceDir);
+      debug('[ConfigWatcher] Could not resolve Mortise sessions dir for workspace:', this.workspaceDir);
       return;
     }
 
-    if (!existsSync(piSessionsDir)) {
-      debug('[ConfigWatcher] Pi sessions dir does not exist yet, skipping watch:', piSessionsDir);
+    if (!existsSync(sessionsDir)) {
+      debug('[ConfigWatcher] Mortise sessions dir does not exist yet, skipping watch:', sessionsDir);
       return;
     }
 
-    debug('[ConfigWatcher] Setting up Pi sessions watcher for:', piSessionsDir);
+    debug('[ConfigWatcher] Setting up Mortise sessions watcher for:', sessionsDir);
     try {
-      const watcher = watch(piSessionsDir, (eventType, filename) => {
+      const watcher = watch(sessionsDir, (eventType, filename) => {
         if (!filename) return;
         const normalizedPath = filename.replace(/\\/g, '/');
 
-        // Pi tree format: {timestamp}_{sessionId}.jsonl
+        // Mortise session tree format: {timestamp}_{sessionId}.jsonl
         const parts = normalizedPath.split('/');
         let sessionId: string | null = null;
 
@@ -446,11 +433,11 @@ export class ConfigWatcher {
         }
       });
 
-      watcher.on('error', (err) => debug('[ConfigWatcher] Pi sessions watcher error:', err));
+      watcher.on('error', (err) => debug('[ConfigWatcher] Mortise sessions watcher error:', err));
       this.watchers.push(watcher);
-      debug('[ConfigWatcher] Watching Pi sessions dir:', piSessionsDir);
+      debug('[ConfigWatcher] Watching Mortise sessions dir:', sessionsDir);
     } catch (error) {
-      debug('[ConfigWatcher] Error watching Pi sessions directory:', error);
+      debug('[ConfigWatcher] Error watching Mortise sessions directory:', error);
     }
   }
 
@@ -466,15 +453,8 @@ export class ConfigWatcher {
       return;
     }
 
-    // Workspace-level automations config file
-    if (relativePath === AUTOMATIONS_CONFIG_FILE) {
-      debug('[ConfigWatcher] automations config change detected:', relativePath);
-      this.debounce('automations-config', () => this.handleAutomationsConfigChange());
-      return;
-    }
-
-    // Skills changes: .pi/skills/{slug}/...
-    if (parts[0] === '.pi' && parts[1] === 'skills' && parts.length >= 3) {
+    // Skills changes: .mortise/skills/{slug}/...
+    if (parts[0] === MORTISE_PROJECT_DIR && parts[1] === 'skills' && parts.length >= 3) {
       const slug = parts[2]!;
       const file = parts[3];
 
@@ -600,7 +580,7 @@ export class ConfigWatcher {
       this.callbacks.onSkillsListChange?.(allSkills);
     } catch (error) {
       debug('[ConfigWatcher] Error handling skills dir change:', error);
-      this.callbacks.onError?.('.pi/skills/', error as Error);
+      this.callbacks.onError?.(`${MORTISE_PROJECT_SKILLS_DIR}/`, error as Error);
     }
   }
 
@@ -653,29 +633,6 @@ export class ConfigWatcher {
     this.callbacks.onWorkspacePermissionsChange?.(this.workspaceId);
   }
 
-  /**
-   * Handle config.json change
-   */
-  private handleConfigChange(): void {
-    debug('[ConfigWatcher] config.json changed');
-
-    const validation = validateConfig();
-    if (!validation.valid) {
-      debug('[ConfigWatcher] Config validation failed:', validation.errors);
-      this.callbacks.onValidationError?.('config.json', validation);
-      return;
-    }
-
-    const config = loadStoredConfig();
-    if (config) {
-      this.callbacks.onConfigChange?.(config);
-
-      this.handleProvidersChange();
-    } else {
-      this.callbacks.onError?.('config.json', new Error('Failed to load config'));
-    }
-  }
-
   private handleProvidersChange(): void {
     try {
       const providers = readPiGlobalProviders();
@@ -709,14 +666,6 @@ export class ConfigWatcher {
     }
   }
 
-  /**
-   * Handle automations config change.
-   */
-  private handleAutomationsConfigChange(): void {
-    debug('[ConfigWatcher] automations config changed:', this.workspaceId);
-    this.callbacks.onAutomationsConfigChange?.(this.workspaceId);
-  }
-
   // ============================================================
   // Session Metadata Handlers
   // ============================================================
@@ -727,7 +676,7 @@ export class ConfigWatcher {
    * instances, scripts, or manual edits.
    */
   private handleSessionMetadataChange(sessionId: string): void {
-    // session files now live under ~/.pi/agent/sessions/{encoded-cwd}/.
+    // session files now live under ~/.mortise/agent/sessions/{encoded-cwd}/.
     // The workspaceDir no longer contains a sessions/ subdirectory.
     const sessionFile = getSessionFilePath(this.workspaceDir, sessionId);
 

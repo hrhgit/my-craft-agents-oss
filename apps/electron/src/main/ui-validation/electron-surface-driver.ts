@@ -191,6 +191,16 @@ export class ElectronUiSurfaceDriver {
     }
   }
 
+  async rendererPerformance(selector: UiDriverWindowSelector = {}, durationMs = 1_000): Promise<Record<string, unknown>> {
+    const window = this.resolveWindow(selector)
+    try {
+      const result = await this.stateFor(window).cdp.captureRendererPerformance(durationMs)
+      return { ...result, webContentsId: window.webContents.id, verificationLevel: 'renderer-verified' }
+    } catch (error) {
+      throw await rendererDriverDisconnected(error)
+    }
+  }
+
   async waitForSnapshot(
     selector: UiDriverWindowSelector,
     predicate: (snapshot: UiDriverSnapshot) => boolean,

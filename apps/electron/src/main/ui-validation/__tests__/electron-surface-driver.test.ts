@@ -93,6 +93,31 @@ describe('ElectronUiSurfaceDriver window actions', () => {
     await expect(driver.electronWindowAction({ webContentsId: 61, role: 'child-session' }, 'focus')).rejects.toMatchObject({ code: 'TARGET_NOT_FOUND' })
   })
 
+  it('samples only the explicitly selected managed renderer window', async () => {
+    const first = fakeWindow(63, 'First')
+    const second = fakeWindow(64, 'Second')
+    const driver = new ElectronUiSurfaceDriver(fakeWindowManager([
+      { window: first.window, workspaceId: 'workspace-1', role: 'main' },
+      { window: second.window, workspaceId: 'workspace-2', role: 'main' },
+    ])) as any
+    driver.stateFor = (window: BrowserWindow) => ({
+      cdp: {
+        captureRendererPerformance: async (durationMs: number) => ({
+          sampledWebContentsId: window.webContents.id,
+          durationMs,
+        }),
+      },
+    })
+
+    await expect(driver.rendererPerformance({}, 250)).rejects.toMatchObject({ code: 'AMBIGUOUS_TARGET' })
+    await expect(driver.rendererPerformance({ webContentsId: 64 }, 250)).resolves.toMatchObject({
+      sampledWebContentsId: 64,
+      webContentsId: 64,
+      durationMs: 250,
+      verificationLevel: 'renderer-verified',
+    })
+  })
+
   it('keeps an action bound to its starting window when drag creates another window', async () => {
     const main = fakeWindow(71, 'Main')
     const auxiliary = fakeWindow(72, 'Auxiliary')

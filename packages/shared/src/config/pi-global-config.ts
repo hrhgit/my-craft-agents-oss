@@ -2,8 +2,8 @@
  * Pi CLI Global Config facade.
  *
  * This is the single source of truth for "pure Pi + custom provider" mode.
- * Mortise keeps this module as a compatibility wrapper for older settings IPC
- * handlers, but storage reads/writes go through Pi's host facade.
+ * Mortise settings handlers use this module as the canonical typed boundary;
+ * storage reads/writes go through Pi's host facade.
  */
 
 import { existsSync, mkdirSync, watch, type FSWatcher } from 'fs';
@@ -14,7 +14,6 @@ import {
   deleteShellGuiEntry as deletePiHostShellGuiEntry,
   hasGlobalProviderAuth as hasPiHostGlobalProviderAuth,
   maskApiKey as maskPiHostApiKey,
-  migrateGlobalProviderApiKeysToAuth as migratePiHostGlobalProviderApiKeysToAuth,
   readMortiseSettings as readPiHostMortiseSettings,
   readExtensionConfig as readPiHostExtensionConfig,
   readExtensionNamespace as readPiHostExtensionNamespace,
@@ -41,7 +40,7 @@ import {
 } from '@mortise/pi-coding-agent/host-facade';
 import { PI_MODEL_REFERENCE_CURRENT_SESSION, type PiExtensionCatalogEntry, type PiExtensionCatalogResult, type PiExtensionConfigPatch, type PiExtensionSettingField, type PiExtensionSettingScalar } from './pi-extension-settings.ts';
 import type { PiCustomApi, PiGlobalModel, PiGlobalProvider } from './pi-provider-models.ts';
-import { PI_AGENT_DIR } from './paths';
+import { MORTISE_AGENT_DIR, MORTISE_PROJECT_DIR } from './paths';
 import { DEFAULT_THINKING_LEVEL, type ThinkingLevel } from '../agent/thinking-levels.ts';
 
 export {
@@ -238,44 +237,6 @@ export function hasPiGlobalProviderAuth(providerKey: string | undefined): boolea
   return hasPiHostGlobalProviderAuth(providerKey);
 }
 
-/** Minimal legacy connection shape accepted during provider migration. */
-type LegacyPiConnectionReference = {
-  slug: string;
-  piAuthProvider?: string;
-  providerType?: string;
-};
-
-export function getPiGlobalProviderKeyForConnection(
-  connection: LegacyPiConnectionReference | null | undefined,
-): string | undefined {
-  if (!connection) return undefined;
-  const inferredFromSlug = inferPiGlobalProviderKeyFromSlug(connection.slug);
-  if (connection.providerType === 'pi') {
-    return connection.piAuthProvider || inferredFromSlug;
-  }
-  return inferredFromSlug || connection.piAuthProvider;
-}
-
-export function hasPiGlobalAuthForConnection(
-  connection: LegacyPiConnectionReference | null | undefined,
-): boolean {
-  if (!connection) return false;
-  if (connection.providerType !== 'pi' && connection.providerType !== 'pi_compat') return false;
-  const providerKey = getPiGlobalProviderKeyForConnection(connection);
-  if (!providerKey) return false;
-  return connection.providerType === 'pi'
-    ? hasPiGlobalProviderAuth(providerKey)
-    : !!readPiGlobalProviders()[providerKey] && hasPiGlobalProviderAuth(providerKey);
-}
-
-function inferPiGlobalProviderKeyFromSlug(slug: string): string | undefined {
-  if (!slug.startsWith('pi-')) return undefined;
-  const key = slug.slice('pi-'.length);
-  // pi-api-key is a generic onboarding slug; the provider is piAuthProvider.
-  if (key === 'api-key' || /^api-key-\d+$/.test(key)) return undefined;
-  return key;
-}
-
 /** Mask apiKey for list display: first 7 + last 4 chars. */
 export function maskApiKey(key: string | undefined): string {
   return maskPiHostApiKey(key);
@@ -295,18 +256,18 @@ export function readPiGlobalProvidersForDisplay(): PiGlobalProviderForDisplay[] 
 // ===== Writes =====
 
 function ensurePiAgentDir(): void {
-  if (!existsSync(PI_AGENT_DIR)) {
-    mkdirSync(PI_AGENT_DIR, { recursive: true });
+  if (!existsSync(MORTISE_AGENT_DIR)) {
+    mkdirSync(MORTISE_AGENT_DIR, { recursive: true });
   }
 }
 
 /**
- * Watch Pi's global model/default-provider config without exposing
- * ~/.pi/agent path handling to higher-level config watchers.
+ * Watch Mortise's Pi-runtime model/default-provider config without exposing
+ * the Agent-root path to higher-level config watchers.
  */
 export function watchPiGlobalModelsFile(onModelsChanged: () => void): FSWatcher {
   ensurePiAgentDir();
-  return watch(PI_AGENT_DIR, (_eventType, filename) => {
+  return watch(MORTISE_AGENT_DIR, (_eventType, filename) => {
     if (!filename) return;
     if (filename === 'models.json' || filename === 'settings.json' || filename === 'auth.json') {
       onModelsChanged();
@@ -449,20 +410,9 @@ export function deletePiGlobalApiKey(providerKey: string): void {
   deletePiHostGlobalApiKey(providerKey);
 }
 
-export interface PiGlobalApiKeyMigrationResult {
-  migrated: number;
-  removedFromModels: number;
-  changed: boolean;
-}
-
-export function migratePiGlobalProviderApiKeysToAuth(): PiGlobalApiKeyMigrationResult {
-  return migratePiHostGlobalProviderApiKeysToAuth();
-}
-
 export function savePiGlobalProvider(key: string, provider: PiGlobalProvider, apiKey?: string): void {
   assertValidProviderKey(key);
-  const legacyApiKey = normalizeApiKeyInput((provider as PiGlobalProvider & { apiKey?: string }).apiKey);
-  const nextApiKey = normalizeApiKeyInput(apiKey) ?? legacyApiKey;
+  const nextApiKey = normalizeApiKeyInput(apiKey);
   if (nextApiKey) {
     setPiGlobalApiKey(key, nextApiKey);
   }
@@ -516,7 +466,7 @@ export async function removePiGlobalDefaultSlot(slot: number): Promise<void> {
 }
 
 /**
- * Set only the top-level `defaultThinkingLevel` in ~/.pi/agent/settings.json
+ * Set only the top-level `defaultThinkingLevel` in the Mortise Agent settings.
  * without touching defaultProvider/defaultModel. This is the authoritative
  * SoT read by the pi subprocess; mortise's setDefaultThinkingLevel() mirrors
  * its value here so the subprocess picks it up immediately.
@@ -527,8 +477,8 @@ export async function setPiGlobalDefaultThinkingLevel(level: string): Promise<vo
 
 // ===== Mortise agent runtime namespace (mortise.agent.*) =====
 //
-// Mortise-only UI/window preferences stay in ~/.mortise/config.json. Runtime
-// toggles that affect agent behavior live in ~/.pi/agent/settings.json under
+// Mortise-only UI/window preferences stay in ~/.mortise/state.sqlite. Runtime
+// toggles that affect agent behavior live in the Mortise Agent settings under
 // mortise.agent.* so Pi/Mortise subprocesses read the same source of truth.
 
 export type PiMortiseSettings = Record<string, unknown>;
@@ -561,7 +511,7 @@ export function writePiMortiseBoolean(key: string, value: boolean): void {
 
 // ===== 扩展命名空间（extensionConfig.<name>.*）=====
 //
-// 扩展级 model/enabled/concurrency 统一存放在 ~/.pi/agent/settings.json 的
+// 扩展级 model/enabled/concurrency 统一存放在 Mortise Agent settings.json 的
 // `extensionConfig.<id>.*` 命名空间；不再读取旧 `extensions.<name>.*` 对象。
 
 /**
@@ -653,12 +603,13 @@ export async function writePiExtensionConcurrency(name: string, concurrency: num
  */
 export async function getPiExtensionCatalog(options: { cwd?: string; agentDir?: string } = {}): Promise<PiExtensionCatalogResult> {
   const cwd = options.cwd ?? process.cwd();
-  const agentDir = options.agentDir ?? PI_AGENT_DIR;
+  const agentDir = options.agentDir ?? MORTISE_AGENT_DIR;
   try {
-    const settingsManager = SettingsManager.create(cwd, agentDir);
+    const settingsManager = SettingsManager.create(cwd, agentDir, MORTISE_PROJECT_DIR);
     const packageManager = new DefaultPackageManager({
       cwd,
       agentDir,
+      projectConfigDir: MORTISE_PROJECT_DIR,
       settingsManager,
       extensionTarget: 'mortise',
     });
@@ -754,7 +705,11 @@ export async function patchPiExtensionConfig(
   options: { cwd?: string; agentDir?: string } = {},
 ): Promise<{ config: Record<string, unknown>; requiresReload: boolean }> {
   const { requiresReload } = validatePiExtensionConfigPatch(entry, patch);
-  const settingsManager = SettingsManager.create(options.cwd ?? process.cwd(), options.agentDir ?? PI_AGENT_DIR);
+  const settingsManager = SettingsManager.create(
+    options.cwd ?? process.cwd(),
+    options.agentDir ?? MORTISE_AGENT_DIR,
+    MORTISE_PROJECT_DIR,
+  );
   const config = { ...(settingsManager.getExtensionConfig(patch.extensionId) as Record<string, unknown> | undefined) };
   for (const [key, value] of Object.entries(patch.set ?? {})) config[key] = value;
   for (const key of patch.unset ?? []) delete config[key];
@@ -774,7 +729,7 @@ export async function patchPiExtensionConfig(
 // ===== Shell GUI 命名空间（shellGui.<name>.*）=====
 //
 // mortise shell 的 GUI 开关与 agent 行为字段（showStatusBadge/widgetVisible/
-// mortise 全局开关等）回归 ~/.pi/agent/settings.json 的 `shellGui.<name>.*`
+// mortise 全局开关等）存放在 Mortise Agent settings.json 的 `shellGui.<name>.*`
 // 命名空间。pi CLI 单独运行时忽略此字段（pi settings-manager.ts 中 shellGui 为可选）。
 
 /**

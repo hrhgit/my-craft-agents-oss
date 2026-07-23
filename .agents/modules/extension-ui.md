@@ -21,7 +21,7 @@ collaborates_with: [extension-runtime, ui-validation-developer-kit]
 validation:
   - { id: extension-ui-regression, kind: unit, command: "bun test apps/electron/src/renderer/components/extensions packages/shared/src/protocol/extension-contributions.test.ts", description: "Run extension contribution UI regressions.", triggers: [owned-change], required: true, evidence: "Bun test exit status and output." }
   - { id: extension-ui-physical, kind: physical, command: "bun run test:ui-validation:extension", description: "Exercise extension UI through the shared Developer Kit host.", triggers: [ui-change, extension-contract-change, release], required: false, evidence: "Developer Kit run output and retained extension UI evidence." }
-scope_digest: aa8b5d7c85c66a3479a00880d8a0dcdcca2cbb64
+scope_digest: 1648b2d20d83fcb5e28a6cc383a0e798cd1a9f0f
 ---
 
 ## Purpose
@@ -52,5 +52,6 @@ Run contribution protocol, interaction store, sandbox, renderer routing, and ext
 Contribution version skew can leave stale interaction state; excessive freedom can compromise host layout or accessibility.
 
 ## Semantic history
+- 2026-07-21: Removed legacy widget and RemoteUI renderer models, retaining one versioned contribution surface and one typed interaction composer with queued lifecycle handling.
 - 2026-07-13: Added versioned Pi extension UI contributions and placement policy.
 - 2026-07-14: Synchronized extension interaction state and validation semantics.

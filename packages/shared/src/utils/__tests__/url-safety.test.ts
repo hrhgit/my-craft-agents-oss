@@ -45,7 +45,11 @@ describe('classifyExternalUrl — internal deep links', () => {
   })
 
   it('is case-insensitive for the scheme', () => {
-    expect(classifyExternalUrl('MORTISEAGENTS://settings').kind).toBe('internal-deeplink')
+    expect(classifyExternalUrl('MORTISE://settings').kind).toBe('internal-deeplink')
+  })
+
+  it('rejects the removed Mortise Agents scheme instead of aliasing it', () => {
+    expect(classifyExternalUrl('MORTISEAGENTS://settings').kind).toBe('dangerous')
   })
 })
 

@@ -27,10 +27,12 @@ import { APP_SHELL_SCENARIO_IDS, AppShellScenarioAdapterError, ElectronAppShellS
 import { loadRendererTarget, rendererPageUrl } from './renderer-navigation'
 import { uiTestHostHttpErrorEnvelope } from './http-error-envelope'
 import { findRendererSnapshotTargets, resolveRendererSnapshotTarget } from './snapshot-target'
-import { parseElectronActionParams, parseElectronWaitParams } from './test-host-request'
+import { parseElectronActionParams, parseElectronWaitParams, parseRendererPerformanceDuration } from './test-host-request'
 import { ElectronBackgroundWindowController, parseElectronUiWindowMode } from './background-window-mode'
 import { parseBrowserViewKeyAction } from './browser-view-key-action'
 import { ElectronBrowserViewSurfaceAdapter } from './browser-view-surface-adapter'
+import { sessionValidation, type SessionValidationMode } from './session-validation-backend'
+import { semanticValueFingerprintScript } from './value-fingerprint'
 
 const MAX_REQUEST_BYTES = 1_000_000
 const MAX_WAIT_MS = UI_TEST_HOST_MAX_WAIT_MS
@@ -360,6 +362,16 @@ export async function startUiTestHost(options: UiTestHostOptions): Promise<UiTes
       }
       return snapshot
     }
+    if (command === 'value-fingerprint') {
+      const semanticId = requiredString(params.semanticId, 'semanticId')
+      const window = resolveManagedWindow(options.windowManager, selector)
+      const fingerprint = await window.webContents.executeJavaScript(
+        semanticValueFingerprintScript(semanticId),
+        true,
+      ) as { length: number; sha256: string } | null
+      if (!fingerprint) throw new ElectronUiDriverError('TARGET_NOT_FOUND', `Semantic value target was not found: ${semanticId}.`)
+      return { semanticId, ...fingerprint, verificationLevel: 'renderer-verified' }
+    }
     if (command === 'action') {
       const parsedAction = parseElectronActionParams(params)
       const actionWindow = resolveManagedWindow(options.windowManager, selector)
@@ -627,6 +639,13 @@ export async function startUiTestHost(options: UiTestHostOptions): Promise<UiTes
       return observed
     }
     if (command === 'evidence') return captureEvidence(params, selector)
+    if (command === 'diagnostics.renderer.performance') {
+      const requestedDuration = parseRendererPerformanceDuration(params.durationMs)
+      if (requestedDuration === null) {
+        throw new ElectronUiDriverError('UNSUPPORTED', 'Renderer performance durationMs must be between 100 and 5000.')
+      }
+      return driver.rendererPerformance(selector, requestedDuration)
+    }
     if (command === 'diagnostics.renderer.detach') {
       const window = resolveManagedWindow(options.windowManager, selector)
       if (window.webContents.debugger.isAttached()) window.webContents.debugger.detach()
@@ -658,6 +677,38 @@ export async function startUiTestHost(options: UiTestHostOptions): Promise<UiTes
       const scenarioState = await callAppShellScenarioAdapter(() => appShellScenarioAdapter(selector).snapshot()) as { revision?: unknown; clock?: { mode?: unknown } }
       if (activeScenario) activeScenario = { ...activeScenario, state: scenarioState }
       return { now, state: scenarioState, revision: typeof scenarioState.revision === 'number' ? scenarioState.revision : revision, verificationLevel: 'scenario-verified' }
+    }
+    if (command === 'session-validation.arm') {
+      const workspaceId = requiredString(params.workspaceId, 'workspaceId')
+      const sessionId = typeof params.sessionId === 'string' ? requiredString(params.sessionId, 'sessionId') : undefined
+      const modeName = requiredString(params.mode, 'mode')
+      const mode: SessionValidationMode = modeName === 'fail-before-assistant'
+        ? { kind: 'fail-before-assistant', ...(typeof params.message === 'string' ? { message: params.message } : {}) }
+        : modeName === 'fail-publication-metadata'
+          ? { kind: 'fail-publication-metadata', answer: requiredString(params.answer, 'answer') }
+        : modeName === 'fail-user-persistence-once'
+          ? {
+              kind: 'fail-user-persistence-once',
+              answer: requiredString(params.answer, 'answer'),
+              ...(typeof params.message === 'string' ? { message: params.message } : {}),
+            }
+        : modeName === 'fail-settlement-projection'
+          ? { kind: 'fail-settlement-projection', answer: requiredString(params.answer, 'answer') }
+        : modeName === 'succeed'
+          ? { kind: 'succeed', answer: requiredString(params.answer, 'answer') }
+          : (() => { throw new ElectronUiDriverError('INVALID_REQUEST', 'Unsupported Session validation mode.') })()
+      sessionValidation.arm({ runId, workspaceId, ...(sessionId ? { sessionId } : {}), mode })
+      return { armed: true, workspaceId, ...(sessionId ? { sessionId } : {}), mode: mode.kind, verificationLevel: 'scenario-verified' }
+    }
+    if (command === 'session-validation.clear') {
+      sessionValidation.clear()
+      return { cleared: true, verificationLevel: 'scenario-verified' }
+    }
+    if (command === 'session-validation.status') {
+      return { status: sessionValidation.status(), verificationLevel: 'scenario-verified' }
+    }
+    if (command === 'session-validation.release-settlement') {
+      return { status: sessionValidation.releaseSettlement(), verificationLevel: 'scenario-verified' }
     }
     if (command === 'fault.set') {
       const adapter = await ensureAppShellScenarioHost(selector, params)
@@ -1285,6 +1336,7 @@ function normalizeMethod(method: string): string {
     'ui.windows': 'windows',
     'ui.window': 'window',
     'ui.snapshot': 'snapshot',
+    'ui.valueFingerprint': 'value-fingerprint',
     'ui.action': 'action',
     'ui.browserKey': 'browser-key',
     'ui.native': 'native',

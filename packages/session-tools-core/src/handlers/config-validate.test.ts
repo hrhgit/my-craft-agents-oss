@@ -1,55 +1,24 @@
-import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
-import { mkdtempSync, writeFileSync, rmSync, existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
+import { describe, expect, it } from 'bun:test';
+
+import type { SessionToolContext } from '../context.ts';
 import { handleConfigValidate } from './config-validate.ts';
-import { getResultText } from '../types.ts';
 
-function createCtx(workspacePath: string) {
-  return {
-    sessionId: 'test-session',
-    workspacePath,
-    get skillsPath() { return join(workspacePath, 'skills'); },
-    plansFolderPath: join(workspacePath, 'plans'),
-    callbacks: {
-      onPlanSubmitted: () => {},
+const contextWithoutValidators = {
+  workspacePath: 'C:/workspace',
+} as SessionToolContext;
+
+describe('config validation authority', () => {
+  it.each(['config', 'all'] as const)(
+    'does not fall back to retired JSON storage for %s',
+    async target => {
+      const result = await handleConfigValidate(contextWithoutValidators, { target });
+      const content = result.content[0];
+
+      expect(result.isError).toBe(true);
+      expect(content?.type).toBe('text');
+      if (content?.type !== 'text') throw new Error('Expected a text error response');
+      expect(content.text).toContain('SQLite configuration validation is unavailable');
+      expect(content.text).not.toContain('config.json');
     },
-    fs: {
-      exists: (path: string) => existsSync(path),
-      readFile: (path: string) => readFileSync(path, 'utf-8'),
-      readFileBuffer: (path: string) => readFileSync(path),
-      writeFile: (path: string, content: string) => writeFileSync(path, content),
-      isDirectory: (path: string) => existsSync(path) && statSync(path).isDirectory(),
-      readdir: (path: string) => readdirSync(path),
-      stat: (path: string) => {
-        const s = statSync(path);
-        return { size: s.size, isDirectory: () => s.isDirectory() };
-      },
-    },
-    validators: undefined,
-  } as const;
-}
-
-describe('config-validate automations target', () => {
-  let tempDir: string;
-
-  beforeEach(() => {
-    tempDir = mkdtempSync(join(tmpdir(), 'config-validate-automations-test-'));
-  });
-
-  afterEach(() => {
-    rmSync(tempDir, { recursive: true, force: true });
-  });
-
-  it('validates automations.json when present', async () => {
-    writeFileSync(join(tempDir, 'automations.json'), JSON.stringify({ version: 2, automations: {} }));
-
-    const result = await handleConfigValidate(createCtx(tempDir), { target: 'automations' });
-    expect(getResultText(result)).toContain('Validation passed');
-  });
-
-  it('returns no-config message when automations.json does not exist', async () => {
-    const result = await handleConfigValidate(createCtx(tempDir), { target: 'automations' });
-    expect(getResultText(result)).toContain('No automations.json');
-  });
+  );
 });

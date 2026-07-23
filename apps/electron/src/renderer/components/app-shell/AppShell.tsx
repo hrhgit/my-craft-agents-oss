@@ -35,6 +35,12 @@ import { WorkspaceCoordinationStatusPopover } from "./WorkspaceCoordinationStatu
 import { SquarePenRounded } from "../icons/SquarePenRounded"
 import { cn } from "@/lib/utils"
 import { isMac } from "@/lib/platform"
+import {
+  canOpenSeparateBrowserSurface,
+  canUseAuxiliaryLayoutWindows,
+  canUseNativeBrowserPanes,
+  hasPlatformCapability,
+} from "@/lib/platform-capabilities"
 import { Button } from "@/components/ui/button"
 import { HeaderIconButton } from "@/components/ui/HeaderIconButton"
 import { Separator } from "@/components/ui/separator"
@@ -117,7 +123,7 @@ import { PanelHeader } from "./PanelHeader"
 import { FabNewChat } from "./FabNewChat"
 import { SendToWorkspaceDialog } from "./SendToWorkspaceDialog"
 import { MessagingDialogHost } from "@/components/messaging/MessagingDialogHost"
-import { useRemoteUIRequests } from "@/hooks/useRemoteUIRequests"
+import { useExtensionInteractions } from "@/hooks/useExtensionInteractions"
 import { EditPopover, getEditConfig } from "@/components/ui/EditPopover"
 import SettingsNavigator from "@/pages/settings/SettingsNavigator"
 import {
@@ -323,13 +329,13 @@ function AppShellContent({
   // Ref for ChatDisplay navigation (exposed via forwardRef)
   const chatDisplayRef = React.useRef<ChatDisplayHandle>(null)
   // Track match count and index from ChatDisplay (for SessionList navigation UI)
-  const [chatMatchInfo, setChatMatchInfo] = React.useState<{ sessionId: string | null; count: number; index: number; isHighlighting?: boolean }>({ sessionId: null, count: 0, index: 0 })
+  const [chatMatchInfo, setChatMatchInfo] = React.useState<{ sessionId: string | null; count: number; index: number; hasMore: boolean; isHighlighting?: boolean }>({ sessionId: null, count: 0, index: 0, hasMore: false })
 
   // Callback for immediate match info updates from ChatDisplay
   // Memo guard prevents render feedback loops from identical updates
-  const handleChatMatchInfoChange = React.useCallback((info: { sessionId: string | null; count: number; index: number; isHighlighting: boolean }) => {
+  const handleChatMatchInfoChange = React.useCallback((info: { sessionId: string | null; count: number; index: number; hasMore: boolean; isHighlighting: boolean }) => {
     setChatMatchInfo(prev => {
-      if (prev.sessionId === info.sessionId && prev.count === info.count && prev.index === info.index && prev.isHighlighting === info.isHighlighting) {
+      if (prev.sessionId === info.sessionId && prev.count === info.count && prev.index === info.index && prev.hasMore === info.hasMore && prev.isHighlighting === info.isHighlighting) {
         return prev
       }
       return info
@@ -339,7 +345,7 @@ function AppShellContent({
   // Reset match info when search is deactivated
   React.useEffect(() => {
     if (!searchActive || !searchQuery) {
-      setChatMatchInfo({ sessionId: null, count: 0, index: 0 })
+      setChatMatchInfo({ sessionId: null, count: 0, index: 0, hasMore: false })
     }
   }, [searchActive, searchQuery])
 
@@ -598,9 +604,9 @@ function AppShellContent({
   // Pi extension dialogs are visible only for the active session. Requests for
   // other sessions remain queued until that session becomes active.
   const {
-    currentRequest: remoteUIRequest,
-    respond: respondRemoteUI,
-  } = useRemoteUIRequests(effectiveSessionId)
+    currentRequest: extensionInteraction,
+    respond: respondToExtensionInteraction,
+  } = useExtensionInteractions(effectiveSessionId)
 
   // Focus chat input for the target session only (multi-panel safe).
   const focusChatInputForSession = useCallback((targetSessionId?: string | null) => {
@@ -653,10 +659,14 @@ function AppShellContent({
   useAction('app.keyboardShortcuts', onOpenKeyboardShortcuts)
 
   // New window
-  useAction('app.newWindow', () => window.electronAPI.menuNewWindow())
+  useAction('app.newWindow', () => window.electronAPI.menuNewWindow(), {
+    enabled: canOpenSeparateBrowserSurface,
+  })
 
   // Quit (note: also handled by native menu on macOS)
-  useAction('app.quit', () => window.electronAPI.menuQuit())
+  useAction('app.quit', () => window.electronAPI.menuQuit(), {
+    enabled: () => hasPlatformCapability('nativeMenu'),
+  })
 
   // History navigation
   useAction('nav.goBack', goBack)
@@ -803,9 +813,7 @@ function AppShellContent({
     refreshWorkspaceRemoteHealth()
   }, [refreshWorkspaceRemoteHealth])
 
-  // Skills are scoped to the workspace root under complete-unification semantics.
-  // Keep the legacy variable name for downstream DTO compatibility.
-  const activeSessionWorkingDirectory = activeWorkspace?.rootPath
+  const activeWorkspaceRoot = activeWorkspace?.rootPath
   React.useEffect(() => {
     if (!activeWorkspaceId) return
     let cancelled = false
@@ -1074,10 +1082,10 @@ function AppShellContent({
     ...contextValue,
     onDeleteSession: handleDeleteSession,
     skills,
-    activeSessionWorkingDirectory,
+    activeWorkspaceRoot,
     enabledModes,
-    remoteUIRequest,
-    respondRemoteUI,
+    extensionInteraction,
+    respondToExtensionInteraction,
     panelHeaderTrailingAction: null,
     isCompactMode: isAutoCompact,
     // Search state for ChatDisplay highlighting
@@ -1093,7 +1101,7 @@ function AppShellContent({
     getAutomationHistory,
     onReplayAutomation: handleReplayAutomation,
     workspaceNavigation,
-  }), [contextValue, handleDeleteSession, skills, activeSessionWorkingDirectory, enabledModes, remoteUIRequest, respondRemoteUI, isAutoCompact, searchActive, searchQuery, handleChatMatchInfoChange, handleTestAutomation, handleToggleAutomation, handleDuplicateAutomation, handleDeleteAutomation, automationTestResults, getAutomationHistory, handleReplayAutomation, workspaceNavigation])
+  }), [contextValue, handleDeleteSession, skills, activeWorkspaceRoot, enabledModes, extensionInteraction, respondToExtensionInteraction, isAutoCompact, searchActive, searchQuery, handleChatMatchInfoChange, handleTestAutomation, handleToggleAutomation, handleDuplicateAutomation, handleDeleteAutomation, automationTestResults, getAutomationHistory, handleReplayAutomation, workspaceNavigation])
 
   // Persist expanded folders to localStorage (workspace-scoped)
   React.useEffect(() => {
@@ -1113,6 +1121,7 @@ function AppShellContent({
 
   // Listen for focus mode toggle from menu (View → Focus Mode)
   React.useEffect(() => {
+    if (!hasPlatformCapability('nativeMenu')) return
     const cleanup = window.electronAPI.onMenuToggleFocusMode?.(() => {
       setIsFocusMode(v => !v)
     })
@@ -1121,6 +1130,7 @@ function AppShellContent({
 
   // Listen for sidebar toggle from menu (View → Toggle Sidebar)
   React.useEffect(() => {
+    if (!hasPlatformCapability('nativeMenu')) return
     const cleanup = window.electronAPI.onMenuToggleSidebar?.(() => {
       handleToggleSidebar()
     })
@@ -1232,7 +1242,7 @@ function AppShellContent({
 
   // Create a new workspace-owned dedicated browser window and focus it.
   const handleNewBrowserWindow = useCallback(async () => {
-    if (!activeWorkspace) return
+    if (!activeWorkspace || !canUseNativeBrowserPanes()) return
     try {
       const instanceId = await window.electronAPI.browserPane.create({
         show: true,
@@ -1303,7 +1313,9 @@ function AppShellContent({
               hasRemoteWorkspaces={hasRemoteWorkspaces}
               onRename={() => openSidebarSessionRename(workspaceId, summary)}
               onMarkUnread={() => handleSidebarSessionMarkUnread(workspaceId, summary)}
-              onOpenInNewWindow={() => window.electronAPI.openSessionInNewWindow(workspaceId, summary.id)}
+              onOpenInNewWindow={canOpenSeparateBrowserSurface()
+                ? () => window.electronAPI.openSessionInNewWindow(workspaceId, summary.id)
+                : undefined}
               onSendToWorkspace={item.isActive && hasRemoteWorkspaces
                 ? () => setSendToWorkspaceIds([summary.id])
                 : undefined}
@@ -1355,7 +1367,9 @@ function AppShellContent({
         contextMenu: item.isActive ? undefined : {
           type: 'workspace' as const,
           isActiveWorkspace: false,
-          onOpenWorkspaceInNewWindow: () => { void workspaceNavigation.openWorkspaceInNewWindow(workspaceId) },
+          onOpenWorkspaceInNewWindow: canUseAuxiliaryLayoutWindows()
+            ? () => { void workspaceNavigation.openWorkspaceInNewWindow(workspaceId) }
+            : undefined,
           onRemoveWorkspace: () => { void workspaceNavigation.removeWorkspace(item.workspace) },
         },
       }
@@ -1449,6 +1463,43 @@ function AppShellContent({
       }
     },
   }), [focusedSidebarItemId])
+
+  const sessionSearchSurface = (
+    <SessionList
+      key={sessionFilter?.kind}
+      items={searchActive ? workspaceSessionMetas : filteredSessionMetas}
+      onDelete={handleDeleteSession}
+      onMarkUnread={onMarkSessionUnread}
+      onRename={onRenameSession}
+      onFocusChatInput={(targetSessionId) => {
+        focusChatInputForSession(targetSessionId ?? focusedSessionId ?? session.selected)
+      }}
+      onSessionSelect={(selectedMeta) => {
+        navigateToSessionInPanel(selectedMeta.id)
+      }}
+      onOpenInNewWindow={canOpenSeparateBrowserSurface()
+        ? (selectedMeta) => {
+            if (activeWorkspaceId) {
+              window.electronAPI.openSessionInNewWindow(activeWorkspaceId, selectedMeta.id)
+            }
+          }
+        : undefined}
+      sessionOptions={sessionOptions}
+      searchActive={searchActive}
+      searchQuery={searchQuery}
+      onSearchChange={setSearchQuery}
+      onSearchClose={() => {
+        setSearchActive(false)
+        setSearchQuery('')
+      }}
+      groupingMode={chatGroupingMode}
+      workspaceId={activeWorkspaceId ?? undefined}
+      focusedSessionId={panelCount === 0 ? null : panelCount > 1 ? focusedSessionId : undefined}
+      onNavigateToSession={navigateToSessionInPanel}
+      hasPendingPrompt={hasPendingPrompt}
+      activeChatMatchInfo={chatMatchInfo}
+    />
+  )
 
   // Unified sidebar keyboard navigation
   const handleSidebarKeyDown = React.useCallback((e: React.KeyboardEvent) => {
@@ -1558,7 +1609,9 @@ function AppShellContent({
           workspaceNavigation={workspaceNavigation}
           activeSessionId={effectiveSessionId}
           onNewChat={() => handleNewChat()}
-          onNewWindow={() => window.electronAPI.menuNewWindow()}
+          onNewWindow={canOpenSeparateBrowserSurface()
+            ? () => window.electronAPI.menuNewWindow()
+            : undefined}
           onOpenSettings={onOpenSettings}
           onOpenSettingsSubpage={handleSettingsClick}
           onOpenKeyboardShortcuts={onOpenKeyboardShortcuts}
@@ -1570,7 +1623,9 @@ function AppShellContent({
           onToggleSidebar={handleToggleSidebar}
           onToggleFocusMode={() => setIsFocusMode(prev => !prev)}
           onAddSessionPanel={() => handleNewChat(true)}
-          onAddBrowserPanel={() => { void handleNewBrowserWindow() }}
+          onAddBrowserPanel={canUseNativeBrowserPanes()
+            ? () => { void handleNewBrowserWindow() }
+            : undefined}
           onTogglePanelLayout={togglePanelLayout}
           isCanvasLayoutFocused={isCanvasLayoutFocused}
           isWorkspaceCanvasActive={isSessionsNavigation(navState)}
@@ -1654,6 +1709,20 @@ function AppShellContent({
                     <TooltipTrigger asChild>
                       <button
                         type="button"
+                        data-mortise-semantic-id="session.search.open"
+                        aria-label={t('shortcuts.action.search')}
+                        onClick={() => setSearchActive(true)}
+                        className="flex h-6 w-6 shrink-0 items-center justify-center rounded-[5px] text-muted-foreground outline-none hover:bg-foreground/[0.05] hover:text-foreground focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
+                      >
+                        <Search className="h-3.5 w-3.5" />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="right">{t('shortcuts.action.search')}</TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        type="button"
                         data-mortise-semantic-id="workspace.add"
                         aria-label={t('workspace.addWorkspace')}
                         onClick={workspaceNavigation.openCreation}
@@ -1665,12 +1734,14 @@ function AppShellContent({
                     <TooltipContent side="right">{t('workspace.addWorkspace')}</TooltipContent>
                   </Tooltip>
                 </div>
-                <LeftSidebar
-                  isCollapsed={false}
-                  getItemProps={getSidebarItemProps}
-                  focusedItemId={focusedSidebarItemId}
-                  links={workspaceSidebarItems}
-                />
+                {searchActive ? sessionSearchSurface : (
+                  <LeftSidebar
+                    isCollapsed={false}
+                    getItemProps={getSidebarItemProps}
+                    focusedItemId={focusedSidebarItemId}
+                    links={workspaceSidebarItems}
+                  />
+                )}
                 {effectiveSessionId && <ExtensionContributionZone className="px-2 py-1" sessionId={effectiveSessionId} surface="sidebar.section" />}
                 {effectiveSessionId && <ExtensionContributionZone className="px-2 py-1" sessionId={effectiveSessionId} surface="sidebar.footer" />}
                 </div>
@@ -1796,43 +1867,12 @@ function AppShellContent({
               />
             )}
             {isAutoCompact && isSessionsNavigation(navState) && (
-              /* Compact navigation keeps the legacy list interaction; desktop
-                 conversations now live entirely in the workspace-first sidebar. */
+              /* Compact navigation reuses the canonical SessionList search surface;
+                 desktop conversations live in the workspace-first sidebar. */
               <>
                 {/* SessionList: Scrollable list of session cards */}
                 {/* Key on sidebarMode forces full remount when switching views, skipping animations */}
-                <SessionList
-                  key={sessionFilter?.kind}
-                  items={searchActive ? workspaceSessionMetas : filteredSessionMetas}
-                  onDelete={handleDeleteSession}
-                  onMarkUnread={onMarkSessionUnread}
-                  onRename={onRenameSession}
-                  onFocusChatInput={(targetSessionId) => {
-                    focusChatInputForSession(targetSessionId ?? focusedSessionId ?? session.selected)
-                  }}
-                  onSessionSelect={(selectedMeta) => {
-                    navigateToSessionInPanel(selectedMeta.id)
-                  }}
-                  onOpenInNewWindow={(selectedMeta) => {
-                    if (activeWorkspaceId) {
-                      window.electronAPI.openSessionInNewWindow(activeWorkspaceId, selectedMeta.id)
-                    }
-                  }}
-                  sessionOptions={sessionOptions}
-                  searchActive={searchActive}
-                  searchQuery={searchQuery}
-                  onSearchChange={setSearchQuery}
-                  onSearchClose={() => {
-                    setSearchActive(false)
-                    setSearchQuery('')
-                  }}
-                  groupingMode={chatGroupingMode}
-                  workspaceId={activeWorkspaceId ?? undefined}
-                  focusedSessionId={panelCount === 0 ? null : panelCount > 1 ? focusedSessionId : undefined}
-                  onNavigateToSession={navigateToSessionInPanel}
-                  hasPendingPrompt={hasPendingPrompt}
-                  activeChatMatchInfo={chatMatchInfo}
-                />
+                {sessionSearchSurface}
               </>
             )}
             {/* Mobile/compact-only FAB for starting a new chat — only on the

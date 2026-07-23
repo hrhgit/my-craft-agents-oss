@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it } from 'bun:test'
 import { spawn, type ChildProcess } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { MultiWriterStore } from '../../storage/index.ts'
 
 const repositoryRoot = resolve(import.meta.dir, '../../../../..')
 const workerPath = join(import.meta.dir, 'fixtures', 'multi-writer-config-worker.ts')
@@ -11,11 +12,6 @@ const temporaryDirectories: string[] = []
 function setupConfigDir(): string {
   const configDir = mkdtempSync(join(tmpdir(), 'mortise-config-multi-writer-'))
   temporaryDirectories.push(configDir)
-  writeFileSync(join(configDir, 'config.json'), JSON.stringify({
-    workspaces: [],
-    activeWorkspaceId: null,
-    activeSessionId: null,
-  }, null, 2))
   writeFileSync(join(configDir, 'config-defaults.json'), JSON.stringify({
     version: 'test',
     description: 'test defaults',
@@ -65,8 +61,7 @@ afterEach(() => {
 describe('config multi-writer compatibility', () => {
   it('merges disjoint edits from Bun and Electron writers', async () => {
     const configDir = setupConfigDir()
-    const imported = spawnWorker(configDir, 'colorTheme', 'dark')
-    await collect(imported)
+    await collect(spawnWorker(configDir, 'colorTheme', 'dark'))
 
     const [bunWriter, electronWriter] = await Promise.all([
       collect(spawnWorker(configDir, 'colorTheme', 'light')),
@@ -75,9 +70,40 @@ describe('config multi-writer compatibility', () => {
     void bunWriter
     void electronWriter
 
-    const config = JSON.parse(readFileSync(join(configDir, 'config.json'), 'utf8')) as Record<string, unknown>
+    const store = MultiWriterStore.openSync({
+      databasePath: join(configDir, 'state.sqlite'),
+      writerId: 'test-reader',
+      writerVersion: 1,
+    })
+    const config = store.getRecord('config', 'root')?.value as Record<string, unknown>
+    store.close()
     expect(config.colorTheme).toBe('light')
     expect(config.notificationsEnabled).toBe(false)
-    expect(JSON.parse(readFileSync(join(configDir, '.config.json.sync'), 'utf8'))).toEqual(config)
+    expect(existsSync(join(configDir, 'config.json'))).toBe(false)
+    expect(existsSync(join(configDir, '.config.json.sync'))).toBe(false)
+  }, 30_000)
+
+  it('ignores and preserves retired config.json data', async () => {
+    const configDir = setupConfigDir()
+    const legacyPath = join(configDir, 'config.json')
+    const legacyContents = JSON.stringify({
+      workspaces: [],
+      activeWorkspaceId: null,
+      activeSessionId: null,
+      colorTheme: 'legacy-theme',
+    }, null, 2)
+    writeFileSync(legacyPath, legacyContents)
+
+    await collect(spawnWorker(configDir, 'colorTheme', 'current-theme'))
+
+    const store = MultiWriterStore.openSync({
+      databasePath: join(configDir, 'state.sqlite'),
+      writerId: 'legacy-test-reader',
+      writerVersion: 1,
+    })
+    expect((store.getRecord('config', 'root')?.value as Record<string, unknown>).colorTheme).toBe('current-theme')
+    store.close()
+    expect(readFileSync(legacyPath, 'utf8')).toBe(legacyContents)
+    expect(existsSync(join(configDir, '.config.json.sync'))).toBe(false)
   }, 30_000)
 })

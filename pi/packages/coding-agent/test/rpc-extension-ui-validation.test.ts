@@ -77,6 +77,14 @@ describe("extension UI validation capability", () => {
 		expect(send).not.toHaveBeenCalled();
 	});
 
+	it("does not emit a retired widget protocol from the capability-free headless context", () => {
+		const send = vi.fn();
+		const ui = createHeadlessUIContext({ send });
+		expect(ui.capabilities.widgets).toBe(false);
+		ui.setWidget("status", ["ready"]);
+		expect(send).not.toHaveBeenCalled();
+	});
+
 	it("emits revisioned validation deltas from a real RPC extension context", async () => {
 		const root = join(tmpdir(), `pi-ui-validation-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 		const extensionPath = join(root, "validation-extension.js");

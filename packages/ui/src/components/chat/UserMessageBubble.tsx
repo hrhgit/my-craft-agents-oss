@@ -171,14 +171,11 @@ function InlineFileBadge({
   badge: ContentBadge
   onFileClick?: (path: string) => void
 }) {
-  // Strip workspace/session path prefix for cleaner tooltip display.
-  // Matches both legacy (.mortise/workspaces/{id}/sessions/{id}/) and Pi (~/.pi/agent/sessions/{encoded-cwd}/) paths.
-  // e.g. "/Users/.../workspaces/{id}/sessions/{id}/plans/foo.md" → "plans/foo.md"
-  // e.g. "/Users/.../.pi/agent/sessions/{encoded-cwd}/.mortise/{id}/plans/foo.md" → "plans/foo.md"
+  // Strip the current Mortise session sidecar prefix for cleaner tooltip display.
+  // e.g. "/Users/.../.mortise/agent/sessions/{encoded-cwd}/.mortise/{id}/plans/foo.md" -> "plans/foo.md"
   const rawPath = badge.filePath || badge.label
   const tooltipPath = normalizePath(rawPath)
-    .replace(/^.*\.mortise\/workspaces\/[^/]+\/(sessions\/[^/]+\/)?/, '')
-    .replace(/^.*\.pi\/agent\/sessions\/[^/]+\/\.mortise\/[^/]+\//, '')
+    .replace(/^.*\.mortise\/agent\/sessions\/[^/]+\/\.mortise\/[^/]+\//, '')
   const isClickable = !!badge.filePath && !!onFileClick
 
   const badgeContent = (

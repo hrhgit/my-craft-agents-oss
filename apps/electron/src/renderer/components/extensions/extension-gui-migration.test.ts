@@ -24,9 +24,12 @@ describe('extension GUI migration guard', () => {
   it('does not restore ask_user identity branches in the generic host adapters', () => {
     const hostSources = [
       read('packages/shared/src/agent/pi-agent.ts'),
-      read('apps/electron/src/renderer/components/extensions/RemoteUIModal.tsx'),
-      read('apps/electron/src/renderer/hooks/useRemoteUIRequests.ts'),
+      read('apps/electron/src/renderer/components/extensions/ExtensionInteractionComposer.tsx'),
+      read('apps/electron/src/renderer/hooks/useExtensionInteractions.ts'),
     ].join('\n')
     expect(hostSources).not.toMatch(/ASK_USER_EXTENSION_IDS|isAskUserExtension|parseAskUserPrompt|remote-ui-batch/)
+    expect(existsSync(resolve(root, 'apps/electron/src/renderer/components/extensions/RemoteUIModal.tsx'))).toBe(false)
+    expect(existsSync(resolve(root, 'apps/electron/src/renderer/hooks/useRemoteUIRequests.ts'))).toBe(false)
+    expect(hostSources).not.toMatch(/remoteui_request|legacy-widget:/)
   })
 })

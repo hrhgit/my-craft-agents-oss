@@ -1,6 +1,7 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { existsSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { homedir } from 'node:os'
+import { atomicWriteFile } from '@mortise/shared/utils'
 import {
   assertSingleWorkspaceLayout,
   createDefaultAppLayout,
@@ -19,6 +20,14 @@ export interface LayoutCoordinatorOptions {
   authorizeContentRef?: (ref: ContentRef) => boolean
   resolveServerId?: (workspaceId: string) => string | undefined
   onChanged?: (layout: AppLayout) => void
+  persistSnapshot?: (storagePath: string, contents: string) => Promise<void>
+}
+
+export interface LayoutPersistenceState {
+  pendingRevisions: number
+  writing: boolean
+  failed: boolean
+  highWaterRevisions: number
 }
 
 export class LayoutCoordinator {
@@ -26,13 +35,18 @@ export class LayoutCoordinator {
   private readonly layouts: Map<string, AppLayout>
   private changedHandler: ((layout: AppLayout) => void) | undefined
   private needsPersistAfterLoad = false
+  private requestedPersistRevision = 0
+  private durablePersistRevision = 0
+  private highWaterRevisions = 0
+  private persistenceLoop: Promise<void> | undefined
+  private persistenceError: Error | undefined
 
   constructor(private readonly options: LayoutCoordinatorOptions = {}) {
     this.storagePath = options.storagePath
       ?? join(process.env.MORTISE_CONFIG_DIR || join(homedir(), '.mortise'), 'app-layout.v1.json')
     this.layouts = this.loadFromDisk()
     this.changedHandler = options.onChanged
-    if (this.needsPersistAfterLoad) this.persist()
+    if (this.needsPersistAfterLoad) this.requestPersist()
   }
 
   setChangedHandler(handler: (layout: AppLayout) => void): void {
@@ -51,7 +65,7 @@ export class LayoutCoordinator {
     const rebound = rebindLayoutServer(current, trustedServerId)
     this.assertAuthorized(rebound)
     this.layouts.set(workspaceId, rebound)
-    this.persist()
+    this.requestPersist()
     this.changedHandler?.(structuredClone(rebound))
     return structuredClone(rebound)
   }
@@ -67,7 +81,7 @@ export class LayoutCoordinator {
     this.assertAuthorized(sanitized)
     const saved = { ...sanitized, revision: Math.max(current.revision, sanitized.revision) + 1 }
     this.layouts.set(saved.workspaceId, saved)
-    this.persist()
+    this.requestPersist()
     this.changedHandler?.(structuredClone(saved))
     return structuredClone(saved)
   }
@@ -95,7 +109,7 @@ export class LayoutCoordinator {
     this.assertAuthorized(merged)
     const saved = { ...merged, revision: Math.max(current.revision, view.revision) + 1 }
     this.layouts.set(saved.workspaceId, saved)
-    this.persist()
+    this.requestPersist()
     this.changedHandler?.(structuredClone(saved))
     return structuredClone(saved)
   }
@@ -105,7 +119,7 @@ export class LayoutCoordinator {
     const next = detachPanelGroup(current, groupId, windowId, bounds)
     if (next === current) throw new Error(`Panel group cannot be detached: ${groupId}`)
     this.layouts.set(workspaceId, next)
-    this.persist()
+    this.requestPersist()
     this.changedHandler?.(structuredClone(next))
     return structuredClone(next)
   }
@@ -115,7 +129,7 @@ export class LayoutCoordinator {
     const next = detachContentTab(current, tabId, windowId, bounds)
     if (next === current) throw new Error(`Content tab cannot be detached: ${tabId}`)
     this.layouts.set(workspaceId, next)
-    this.persist()
+    this.requestPersist()
     this.changedHandler?.(structuredClone(next))
     return structuredClone(next)
   }
@@ -129,7 +143,7 @@ export class LayoutCoordinator {
     const next = redockLayoutWindow(current, windowId)
     if (next === current) return structuredClone(current)
     this.layouts.set(ownerWorkspaceId, next)
-    this.persist()
+    this.requestPersist()
     this.changedHandler?.(structuredClone(next))
     return structuredClone(next)
   }
@@ -203,15 +217,60 @@ export class LayoutCoordinator {
       : layout
   }
 
-  private persist(): void {
-    mkdirSync(dirname(this.storagePath), { recursive: true })
-    const tempPath = `${this.storagePath}.${process.pid}.tmp`
-    const payload = {
-      version: 1,
-      layouts: Object.fromEntries(this.layouts),
+  getPersistenceState(): LayoutPersistenceState {
+    return {
+      pendingRevisions: Math.max(0, this.requestedPersistRevision - this.durablePersistRevision),
+      writing: this.persistenceLoop !== undefined,
+      failed: this.persistenceError !== undefined,
+      highWaterRevisions: this.highWaterRevisions,
     }
-    writeFileSync(tempPath, `${JSON.stringify(payload, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 })
-    renameSync(tempPath, this.storagePath)
+  }
+
+  async flush(): Promise<void> {
+    while (this.persistenceLoop) await this.persistenceLoop
+    if (this.persistenceError) throw this.persistenceError
+    if (this.durablePersistRevision < this.requestedPersistRevision) {
+      this.ensurePersistenceLoop()
+      return this.flush()
+    }
+  }
+
+  private requestPersist(): void {
+    this.requestedPersistRevision += 1
+    this.highWaterRevisions = Math.max(
+      this.highWaterRevisions,
+      this.requestedPersistRevision - this.durablePersistRevision,
+    )
+    if (this.persistenceError) this.persistenceError = undefined
+    this.ensurePersistenceLoop()
+  }
+
+  private ensurePersistenceLoop(): void {
+    if (this.persistenceLoop || this.persistenceError) return
+    this.persistenceLoop = new Promise<void>(resolve => setImmediate(resolve))
+      .then(() => this.drainPersistence())
+      .catch(error => {
+        this.persistenceError = error instanceof Error ? error : new Error(String(error))
+      })
+      .finally(() => {
+        this.persistenceLoop = undefined
+        if (!this.persistenceError && this.durablePersistRevision < this.requestedPersistRevision) {
+          this.ensurePersistenceLoop()
+        }
+      })
+  }
+
+  private async drainPersistence(): Promise<void> {
+    while (this.durablePersistRevision < this.requestedPersistRevision) {
+      const targetRevision = this.requestedPersistRevision
+      const payload = {
+        version: 1,
+        layouts: Object.fromEntries(this.layouts),
+      }
+      const contents = `${JSON.stringify(payload, null, 2)}\n`
+      await (this.options.persistSnapshot ?? atomicWriteFile)(this.storagePath, contents)
+      this.durablePersistRevision = targetRevision
+    }
   }
 }
 

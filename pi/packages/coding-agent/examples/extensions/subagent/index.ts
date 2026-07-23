@@ -317,6 +317,7 @@ async function startSubagentActivity(
 
 async function runSingleAgent(
 	ctx: ExtensionContext,
+	currentThinkingLevel: NonNullable<Parameters<typeof resolveModelReference>[1]>["currentThinkingLevel"],
 	defaultCwd: string,
 	agents: AgentConfig[],
 	agentName: string,
@@ -346,14 +347,17 @@ async function runSingleAgent(
 	const effectiveCwd = cwd ?? defaultCwd;
 	const args: string[] = ["--mode", "json", "-p", "--no-session"];
 	const configuredModel = agent.model ?? "current-session";
-	const isReference = configuredModel === "current-session" || /^default:[1-9]\d*$/.test(configuredModel) || configuredModel.startsWith("model:");
+	const isReference =
+		configuredModel === "current-session" ||
+		/^default:[1-9]\d*$/.test(configuredModel) ||
+		configuredModel.startsWith("model:");
 	const resolvedReference = isReference
 		? resolveModelReference(configuredModel, {
-			currentModel: ctx.model,
-			currentThinkingLevel: ctx.getThinkingLevel(),
-			modelRegistry: ctx.modelRegistry,
-			cwd: effectiveCwd,
-		})
+				currentModel: ctx.model,
+				currentThinkingLevel,
+				modelRegistry: ctx.modelRegistry,
+				cwd: effectiveCwd,
+			})
 		: undefined;
 	if (isReference) {
 		if (!resolvedReference) {
@@ -638,6 +642,7 @@ export default function (pi: ExtensionAPI) {
 
 					const result = await runSingleAgent(
 						ctx,
+						pi.getThinkingLevel(),
 						ctx.cwd,
 						agents,
 						step.agent,
@@ -711,6 +716,7 @@ export default function (pi: ExtensionAPI) {
 				const results = await mapWithConcurrencyLimit(params.tasks, MAX_CONCURRENCY, async (t, index) => {
 					const result = await runSingleAgent(
 						ctx,
+						pi.getThinkingLevel(),
 						ctx.cwd,
 						agents,
 						t.agent,
@@ -754,6 +760,7 @@ export default function (pi: ExtensionAPI) {
 			if (params.agent && params.task) {
 				const result = await runSingleAgent(
 					ctx,
+					pi.getThinkingLevel(),
 					ctx.cwd,
 					agents,
 					params.agent,

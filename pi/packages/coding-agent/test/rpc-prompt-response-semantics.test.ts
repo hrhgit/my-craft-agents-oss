@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Agent } from "@mortise/pi-agent-core";
@@ -89,8 +89,14 @@ function sleep(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function createRuntimeHost(options: { withAuth: boolean; responseDelayMs: number; model?: Model<any> }): {
+function createRuntimeHost(options: {
+	withAuth: boolean;
+	responseDelayMs: number;
+	model?: Model<any>;
+	persistSession?: boolean;
+}): {
 	runtimeHost: AgentSessionRuntime;
+	getSessionFile: () => string | undefined;
 	cleanup: () => Promise<void>;
 } {
 	const tempDir = join(tmpdir(), `pi-rpc-prompt-${Date.now()}-${Math.random().toString(36).slice(2)}`);
@@ -120,7 +126,9 @@ function createRuntimeHost(options: { withAuth: boolean; responseDelayMs: number
 		},
 	});
 
-	const sessionManager = SessionManager.inMemory();
+	const sessionManager = options.persistSession
+		? SessionManager.create(tempDir, join(tempDir, "sessions"))
+		: SessionManager.inMemory();
 	const settingsManager = SettingsManager.create(tempDir, tempDir);
 	const authStorage = AuthStorage.create(join(tempDir, "auth.json"));
 	const modelRegistry = ModelRegistry.create(authStorage, tempDir);
@@ -148,6 +156,7 @@ function createRuntimeHost(options: { withAuth: boolean; responseDelayMs: number
 
 	return {
 		runtimeHost,
+		getSessionFile: () => sessionManager.getSessionFile(),
 		cleanup: async () => {
 			try {
 				if (session.isStreaming) {
@@ -164,18 +173,24 @@ function createRuntimeHost(options: { withAuth: boolean; responseDelayMs: number
 	};
 }
 
-async function startRpcMode(options: { withAuth: boolean; responseDelayMs: number; model?: Model<any> }): Promise<{
+async function startRpcMode(options: {
+	withAuth: boolean;
+	responseDelayMs: number;
+	model?: Model<any>;
+	persistSession?: boolean;
+}): Promise<{
 	lineHandler: (line: string) => void;
+	getSessionFile: () => string | undefined;
 	cleanup: () => Promise<void>;
 }> {
 	rpcIo.outputLines = [];
 	rpcIo.lineHandler = undefined;
 
-	const { runtimeHost, cleanup } = createRuntimeHost(options);
+	const { runtimeHost, getSessionFile, cleanup } = createRuntimeHost(options);
 	void runRpcMode(runtimeHost);
 	await vi.waitFor(() => expect(rpcIo.lineHandler).toBeDefined());
 
-	return { lineHandler: rpcIo.lineHandler!, cleanup };
+	return { lineHandler: rpcIo.lineHandler!, getSessionFile, cleanup };
 }
 
 describe("RPC prompt response semantics", () => {
@@ -238,6 +253,110 @@ describe("RPC prompt response semantics", () => {
 					command: "prompt",
 					success: true,
 				});
+			});
+		} finally {
+			await cleanup();
+		}
+	});
+
+	it("emits the user persistence event only after canonical JSONL publication", async () => {
+		const clientMutationId = "mutation-durable-1";
+		const { lineHandler, getSessionFile, cleanup } = await startRpcMode({
+			withAuth: true,
+			responseDelayMs: 100,
+			persistSession: true,
+		});
+
+		try {
+			lineHandler(JSON.stringify({ id: "durable-1", type: "prompt", message: "Hello", clientMutationId }));
+
+			await vi.waitFor(() => {
+				const records = parseOutputLines(rpcIo.outputLines);
+				expect(
+					records.some(
+						(record) =>
+							record.type === "message_end" &&
+							(record.message as { role?: string } | undefined)?.role === "user",
+					),
+				).toBe(true);
+			});
+			expect(parseOutputLines(rpcIo.outputLines).some((record) => record.type === "pi_user_message_persisted")).toBe(
+				false,
+			);
+			expect(existsSync(getSessionFile()!)).toBe(false);
+
+			await vi.waitFor(() => {
+				const records = parseOutputLines(rpcIo.outputLines);
+				const persistedIndex = records.findIndex((record) => record.type === "pi_user_message_persisted");
+				const settledIndex = records.findIndex((record) => record.type === "agent_settled");
+				expect(persistedIndex).toBeGreaterThanOrEqual(0);
+				expect(settledIndex).toBeGreaterThan(persistedIndex);
+
+				const persistedEvent = records[persistedIndex];
+				expect(persistedEvent).toMatchObject({ type: "pi_user_message_persisted", clientMutationId });
+
+				const sessionFile = getSessionFile();
+				expect(sessionFile).toBe(persistedEvent.sessionFile);
+				expect(sessionFile && existsSync(sessionFile)).toBe(true);
+				const entries = readFileSync(sessionFile!, "utf8")
+					.trim()
+					.split("\n")
+					.map((line) => JSON.parse(line) as Record<string, any>);
+				expect(entries).toContainEqual(
+					expect.objectContaining({
+						type: "message",
+						id: persistedEvent.entryId,
+						message: expect.objectContaining({ role: "user", clientMutationId }),
+					}),
+				);
+			});
+		} finally {
+			await cleanup();
+		}
+	});
+
+	it("emits persistence immediately when appending a user message to a published session", async () => {
+		const { lineHandler, getSessionFile, cleanup } = await startRpcMode({
+			withAuth: true,
+			responseDelayMs: 100,
+			persistSession: true,
+		});
+
+		try {
+			lineHandler(
+				JSON.stringify({ id: "published-1", type: "prompt", message: "First", clientMutationId: "mutation-first" }),
+			);
+			await vi.waitFor(() => {
+				expect(parseOutputLines(rpcIo.outputLines).some((record) => record.type === "agent_settled")).toBe(true);
+			});
+
+			rpcIo.outputLines = [];
+			const clientMutationId = "mutation-existing-session";
+			lineHandler(JSON.stringify({ id: "published-2", type: "prompt", message: "Second", clientMutationId }));
+
+			await vi.waitFor(() => {
+				const records = parseOutputLines(rpcIo.outputLines);
+				const persistedIndex = records.findIndex(
+					(record) => record.type === "pi_user_message_persisted" && record.clientMutationId === clientMutationId,
+				);
+				const assistantStartIndex = records.findIndex(
+					(record) =>
+						record.type === "message_start" &&
+						(record.message as { role?: string } | undefined)?.role === "assistant",
+				);
+				expect(persistedIndex).toBeGreaterThanOrEqual(0);
+				expect(assistantStartIndex === -1 || persistedIndex < assistantStartIndex).toBe(true);
+
+				const entries = readFileSync(getSessionFile()!, "utf8")
+					.trim()
+					.split("\n")
+					.map((line) => JSON.parse(line) as Record<string, any>);
+				expect(entries).toContainEqual(
+					expect.objectContaining({
+						type: "message",
+						message: expect.objectContaining({ role: "user", clientMutationId }),
+					}),
+				);
 			});
 		} finally {
 			await cleanup();

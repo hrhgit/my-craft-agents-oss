@@ -1,14 +1,24 @@
 import { describe, expect, it } from 'bun:test'
 import { RPC_CHANNELS } from '@mortise/shared/protocol'
-import { CLIENT_OPEN_EXTERNAL } from '@mortise/server-core/transport'
+import {
+  CLIENT_OPEN_EXTERNAL,
+  CLIENT_OPEN_PATH,
+  CLIENT_SHOW_IN_FOLDER,
+} from '@mortise/server-core/transport'
 import type { RpcServer, HandlerFn, RequestContext } from '@mortise/server-core/transport'
 import type { HandlerDeps } from '../handler-deps'
 import { registerSystemCoreHandlers } from './system'
 
-function createTestHarness(overrides?: { workspaceId?: string | null }) {
+function createTestHarness(overrides?: {
+  workspaceId?: string | null
+  capabilities?: string[]
+  platform?: Partial<HandlerDeps['platform']>
+  invokeError?: Error & { code?: string }
+}) {
   const handlers = new Map<string, HandlerFn>()
   const invokeClientCalls: Array<{ clientId: string; channel: string; args: any[] }> = []
   const pushCalls: Array<{ channel: string; target: any; args: any[] }> = []
+  const capabilities = new Set(overrides?.capabilities ?? [CLIENT_OPEN_EXTERNAL])
 
   const server: RpcServer = {
     handle(channel, handler) {
@@ -19,9 +29,10 @@ function createTestHarness(overrides?: { workspaceId?: string | null }) {
     },
     async invokeClient(clientId, channel, ...args) {
       invokeClientCalls.push({ clientId, channel, args })
+      if (overrides?.invokeError) throw overrides.invokeError
       return undefined
     },
-    hasClientCapability() { return false },
+    hasClientCapability(_clientId, capability) { return capabilities.has(capability) },
     findClientsWithCapability() { return [] },
   }
 
@@ -43,15 +54,11 @@ function createTestHarness(overrides?: { workspaceId?: string | null }) {
         getMetadata: async () => null,
         process: async () => Buffer.from(''),
       },
+      ...overrides?.platform,
     },
   }
 
   registerSystemCoreHandlers(server, deps)
-
-  const openUrl = handlers.get(RPC_CHANNELS.shell.OPEN_URL)
-  if (!openUrl) {
-    throw new Error('OPEN_URL handler not registered')
-  }
 
   const ctx: RequestContext = {
     clientId: 'client-1',
@@ -59,7 +66,19 @@ function createTestHarness(overrides?: { workspaceId?: string | null }) {
     webContentsId: 101,
   }
 
-  return { openUrl, ctx, invokeClientCalls, pushCalls }
+  const handler = (channel: string): HandlerFn => {
+    const registered = handlers.get(channel)
+    if (!registered) throw new Error(`${channel} handler not registered`)
+    return registered
+  }
+
+  return {
+    openUrl: handler(RPC_CHANNELS.shell.OPEN_URL),
+    handler,
+    ctx,
+    invokeClientCalls,
+    pushCalls,
+  }
 }
 
 describe('registerSystemCoreHandlers OPEN_URL', () => {
@@ -145,5 +164,72 @@ describe('registerSystemCoreHandlers OPEN_URL', () => {
     await expect(openUrl(ctx, 'not a url')).rejects.toThrow(
       /^Failed to open URL: URL blocked\. URL is malformed and cannot be parsed\./,
     )
+  })
+
+  it('returns a stable typed error when no client or platform can open a URL', async () => {
+    const { openUrl, ctx } = createTestHarness({ capabilities: [] })
+
+    let caught: unknown
+    try {
+      await openUrl(ctx, 'https://example.com')
+    } catch (error) {
+      caught = error
+    }
+
+    expect((caught as { code?: string }).code).toBe('CAPABILITY_UNAVAILABLE')
+    expect((caught as Error).message).toBe(
+      'Open URL is unavailable because neither the requesting client nor this platform implements it',
+    )
+  })
+
+  it('preserves a typed unavailable error when client capability disappears during dispatch', async () => {
+    const unavailable = Object.assign(new Error('Client lacks capability: client:openExternal'), {
+      code: 'CAPABILITY_UNAVAILABLE',
+    })
+    const { openUrl, ctx } = createTestHarness({ invokeError: unavailable })
+
+    let caught: unknown
+    try {
+      await openUrl(ctx, 'https://example.com')
+    } catch (error) {
+      caught = error
+    }
+
+    expect(caught).toBe(unavailable)
+    expect((caught as { code?: string }).code).toBe('CAPABILITY_UNAVAILABLE')
+  })
+})
+
+describe('registerSystemCoreHandlers native file actions', () => {
+  it.each([
+    [RPC_CHANNELS.shell.OPEN_FILE, 'Open file'],
+    [RPC_CHANNELS.shell.SHOW_IN_FOLDER, 'Show in folder'],
+  ])('returns CAPABILITY_UNAVAILABLE for %s without a capable client or platform', async (channel, action) => {
+    const { handler, ctx } = createTestHarness({ capabilities: [] })
+
+    let caught: unknown
+    try {
+      await handler(channel)(ctx, process.env.USERPROFILE ?? process.cwd())
+    } catch (error) {
+      caught = error
+    }
+
+    expect((caught as { code?: string }).code).toBe('CAPABILITY_UNAVAILABLE')
+    expect((caught as Error).message).toBe(
+      `${action} is unavailable because neither the requesting client nor this platform implements it`,
+    )
+  })
+
+  it.each([
+    [RPC_CHANNELS.shell.OPEN_FILE, CLIENT_OPEN_PATH],
+    [RPC_CHANNELS.shell.SHOW_IN_FOLDER, CLIENT_SHOW_IN_FOLDER],
+  ])('routes %s through an advertised client capability', async (channel, capability) => {
+    const { handler, ctx, invokeClientCalls } = createTestHarness({ capabilities: [capability] })
+    const path = process.env.USERPROFILE ?? process.cwd()
+
+    await handler(channel)(ctx, path)
+
+    expect(invokeClientCalls).toHaveLength(1)
+    expect(invokeClientCalls[0]?.channel).toBe(capability)
   })
 })

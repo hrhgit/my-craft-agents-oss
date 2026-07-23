@@ -984,22 +984,25 @@ describe('registerFilesHandlers STORE_ATTACHMENT', () => {
       await mkdir(configDir, { recursive: true })
       await mkdir(piAgentDir, { recursive: true })
       await mkdir(workspaceRoot, { recursive: true })
-      await writeFile(
-        join(configDir, 'config.json'),
-        JSON.stringify({
-          workspaces: [{ id: 'ws-1', name: 'Workspace', rootPath: workspaceRoot, createdAt: Date.now() }],
-          activeWorkspaceId: 'ws-1',
-          activeSessionId: null,
-        }, null, 2),
-        'utf-8',
-      )
-
       const filePath = join(tmp, 'notes.txt')
       await writeFile(filePath, 'hello')
 
       const script = `
         import { RPC_CHANNELS } from '@mortise/shared/protocol'
+        import { ensureConfigDir, saveConfig } from '@mortise/shared/config'
+        import { createWorkspaceAtPath } from '@mortise/shared/workspaces'
         import { registerFilesHandlers } from ${JSON.stringify(FILES_MODULE)}
+
+        ensureConfigDir()
+        createWorkspaceAtPath(process.env.TEST_WORKSPACE_ROOT, 'Workspace')
+        saveConfig({
+          workspaces: [{
+            id: 'ws-1', name: 'Workspace', slug: 'workspace',
+            rootPath: process.env.TEST_WORKSPACE_ROOT, createdAt: Date.now(),
+          }],
+          activeWorkspaceId: 'ws-1',
+          activeSessionId: null,
+        })
 
         const handlers = new Map()
         const server = {
@@ -1067,6 +1070,7 @@ describe('registerFilesHandlers STORE_ATTACHMENT', () => {
           MORTISE_CONFIG_DIR: configDir,
           PI_CODING_AGENT_DIR: piAgentDir,
           TEST_ATTACHMENT_PATH: filePath,
+          TEST_WORKSPACE_ROOT: workspaceRoot,
         },
         stdout: 'pipe',
         stderr: 'pipe',

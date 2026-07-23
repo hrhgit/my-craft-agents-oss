@@ -57,7 +57,7 @@ import type {
 	RpcToolResultRequest,
 	RpcToolResultResponse,
 } from "./rpc-types.ts";
-import { PI_HOST_HOOKS_MODULE_ENV, PI_LEGACY_FETCH_INTERCEPTOR_MODULE_ENV } from "./rpc-types.ts";
+import { PI_HOST_HOOKS_MODULE_ENV } from "./rpc-types.ts";
 
 // ============================================================================
 // Types
@@ -100,10 +100,6 @@ export interface RpcClientOptions {
 	 * `toolMetadataResolver`/`createToolMetadataResolver`.
 	 */
 	hostHooksModule?: string;
-	/**
-	 * @deprecated Use `hostHooksModule`. Kept as an alias for older embedders.
-	 */
-	fetchInterceptorModule?: string;
 	/** Provider to use */
 	provider?: string;
 	/** Model ID to use */
@@ -241,7 +237,7 @@ export class RpcClient {
 			args.push(...this.options.args);
 		}
 
-		const hostHooksModule = this.options.hostHooksModule ?? this.options.fetchInterceptorModule;
+		const hostHooksModule = this.options.hostHooksModule;
 		const baseEnv = this.options.envMode === "replace" ? {} : process.env;
 		const env = {
 			...baseEnv,
@@ -253,7 +249,6 @@ export class RpcClient {
 			...(hostHooksModule
 				? {
 						[PI_HOST_HOOKS_MODULE_ENV]: hostHooksModule,
-						[PI_LEGACY_FETCH_INTERCEPTOR_MODULE_ENV]: hostHooksModule,
 					}
 				: {}),
 		};
@@ -500,7 +495,9 @@ export class RpcClient {
 		options?: { clientMutationId?: string; attachments?: import("@mortise/pi-ai/types").UserAttachmentMetadata[] },
 	): Promise<void> {
 		await this.send({
-			type: "follow_up", message, images,
+			type: "follow_up",
+			message,
+			images,
 			clientMutationId: options?.clientMutationId,
 			attachments: options?.attachments,
 		});
@@ -856,7 +853,7 @@ export class RpcClient {
 		await this.send({ type: "set_global_default", provider, model, thinkingLevel, cwd });
 	}
 
-	async setCraftCredential(slug: string, credential: unknown): Promise<void> {
+	async setMortiseCredential(slug: string, credential: unknown): Promise<void> {
 		await this.send({ type: "set_mortise_credential", slug, credential });
 	}
 
@@ -873,7 +870,7 @@ export class RpcClient {
 		return this.getData<HostSessionProjection>(response);
 	}
 
-	async setCraftSessionMetadata(
+	async setMortiseSessionMetadata(
 		sessionPath: string,
 		options: { sessionDir?: string; cwdOverride?: string; name?: string; metadata?: unknown; customType?: string },
 	): Promise<HostSessionProjection> {
@@ -906,12 +903,13 @@ export class RpcClient {
 	}
 
 	async listSkills(
-		options: { cwd?: string; agentDir?: string; skillPaths?: string[] } = {},
+		options: { cwd?: string; agentDir?: string; projectConfigDir?: string; skillPaths?: string[] } = {},
 	): Promise<HostSkillsResult> {
 		const response = await this.send({
 			type: "list_skills",
 			cwd: options.cwd,
 			agentDir: options.agentDir,
+			projectConfigDir: options.projectConfigDir,
 			skillPaths: options.skillPaths,
 		});
 		return this.getData<HostSkillsResult>(response);
@@ -919,20 +917,28 @@ export class RpcClient {
 
 	async resolveSkill(
 		name: string,
-		options: { cwd?: string; agentDir?: string; skillPaths?: string[] } = {},
+		options: { cwd?: string; agentDir?: string; projectConfigDir?: string; skillPaths?: string[] } = {},
 	): Promise<HostResolvedSkill | null> {
 		const response = await this.send({
 			type: "resolve_skill",
 			name,
 			cwd: options.cwd,
 			agentDir: options.agentDir,
+			projectConfigDir: options.projectConfigDir,
 			skillPaths: options.skillPaths,
 		});
 		return this.getData<HostResolvedSkill | null>(response);
 	}
 
-	async getExtensions(options: { cwd?: string; agentDir?: string } = {}): Promise<HostExtensionsResult> {
-		const response = await this.send({ type: "get_extensions", cwd: options.cwd, agentDir: options.agentDir });
+	async getExtensions(
+		options: { cwd?: string; agentDir?: string; projectConfigDir?: string } = {},
+	): Promise<HostExtensionsResult> {
+		const response = await this.send({
+			type: "get_extensions",
+			cwd: options.cwd,
+			agentDir: options.agentDir,
+			projectConfigDir: options.projectConfigDir,
+		});
 		return this.getData<HostExtensionsResult>(response);
 	}
 
@@ -1492,7 +1498,9 @@ export class PiRuntimeHandle {
 	}
 
 	getLastAssistantText(): Promise<string | null> {
-		return this.requestData<{ text: string | null }>({ type: "get_last_assistant_text" }).then((result) => result.text);
+		return this.requestData<{ text: string | null }>({ type: "get_last_assistant_text" }).then(
+			(result) => result.text,
+		);
 	}
 
 	setActiveTools(toolNames: string[]): Promise<void> {
@@ -1536,7 +1544,9 @@ export class PiRuntimeHandle {
 		options?: { clientMutationId?: string; attachments?: import("@mortise/pi-ai/types").UserAttachmentMetadata[] },
 	): Promise<void> {
 		return this.requestVoid({
-			type: "follow_up", message, images,
+			type: "follow_up",
+			message,
+			images,
 			clientMutationId: options?.clientMutationId,
 			attachments: options?.attachments,
 		});
@@ -1680,9 +1690,7 @@ export class PiRuntimeHandle {
 			const events: RpcAgentEvent[] = [];
 			const timer = setTimeout(() => {
 				unsubscribe();
-				reject(
-					new Error(`Timeout collecting events for runtime ${this.runtimeId}. Stderr: ${this.getStderr()}`),
-				);
+				reject(new Error(`Timeout collecting events for runtime ${this.runtimeId}. Stderr: ${this.getStderr()}`));
 			}, timeout);
 			const unsubscribe = this.onEvent((event) => {
 				events.push(event);

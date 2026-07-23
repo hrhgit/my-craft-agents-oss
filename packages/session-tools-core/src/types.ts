@@ -37,10 +37,28 @@ export interface CallbackMessage {
 // Tool Result Types
 // ============================================================
 
-// Re-export ToolResult and TextContent from canonical source (@mortise/shared/agent)
-export type { TextContent, ToolResult } from '@mortise/shared/agent';
-// Re-export getResultText helper for test consumers
-export { getResultText } from '@mortise/shared/agent';
+export interface TextContent {
+  type: 'text';
+  text: string;
+}
+
+export interface ImageContent {
+  type: 'image';
+  data: string;
+  mimeType: string;
+}
+
+export interface ToolResult {
+  [x: string]: unknown;
+  content: Array<TextContent | ImageContent>;
+  structuredContent?: Record<string, unknown>;
+  isError?: boolean;
+}
+
+export function getResultText(result: ToolResult, index = 0): string {
+  const block = result.content[index];
+  return block?.type === 'text' ? block.text : '';
+}
 
 // ============================================================
 // Validation Result Types

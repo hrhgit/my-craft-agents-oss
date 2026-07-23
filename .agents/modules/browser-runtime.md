@@ -25,7 +25,7 @@ collaborates_with: [universal-layout]
 validation:
   - { id: browser-regression, kind: unit, command: "bun test apps/electron/src/main/__tests__/browser-cdp.test.ts apps/electron/src/renderer/browser-new-tab-contract.test.ts", description: "Run browser CDP and new-tab regressions.", triggers: [owned-change], required: true, evidence: "Bun test exit status and output." }
   - { id: browser-physical, kind: physical, command: "bun run test:ui-validation:electron", description: "Exercise browser behavior through the shared Developer Kit host.", triggers: [ui-change, native-change, release], required: false, evidence: "Developer Kit run output and retained UI evidence." }
-scope_digest: baff249e6252f0df5a991c2d54b3bfe5314c356c
+scope_digest: f9555a9673149a1a429c2fc6f9e6268d7e1dd539
 ---
 
 ## Purpose
@@ -56,6 +56,7 @@ Run CDP, pane lifecycle, request observer, toolbar, blank-tab, and dock occlusio
 Browser views render outside the DOM; stale bounds or readiness can make automation target an invisible pane.
 
 ## Semantic history
+- 2026-07-22: CDP commands now hold an in-flight lease before attachment begins, preventing idle detach from racing delayed attachment or active commands.
 - 2026-07-20: Replaced built-in Data Sources guidance with reusable CLI, Pi extension, and direct MCP integration guidance.
 - 2026-07-14: Added browser CDP control to the UI validation surface.
 - 2026-07-18: Integrated native browser panes with universal dock validation.

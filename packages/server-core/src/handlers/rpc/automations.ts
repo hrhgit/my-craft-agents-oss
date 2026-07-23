@@ -1,14 +1,8 @@
-import { randomUUID } from 'node:crypto'
-import { RPC_CHANNELS } from '@mortise/shared/protocol'
-import type { RpcServer } from '@mortise/server-core/transport'
-import type { HandlerDeps } from '../handler-deps'
-import { resolveWorkspaceId } from '../utils'
 import { CapabilityReadOnlyError } from '@mortise/shared/storage'
 import {
   AutomationDefinitionV3Schema,
   AutomationV3Runtime,
   AutomationV3Store,
-  automationIdentity,
   CloudEventV1Schema,
   evaluateConditions,
   type AutomationCapabilityResultV1,
@@ -32,7 +26,6 @@ export interface AutomationWorkspaceCapabilityContextV1 {
   host?: AutomationWorkspaceHostV3
   validateSession?: (sessionId: string, workspaceId: string) => boolean
 }
-
 /**
  * Host-owned implementation of automation.workspace/v1. Transport layers only
  * authenticate/authorize and forward typed requests to this dispatcher.
@@ -58,7 +51,7 @@ export async function executeAutomationWorkspaceOperationV1(
     return result
   }
   try {
-    const document = store.initializeOrMigrate().document
+    const document = store.initialize()
     switch (request.operation) {
       case 'describe':
         return {
@@ -197,130 +190,4 @@ export async function executeAutomationWorkspaceOperationV1(
     status: 'invalid',
     error: { code: 'unsupported_automation_operation', message: 'Unsupported automation operation', retryable: false },
   }
-}
-
-export const HANDLED_CHANNELS = [
-  RPC_CHANNELS.automations.GET,
-  RPC_CHANNELS.automations.TEST,
-  RPC_CHANNELS.automations.SET_ENABLED,
-  RPC_CHANNELS.automations.DUPLICATE,
-  RPC_CHANNELS.automations.DELETE,
-  RPC_CHANNELS.automations.GET_HISTORY,
-  RPC_CHANNELS.automations.GET_LAST_EXECUTED,
-  RPC_CHANNELS.automations.REPLAY,
-] as const
-
-export function registerAutomationsHandlers(server: RpcServer, deps: HandlerDeps): void {
-  const log = deps.platform.logger
-
-  // Bounded V2 client adapter. All reads project the canonical V3 store and
-  // every mutation writes it with revision CAS; no V2 file runtime is mounted.
-  const resolveHost = (contextWorkspaceId: string | null | undefined, requestedWorkspaceId: string) => {
-    const workspaceId = resolveWorkspaceId(contextWorkspaceId, requestedWorkspaceId)!
-    const host = deps.sessionManager.getAutomationHost(workspaceId)
-    if (!host) throw new Error(`Canonical Automations host is unavailable for ${workspaceId}`)
-    return { workspaceId, host }
-  }
-  const legacyEvent = (definition: import('@mortise/shared/automations').AutomationDefinitionV3): string => {
-    const trigger = definition.triggers[0]
-    return trigger?.type === 'time' ? 'SchedulerTick' : trigger?.eventType ?? 'ExternalEvent'
-  }
-  const definitionsForLegacy = (host: import('@mortise/shared/automations').AutomationWorkspaceHostV3, eventName: string) =>
-    host.store.initializeOrMigrate().document.definitions.filter(definition => legacyEvent(definition) === eventName)
-
-  server.handle(RPC_CHANNELS.automations.GET, async (ctx, workspaceId: string) => {
-    const { host } = resolveHost(ctx.workspaceId, workspaceId)
-    const document = host.store.initializeOrMigrate().document
-    const automations: Record<string, unknown[]> = {}
-    for (const definition of document.definitions) {
-      const event = legacyEvent(definition)
-      const trigger = definition.triggers[0]
-      const schedule = trigger?.type === 'time' ? trigger.schedule : undefined
-      ;(automations[event] ??= []).push({
-        id: definition.id,
-        name: definition.name,
-        enabled: definition.enabled,
-        ...(trigger?.type === 'event' && trigger.matcher ? { matcher: trigger.matcher } : {}),
-        ...(schedule?.kind === 'cron' ? { cron: schedule.expression, timezone: schedule.timezone } : {}),
-        conditions: definition.conditions,
-        actions: definition.actions,
-      })
-    }
-    return { version: 3, revision: document.revision, automations }
-  })
-
-  server.handle(RPC_CHANNELS.automations.TEST, async () => {
-    throw new Error(`Legacy automations:test is retired; use ${RPC_CHANNELS.automations.COMMAND} run and get-run`)
-  })
-
-  server.handle(RPC_CHANNELS.automations.SET_ENABLED, async (ctx, workspaceId: string, eventName: string, matcherIndex: number, enabled: boolean) => {
-    const { host } = resolveHost(ctx.workspaceId, workspaceId)
-    const document = host.store.initializeOrMigrate().document
-    const definition = definitionsForLegacy(host, eventName)[matcherIndex]
-    if (!definition) throw new Error('Automation not found')
-    const result = host.store.mutateDocument({
-      operationId: randomUUID(), expectedRevision: document.revision,
-      document: { ...document, definitions: document.definitions.map(item => item.id === definition.id ? { ...item, enabled, updatedAt: new Date().toISOString() } : item) },
-    })
-    if (result.status !== 'ok') throw new Error(`Automation update failed: ${result.status}`)
-    host.refresh()
-  })
-
-  server.handle(RPC_CHANNELS.automations.DUPLICATE, async (ctx, workspaceId: string, eventName: string, matcherIndex: number) => {
-    const { host } = resolveHost(ctx.workspaceId, workspaceId)
-    const document = host.store.initializeOrMigrate().document
-    const definition = definitionsForLegacy(host, eventName)[matcherIndex]
-    if (!definition) throw new Error('Automation not found')
-    const now = new Date().toISOString()
-    const clone = {
-      ...definition,
-      id: automationIdentity('aut_copy', definition.id, randomUUID()),
-      name: `${definition.name} Copy`,
-      triggers: definition.triggers.map(trigger => ({ ...trigger, id: automationIdentity('trg_copy', trigger.id, randomUUID()) })),
-      actions: definition.actions.map(action => ({ ...action, id: automationIdentity('act_copy', action.id, randomUUID()) })),
-      createdAt: now,
-      updatedAt: now,
-    }
-    const result = host.store.mutateDocument({ operationId: randomUUID(), expectedRevision: document.revision, document: { ...document, definitions: [...document.definitions, clone] } })
-    if (result.status !== 'ok') throw new Error(`Automation duplicate failed: ${result.status}`)
-    host.refresh()
-  })
-
-  server.handle(RPC_CHANNELS.automations.DELETE, async (ctx, workspaceId: string, eventName: string, matcherIndex: number) => {
-    const { host } = resolveHost(ctx.workspaceId, workspaceId)
-    const document = host.store.initializeOrMigrate().document
-    const definition = definitionsForLegacy(host, eventName)[matcherIndex]
-    if (!definition) throw new Error('Automation not found')
-    const result = host.store.mutateDocument({ operationId: randomUUID(), expectedRevision: document.revision, document: { ...document, definitions: document.definitions.filter(item => item.id !== definition.id) } })
-    if (result.status !== 'ok') throw new Error(`Automation delete failed: ${result.status}`)
-    host.refresh()
-  })
-
-  server.handle(RPC_CHANNELS.automations.GET_HISTORY, async (ctx, workspaceId: string, automationId: string, limit = 20) => {
-    const { host } = resolveHost(ctx.workspaceId, workspaceId)
-    return host.store.listRuns({ automationId, limit }).map(run => ({
-      id: run.automationId,
-      ts: Date.parse(run.completedAt ?? run.startedAt ?? run.createdAt),
-      ok: run.state === 'succeeded' || run.state === 'partial',
-      sessionId: run.actions.find(action => action.sessionId)?.sessionId,
-      error: run.actions.find(action => action.error)?.error?.message ?? run.reason,
-    }))
-  })
-
-  server.handle(RPC_CHANNELS.automations.REPLAY, async (ctx, workspaceId: string, automationId: string) => {
-    const { host } = resolveHost(ctx.workspaceId, workspaceId)
-    const accepted = host.acceptManual(automationId, randomUUID())
-    return { runId: accepted.run.runId, accepted: true }
-  })
-
-  server.handle(RPC_CHANNELS.automations.GET_LAST_EXECUTED, async (ctx, workspaceId: string) => {
-    const { host } = resolveHost(ctx.workspaceId, workspaceId)
-    const result: Record<string, number> = {}
-    for (const run of host.store.listRuns({ limit: 500 })) {
-      const timestamp = Date.parse(run.completedAt ?? run.startedAt ?? run.createdAt)
-      if (timestamp > (result[run.automationId] ?? 0)) result[run.automationId] = timestamp
-    }
-    return result
-  })
-  return
 }

@@ -5,6 +5,83 @@ export interface CoordinatedLayoutSaveQueue {
   flush(): Promise<void>
 }
 
+export type LayoutPersistenceBoundary =
+  | 'idle'
+  | 'interaction-end'
+  | 'workspace-transition'
+  | 'window-close'
+  | 'scope-dispose'
+
+export interface LayoutPersistenceCoordinator<T> {
+  markDirty(value: T): void
+  flush(boundary: Exclude<LayoutPersistenceBoundary, 'idle'>, value?: T): Promise<void>
+  discard(): void
+}
+
+interface LayoutPersistenceCoordinatorOptions<T> {
+  persist: (value: T, boundary: LayoutPersistenceBoundary) => Promise<void>
+  idleDelayMs?: number
+  onError?: (error: unknown, boundary: LayoutPersistenceBoundary) => void
+}
+
+/** Keep capture and serialization outside model-change callbacks. */
+export function createLayoutPersistenceCoordinator<T>({
+  persist,
+  idleDelayMs = 120,
+  onError = () => undefined,
+}: LayoutPersistenceCoordinatorOptions<T>): LayoutPersistenceCoordinator<T> {
+  let pending: T | undefined
+  let idleTimer: ReturnType<typeof setTimeout> | undefined
+  let tail = Promise.resolve()
+
+  const cancelIdle = () => {
+    if (idleTimer !== undefined) clearTimeout(idleTimer)
+    idleTimer = undefined
+  }
+
+  const enqueuePending = (boundary: LayoutPersistenceBoundary): Promise<void> => {
+    cancelIdle()
+    if (pending === undefined) return tail
+    const value = pending
+    pending = undefined
+    const result = tail.then(() => persist(value, boundary))
+    tail = result.catch(() => undefined)
+    return result
+  }
+
+  const scheduleIdle = () => {
+    cancelIdle()
+    idleTimer = setTimeout(() => {
+      idleTimer = undefined
+      void enqueuePending('idle').catch(error => onError(error, 'idle'))
+    }, idleDelayMs)
+  }
+
+  return {
+    markDirty(value) {
+      pending = value
+      scheduleIdle()
+    },
+    async flush(boundary, value) {
+      if (value !== undefined) pending = value
+      cancelIdle()
+      while (true) {
+        if (pending !== undefined) await enqueuePending(boundary)
+        else await tail
+        if (pending === undefined) {
+          const observed = tail
+          await observed
+          if (pending === undefined && tail === observed) return
+        }
+      }
+    },
+    discard() {
+      pending = undefined
+      cancelIdle()
+    },
+  }
+}
+
 export function createCoordinatedLayoutSaveQueue(): CoordinatedLayoutSaveQueue {
   let tail = Promise.resolve()
   return {

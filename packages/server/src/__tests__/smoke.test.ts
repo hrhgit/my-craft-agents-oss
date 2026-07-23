@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect, afterEach } from 'bun:test'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Subprocess } from 'bun'
@@ -23,16 +23,23 @@ interface SpawnedServer {
   url: string
   token: string
   healthPort: number
+  configDir: string
   endpointFile: string
   proc: Subprocess
+  getStderr: () => string
   stop: () => Promise<void>
 }
 
-async function spawnTestServer(extraEnv?: Record<string, string>): Promise<SpawnedServer> {
+async function spawnTestServer(
+  extraEnv?: Record<string, string>,
+  configDir = mkdtempSync(join(tmpdir(), 'mortise-server-smoke-')),
+): Promise<SpawnedServer> {
   const token = crypto.randomUUID() + crypto.randomUUID() // 72 chars, well above 16 minimum
-  const { CLAUDECODE: _, ...parentEnv } = process.env
-  const configDir = mkdtempSync(join(tmpdir(), 'mortise-server-smoke-'))
-
+  const {
+    CLAUDECODE: _,
+    PI_CODING_AGENT_DIR: _parentAgentDir,
+    ...parentEnv
+  } = process.env
   const proc = Bun.spawn(['bun', 'run', SERVER_ENTRY], {
     env: {
       ...parentEnv,
@@ -47,11 +54,26 @@ async function spawnTestServer(extraEnv?: Record<string, string>): Promise<Spawn
     stderr: 'pipe',
   })
 
+  let stderr = ''
+  void (async () => {
+    const reader = proc.stderr!.getReader()
+    const decoder = new TextDecoder()
+    try {
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        stderr += decoder.decode(value, { stream: true })
+      }
+    } catch {
+      // Stream closed
+    }
+  })()
+
   return new Promise<SpawnedServer>((resolve, reject) => {
     const timer = setTimeout(() => {
       proc.kill()
       rmSync(configDir, { recursive: true, force: true })
-      reject(new Error(`Server did not start within ${STARTUP_TIMEOUT}ms`))
+      reject(new Error(`Server did not start within ${STARTUP_TIMEOUT}ms${stderr ? `:\n${stderr}` : ''}`))
     }, STARTUP_TIMEOUT)
 
     let url = ''
@@ -70,8 +92,10 @@ async function spawnTestServer(extraEnv?: Record<string, string>): Promise<Spawn
             url,
             token,
             healthPort: 0, // health port not printed; we skip health test if 0
+            configDir,
             endpointFile: join(configDir, '.server-endpoint.json'),
             proc,
+            getStderr: () => stderr,
             stop: async () => {
               try {
                 proc.kill('SIGTERM')
@@ -166,7 +190,11 @@ describe('headless server smoke test', () => {
 
   it('rejects short token at startup', async () => {
     const token = 'short'
-    const { CLAUDECODE: _, ...parentEnv } = process.env
+    const {
+      CLAUDECODE: _,
+      PI_CODING_AGENT_DIR: _parentAgentDir,
+      ...parentEnv
+    } = process.env
     const configDir = mkdtempSync(join(tmpdir(), 'mortise-server-smoke-'))
     const proc = Bun.spawn(['bun', 'run', SERVER_ENTRY], {
       env: {
@@ -206,4 +234,28 @@ describe('headless server smoke test', () => {
     // Mark as stopped so afterEach doesn't double-kill
     server = null
   }, TEST_TIMEOUT)
+
+  it('does not read or import the independent Pi Agent root', async () => {
+    const fakeHome = mkdtempSync(join(tmpdir(), 'mortise-server-home-'))
+    const sourceExtensionDir = join(fakeHome, '.pi', 'agent', 'extensions')
+    const canonicalConfigDir = join(fakeHome, '.mortise')
+    mkdirSync(sourceExtensionDir, { recursive: true })
+    writeFileSync(join(sourceExtensionDir, 'must-not-import.ts'), 'export default {}')
+
+    try {
+      server = await spawnTestServer(
+        { HOME: fakeHome, USERPROFILE: fakeHome },
+        canonicalConfigDir,
+      )
+      expect(existsSync(join(canonicalConfigDir, 'agent', 'extensions', 'must-not-import.ts'))).toBe(false)
+      expect(existsSync(join(canonicalConfigDir, 'agent', '.migrations'))).toBe(false)
+    } finally {
+      if (server) {
+        await server.stop().catch(() => {})
+        server = null
+      }
+      rmSync(fakeHome, { recursive: true, force: true })
+    }
+  }, TEST_TIMEOUT)
+
 })

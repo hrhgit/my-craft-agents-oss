@@ -4,7 +4,7 @@
 
 Pi extensions can add persistent GUI to Mortise without shipping extension-specific code inside Mortise. Extensions publish serializable contributions; Mortise owns rendering, layout, validation, permissions, recovery, and fallback.
 
-> **Placement and reload:** Mortise extensions must be declared with `targets: ["mortise"]` in a Pi package manifest. Put the package under `~/.pi/agent/extensions/` (global) or `.pi/extensions/` (project-local), then use **Settings > Extensions > Reload extensions**. Mortise reloads immediately when sessions are idle and asks before interrupting running sessions.
+> **Placement and reload:** Mortise extensions must be declared with `targets: ["mortise"]` in a Pi package manifest. Put the package under `~/.mortise/agent/extensions/` (global) or `.mortise/extensions/` (project-local), then use **Settings > Extensions > Reload extensions**. Mortise reloads immediately when sessions are idle and asks before interrupting running sessions.
 
 **Key capabilities:**
 - **Host-rendered UI** - Compose text, Markdown, icons, badges, buttons, rows, and stacks with `ctx.ui.upsertContribution()`
@@ -45,7 +45,7 @@ The Quick Start below is a complete host-rendered example that you can install d
 
 ## Quick Start
 
-Create `~/.pi/agent/extensions/my-mortise-ui/package.json`:
+Create `~/.mortise/agent/extensions/my-mortise-ui/package.json`:
 
 ```json
 {
@@ -86,7 +86,7 @@ Create `~/.pi/agent/extensions/my-mortise-ui/package.json`:
 }
 ```
 
-Create `~/.pi/agent/extensions/my-mortise-ui/index.ts`:
+Create `~/.mortise/agent/extensions/my-mortise-ui/index.ts`:
 
 ```typescript
 import type { ExtensionAPI, ExtensionUIContext } from "@mortise/pi-coding-agent";
@@ -142,8 +142,8 @@ Mortise-target extensions use the same discovery locations as other Pi extension
 
 | Location | Scope |
 |----------|-------|
-| `~/.pi/agent/extensions/` | Global (all projects) |
-| `.pi/extensions/` | Project-local |
+| `~/.mortise/agent/extensions/` | Global (all projects) |
+| `.mortise/extensions/` | Project-local |
 | A package listed in Pi `settings.json` | Global or project-local, depending on the settings file |
 
 Manifest target values:
@@ -649,7 +649,7 @@ Read settings through Pi's `SettingsManager`:
 ```typescript
 import { SettingsManager, getAgentDir } from "@mortise/pi-coding-agent";
 
-const settings = SettingsManager.create(process.cwd(), getAgentDir());
+const settings = SettingsManager.create(process.cwd(), getAgentDir(), ".mortise");
 const config = settings.getExtensionConfig("my-mortise-ui");
 const visible = config?.visible !== false;
 ```
@@ -967,17 +967,13 @@ For sandbox apps, also verify:
 5. Multiple sandbox apps remain isolated on the same surface.
 6. The validation bridge exposes meaningful controls and state without requiring coordinate-only interaction.
 
-## Legacy Widgets
+## Widget Convenience API
 
-`ctx.ui.setWidget(key, string[], { placement })` remains a compatibility path. Mortise normalizes it into a text contribution. Do not use it for new GUI.
-
-Migrate a legacy widget by:
-
-1. Choosing an explicit surface.
-2. Replacing formatted terminal strings with host-rendered nodes.
-3. Registering commands for button actions.
-4. Using stable contribution IDs and explicit removal.
-5. Testing reload, reconnect, overflow, and multiple extensions.
+`ctx.ui.setWidget(key, string[], { placement })` maps directly to a versioned
+text contribution in RPC mode. Use `ctx.ui.upsertContribution` for structured
+content, explicit surfaces, actions, and richer validation semantics. Both APIs
+share the same contribution lifecycle and renderer; no legacy widget protocol
+is accepted.
 
 TUI component factories never cross the Pi RPC boundary.
 

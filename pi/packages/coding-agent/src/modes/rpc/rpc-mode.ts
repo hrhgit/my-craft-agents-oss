@@ -56,10 +56,10 @@ import {
 	listSkills,
 	resolveSkill,
 	saveGlobalProvider,
-	setCraftCredential,
-	setCraftSessionMetadata,
 	setExtensionConfig,
 	setGlobalDefault,
+	setMortiseCredential,
+	setMortiseSessionMetadata,
 	toHostErrorPayload,
 } from "../../core/host-facade.ts";
 import {
@@ -103,12 +103,7 @@ import type {
 	RpcToolResultRequest,
 	RpcToolResultResponse,
 } from "./rpc-types.ts";
-import {
-	PI_HOST_HOOKS_MODULE_ENV,
-	PI_LEGACY_FETCH_INTERCEPTOR_MODULE_ENV,
-	PI_RPC_COMMANDS,
-	PI_RPC_PROTOCOL_VERSION,
-} from "./rpc-types.ts";
+import { PI_HOST_HOOKS_MODULE_ENV, PI_RPC_COMMANDS, PI_RPC_PROTOCOL_VERSION } from "./rpc-types.ts";
 
 // Re-export types for consumers
 export type {
@@ -273,7 +268,6 @@ function createRpcCapabilities(): RpcCapabilities {
 		commands: [...PI_RPC_COMMANDS],
 		features: {
 			hostHooksModule: true,
-			legacyFetchInterceptorModule: true,
 			toolExecutionMetadata: true,
 			hostToolResults: "content",
 			extensionCommandResult: true,
@@ -285,16 +279,12 @@ function createRpcCapabilities(): RpcCapabilities {
 		},
 		hostHooks: {
 			moduleEnv: PI_HOST_HOOKS_MODULE_ENV,
-			legacyModuleEnv: PI_LEGACY_FETCH_INTERCEPTOR_MODULE_ENV,
 			exports: [
 				"fetchInterceptor",
 				"createFetchInterceptor",
-				"createCraftFetchInterceptor",
 				"toolMetadataResolver",
 				"resolveToolMetadata",
-				"resolveCraftToolMetadata",
 				"createToolMetadataResolver",
-				"createCraftToolMetadataResolver",
 			],
 		},
 	};
@@ -627,8 +617,8 @@ export async function runRpcMode(
 		sessionId: string;
 		clientId?: string;
 		extensionId: string;
-		method: "interact" | "select" | "confirm" | "input" | "editor";
-		interactionRequest?: ExtensionInteractionRequestV1;
+		method: "interact";
+		interactionRequest: ExtensionInteractionRequestV1;
 		resolve: (value: RpcExtensionUIResponse) => void;
 		reject: (error: Error) => void;
 	};
@@ -651,16 +641,12 @@ export async function runRpcMode(
 				} satisfies RpcExtensionUICancel,
 				{ runtimeId: pending.runtimeId, sessionId: pending.sessionId, clientId: pending.clientId },
 			);
-			if (pending.interactionRequest) {
-				pending.resolve({
-					type: "extension_ui_response",
-					id,
-					extensionId: pending.extensionId,
-					interaction: { schemaVersion: 1, status: "cancelled", reason },
-				});
-			} else {
-				pending.resolve({ type: "extension_ui_response", id, cancelled: true });
-			}
+			pending.resolve({
+				type: "extension_ui_response",
+				id,
+				extensionId: pending.extensionId,
+				interaction: { schemaVersion: 1, status: "cancelled", reason },
+			});
 		}
 	};
 	type PendingHostCapabilityRequest = {
@@ -1106,24 +1092,6 @@ export async function runRpcMode(
 		return true;
 	}
 
-	function isValidLegacyUIResponse(pending: PendingExtensionRequest, response: RpcExtensionUIResponse): boolean {
-		if ("interaction" in response) return false;
-		const commonKeys = ["type", "id", "clientId", "runtimeId", "sessionId", "extensionId"];
-		if ("cancelled" in response) {
-			return response.cancelled === true && hasOnlyKeys(response, [...commonKeys, "cancelled"]);
-		}
-		if (pending.method === "confirm") {
-			return (
-				"confirmed" in response &&
-				typeof response.confirmed === "boolean" &&
-				hasOnlyKeys(response, [...commonKeys, "confirmed"])
-			);
-		}
-		return (
-			"value" in response && typeof response.value === "string" && hasOnlyKeys(response, [...commonKeys, "value"])
-		);
-	}
-
 	function assertValidDialogOptions(options: ExtensionUIDialogOptions | undefined): void {
 		if (
 			options?.timeout !== undefined &&
@@ -1133,164 +1101,14 @@ export async function runRpcMode(
 		}
 	}
 
-	/** Helper for dialog methods with signal/timeout support */
-	function createDialogPromise<T>(
-		binding: RuntimeBinding,
-		extensionId: string,
-		opts: ExtensionUIDialogOptions | undefined,
-		defaultValue: T,
-		request: Record<string, unknown>,
-		parseResponse: (response: RpcExtensionUIResponse) => T,
-	): Promise<T> {
-		assertValidDialogOptions(opts);
-		if (opts?.signal?.aborted) return Promise.resolve(defaultValue);
-		const method = request.method as PendingExtensionRequest["method"];
-
-		const id = crypto.randomUUID();
-		return new Promise((resolve, reject) => {
-			let timeoutId: ReturnType<typeof setTimeout> | undefined;
-			let emitted = false;
-
-			const cleanup = () => {
-				if (timeoutId) clearTimeout(timeoutId);
-				opts?.signal?.removeEventListener("abort", onAbort);
-				pendingExtensionRequests.delete(id);
-			};
-
-			const onAbort = () => {
-				if (emitted) {
-					output(
-						{ type: "extension_ui_cancel", id, extensionId, schemaVersion: 1, reason: "aborted", method },
-						binding,
-					);
-				}
-				cleanup();
-				resolve(defaultValue);
-			};
-
-			pendingExtensionRequests.set(id, {
-				runtimeId: binding.runtimeId,
-				sessionId: binding.session.sessionId,
-				clientId: binding.clientId,
-				extensionId,
-				method,
-				resolve: (response: RpcExtensionUIResponse) => {
-					cleanup();
-					resolve(parseResponse(response));
-				},
-				reject: (error) => {
-					cleanup();
-					reject(error);
-				},
-			});
-			opts?.signal?.addEventListener("abort", onAbort, { once: true });
-			if (opts?.signal?.aborted) {
-				onAbort();
-				return;
-			}
-			if (opts?.timeout) {
-				timeoutId = setTimeout(() => {
-					if (emitted) {
-						output(
-							{ type: "extension_ui_cancel", id, extensionId, schemaVersion: 1, reason: "timeout", method },
-							binding,
-						);
-					}
-					cleanup();
-					resolve(defaultValue);
-				}, opts.timeout);
-			}
-			emitted = true;
-			output({ type: "extension_ui_request", id, extensionId, ...request } as RpcExtensionUIRequest, binding);
-		});
-	}
-
 	/**
 	 * Create an extension UI context that uses the RPC protocol.
 	 */
-	const createExtensionUIContext = (binding: RuntimeBinding, extensionId: string): ExtensionUIContext => ({
-		capabilities: {
-			kind: binding.uiCapabilities.kind,
-			dialogs: binding.uiCapabilities.dialogs,
-			widgets: binding.uiCapabilities.widgets,
-			customComponents: false,
-			terminalInput: false,
-			editorControl: binding.uiCapabilities.editorControl,
-			contributions: binding.uiCapabilities.contributions,
-			interactionSchemas: binding.uiCapabilities.interactionSchemas,
-		},
-		validation: {
-			available: binding.uiCapabilities.validation === true,
-			protocolVersions: binding.uiCapabilities.validation ? [1] : [],
-			upsertDefinition(definition): void {
-				if (!binding.uiCapabilities.validation) return;
-				const ownerKey = `${binding.runtimeId}\0${extensionId}`;
-				const definitions = activeValidationDefinitions.get(ownerKey) ?? new Map();
-				definitions.set(definition.id, definition);
-				activeValidationDefinitions.set(ownerKey, definitions);
-				emitValidation(binding, extensionId, { operation: "upsert", definition });
-			},
-			updateState(definitionId, state): void {
-				if (!binding.uiCapabilities.validation) return;
-				const definitions = activeValidationDefinitions.get(`${binding.runtimeId}\0${extensionId}`);
-				const current = definitions?.get(definitionId);
-				if (!definitions || !current) throw new Error(`Unknown UI validation definition: ${definitionId}`);
-				const definition: ExtensionUIValidationDefinitionV1 = { ...current, ...state };
-				definitions.set(definitionId, definition);
-				emitValidation(binding, extensionId, { operation: "upsert", definition });
-			},
-			removeDefinition(definitionId): void {
-				if (!binding.uiCapabilities.validation) return;
-				activeValidationDefinitions.get(`${binding.runtimeId}\0${extensionId}`)?.delete(definitionId);
-				emitValidation(binding, extensionId, { operation: "remove", definitionId });
-			},
-			clearDefinitions(): void {
-				if (!binding.uiCapabilities.validation) return;
-				activeValidationDefinitions.delete(`${binding.runtimeId}\0${extensionId}`);
-				emitValidation(binding, extensionId, { operation: "reset" });
-			},
-		},
-		upsertContribution(contribution): void {
-			if (!binding.uiCapabilities.contributions) return;
-			const ownerKey = `${binding.runtimeId}\0${extensionId}`;
-			const contributions = activeContributions.get(ownerKey) ?? new Map();
-			contributions.set(contribution.id, contribution);
-			activeContributions.set(ownerKey, contributions);
-			output(
-				{
-					type: "extension_ui_request",
-					id: crypto.randomUUID(),
-					extensionId,
-					method: "contribution",
-					operation: "upsert",
-					revision: nextContributionRevision(binding, extensionId),
-					contribution,
-				} satisfies RpcExtensionUIRequest,
-				binding,
-			);
-		},
-		removeContribution(contributionId): void {
-			if (!binding.uiCapabilities.contributions) return;
-			activeContributions.get(`${binding.runtimeId}\0${extensionId}`)?.delete(contributionId);
-			output(
-				{
-					type: "extension_ui_request",
-					id: crypto.randomUUID(),
-					extensionId,
-					method: "contribution",
-					operation: "remove",
-					revision: nextContributionRevision(binding, extensionId),
-					contributionId,
-				} satisfies RpcExtensionUIRequest,
-				binding,
-			);
-		},
-		clearContributions(): void {
-			if (!binding.uiCapabilities.contributions) return;
-			activeContributions.delete(`${binding.runtimeId}\0${extensionId}`);
-			emitContributionReset(binding, extensionId);
-		},
-		interact: (request, opts) => {
+	const createExtensionUIContext = (binding: RuntimeBinding, extensionId: string): ExtensionUIContext => {
+		const interact = (
+			request: ExtensionInteractionRequestV1,
+			opts?: ExtensionUIDialogOptions,
+		): Promise<ExtensionInteractionResponseV1> => {
 			assertValidInteractionRequest(request);
 			assertValidDialogOptions(opts);
 			if (!binding.uiCapabilities.interactionSchemas.includes(1)) {
@@ -1336,7 +1154,7 @@ export async function runRpcMode(
 					resolve: (response) => {
 						cleanup();
 						if (!("interaction" in response)) {
-							reject(new Error("Host returned a legacy response for an interaction v1 request"));
+							reject(new Error("Host returned a non-versioned response for an interaction v1 request"));
 							return;
 						}
 						resolve(response.interaction);
@@ -1358,219 +1176,356 @@ export async function runRpcMode(
 					binding,
 				);
 			});
-		},
-		select: (title, options, opts) =>
-			binding.uiCapabilities.dialogs
-				? createDialogPromise(
-						binding,
-						extensionId,
-						opts,
-						undefined,
-						{ method: "select", title, options, timeout: opts?.timeout },
-						(r) => ("cancelled" in r && r.cancelled ? undefined : "value" in r ? r.value : undefined),
-					)
-				: Promise.resolve(undefined),
+		};
 
-		confirm: (title, message, opts) =>
-			binding.uiCapabilities.dialogs
-				? createDialogPromise(
-						binding,
-						extensionId,
-						opts,
-						false,
-						{ method: "confirm", title, message, timeout: opts?.timeout },
-						(r) => ("cancelled" in r && r.cancelled ? false : "confirmed" in r ? r.confirmed : false),
-					)
-				: Promise.resolve(false),
-
-		input: (title, placeholder, opts) =>
-			binding.uiCapabilities.dialogs
-				? createDialogPromise(
-						binding,
-						extensionId,
-						opts,
-						undefined,
-						{ method: "input", title, placeholder, timeout: opts?.timeout },
-						(r) => ("cancelled" in r && r.cancelled ? undefined : "value" in r ? r.value : undefined),
-					)
-				: Promise.resolve(undefined),
-
-		notify(message: string, type?: "info" | "warning" | "error"): void {
-			// Fire and forget - no response needed
-			output(
-				{
-					type: "extension_ui_request",
-					id: crypto.randomUUID(),
-					extensionId,
-					method: "notify",
-					message,
-					notifyType: type,
-				} as RpcExtensionUIRequest,
-				binding,
-			);
-		},
-
-		onTerminalInput(): () => void {
-			// Raw terminal input not supported in RPC mode
-			return () => {};
-		},
-
-		setStatus(key: string, text: string | undefined): void {
-			// Fire and forget - no response needed
-			output(
-				{
-					type: "extension_ui_request",
-					id: crypto.randomUUID(),
-					extensionId,
-					method: "setStatus",
-					statusKey: key,
-					statusText: text,
-				} as RpcExtensionUIRequest,
-				binding,
-			);
-		},
-
-		setWorkingMessage(_message?: string): void {
-			// Working message not supported in RPC mode - requires TUI loader access
-		},
-
-		setWorkingVisible(_visible: boolean): void {
-			// Working visibility not supported in RPC mode - requires TUI loader access
-		},
-
-		setWorkingIndicator(_options?: WorkingIndicatorOptions): void {
-			// Working indicator customization not supported in RPC mode - requires TUI loader access
-		},
-
-		setHiddenThinkingLabel(_label?: string): void {
-			// Hidden thinking label not supported in RPC mode - requires TUI message rendering access
-		},
-
-		setWidget(key: string, content: unknown, options?: ExtensionWidgetOptions): void {
-			if (!binding.uiCapabilities.widgets) return;
-			// Only support string arrays in RPC mode - factory functions are ignored
-			if (content === undefined || Array.isArray(content)) {
+		return {
+			capabilities: {
+				kind: binding.uiCapabilities.kind,
+				dialogs: binding.uiCapabilities.dialogs,
+				widgets: binding.uiCapabilities.widgets,
+				customComponents: false,
+				terminalInput: false,
+				editorControl: binding.uiCapabilities.editorControl,
+				contributions: binding.uiCapabilities.contributions,
+				interactionSchemas: binding.uiCapabilities.interactionSchemas,
+			},
+			validation: {
+				available: binding.uiCapabilities.validation === true,
+				protocolVersions: binding.uiCapabilities.validation ? [1] : [],
+				upsertDefinition(definition): void {
+					if (!binding.uiCapabilities.validation) return;
+					const ownerKey = `${binding.runtimeId}\0${extensionId}`;
+					const definitions = activeValidationDefinitions.get(ownerKey) ?? new Map();
+					definitions.set(definition.id, definition);
+					activeValidationDefinitions.set(ownerKey, definitions);
+					emitValidation(binding, extensionId, { operation: "upsert", definition });
+				},
+				updateState(definitionId, state): void {
+					if (!binding.uiCapabilities.validation) return;
+					const definitions = activeValidationDefinitions.get(`${binding.runtimeId}\0${extensionId}`);
+					const current = definitions?.get(definitionId);
+					if (!definitions || !current) throw new Error(`Unknown UI validation definition: ${definitionId}`);
+					const definition: ExtensionUIValidationDefinitionV1 = { ...current, ...state };
+					definitions.set(definitionId, definition);
+					emitValidation(binding, extensionId, { operation: "upsert", definition });
+				},
+				removeDefinition(definitionId): void {
+					if (!binding.uiCapabilities.validation) return;
+					activeValidationDefinitions.get(`${binding.runtimeId}\0${extensionId}`)?.delete(definitionId);
+					emitValidation(binding, extensionId, { operation: "remove", definitionId });
+				},
+				clearDefinitions(): void {
+					if (!binding.uiCapabilities.validation) return;
+					activeValidationDefinitions.delete(`${binding.runtimeId}\0${extensionId}`);
+					emitValidation(binding, extensionId, { operation: "reset" });
+				},
+			},
+			upsertContribution(contribution): void {
+				if (!binding.uiCapabilities.contributions) return;
+				const ownerKey = `${binding.runtimeId}\0${extensionId}`;
+				const contributions = activeContributions.get(ownerKey) ?? new Map();
+				contributions.set(contribution.id, contribution);
+				activeContributions.set(ownerKey, contributions);
 				output(
 					{
 						type: "extension_ui_request",
 						id: crypto.randomUUID(),
 						extensionId,
-						method: "setWidget",
-						widgetKey: key,
-						widgetLines: content as string[] | undefined,
-						widgetPlacement: options?.placement,
+						method: "contribution",
+						operation: "upsert",
+						revision: nextContributionRevision(binding, extensionId),
+						contribution,
+					} satisfies RpcExtensionUIRequest,
+					binding,
+				);
+			},
+			removeContribution(contributionId): void {
+				if (!binding.uiCapabilities.contributions) return;
+				activeContributions.get(`${binding.runtimeId}\0${extensionId}`)?.delete(contributionId);
+				output(
+					{
+						type: "extension_ui_request",
+						id: crypto.randomUUID(),
+						extensionId,
+						method: "contribution",
+						operation: "remove",
+						revision: nextContributionRevision(binding, extensionId),
+						contributionId,
+					} satisfies RpcExtensionUIRequest,
+					binding,
+				);
+			},
+			clearContributions(): void {
+				if (!binding.uiCapabilities.contributions) return;
+				activeContributions.delete(`${binding.runtimeId}\0${extensionId}`);
+				emitContributionReset(binding, extensionId);
+			},
+			interact,
+			select: (title, options, opts) =>
+				binding.uiCapabilities.dialogs
+					? interact(
+							{
+								schemaVersion: 1,
+								title,
+								fields: [
+									{
+										id: "selection",
+										kind: "choice",
+										label: title,
+										required: true,
+										options: options.map((label, index) => ({ id: `option-${index + 1}`, label })),
+										minSelections: 1,
+										maxSelections: 1,
+									},
+								],
+							},
+							opts,
+						).then((response) => {
+							if (response.status !== "submitted") return undefined;
+							const answer = response.answers.find(
+								(item) => item.fieldId === "selection" && item.kind === "choice",
+							);
+							if (!answer || answer.kind !== "choice") return undefined;
+							const match = /^option-(\d+)$/.exec(answer.selectedOptionIds[0] ?? "");
+							return match ? options[Number(match[1]) - 1] : undefined;
+						})
+					: Promise.resolve(undefined),
+
+			confirm: (title, message, opts) =>
+				binding.uiCapabilities.dialogs
+					? interact(
+							{
+								schemaVersion: 1,
+								title,
+								description: message,
+								fields: [{ id: "confirmation", kind: "confirm", label: message || title, required: true }],
+							},
+							opts,
+						).then((response) => {
+							if (response.status !== "submitted") return false;
+							const answer = response.answers.find((item) => item.fieldId === "confirmation");
+							return answer?.kind === "confirm" ? answer.value : false;
+						})
+					: Promise.resolve(false),
+
+			input: (title, placeholder, opts) =>
+				binding.uiCapabilities.dialogs
+					? interact(
+							{
+								schemaVersion: 1,
+								title,
+								fields: [{ id: "value", kind: "text", label: title, placeholder }],
+							},
+							opts,
+						).then((response) => {
+							if (response.status !== "submitted") return undefined;
+							const answer = response.answers.find((item) => item.fieldId === "value");
+							return answer?.kind === "text" ? answer.value : undefined;
+						})
+					: Promise.resolve(undefined),
+
+			notify(message: string, type?: "info" | "warning" | "error"): void {
+				// Fire and forget - no response needed
+				output(
+					{
+						type: "extension_ui_request",
+						id: crypto.randomUUID(),
+						extensionId,
+						method: "notify",
+						message,
+						notifyType: type,
 					} as RpcExtensionUIRequest,
 					binding,
 				);
-			}
-			// Component factories are not supported in RPC mode - would need TUI access
-		},
+			},
 
-		setFooter(_factory: unknown): void {
-			// Custom footer not supported in RPC mode - requires TUI access
-		},
+			onTerminalInput(): () => void {
+				// Raw terminal input not supported in RPC mode
+				return () => {};
+			},
 
-		setHeader(_factory: unknown): void {
-			// Custom header not supported in RPC mode - requires TUI access
-		},
-
-		setTitle(title: string): void {
-			if (!binding.uiCapabilities.editorControl) return;
-			// Fire and forget - host can implement terminal title control
-			output(
-				{
-					type: "extension_ui_request",
-					id: crypto.randomUUID(),
-					extensionId,
-					method: "setTitle",
-					title,
-				} as RpcExtensionUIRequest,
-				binding,
-			);
-		},
-
-		async custom() {
-			// Custom UI not supported in RPC mode
-			return undefined as never;
-		},
-
-		pasteToEditor(text: string): void {
-			// Paste handling not supported in RPC mode - falls back to setEditorText
-			this.setEditorText(text);
-		},
-
-		setEditorText(text: string): void {
-			if (!binding.uiCapabilities.editorControl) return;
-			// Fire and forget - host can implement editor control
-			output(
-				{
-					type: "extension_ui_request",
-					id: crypto.randomUUID(),
-					extensionId,
-					method: "set_editor_text",
-					text,
-				} as RpcExtensionUIRequest,
-				binding,
-			);
-		},
-
-		getEditorText(): string {
-			// Synchronous method can't wait for RPC response
-			// Host should track editor state locally if needed
-			return "";
-		},
-
-		editor: (title: string, prefill?: string): Promise<string | undefined> =>
-			binding.uiCapabilities.dialogs
-				? createDialogPromise(
-						binding,
+			setStatus(key: string, text: string | undefined): void {
+				// Fire and forget - no response needed
+				output(
+					{
+						type: "extension_ui_request",
+						id: crypto.randomUUID(),
 						extensionId,
-						undefined,
-						undefined,
-						{ method: "editor", title, prefill },
-						(response) => ("value" in response ? response.value : undefined),
-					)
-				: Promise.resolve(undefined),
+						method: "setStatus",
+						statusKey: key,
+						statusText: text,
+					} as RpcExtensionUIRequest,
+					binding,
+				);
+			},
 
-		addAutocompleteProvider(): void {
-			// Autocomplete provider composition is not supported in RPC mode
-		},
+			setWorkingMessage(_message?: string): void {
+				// Working message not supported in RPC mode - requires TUI loader access
+			},
 
-		setEditorComponent(): void {
-			// Custom editor components not supported in RPC mode
-		},
+			setWorkingVisible(_visible: boolean): void {
+				// Working visibility not supported in RPC mode - requires TUI loader access
+			},
 
-		getEditorComponent() {
-			// Custom editor components not supported in RPC mode
-			return undefined;
-		},
+			setWorkingIndicator(_options?: WorkingIndicatorOptions): void {
+				// Working indicator customization not supported in RPC mode - requires TUI loader access
+			},
 
-		get theme() {
-			return theme;
-		},
+			setHiddenThinkingLabel(_label?: string): void {
+				// Hidden thinking label not supported in RPC mode - requires TUI message rendering access
+			},
 
-		getAllThemes() {
-			return [];
-		},
+			setWidget(key: string, content: unknown, options?: ExtensionWidgetOptions): void {
+				if (!binding.uiCapabilities.widgets || !binding.uiCapabilities.contributions) return;
+				if (content === undefined) {
+					activeContributions.get(`${binding.runtimeId}\0${extensionId}`)?.delete(key);
+					output(
+						{
+							type: "extension_ui_request",
+							id: crypto.randomUUID(),
+							extensionId,
+							method: "contribution",
+							operation: "remove",
+							revision: nextContributionRevision(binding, extensionId),
+							contributionId: key,
+						} satisfies RpcExtensionUIRequest,
+						binding,
+					);
+					return;
+				}
+				if (!Array.isArray(content) || content.some((line) => typeof line !== "string")) return;
+				const contribution = {
+					schemaVersion: 1 as const,
+					id: key,
+					surface:
+						options?.placement === "belowEditor" ? ("composer.below" as const) : ("composer.above" as const),
+					content: { type: "text" as const, text: content.join("\n") },
+				};
+				const ownerKey = `${binding.runtimeId}\0${extensionId}`;
+				const contributions = activeContributions.get(ownerKey) ?? new Map();
+				contributions.set(key, contribution);
+				activeContributions.set(ownerKey, contributions);
+				output(
+					{
+						type: "extension_ui_request",
+						id: crypto.randomUUID(),
+						extensionId,
+						method: "contribution",
+						operation: "upsert",
+						revision: nextContributionRevision(binding, extensionId),
+						contribution,
+					} satisfies RpcExtensionUIRequest,
+					binding,
+				);
+			},
 
-		getTheme(_name: string) {
-			return undefined;
-		},
+			setFooter(_factory: unknown): void {
+				// Custom footer not supported in RPC mode - requires TUI access
+			},
 
-		setTheme(_theme: string | Theme) {
-			// Theme switching not supported in RPC mode
-			return { success: false, error: "Theme switching not supported in RPC mode" };
-		},
+			setHeader(_factory: unknown): void {
+				// Custom header not supported in RPC mode - requires TUI access
+			},
 
-		getToolsExpanded() {
-			// Tool expansion not supported in RPC mode - no TUI
-			return false;
-		},
+			setTitle(title: string): void {
+				if (!binding.uiCapabilities.editorControl) return;
+				// Fire and forget - host can implement terminal title control
+				output(
+					{
+						type: "extension_ui_request",
+						id: crypto.randomUUID(),
+						extensionId,
+						method: "setTitle",
+						title,
+					} as RpcExtensionUIRequest,
+					binding,
+				);
+			},
 
-		setToolsExpanded(_expanded: boolean) {
-			// Tool expansion not supported in RPC mode - no TUI
-		},
-	});
+			async custom() {
+				// Custom UI not supported in RPC mode
+				return undefined as never;
+			},
+
+			pasteToEditor(text: string): void {
+				// Paste handling not supported in RPC mode - falls back to setEditorText
+				this.setEditorText(text);
+			},
+
+			setEditorText(text: string): void {
+				if (!binding.uiCapabilities.editorControl) return;
+				// Fire and forget - host can implement editor control
+				output(
+					{
+						type: "extension_ui_request",
+						id: crypto.randomUUID(),
+						extensionId,
+						method: "set_editor_text",
+						text,
+					} as RpcExtensionUIRequest,
+					binding,
+				);
+			},
+
+			getEditorText(): string {
+				// Synchronous method can't wait for RPC response
+				// Host should track editor state locally if needed
+				return "";
+			},
+
+			editor: (title: string, prefill?: string): Promise<string | undefined> =>
+				binding.uiCapabilities.dialogs
+					? interact({
+							schemaVersion: 1,
+							title,
+							fields: [{ id: "value", kind: "text", label: title, multiline: true, defaultValue: prefill }],
+						}).then((response) => {
+							if (response.status !== "submitted") return undefined;
+							const answer = response.answers.find((item) => item.fieldId === "value");
+							return answer?.kind === "text" ? answer.value : undefined;
+						})
+					: Promise.resolve(undefined),
+
+			addAutocompleteProvider(): void {
+				// Autocomplete provider composition is not supported in RPC mode
+			},
+
+			setEditorComponent(): void {
+				// Custom editor components not supported in RPC mode
+			},
+
+			getEditorComponent() {
+				// Custom editor components not supported in RPC mode
+				return undefined;
+			},
+
+			get theme() {
+				return theme;
+			},
+
+			getAllThemes() {
+				return [];
+			},
+
+			getTheme(_name: string) {
+				return undefined;
+			},
+
+			setTheme(_theme: string | Theme) {
+				// Theme switching not supported in RPC mode
+				return { success: false, error: "Theme switching not supported in RPC mode" };
+			},
+
+			getToolsExpanded() {
+				// Tool expansion not supported in RPC mode - no TUI
+				return false;
+			},
+
+			setToolsExpanded(_expanded: boolean) {
+				// Tool expansion not supported in RPC mode - no TUI
+			},
+		};
+	};
 
 	const createExtensionCapabilitiesContext = (
 		binding: RuntimeBinding,
@@ -1915,7 +1870,11 @@ export async function runRpcMode(
 			let sessionManager: SessionManager;
 			if (command.inMemory) {
 				if (command.sessionPath || command.forkFromSessionPath || command.sessionDir || command.sessionId) {
-					return error(id, "open_runtime", "In-memory runtimes cannot specify persisted Session identity or paths");
+					return error(
+						id,
+						"open_runtime",
+						"In-memory runtimes cannot specify persisted Session identity or paths",
+					);
 				}
 				sessionManager = SessionManager.inMemory(command.cwd);
 			} else if (command.forkFromSessionPath) {
@@ -1942,6 +1901,7 @@ export async function runRpcMode(
 				? await runtimeHost.createSibling({
 						cwd: sessionManager.getCwd(),
 						agentDir: command.agentDir,
+						projectConfigDir: command.projectConfigDir,
 						sessionManager,
 						sessionStartEvent: {
 							type: "session_start",
@@ -1957,8 +1917,9 @@ export async function runRpcMode(
 						extensionPaths: command.extensionPaths,
 					})
 				: await createAgentSessionRuntime(globalHostFactory!.createRuntime, {
-						cwd: sessionManager.getCwd(),
-						agentDir: command.agentDir ?? globalHostFactory!.agentDir,
+					cwd: sessionManager.getCwd(),
+					agentDir: command.agentDir ?? globalHostFactory!.agentDir,
+					projectConfigDir: command.projectConfigDir,
 						sessionManager,
 						sessionStartEvent: {
 							type: "session_start",
@@ -2413,7 +2374,7 @@ export async function runRpcMode(
 			}
 
 			case "set_mortise_credential": {
-				setCraftCredential(command.slug, command.credential);
+				setMortiseCredential(command.slug, command.credential);
 				return success(id, "set_mortise_credential");
 			}
 
@@ -2433,7 +2394,7 @@ export async function runRpcMode(
 				return success(
 					id,
 					"set_mortise_session_metadata",
-					setCraftSessionMetadata({
+					await setMortiseSessionMetadata({
 						sessionPath: command.sessionPath,
 						sessionDir: command.sessionDir,
 						cwdOverride: command.cwdOverride,
@@ -2462,7 +2423,12 @@ export async function runRpcMode(
 				return success(
 					id,
 					"list_skills",
-					await listSkills({ cwd: command.cwd, agentDir: command.agentDir, skillPaths: command.skillPaths }),
+					await listSkills({
+						cwd: command.cwd,
+						agentDir: command.agentDir,
+						projectConfigDir: command.projectConfigDir,
+						skillPaths: command.skillPaths,
+					}),
 				);
 			}
 
@@ -2474,6 +2440,7 @@ export async function runRpcMode(
 						name: command.name,
 						cwd: command.cwd,
 						agentDir: command.agentDir,
+						projectConfigDir: command.projectConfigDir,
 						skillPaths: command.skillPaths,
 					}),
 				);
@@ -2486,6 +2453,7 @@ export async function runRpcMode(
 					await getExtensions({
 						cwd: command.cwd,
 						agentDir: command.agentDir,
+						projectConfigDir: command.projectConfigDir,
 						extensionTarget: binding.extensionTarget,
 					}),
 				);
@@ -2688,28 +2656,22 @@ export async function runRpcMode(
 				rejectMalformedResponse();
 				return;
 			}
-			if (pending.interactionRequest) {
-				if (
-					!("interaction" in response) ||
-					!hasOnlyKeys(response, [
-						"type",
-						"id",
-						"clientId",
-						"runtimeId",
-						"sessionId",
-						"extensionId",
-						"interaction",
-					]) ||
-					response.extensionId !== pending.extensionId
-				) {
-					rejectMalformedResponse();
-					return;
-				}
-				if (!isValidInteractionResponse(pending.interactionRequest, response.interaction)) {
-					rejectMalformedResponse();
-					return;
-				}
-			} else if (!isValidLegacyUIResponse(pending, response)) {
+			if (
+				!hasOnlyKeys(response, [
+					"type",
+					"id",
+					"clientId",
+					"runtimeId",
+					"sessionId",
+					"extensionId",
+					"interaction",
+				]) ||
+				response.extensionId !== pending.extensionId
+			) {
+				rejectMalformedResponse();
+				return;
+			}
+			if (!isValidInteractionResponse(pending.interactionRequest, response.interaction)) {
 				rejectMalformedResponse();
 				return;
 			}

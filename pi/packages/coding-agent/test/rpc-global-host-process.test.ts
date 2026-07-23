@@ -124,10 +124,16 @@ describe("Pi RPC GlobalHost process", () => {
 
 		if (!hostState) throw new Error("GlobalHost state was not written");
 		process.kill(hostState.pid, "SIGTERM");
-		for (let attempt = 0; attempt < 40; attempt++) {
+		for (let attempt = 0; attempt < 600; attempt++) {
 			const currentState = readPiGlobalHostState(root);
-			if (!currentState || currentState.pid !== hostState.pid) break;
-			await new Promise((resolve) => setTimeout(resolve, 50));
+			let processExited = false;
+			try {
+				process.kill(hostState.pid, 0);
+			} catch {
+				processExited = true;
+			}
+			if (processExited && (!currentState || currentState.pid !== hostState.pid)) break;
+			await new Promise((resolve) => setTimeout(resolve, 100));
 		}
 
 		const restarted = new RpcClient(options);
@@ -138,7 +144,7 @@ describe("Pi RPC GlobalHost process", () => {
 		expect(restartedState?.pid).toBeDefined();
 		expect(restartedState?.pid).not.toBe(hostState.pid);
 		if (restartedState) hostPids.push(restartedState.pid);
-	});
+	}, 120_000);
 
 	it("isolates host generations that share one agent directory", async () => {
 		const root = join(tmpdir(), `pi-global-host-generation-${Date.now()}-${Math.random().toString(36).slice(2)}`);

@@ -22,7 +22,7 @@ bin\mortise-ui.exe stop
 bin\mortise-logs.exe recent
 ```
 
-To load an extension directly from its development directory without copying its source or using the global Pi profile:
+To load an extension directly from its development directory without copying its source or using the global Mortise profile:
 
 ```powershell
 bin\mortise-ui.exe start --surface electron --profile fixture --extension C:\path\to\my-extension
@@ -34,8 +34,8 @@ The Developer Host uses an isolated profile, a per-run random authentication tok
 
 On Windows, native snapshots and actions use the UI Automation driver bundled under `dev-host/resources/ui-validation`; they do not depend on a source checkout.
 
-Use `--profile clone --source-mortise-profile <path> --source-pi-profile <path>` only when validation explicitly requires copied user configuration. The clone is placed inside the run directory; the Developer Host never mutates the selected source profile.
+Use `--profile clone --source-mortise-profile <path>` only when validation explicitly requires copied user configuration. The clone is placed inside the run directory; the Developer Host never mutates the selected source profile.
 
 The kit validates extensions against its bundled Host version. Read `docs/pi-extensions.md` for the package manifest, contribution, settings, and validation contracts.
 
-Copy `examples/manifest-v1/` into `~/.pi/agent/extensions/` to run the minimal packaged example. Use `schemas/extension-manifest-v1.schema.json` in editor or CI validation; the bundled Host remains authoritative for SemVer ranges and cross-extension diagnostics.
+Copy `examples/manifest-v1/` into `~/.mortise/agent/extensions/` to run the minimal packaged example. Use `schemas/extension-manifest-v1.schema.json` in editor or CI validation; the bundled Host remains authoritative for SemVer ranges and cross-extension diagnostics.

@@ -424,8 +424,6 @@ export function isApiKeyLoginProvider(
  * Options for InteractiveMode initialization.
  */
 export interface InteractiveModeOptions {
-	/** Providers that were migrated to auth.json (shows warning) */
-	migratedProviders?: string[];
 	/** Warning message if session model couldn't be restored */
 	modelFallbackMessage?: string;
 	/** Initial message to send on startup (can include @file content) */
@@ -983,12 +981,8 @@ export class InteractiveMode {
 		this.scheduleStartupBackgroundChecks();
 
 		// Show startup warnings
-		const { migratedProviders, initialMessage, initialImages, initialMessages } = this.options;
+		const { initialMessage, initialImages, initialMessages } = this.options;
 		const modelFallbackMessage = this.runtimeHost.modelFallbackMessage ?? this.options.modelFallbackMessage;
-
-		if (migratedProviders && migratedProviders.length > 0) {
-			this.showWarning(`Migrated credentials to auth.json: ${migratedProviders.join(", ")}`);
-		}
 
 		const modelsJsonError = this.session.modelRegistry.getError();
 		if (modelsJsonError) {

@@ -15,7 +15,7 @@ depends_on: [session-lifecycle, headless-server-cli]
 collaborates_with: []
 validation:
   - { id: messaging-regression, kind: unit, command: "bun test packages/messaging-gateway packages/messaging-whatsapp-worker", description: "Run messaging gateway and worker regressions.", triggers: [owned-change], required: true, evidence: "Bun test exit status and output." }
-scope_digest: 6f485d5a6f138ce4eeb7f97cd9b93c15f2c63ae5
+scope_digest: 23c3b993c7360300506140fdd0db297b854caa75
 ---
 
 ## Purpose
@@ -46,5 +46,8 @@ Run adapter, routing, reconnect, worker protocol, and renderer messaging tests.
 Provider reconnect and duplicate-delivery behavior differ; remote media can exceed local attachment limits.
 
 ## Semantic history
-- 2026-06-07: Expanded session activity and extension runtime behavior used by messaging.
+- 2026-07-21: Made SQLite the sole messaging-state authority and removed legacy JSON import, patch-back, materialization, and sync baselines.
+- 2026-07-21: Required persisted pending-sender rejection reasons and removed missing-field fallback behavior across gateway and client contracts.
+- 2026-07-21: Removed legacy binding-config migration and transcript-event compatibility; bindings use the current schema and conversation rendering follows Pi projections.
+- 2026-07-21: Changed `/new` to an ephemeral channel draft and install bindings only through the assistant-backed first-turn publication hook.
 - 2026-07-14: Hardened Pi messaging extension routing.

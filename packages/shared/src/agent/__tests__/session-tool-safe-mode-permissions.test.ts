@@ -36,8 +36,8 @@ describe('session tool safe-mode classification', () => {
     }
   });
 
-  it('keeps legacy prefixed names readable', () => {
-    expect(shouldAllowToolInMode('mcp__session__script_sandbox', {}, 'safe').allowed).toBe(true);
+  it('rejects retired session-tool prefixes as external MCP tools', () => {
+    expect(shouldAllowToolInMode('mcp__session__script_sandbox', {}, 'safe').allowed).toBe(false);
     expect(shouldAllowToolInMode('mcp__session__spawn_session', {}, 'safe').allowed).toBe(false);
   });
 });

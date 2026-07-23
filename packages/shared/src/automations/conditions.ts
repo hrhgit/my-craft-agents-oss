@@ -10,7 +10,7 @@
  * - and/or/not: Logical composition with short-circuit evaluation
  */
 
-import type { AutomationCondition, TimeCondition, StateCondition, LogicalCondition } from './types.ts';
+import type { AutomationCondition, TimeCondition, StateCondition, LogicalCondition } from './v3-types.ts';
 import { MAX_CONDITION_DEPTH_EXCLUSIVE } from './conditions-constants.ts';
 
 // ============================================================================

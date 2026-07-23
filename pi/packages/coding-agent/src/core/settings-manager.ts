@@ -1,12 +1,12 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import lockfile from "proper-lockfile";
-import { CONFIG_DIR_NAME, getAgentDir } from "../config.ts";
+import { getAgentDir, getProjectConfigDir } from "../config.ts";
 import { normalizePath, resolvePath } from "../utils/paths.ts";
+import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
 import type { ExtensionActivation, ExtensionTarget } from "./extensions/types.ts";
 import { DEFAULT_HTTP_IDLE_TIMEOUT_MS, parseHttpIdleTimeoutMs } from "./http-dispatcher.ts";
 import type { NetworkSettings } from "./network-types.ts";
-import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
 
 export interface CompactionSettings {
 	enabled?: boolean; // default: true
@@ -229,11 +229,11 @@ export class FileSettingsStorage implements SettingsStorage {
 	private globalSettingsPath: string;
 	private projectSettingsPath: string;
 
-	constructor(cwd: string, agentDir: string) {
+	constructor(cwd: string, agentDir: string, projectConfigDir = getProjectConfigDir()) {
 		const resolvedCwd = resolvePath(cwd);
 		const resolvedAgentDir = resolvePath(agentDir);
 		this.globalSettingsPath = join(resolvedAgentDir, "settings.json");
-		this.projectSettingsPath = join(resolvedCwd, CONFIG_DIR_NAME, "settings.json");
+		this.projectSettingsPath = join(resolvedCwd, projectConfigDir, "settings.json");
 	}
 
 	private acquireLockSyncWithRetry(path: string): () => void {
@@ -343,8 +343,8 @@ export class SettingsManager {
 	}
 
 	/** Create a SettingsManager that loads from files */
-	static create(cwd: string, agentDir: string = getAgentDir()): SettingsManager {
-		const storage = new FileSettingsStorage(cwd, agentDir);
+	static create(cwd: string, agentDir: string = getAgentDir(), projectConfigDir = getProjectConfigDir()): SettingsManager {
+		const storage = new FileSettingsStorage(cwd, agentDir, projectConfigDir);
 		return SettingsManager.fromStorage(storage);
 	}
 

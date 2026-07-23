@@ -1,11 +1,7 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync, rmSync, statSync, readdirSync } from 'fs';
 import { createHash, randomUUID } from 'node:crypto';
 import { join, dirname, basename } from 'path';
-import { clearAllCraftCredentials } from '../credentials/index.ts';
-import {
-  readCraftLlmConnections as readLegacyProviderEntries,
-  writeCraftLlmConnections,
-} from '@mortise/pi-coding-agent/host-facade';
+import { clearAllMortiseCredentials } from '../credentials/index.ts';
 import { getOrCreateLatestSession, type SessionHeader } from '../sessions/index.ts';
 import {
   discoverWorkspacesInDefaultLocation,
@@ -20,8 +16,14 @@ import { extractWorkspaceSlugFromPath } from '../utils/workspace-slug.ts';
 import { initializeDocs } from '../docs/index.ts';
 import { expandPath, toPortablePath, getBundledAssetsDir } from '../utils/paths.ts';
 import { debug } from '../utils/debug.ts';
-import { atomicWriteFileSync, readJsonFileSync } from '../utils/files.ts';
+import { readJsonFileSync } from '../utils/files.ts';
 import { CONFIG_DIR } from './paths.ts';
+import {
+  GLOBAL_CONFIG_RECORD_KEY,
+  GLOBAL_CONFIG_RECORD_NAMESPACE,
+  MORTISE_STATE_WRITER_VERSION,
+  getMortiseStateDatabasePath,
+} from './state-contract.ts';
 import type { StoredAttachment, StoredMessage } from '@mortise/core/types';
 import type { Plan } from '../agent/plan-types.ts';
 import type { PermissionMode } from '../agent/mode-manager.ts';
@@ -79,105 +81,7 @@ import {
   type MidStreamBehavior,
 } from './midstream-behavior.ts';
 
-type LegacyStoredConfig = StoredConfig & {
-  defaultLlmConnection?: string;
-  llmConnections?: LegacyProviderEntry[];
-};
-
-interface LegacyProviderEntry {
-  slug: string;
-  name?: string;
-  piAuthProvider?: string;
-  baseUrl?: string;
-  customEndpoint?: { api?: PiGlobalProvider['api'] };
-  models?: Array<string | {
-    id: string;
-    name?: string;
-    contextWindow?: number;
-    supportsThinking?: boolean;
-    supportsImages?: boolean;
-  }>;
-  defaultModel?: string;
-}
-
-function legacyProviderKey(connection: LegacyProviderEntry): string | null {
-  const explicit = connection.piAuthProvider?.trim();
-  if (explicit) return explicit;
-  const slug = connection.slug?.trim();
-  if (!slug) return null;
-  return slug.startsWith('pi-') ? slug.slice(3) || null : slug;
-}
-
-function legacyConnectionModels(connection: LegacyProviderEntry): PiGlobalModel[] | undefined {
-  if (!connection.models?.length) return undefined;
-  return connection.models.map(model => typeof model === 'string'
-    ? { id: model, name: model }
-    : {
-        id: model.id,
-        name: model.name ?? model.id,
-        contextWindow: model.contextWindow,
-        reasoning: model.supportsThinking,
-        input: model.supportsImages ? ['text', 'image'] : ['text'],
-      });
-}
-
-/**
- * Import retired Mortise connection data into Pi's provider/model files.
- * Existing Pi providers always win, making repeated startup calls idempotent.
- */
-function migrateLegacyLlmConfiguration(config: LegacyStoredConfig): void {
-  const legacyProviderEntries = readLegacyProviderEntries<LegacyProviderEntry>();
-  const legacyConnections = [
-    ...(Array.isArray(config.llmConnections) ? config.llmConnections : []),
-    ...legacyProviderEntries,
-  ];
-  if (legacyConnections.length === 0 && !config.defaultLlmConnection) return;
-
-  const providers = readPiGlobalProviders();
-  const migratedKeys = new Map<string, string>();
-  for (const connection of legacyConnections) {
-    if (!connection || typeof connection !== 'object') continue;
-    const key = legacyProviderKey(connection);
-    if (!key) continue;
-    migratedKeys.set(connection.slug, key);
-    if (providers[key]) continue;
-
-    const provider: PiGlobalProvider = {
-      ...(connection.baseUrl ? { baseUrl: connection.baseUrl } : {}),
-      ...(connection.customEndpoint?.api ? { api: connection.customEndpoint.api } : {}),
-      models: legacyConnectionModels(connection),
-    };
-    savePiGlobalProvider(key, provider);
-    providers[key] = provider;
-  }
-
-  const defaultConnection = legacyConnections.find(
-    connection => connection.slug === config.defaultLlmConnection,
-  );
-  const defaultProvider = defaultConnection
-    ? migratedKeys.get(defaultConnection.slug)
-    : config.defaultLlmConnection?.startsWith('pi-')
-      ? config.defaultLlmConnection.slice(3)
-      : undefined;
-  const defaultModel = defaultConnection?.defaultModel
-    ?? (defaultConnection ? legacyConnectionModels(defaultConnection)?.[0]?.id : undefined)
-    ?? (defaultProvider ? providers[defaultProvider]?.models?.[0]?.id : undefined);
-  if (defaultProvider && defaultModel && providers[defaultProvider]) {
-    void setPiGlobalDefault(defaultProvider, defaultModel).catch(error => {
-      debug('[config] Failed to migrate legacy default provider/model:', error);
-    });
-  }
-
-  // Only clear the compatibility collection after every usable entry has been
-  // represented in providers. Invalid entries remain harmlessly ignored.
-  if (legacyProviderEntries.length > 0) {
-    // The host facade serializes this update with Pi's models.json writers.
-    // An empty collection is equivalent to removing the retired metadata.
-    writeCraftLlmConnections([]);
-  }
-}
-
-// Config stored in JSON file (credentials stored in encrypted file, not here)
+// Global application config stored in the shared SQLite state store.
 export interface StoredConfig {
   /** Global behavior when a message arrives while a turn is in progress. */
   midStreamBehavior?: MidStreamBehavior;
@@ -204,7 +108,7 @@ export interface StoredConfig {
   // Tools
   browserToolEnabled?: boolean;  // Enable built-in browser tool (default: true). Disable for Playwright/Puppeteer.
   allowRemoteEvaluate?: boolean;  // Allow remote agents to call `browser_tool evaluate` on local browser (default: true).
-  // Pi 扩展集成开关：控制全局 pi 扩展加载与 prompt 自动化委托
+  // Mortise 扩展集成开关：控制 Mortise Agent 扩展加载与 prompt 自动化委托
   piExtensions?: StoredPiExtensionSettings;
   // Pi 壳模式：Mortise 作为 Pi 的薄壳，完全透传 Pi 身份/会话/技能
   piShell?: {
@@ -225,14 +129,9 @@ export interface StoredConfig {
   serverConfig?: import('./server-config.ts').ServerConfig;
 }
 
-const CONFIG_FILE = join(CONFIG_DIR, 'config.json');
 const CONFIG_DEFAULTS_FILE = join(CONFIG_DIR, 'config-defaults.json');
-const CONFIG_DATABASE_FILE = join(CONFIG_DIR, 'state.sqlite');
-const CONFIG_SYNC_BASELINE_FILE = join(CONFIG_DIR, '.config.json.sync');
-const CONFIG_RECORD_NAMESPACE = 'config';
-const CONFIG_RECORD_KEY = 'root';
+const CONFIG_DATABASE_FILE = getMortiseStateDatabasePath(CONFIG_DIR);
 const CONFIG_SNAPSHOT = Symbol('mortiseConfigSnapshot');
-const CONFIG_WRITER_VERSION = 1;
 
 interface ConfigSnapshot {
   version: number;
@@ -249,7 +148,7 @@ function getConfigStore(): MultiWriterStore {
     configStore = MultiWriterStore.openSync({
       databasePath: CONFIG_DATABASE_FILE,
       writerId,
-      writerVersion: CONFIG_WRITER_VERSION,
+      writerVersion: MORTISE_STATE_WRITER_VERSION,
     });
   }
   return configStore;
@@ -313,21 +212,6 @@ function configDiff(base: unknown, next: unknown, path = ''): RecordPatchOperati
   }];
 }
 
-function readSyncBaseline(): StoredConfig | null {
-  try {
-    if (!existsSync(CONFIG_SYNC_BASELINE_FILE)) return null;
-    return JSON.parse(readFileSync(CONFIG_SYNC_BASELINE_FILE, 'utf8')) as StoredConfig;
-  } catch (error) {
-    debug('[config] Ignoring unreadable config sync baseline:', error instanceof Error ? error.message : error);
-    return null;
-  }
-}
-
-function materializeConfig(value: StoredConfig): void {
-  atomicWriteFileSync(CONFIG_FILE, JSON.stringify(value, null, 2));
-  atomicWriteFileSync(CONFIG_SYNC_BASELINE_FILE, JSON.stringify(value));
-}
-
 function attachConfigSnapshot(config: StoredConfig, snapshot: ConfigSnapshot): StoredConfig {
   Object.defineProperty(config, CONFIG_SNAPSHOT, {
     configurable: true,
@@ -336,41 +220,6 @@ function attachConfigSnapshot(config: StoredConfig, snapshot: ConfigSnapshot): S
     writable: true,
   });
   return config;
-}
-
-function reconcileLegacyConfigFile(record: ConfigSnapshot): ConfigSnapshot {
-  if (!existsSync(CONFIG_FILE)) {
-    materializeConfig(record.value);
-    return record;
-  }
-  let fileValue: StoredConfig;
-  try {
-    fileValue = JSON.parse(readFileSync(CONFIG_FILE, 'utf8')) as StoredConfig;
-  } catch {
-    materializeConfig(record.value);
-    return record;
-  }
-  const baseline = readSyncBaseline();
-  if (baseline && configHash(fileValue) !== configHash(baseline)) {
-    const operations = configDiff(baseline, fileValue);
-    if (operations.length > 0) {
-      const result = getConfigStore().mutateRecordPatch({
-        namespace: CONFIG_RECORD_NAMESPACE,
-        key: CONFIG_RECORD_KEY,
-        operations,
-        expectedVersion: record.version,
-        operationId: `legacy-config-${configHash(fileValue)}`,
-      });
-      if (result.status === 'applied') {
-        const value = result.value as unknown as StoredConfig;
-        materializeConfig(value);
-        return { version: result.version, value };
-      }
-      debug('[config] Legacy config.json edit conflicted with SQLite authority; preserving SQLite value');
-    }
-  }
-  if (configHash(fileValue) !== configHash(record.value)) materializeConfig(record.value);
-  return record;
 }
 
 // Track if config-defaults have been synced this session (prevents re-sync on hot reload)
@@ -489,58 +338,6 @@ export function ensureConfigDefaults(): void {
 
 let configDirInitialized = false;
 
-const MAX_CONFIG_BACKUPS = 3;
-const CONFIG_BACKUP_DATE_RE = /^config\.json\.bak-\d{4}-\d{2}-\d{2}$/;
-let corruptConfigBackupPath: string | null = null;
-
-/**
- * Snapshot an existing config.json into a dated file (config.json.bak-YYYY-MM-DD)
- * and keep only the newest MAX_CONFIG_BACKUPS. Runs once at startup, before any
- * path can mutate or (in failure paths) overwrite the workspace registry.
- * Best-effort: failures are logged and swallowed so a backup never blocks startup.
- */
-export function backupConfigFile(): void {
-  try {
-    if (!existsSync(CONFIG_FILE)) return;
-
-    const now = new Date();
-    const stamp = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-    const dated = join(CONFIG_DIR, `config.json.bak-${stamp}`);
-    // One backup per day, never overwritten: the first snapshot of the day is taken
-    // before any mutation, so it holds the good pre-reset state. A second startup that
-    // day (e.g. after a reset already nuked the registry) must NOT clobber it.
-    if (existsSync(dated)) return;
-    writeFileSync(dated, readFileSync(CONFIG_FILE, 'utf-8'), 'utf-8');
-
-    // ISO date in the name → lexical sort is chronological; drop all but the newest few.
-    const backups = readdirSync(CONFIG_DIR).filter(f => CONFIG_BACKUP_DATE_RE.test(f)).sort();
-    for (const stale of backups.slice(0, Math.max(0, backups.length - MAX_CONFIG_BACKUPS))) {
-      try { rmSync(join(CONFIG_DIR, stale)); } catch { /* ignore individual cleanup errors */ }
-    }
-  } catch (error) {
-    debug('[config] backupConfigFile failed:', error instanceof Error ? error.message : error);
-  }
-}
-
-function backupCorruptConfigFile(reason: unknown): void {
-  try {
-    if (!existsSync(CONFIG_FILE)) return;
-    if (corruptConfigBackupPath && existsSync(corruptConfigBackupPath)) return;
-
-    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-    corruptConfigBackupPath = join(CONFIG_DIR, `config.json.corrupt-${stamp}`);
-    copyFileSync(CONFIG_FILE, corruptConfigBackupPath);
-    debug(
-      '[config] Backed up unreadable config.json to',
-      corruptConfigBackupPath,
-      'reason:',
-      reason instanceof Error ? reason.message : reason,
-    );
-  } catch (backupError) {
-    debug('[config] backupCorruptConfigFile failed:', backupError instanceof Error ? backupError.message : backupError);
-  }
-}
-
 export function ensureConfigDir(): void {
   if (configDirInitialized) return;
 
@@ -548,9 +345,6 @@ export function ensureConfigDir(): void {
     mkdirSync(CONFIG_DIR, { recursive: true });
   }
 
-  // Snapshot an existing config.json (dated, keep last 3) before anything can
-  // mutate or — in a failure path — overwrite the workspace registry.
-  backupConfigFile();
   // Initialize bundled docs under ~/.mortise/docs/.
   initializeDocs();
 
@@ -567,73 +361,17 @@ export function loadStoredConfig(): StoredConfig | null {
   try {
     ensureConfigDir();
     const store = getConfigStore();
-    let record: ConfigSnapshot | null = null;
-    const storedRecord = store.getRecord(CONFIG_RECORD_NAMESPACE, CONFIG_RECORD_KEY);
-    if (storedRecord) {
-      record = reconcileLegacyConfigFile({
-        version: storedRecord.version,
-        value: storedRecord.value as unknown as StoredConfig,
-      });
-    } else {
-      if (!existsSync(CONFIG_FILE)) return null;
-      const imported = readJsonFileSync<StoredConfig & {
-      defaultLlmConnection?: string;
-      llmConnections?: LegacyProviderEntry[];
-      migrationsApplied?: unknown;
-      }>(CONFIG_FILE);
-      const importedStorage: StoredConfig = Array.isArray(imported.workspaces)
-        ? {
-            ...imported,
-            workspaces: imported.workspaces.map(ws => ({
-              ...ws,
-              rootPath: toPortablePath(ws.rootPath),
-            })),
-          }
-        : imported as StoredConfig;
-      const importedResult = store.mutateRecord({
-        namespace: CONFIG_RECORD_NAMESPACE,
-        key: CONFIG_RECORD_KEY,
-        value: importedStorage as unknown as JsonValue,
-        expectedVersion: null,
-        operationId: `import-config-${configHash(importedStorage)}`,
-      });
-      if (importedResult.status !== 'applied') return null;
-      record = {
-        version: importedResult.version,
-        value: importedResult.value as unknown as StoredConfig,
-      };
-      materializeConfig(record.value);
-    }
-
-    const config = JSON.parse(JSON.stringify(record.value)) as StoredConfig & {
-      defaultLlmConnection?: string;
-      llmConnections?: LegacyProviderEntry[];
-      migrationsApplied?: unknown;
+    const storedRecord = store.getRecord(GLOBAL_CONFIG_RECORD_NAMESPACE, GLOBAL_CONFIG_RECORD_KEY);
+    if (!storedRecord) return null;
+    const record: ConfigSnapshot = {
+      version: storedRecord.version,
+      value: storedRecord.value as unknown as StoredConfig,
     };
 
-    let legacyMigrationSucceeded = true;
-    try {
-      migrateLegacyLlmConfiguration(config);
-    } catch (migrationError) {
-      legacyMigrationSucceeded = false;
-      debug(
-        '[config] Failed to migrate legacy LLM configuration; preserving it for retry:',
-        migrationError instanceof Error ? migrationError.message : migrationError,
-      );
-    }
-
-    // Retired connection storage is removed only after Pi accepted the
-    // migration. Keeping it on a transient Pi failure prevents a later config
-    // save from discarding the user's provider definitions before retrying.
-    if (legacyMigrationSucceeded) {
-      delete config.defaultLlmConnection;
-      delete config.llmConnections;
-    }
-    delete config.migrationsApplied;
+    const config = JSON.parse(JSON.stringify(record.value)) as StoredConfig;
 
     // Must have workspaces array
     if (!Array.isArray(config.workspaces)) {
-      backupCorruptConfigFile(new Error('config.workspaces is missing or invalid'));
       return null;
     }
 
@@ -667,7 +405,6 @@ export function loadStoredConfig(): StoredConfig | null {
     });
   } catch (error) {
     debug('[config] loadStoredConfig failed:', error instanceof Error ? error.message : error);
-    backupCorruptConfigFile(error);
     return null;
   }
 }
@@ -676,17 +413,8 @@ export function saveConfig(config: StoredConfig): void {
   ensureConfigDir();
 
   // Convert paths to portable form (~ prefix) for cross-machine compatibility
-  const legacyConfig = config as StoredConfig & {
-    defaultLlmConnection?: unknown;
-    llmConnections?: unknown;
-    migrationsApplied?: unknown;
-  };
-  // Successful migrations remove retired fields in loadStoredConfig. If a
-  // migration failed, retain those fields so this save does not erase data that
-  // still needs to be imported on a later launch.
-  const { migrationsApplied: _migrationsApplied, ...currentConfig } = legacyConfig;
   const storageConfig: StoredConfig = {
-    ...currentConfig,
+    ...config,
     workspaces: config.workspaces.map(ws => ({
       ...ws,
       rootPath: toPortablePath(ws.rootPath),
@@ -700,17 +428,17 @@ export function saveConfig(config: StoredConfig): void {
     const operations = configDiff(snapshot.value, storageConfig);
     if (operations.length === 0) return;
     result = store.mutateRecordPatch({
-      namespace: CONFIG_RECORD_NAMESPACE,
-      key: CONFIG_RECORD_KEY,
+      namespace: GLOBAL_CONFIG_RECORD_NAMESPACE,
+      key: GLOBAL_CONFIG_RECORD_KEY,
       operations,
       expectedVersion: snapshot.version,
       operationId: `config-patch-${randomUUID()}`,
     });
   } else {
-    const current = store.getRecord(CONFIG_RECORD_NAMESPACE, CONFIG_RECORD_KEY);
+    const current = store.getRecord(GLOBAL_CONFIG_RECORD_NAMESPACE, GLOBAL_CONFIG_RECORD_KEY);
     result = store.mutateRecord({
-      namespace: CONFIG_RECORD_NAMESPACE,
-      key: CONFIG_RECORD_KEY,
+      namespace: GLOBAL_CONFIG_RECORD_NAMESPACE,
+      key: GLOBAL_CONFIG_RECORD_KEY,
       value: storageConfig as unknown as JsonValue,
       expectedVersion: current?.version ?? null,
       operationId: `config-replace-${randomUUID()}`,
@@ -719,7 +447,6 @@ export function saveConfig(config: StoredConfig): void {
   if (result.status !== 'applied') {
     throw new Error(`Configuration write conflicted with another backend (version ${result.currentVersion ?? 'missing'})`);
   }
-  materializeConfig(result.value as unknown as StoredConfig);
   attachConfigSnapshot(config, {
     version: result.version,
     value: result.value as unknown as StoredConfig,
@@ -905,7 +632,7 @@ export async function setRtkEnabled(enabled: boolean): Promise<void> {
 /**
  * Get whether the built-in browser tool is enabled.
  * When disabled, browser_tool is not included in session tools.
- * Source of truth: Pi `~/.pi/agent/settings.json.shellGui.mortise.browserToolEnabled`.
+ * Source of truth: Pi `~/.mortise/agent/settings.json.shellGui.mortise.browserToolEnabled`.
  * Defaults to true if not set.
  */
 export function getBrowserToolEnabled(): boolean {
@@ -914,7 +641,7 @@ export function getBrowserToolEnabled(): boolean {
 
 /**
  * Set whether the built-in browser tool is enabled.
- * Persists to Pi `~/.pi/agent/settings.json.shellGui.mortise.browserToolEnabled`.
+ * Persists to Pi `~/.mortise/agent/settings.json.shellGui.mortise.browserToolEnabled`.
  */
 export async function setBrowserToolEnabled(enabled: boolean): Promise<void> {
   await writePiShellGuiBoolean('mortise', 'browserToolEnabled', enabled);
@@ -1001,7 +728,7 @@ export function updatePiExtensionSettings(patch: StoredPiExtensionSettings): PiE
  * 是否启用完全 Pi 透传（壳模式）。
  * 默认 true。为 true 时使用 Pi 原生 system prompt，移除 Mortise 身份覆盖；
  * 为 false 时回退到 Mortise 独立身份模式（应用 applySystemPromptOverride）。
- * Source of truth: Pi `~/.pi/agent/settings.json.shellGui.mortise.piShellFullPassthrough`.
+ * Source of truth: Pi `~/.mortise/agent/settings.json.shellGui.mortise.piShellFullPassthrough`.
  */
 export function getPiShellFullPassthrough(): boolean {
   return readPiShellGuiBoolean('mortise', 'piShellFullPassthrough', true);
@@ -1009,7 +736,7 @@ export function getPiShellFullPassthrough(): boolean {
 
 /**
  * 设置是否启用完全 Pi 透传（壳模式）。
- * Persists to Pi `~/.pi/agent/settings.json.shellGui.mortise.piShellFullPassthrough`.
+ * Persists to Pi `~/.mortise/agent/settings.json.shellGui.mortise.piShellFullPassthrough`.
  */
 export async function setPiShellFullPassthrough(enabled: boolean): Promise<void> {
   await writePiShellGuiBoolean('mortise', 'piShellFullPassthrough', enabled);
@@ -1052,18 +779,14 @@ export function clearGitBashPath(): void {
 }
 
 // Note: getDefaultWorkingDirectory/setDefaultWorkingDirectory removed.
-// Workspace root is the only cwd; legacy defaults.workingDirectory is migrated
-// away and no longer participates in session storage or execution routing.
+// Workspace root is the only cwd; the retired defaults.workingDirectory field
+// is unsupported and does not participate in storage or execution routing.
 // Note: getDefaultPermissionMode/getEnabledPermissionModes removed
-// Permission settings are now stored per-workspace in workspace config.json (defaults.permissionMode, defaults.cyclablePermissionModes)
-
-export function getConfigPath(): string {
-  return CONFIG_FILE;
-}
+// Permission settings are stored in each workspace's canonical SQLite record.
 
 /**
  * Clear all configuration and credentials (for logout).
- * Deletes config file and credentials file.
+ * Deletes the current SQLite state and credentials. Retired JSON files are left untouched.
  */
 export async function clearAllConfig(): Promise<void> {
   closeWorkspaceStorage();
@@ -1071,11 +794,7 @@ export async function clearAllConfig(): Promise<void> {
     configStore.close();
     configStore = null;
   }
-  // Delete config file
-  if (existsSync(CONFIG_FILE)) {
-    rmSync(CONFIG_FILE);
-  }
-  for (const stateFile of [CONFIG_DATABASE_FILE, `${CONFIG_DATABASE_FILE}-wal`, `${CONFIG_DATABASE_FILE}-shm`, CONFIG_SYNC_BASELINE_FILE]) {
+  for (const stateFile of [CONFIG_DATABASE_FILE, `${CONFIG_DATABASE_FILE}-wal`, `${CONFIG_DATABASE_FILE}-shm`]) {
     if (existsSync(stateFile)) rmSync(stateFile);
   }
 
@@ -1086,7 +805,7 @@ export async function clearAllConfig(): Promise<void> {
   }
 
   try {
-    clearAllCraftCredentials();
+    clearAllMortiseCredentials();
   } catch (error) {
     debug('[config] Failed to clear mortise credentials from pi auth.json:', error instanceof Error ? error.message : error);
   }
@@ -1511,8 +1230,6 @@ export function clearWorkspacePlan(workspaceId: string): void {
 //    that never existed on disk. Hydrate reconstructs directly from the stored bytes.
 // ============================================
 
-const DRAFTS_FILE = join(CONFIG_DIR, 'drafts.json');
-const DRAFTS_SYNC_BASELINE_FILE = join(CONFIG_DIR, '.drafts.json.sync');
 const DRAFTS_RECORD_NAMESPACE = 'drafts';
 const DRAFTS_RECORD_KEY = 'root';
 
@@ -1597,8 +1314,7 @@ function isEmptyDraft(draft: SessionDraft): boolean {
 }
 
 /**
- * Load all drafts from disk. Entries that don't parse as SessionDraft
- * (e.g. pre-upgrade string drafts) are discarded silently.
+ * Normalize drafts read from the current SQLite record.
  */
 function normalizeDraftsData(raw: unknown): DraftsData {
   const candidate = raw && typeof raw === 'object' ? raw as { drafts?: Record<string, unknown>; updatedAt?: number } : {};
@@ -1612,72 +1328,15 @@ function normalizeDraftsData(raw: unknown): DraftsData {
   };
 }
 
-function materializeDrafts(data: DraftsData): void {
-  atomicWriteFileSync(DRAFTS_FILE, JSON.stringify(data, null, 2));
-  atomicWriteFileSync(DRAFTS_SYNC_BASELINE_FILE, JSON.stringify(data));
-}
-
-function loadLegacyDrafts(): DraftsData {
-  try {
-    if (!existsSync(DRAFTS_FILE)) return { drafts: {}, updatedAt: 0 };
-    return normalizeDraftsData(readJsonFileSync<unknown>(DRAFTS_FILE));
-  } catch {
-    return { drafts: {}, updatedAt: 0 };
-  }
-}
-
 function loadDraftRecord(): DraftsRecord | null {
   ensureConfigDir();
   const store = getConfigStore();
   const stored = store.getRecord(DRAFTS_RECORD_NAMESPACE, DRAFTS_RECORD_KEY);
   if (stored) {
     const value = normalizeDraftsData(stored.value);
-    let fileValue: DraftsData | null = null;
-    try {
-      if (existsSync(DRAFTS_FILE)) fileValue = normalizeDraftsData(readJsonFileSync<unknown>(DRAFTS_FILE));
-    } catch {
-      fileValue = null;
-    }
-    let baseline: DraftsData | null = null;
-    try {
-      if (existsSync(DRAFTS_SYNC_BASELINE_FILE)) baseline = normalizeDraftsData(JSON.parse(readFileSync(DRAFTS_SYNC_BASELINE_FILE, 'utf8')));
-    } catch {
-      baseline = null;
-    }
-    if (fileValue && baseline && configHash(fileValue) !== configHash(baseline)) {
-      const operations = configDiff(baseline, fileValue);
-      if (operations.length > 0) {
-        const result = store.mutateRecordPatch({
-          namespace: DRAFTS_RECORD_NAMESPACE,
-          key: DRAFTS_RECORD_KEY,
-          operations,
-          expectedVersion: stored.version,
-          operationId: `legacy-drafts-${configHash(fileValue)}`,
-        });
-        if (result.status === 'applied') {
-          const next = normalizeDraftsData(result.value);
-          materializeDrafts(next);
-          return { version: result.version, value: next };
-        }
-      }
-    }
-    if (!fileValue || configHash(fileValue) !== configHash(value)) materializeDrafts(value);
     return { version: stored.version, value };
   }
-
-  if (!existsSync(DRAFTS_FILE)) return null;
-  const imported = loadLegacyDrafts();
-  const result = store.mutateRecord({
-    namespace: DRAFTS_RECORD_NAMESPACE,
-    key: DRAFTS_RECORD_KEY,
-    value: imported as unknown as JsonValue,
-    expectedVersion: null,
-    operationId: `import-drafts-${configHash(imported)}`,
-  });
-  if (result.status !== 'applied') return null;
-  const value = normalizeDraftsData(result.value);
-  materializeDrafts(value);
-  return { version: result.version, value };
+  return null;
 }
 
 function ensureDraftRecord(): DraftsRecord {
@@ -1692,7 +1351,6 @@ function ensureDraftRecord(): DraftsRecord {
     operationId: `create-drafts-${randomUUID()}`,
   });
   if (result.status !== 'applied') throw new Error('Unable to initialize draft storage');
-  materializeDrafts(empty);
   return { version: result.version, value: empty };
 }
 
@@ -1738,7 +1396,6 @@ export function setSessionDraft(sessionId: string, draft: SessionDraft): void {
     operationId: `draft-${randomUUID()}`,
   });
   if (result.status !== 'applied') throw new Error(`Draft write conflicted for session ${sessionId}`);
-  materializeDrafts(normalizeDraftsData(result.value));
 }
 
 function normalizeDraftAttachment(ref: DraftAttachmentRef): DraftAttachmentRef {
@@ -1774,7 +1431,6 @@ export function deleteSessionDraft(sessionId: string): void {
     operationId: `delete-draft-${randomUUID()}`,
   });
   if (result.status !== 'applied') throw new Error(`Draft delete conflicted for session ${sessionId}`);
-  materializeDrafts(normalizeDraftsData(result.value));
 }
 
 /**
@@ -2121,7 +1777,7 @@ export function clearDismissedUpdateVersion(): void {
 
 /**
  * Get the app-level default thinking level for new sessions.
- * Source of truth: Pi `~/.pi/agent/settings.json.defaultThinkingLevel`.
+ * Source of truth: Pi `~/.mortise/agent/settings.json.defaultThinkingLevel`.
  */
 export function getDefaultThinkingLevel(): ThinkingLevel {
   const piSettings = readPiGlobalSettings();
@@ -2135,7 +1791,7 @@ export function getDefaultThinkingLevel(): ThinkingLevel {
 
 /**
  * Set the app-level default thinking level for new sessions.
- * Persists to Pi `~/.pi/agent/settings.json.defaultThinkingLevel` so the Pi
+ * Persists to Pi `~/.mortise/agent/settings.json.defaultThinkingLevel` so the Pi
  * subprocess picks it up immediately. No longer writes to Mortise config.json.
  *
  * @returns true if persisted, false if validation failed

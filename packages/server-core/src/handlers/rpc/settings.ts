@@ -189,7 +189,6 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
       name: config?.name,
       permissionMode: config?.defaults?.permissionMode,
       cyclablePermissionModes: config?.defaults?.cyclablePermissionModes,
-      workingDirectory: workspace.rootPath,
     }
   })
 

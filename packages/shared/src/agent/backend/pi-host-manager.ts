@@ -23,7 +23,7 @@ export interface PiHostLease {
 export interface PiHostAcquireOptions {
   key: string;
   client: RpcClientOptions;
-  runtime: RpcRuntimeOpenOptions;
+  runtime: RpcRuntimeOpenOptions & { agentDir: string; projectConfigDir: string };
 }
 
 interface HostRecord {
@@ -70,7 +70,12 @@ export class PiHostManager {
   async acquire(options: PiHostAcquireOptions): Promise<PiHostLease> {
     let record = this.hosts.get(options.key);
     if (!record) {
-      record = this.createHost(options.key, options.client);
+      record = this.createHost(
+        options.key,
+        options.client,
+        options.runtime.agentDir,
+        options.runtime.projectConfigDir,
+      );
       this.hosts.set(options.key, record);
     }
 
@@ -169,12 +174,22 @@ export class PiHostManager {
     }
   }
 
-  private createHost(key: string, options: RpcClientOptions): HostRecord {
+  private createHost(
+    key: string,
+    options: RpcClientOptions,
+    agentDir: string,
+    projectConfigDir: string,
+  ): HostRecord {
     const instanceId = randomUUID();
     const client = this.createClient({
       ...options,
-      globalHost: { ...options.globalHost, enabled: true, instanceId },
-      env: { ...options.env, PI_GLOBAL_HOST_PROCESS: '1' },
+      globalHost: { ...options.globalHost, enabled: true, agentDir, instanceId },
+      env: {
+        ...options.env,
+        PI_CODING_AGENT_DIR: agentDir,
+        PI_CODING_AGENT_PROJECT_DIR: projectConfigDir,
+        PI_GLOBAL_HOST_PROCESS: '1',
+      },
     });
     const record: HostRecord = {
       key,

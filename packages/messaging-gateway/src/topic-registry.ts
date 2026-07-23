@@ -8,7 +8,7 @@
  * cached entry — so multiple automations sharing a `telegramTopic`
  * value share one topic.
  *
- * Storage: `{messagingDir}/topic-registry.json`
+ * Storage: the `topic-registry` record in `{messagingDir}/state.sqlite`.
  *
  * Concurrency: an in-memory async mutex per `(workspaceId, topicName)`
  * serializes simultaneous create-or-reuse requests, so two automation
@@ -20,7 +20,7 @@
  */
 
 import type { MessagingLogger } from './types'
-import { JsonFileStore, NOOP_LOGGER } from './json-file-store'
+import { NOOP_LOGGER, SqliteRecordStore } from './sqlite-record-store'
 
 export interface AutomationTopicEntry {
   /** User-specified topic name (case-sensitive). The cache key together with workspaceId. */
@@ -34,21 +34,21 @@ export interface AutomationTopicEntry {
   lastUsedAt: number
 }
 
-interface RegistryFileShape {
+interface RegistryState {
   version: 1
   entries: AutomationTopicEntry[]
 }
 
-const FILE_NAME = 'topic-registry.json'
+const RECORD_KEY = 'topic-registry'
 
-export class TopicRegistry extends JsonFileStore<RegistryFileShape> {
+export class TopicRegistry extends SqliteRecordStore<RegistryState> {
   /** Cache: keyed by `topicName`. One workspace per registry instance. */
   private byName = new Map<string, AutomationTopicEntry>()
   /** In-flight find-or-create promises per topic name, used as a mutex. */
   private inflight = new Map<string, Promise<AutomationTopicEntry>>()
 
   constructor(storageDir: string, logger: MessagingLogger = NOOP_LOGGER) {
-    super(storageDir, FILE_NAME, logger)
+    super(storageDir, RECORD_KEY, logger)
     this.load()
   }
 
@@ -147,7 +147,7 @@ export class TopicRegistry extends JsonFileStore<RegistryFileShape> {
   // -------------------------------------------------------------------------
 
   private load(): void {
-    const parsed = this.loadFile()
+    const parsed = this.loadRecord()
     if (!parsed?.entries || !Array.isArray(parsed.entries)) return
     for (const entry of parsed.entries) {
       if (typeof entry?.topicName !== 'string') continue
@@ -165,10 +165,10 @@ export class TopicRegistry extends JsonFileStore<RegistryFileShape> {
   }
 
   private save(): void {
-    const payload: RegistryFileShape = {
+    const payload: RegistryState = {
       version: 1,
       entries: Array.from(this.byName.values()),
     }
-    this.saveFile(payload)
+    this.saveRecord(payload)
   }
 }

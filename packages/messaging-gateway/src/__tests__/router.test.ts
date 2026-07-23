@@ -102,7 +102,18 @@ function makeRouter() {
   const sessionManager = makeFakeSessionManager()
   const commands = makeFakeCommands()
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const router = new Router(sessionManager as any, store, commands as unknown as Commands)
+  const router = new Router(
+    sessionManager as any,
+    store,
+    commands as unknown as Commands,
+    undefined,
+    {
+      getWorkspaceConfig: () => ({
+        enabled: true,
+        platforms: { telegram: { enabled: true, accessMode: 'open' } },
+      }),
+    },
+  )
   return { router, store, sessionManager, commands }
 }
 
@@ -209,7 +220,18 @@ describe('Router', () => {
     const sessionManager = makeFakeSessionManager()
     const commands = makeFakeCommands()
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const router = new Router(sessionManager as any, store, commands as unknown as Commands)
+    const router = new Router(
+      sessionManager as any,
+      store,
+      commands as unknown as Commands,
+      undefined,
+      {
+        getWorkspaceConfig: () => ({
+          enabled: true,
+          platforms: { telegram: { enabled: true, accessMode: 'open' } },
+        }),
+      },
+    )
     const adapter = makeFakeAdapter()
 
     await router.route(adapter, baseMsg({ channelId: '-1001', threadId: 5, text: 'hi from t5' }))

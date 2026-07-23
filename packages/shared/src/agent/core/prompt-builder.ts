@@ -15,7 +15,7 @@
 import { formatPreferencesForPrompt } from '../../config/preferences.ts';
 import { formatSessionState } from '../mode-manager.ts';
 import { getDateTimeContext, getWorkingDirectoryContext } from '../../prompts/system.ts';
-import { getSessionPlansPath, getSessionDataPath, getSessionPath } from '../../sessions/storage.ts';
+import { getSessionPlansPath, getSessionDataPath } from '../../sessions/storage.ts';
 import type {
   PromptBuilderConfig,
   ContextBlockOptions,
@@ -144,14 +144,9 @@ export class PromptBuilder {
    * Get working directory context for prompt injection.
    */
   getWorkingDirectoryContext(): string | null {
-    const sessionId = this.config.session?.mortiseId;
-    const effectiveWorkingDir = this.config.session?.workingDirectory ??
-      (sessionId ? getSessionPath(this.workspaceRootPath, sessionId) : undefined);
-    const isSessionRoot = !this.config.session?.workingDirectory && !!sessionId;
-
     return getWorkingDirectoryContext(
-      effectiveWorkingDir,
-      isSessionRoot,
+      this.workspaceRootPath,
+      false,
       this.config.session?.sdkCwd
     );
   }

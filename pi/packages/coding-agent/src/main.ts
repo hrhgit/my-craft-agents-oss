@@ -16,7 +16,14 @@ import { processFileArguments } from "./cli/file-processor.ts";
 import { buildInitialMessage } from "./cli/initial-message.ts";
 import { listModels } from "./cli/list-models.ts";
 import { selectSession } from "./cli/session-picker.ts";
-import { DISPLAY_VERSION, ENV_SESSION_DIR, expandTildePath, getAgentDir, getPackageDir } from "./config.ts";
+import {
+	DISPLAY_VERSION,
+	ENV_SESSION_DIR,
+	expandTildePath,
+	getAgentDir,
+	getPackageDir,
+	getProjectConfigDir,
+} from "./config.ts";
 import { type CreateAgentSessionRuntimeFactory, createAgentSessionRuntime } from "./core/agent-session-runtime.ts";
 import {
 	type AgentSessionRuntimeDiagnostic,
@@ -46,11 +53,7 @@ import { runMigrations, showDeprecationWarnings } from "./migrations.ts";
 import { InteractiveMode, parseRpcHostUICapabilities, runPrintMode, runRpcMode } from "./modes/index.ts";
 import { ExtensionSelectorComponent } from "./modes/interactive/components/extension-selector.ts";
 import { initTheme, stopThemeWatcher } from "./modes/interactive/theme/theme.ts";
-import {
-	PI_HOST_HOOKS_MODULE_ENV,
-	PI_LEGACY_FETCH_INTERCEPTOR_MODULE_ENV,
-	PI_RPC_UI_CAPABILITIES_ENV,
-} from "./modes/rpc/rpc-types.ts";
+import { PI_HOST_HOOKS_MODULE_ENV, PI_RPC_UI_CAPABILITIES_ENV } from "./modes/rpc/rpc-types.ts";
 import { handleConfigCommand, handlePackageCommand } from "./package-manager-cli.ts";
 import { isLocalPath, normalizePath, resolvePath } from "./utils/paths.ts";
 import { cleanupWindowsSelfUpdateQuarantine } from "./utils/windows-self-update.ts";
@@ -104,18 +107,12 @@ export async function loadHostHooks(modulePath: string | undefined, cwd: string)
 
 	const fetchInterceptor =
 		getFunctionExport(moduleValue, ["fetchInterceptor"])?.fn ??
-		callHookFactory(
-			getFunctionExport(moduleValue, ["createFetchInterceptor", "createCraftFetchInterceptor"]),
-			resolvedPath,
-		) ??
+		callHookFactory(getFunctionExport(moduleValue, ["createFetchInterceptor"]), resolvedPath) ??
 		(typeof defaultExport === "function" ? defaultExport : undefined);
 
 	const toolMetadataResolver =
-		callHookFactory(
-			getFunctionExport(moduleValue, ["createToolMetadataResolver", "createCraftToolMetadataResolver"]),
-			resolvedPath,
-		) ??
-		getFunctionExport(moduleValue, ["toolMetadataResolver", "resolveToolMetadata", "resolveCraftToolMetadata"])?.fn;
+		callHookFactory(getFunctionExport(moduleValue, ["createToolMetadataResolver"]), resolvedPath) ??
+		getFunctionExport(moduleValue, ["toolMetadataResolver", "resolveToolMetadata"])?.fn;
 
 	if (!fetchInterceptor && !toolMetadataResolver) {
 		throw new Error(
@@ -556,8 +553,6 @@ export interface MainOptions {
 	fetchInterceptor?: CreateAgentSessionOptions["fetchInterceptor"];
 	toolMetadataResolver?: CreateAgentSessionOptions["toolMetadataResolver"];
 	hostHooksModule?: string;
-	/** @deprecated Use hostHooksModule. */
-	fetchInterceptorModule?: string;
 }
 
 export async function main(args: string[], options?: MainOptions) {
@@ -628,7 +623,8 @@ export async function main(args: string[], options?: MainOptions) {
 	validateSessionIdFlags(parsed);
 
 	// Run migrations (pass cwd for project-local migrations)
-	const { migratedAuthProviders: migratedProviders, deprecationWarnings } = runMigrations(process.cwd());
+	const projectConfigDir = getProjectConfigDir();
+	const { deprecationWarnings } = runMigrations(process.cwd(), projectConfigDir);
 	time("runMigrations");
 
 	const cwd = process.cwd();
@@ -667,6 +663,7 @@ export async function main(args: string[], options?: MainOptions) {
 			process.exit(1);
 		}
 		sessionManager.appendSessionInfo(name);
+		await sessionManager.flush();
 	}
 	time("createSessionManager");
 
@@ -676,10 +673,7 @@ export async function main(args: string[], options?: MainOptions) {
 	const resolvedThemePaths = resolveCliPaths(cwd, parsed.themes);
 	const authStorage = AuthStorage.create();
 	const moduleHooks = await loadHostHooks(
-		options?.hostHooksModule ??
-			process.env[PI_HOST_HOOKS_MODULE_ENV] ??
-			options?.fetchInterceptorModule ??
-			process.env[PI_LEGACY_FETCH_INTERCEPTOR_MODULE_ENV],
+		options?.hostHooksModule ?? process.env[PI_HOST_HOOKS_MODULE_ENV],
 		sessionManager.getCwd(),
 	);
 	const hostHooks: HostHooks = {
@@ -691,6 +685,7 @@ export async function main(args: string[], options?: MainOptions) {
 	const createRuntime: CreateAgentSessionRuntimeFactory = async ({
 		cwd,
 		agentDir,
+		projectConfigDir,
 		sessionManager,
 		sessionStartEvent,
 		deferResourceLoad,
@@ -702,6 +697,7 @@ export async function main(args: string[], options?: MainOptions) {
 		const services = await createAgentSessionServices({
 			cwd,
 			agentDir,
+			projectConfigDir,
 			authStorage,
 			extensionFlagValues: parsed.unknownFlags,
 			deferResourceLoad,
@@ -831,6 +827,7 @@ export async function main(args: string[], options?: MainOptions) {
 	const runtime = await createAgentSessionRuntime(createRuntime, {
 		cwd: sessionManager.getCwd(),
 		agentDir,
+		projectConfigDir,
 		sessionManager,
 		deferResourceLoad: deferInitialWorkspaceLoad,
 		persistInitialState: !deferInitialWorkspaceLoad,
@@ -906,7 +903,6 @@ export async function main(args: string[], options?: MainOptions) {
 		await runRpcMode(runtime, { uiCapabilities: rpcUiCapabilities });
 	} else if (appMode === "interactive") {
 		const interactiveMode = new InteractiveMode(runtime, {
-			migratedProviders,
 			modelFallbackMessage,
 			initialMessage,
 			initialImages,

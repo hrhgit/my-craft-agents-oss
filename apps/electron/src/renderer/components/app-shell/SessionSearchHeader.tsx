@@ -65,6 +65,7 @@ export function SessionSearchHeader({
         {/* Search icon - always static, never changes to spinner */}
         <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
         <input
+          data-mortise-semantic-id="session.search.input"
           ref={inputRef}
           type="text"
           value={searchQuery}
@@ -78,6 +79,7 @@ export function SessionSearchHeader({
         />
         {onSearchClose && (
           <button
+            data-mortise-semantic-id="session.search.close"
             onClick={onSearchClose}
             className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 hover:bg-foreground/10 rounded"
             title={t("session.closeSearch")}

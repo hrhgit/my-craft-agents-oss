@@ -16,24 +16,23 @@ import { expandPath } from '../utils/paths.ts';
 // Falls back to default ~/.mortise/ for production and non-numbered dev folders
 export const CONFIG_DIR = process.env.MORTISE_CONFIG_DIR || join(homedir(), '.mortise');
 
-// Pi CLI global config directory (~/.pi/agent by default).
-// Respects PI_CODING_AGENT_DIR to stay consistent with Pi SDK's getAgentDir().
-export const PI_AGENT_DIR = process.env.PI_CODING_AGENT_DIR || join(homedir(), '.pi', 'agent');
-export const PI_MODELS_FILE = join(PI_AGENT_DIR, 'models.json');
-export const PI_SETTINGS_FILE = join(PI_AGENT_DIR, 'settings.json');
-export const PI_AUTH_FILE = join(PI_AGENT_DIR, 'auth.json');
+/** Mortise-owned Pi runtime data. Independent Pi continues to use ~/.pi/agent. */
+export const MORTISE_AGENT_DIR = join(CONFIG_DIR, 'agent');
+export const MORTISE_MODELS_FILE = join(MORTISE_AGENT_DIR, 'models.json');
+export const MORTISE_SETTINGS_FILE = join(MORTISE_AGENT_DIR, 'settings.json');
+export const MORTISE_AUTH_FILE = join(MORTISE_AGENT_DIR, 'auth.json');
 
-// Pi skills directories (shared with Mortise in full-passthrough shell mode)
-/** Global Pi skills directory: ~/.pi/agent/skills/ */
-export const PI_SKILLS_DIR = join(PI_AGENT_DIR, 'skills');
-/** Project-level Pi skills relative directory name */
-export const PI_PROJECT_SKILLS_DIR = '.pi/skills';
+/** Mortise global skills directory. */
+export const MORTISE_SKILLS_DIR = join(MORTISE_AGENT_DIR, 'skills');
 
-// Pi sessions directory (shared with Mortise in full-passthrough shell mode)
-/** Global Pi sessions directory: ~/.pi/agent/sessions/ */
-export const PI_SESSIONS_DIR = join(PI_AGENT_DIR, 'sessions');
-/** Project-level Pi sessions relative directory name */
-export const PI_PROJECT_SESSIONS_DIR = '.pi/sessions';
+/** Canonical Mortise-owned project resource root and paths. */
+export const MORTISE_PROJECT_DIR = '.mortise';
+export const MORTISE_PROJECT_SETTINGS_FILE = `${MORTISE_PROJECT_DIR}/settings.json`;
+export const MORTISE_PROJECT_SKILLS_DIR = `${MORTISE_PROJECT_DIR}/skills`;
+export const MORTISE_PROJECT_EXTENSIONS_DIR = `${MORTISE_PROJECT_DIR}/extensions`;
+
+/** Mortise session directory. Historical ~/.pi/agent sessions are not imported. */
+export const MORTISE_SESSIONS_DIR = join(MORTISE_AGENT_DIR, 'sessions');
 
 /**
  * Encode a cwd into the Pi sessions directory name.

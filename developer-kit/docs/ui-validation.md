@@ -86,7 +86,7 @@ reserved for checks that explicitly require copied user configuration; it
 redirects all writes into the run directory.
 
 ```powershell
-bin\mortise-ui.exe start --label provider-clone --surface electron --profile clone --source-mortise-profile C:\path\to\.mortise --source-pi-profile C:\path\to\.pi\agent --json
+bin\mortise-ui.exe start --label provider-clone --surface electron --profile clone --source-mortise-profile C:\path\to\.mortise --json
 ```
 
 ## Evidence And Cleanup
