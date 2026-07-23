@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, mock } from 'bun:test'
 import { SessionManager as PiSessionManager } from '@mortise/pi-coding-agent/host-facade'
-import { getSessionFilePath, getSessionPath } from '@mortise/shared/sessions'
+import { getSessionFilePath, getSessionPath, tryGetSessionFilePath } from '@mortise/shared/sessions'
 import { spawn } from 'node:child_process'
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -98,6 +98,33 @@ describe('Session validation backend', () => {
     expect(readdirSync(profile!).filter(name => name !== 'session-validation.v1.json' && name !== 'pi-agent')).toEqual([])
   })
 
+  it('flushes the first assistant to canonical JSONL before yielding an observable event', async () => {
+    const controller = setupController()
+    const workspaceRoot = join(profile!, 'workspace')
+    const sessionId = 'session-publication'
+    mkdirSync(workspaceRoot, { recursive: true })
+    controller.arm({
+      runId: 'run-a', workspaceId: 'ws-a',
+      mode: { kind: 'succeed', answer: 'durable assistant' },
+    })
+    const backend = controller.backendFactory(backendArgs('ws-a', () => ({} as never), {
+      sessionId, workspaceRoot,
+    }))
+
+    const first = await backend.chat('durable user').next()
+    const sessionFile = tryGetSessionFilePath(workspaceRoot, sessionId)
+
+    expect(first.value).toEqual({ type: 'pi_user_message_persisted' })
+    expect(sessionFile).not.toBeNull()
+    const entries = readFileSync(sessionFile!, 'utf8')
+      .trim()
+      .split('\n')
+      .map(line => JSON.parse(line) as { type?: string; message?: { role?: string; content?: unknown } })
+    expect(entries.filter(entry => entry.type === 'message').map(entry => entry.message?.role))
+      .toEqual(['user', 'assistant'])
+    expect(entries.at(-1)?.message?.content).toEqual([{ type: 'text', text: 'durable assistant' }])
+  })
+
   it('releases the blocker without racing the retained baseline and cleans it after settlement', async () => {
     const controller = setupController()
     const workspaceRoot = join(profile!, 'workspace')
@@ -106,6 +133,20 @@ describe('Session validation backend', () => {
     const sessionFile = getSessionFilePath(workspaceRoot, sessionId, Date.now())
     const piSession = PiSessionManager.create(workspaceRoot, dirname(sessionFile), { id: sessionId })
     piSession.appendMessage({ role: 'user', content: [{ type: 'text', text: 'baseline' }], timestamp: Date.now() })
+    piSession.appendMessage({
+      role: 'assistant',
+      api: 'openai-completions',
+      provider: 'ui-validation',
+      model: 'deterministic',
+      stopReason: 'stop',
+      usage: {
+        input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+      content: [{ type: 'text', text: 'baseline answer' }],
+      timestamp: Date.now(),
+    })
+    await piSession.flush()
     const projectionPath = join(getSessionPath(workspaceRoot, sessionId), 'pi-projection-v1.json')
     const projectionBackupPath = join(dirname(projectionPath), 'pi-projection-v1.session-validation-backup-v1.json')
     mkdirSync(dirname(projectionPath), { recursive: true })

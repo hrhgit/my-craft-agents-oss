@@ -153,6 +153,30 @@ const transportLog = createLogger('ws-rpc-server')
  */
 const WS_MAX_PAYLOAD = 64 * 1024 * 1024 // 64 MiB
 
+/**
+ * Ports blocked by the Fetch standard's bad-port policy. Chromium applies
+ * this policy before a renderer WebSocket reaches the server, including for
+ * loopback URLs. Keep the server boundary browser-safe because both Electron
+ * and WebUI are supported RPC clients.
+ */
+const BROWSER_BLOCKED_PORTS = new Set([
+  0, 1, 7, 9, 11, 13, 15, 17, 19, 20, 21, 22, 23, 25, 37, 42, 43, 53,
+  69, 77, 79, 87, 95, 101, 102, 103, 104, 109, 110, 111, 113, 115, 117,
+  119, 123, 135, 137, 139, 143, 161, 179, 389, 427, 465, 512, 513, 514,
+  515, 526, 530, 531, 532, 540, 548, 554, 556, 563, 587, 601, 636, 989,
+  990, 993, 995, 1719, 1720, 1723, 2049, 3659, 4045, 4190, 5060, 5061,
+  6000, 6566, 6665, 6666, 6667, 6668, 6669, 6679, 6697, 10080,
+])
+
+const MAX_BROWSER_SAFE_PORT_ATTEMPTS = 32
+
+export function isBrowserSafeWebSocketPort(port: number): boolean {
+  return Number.isInteger(port)
+    && port > 0
+    && port <= 65535
+    && !BROWSER_BLOCKED_PORTS.has(port)
+}
+
 export function isLoopbackHost(host: string): boolean {
   return host === '127.0.0.1' || host === 'localhost' || host === '::1' || host === '[::1]'
 }
@@ -377,6 +401,12 @@ export class WsRpcServer implements RpcServer {
   }
 
   async listen(): Promise<void> {
+    if (this.requestedPort !== 0 && !this.isBrowserSafeBoundPort(this.requestedPort)) {
+      throw new Error(
+        `WebSocket port ${this.requestedPort} is blocked by browser security policy. Choose a browser-safe port.`,
+      )
+    }
+
     // Warn about insecure non-loopback binding without auth (does not force-enable
     // auth to avoid breaking existing deployments that rely on network-level isolation).
     if (!this.isLoopbackHost() && !this.requireAuth) {
@@ -385,6 +415,39 @@ export class WsRpcServer implements RpcServer {
       )
     }
 
+    const attempts = this.requestedPort === 0 ? MAX_BROWSER_SAFE_PORT_ATTEMPTS : 1
+    const rejectedPorts: number[] = []
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      try {
+        await this.listenOnce()
+      } catch (error) {
+        await this.releaseBoundListener()
+        throw error
+      }
+
+      if (this.isBrowserSafeBoundPort(this._port)) {
+        this.startHeartbeat()
+        return
+      }
+
+      rejectedPorts.push(this._port)
+      transportLog.warn('Released browser-blocked ephemeral WebSocket port', {
+        port: this._port,
+        attempt,
+      })
+      await this.releaseBoundListener()
+    }
+
+    throw new Error(
+      `Unable to allocate a browser-safe WebSocket port after ${attempts} attempts. Rejected: ${rejectedPorts.join(', ')}`,
+    )
+  }
+
+  private isBrowserSafeBoundPort(port: number): boolean {
+    return isBrowserSafeWebSocketPort(port)
+  }
+
+  private listenOnce(): Promise<void> {
     return new Promise((resolve, reject) => {
       if (this.tlsOptions) {
         // TLS mode: create HTTPS server, attach WebSocketServer to it.
@@ -414,7 +477,6 @@ export class WsRpcServer implements RpcServer {
           if (typeof addr === 'object' && addr) {
             this._port = addr.port
           }
-          this.startHeartbeat()
           resolve()
         })
       } else if (this.httpHandler) {
@@ -434,7 +496,6 @@ export class WsRpcServer implements RpcServer {
           if (typeof addr === 'object' && addr) {
             this._port = addr.port
           }
-          this.startHeartbeat()
           resolve()
         })
       } else {
@@ -452,7 +513,6 @@ export class WsRpcServer implements RpcServer {
           if (typeof addr === 'object' && addr) {
             this._port = addr.port
           }
-          this.startHeartbeat()
           resolve()
         })
 
@@ -465,6 +525,29 @@ export class WsRpcServer implements RpcServer {
         this.onConnection(ws, req.headers.cookie ?? null)
       })
     })
+  }
+
+  private async releaseBoundListener(): Promise<void> {
+    const wss = this.wss
+    const httpServer = this.httpServer
+    const httpsServer = this.httpsServer
+    this.wss = null
+    this.httpServer = null
+    this.httpsServer = null
+    this._port = 0
+
+    const close = (server: WebSocketServer | HttpServer | HttpsServer | null): Promise<void> => {
+      if (!server) return Promise.resolve()
+      return new Promise(resolve => {
+        try {
+          server.close(() => resolve())
+        } catch {
+          resolve()
+        }
+      })
+    }
+
+    await Promise.all([close(wss), close(httpServer), close(httpsServer)])
   }
 
   close(): void {

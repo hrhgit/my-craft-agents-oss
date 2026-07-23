@@ -7,7 +7,7 @@
 
 import { describe, it, expect, afterEach } from 'bun:test'
 import WebSocket from 'ws'
-import { WsRpcServer } from '../server'
+import { isBrowserSafeWebSocketPort, WsRpcServer } from '../server'
 import { PROTOCOL_VERSION } from '@mortise/shared/protocol'
 
 const TEST_TOKEN = 'test-token-with-enough-entropy-to-pass'
@@ -16,10 +16,11 @@ function createServer(opts?: {
   maxClients?: number
   requireAuth?: boolean
   validateToken?: (token: string) => Promise<boolean>
+  port?: number
 }) {
   return new WsRpcServer({
     host: '127.0.0.1',
-    port: 0,
+    port: opts?.port ?? 0,
     requireAuth: opts?.requireAuth ?? true,
     validateToken: opts?.validateToken ?? (async (t) => t === TEST_TOKEN),
     maxClients: opts?.maxClients,
@@ -81,6 +82,42 @@ describe('WsRpcServer lifecycle', () => {
   })
 
   // -- Auth tests --
+
+  it('classifies Fetch-blocked ports before exposing a browser RPC endpoint', () => {
+    expect(isBrowserSafeWebSocketPort(6697)).toBe(false)
+    expect(isBrowserSafeWebSocketPort(6667)).toBe(false)
+    expect(isBrowserSafeWebSocketPort(10080)).toBe(false)
+    expect(isBrowserSafeWebSocketPort(6712)).toBe(true)
+    expect(isBrowserSafeWebSocketPort(9100)).toBe(true)
+  })
+
+  it('rejects an explicitly configured browser-blocked port before binding', async () => {
+    server = createServer({ port: 6697 })
+    await expect(server.listen()).rejects.toThrow(
+      'WebSocket port 6697 is blocked by browser security policy',
+    )
+  })
+
+  it('rebinds when an ephemeral port is not browser-safe', async () => {
+    server = createServer()
+    const candidatePorts: number[] = []
+    const portPolicy = server as unknown as {
+      isBrowserSafeBoundPort: (port: number) => boolean
+    }
+    const defaultPolicy = portPolicy.isBrowserSafeBoundPort.bind(server)
+    portPolicy.isBrowserSafeBoundPort = (port) => {
+      candidatePorts.push(port)
+      return candidatePorts.length > 1 && defaultPolicy(port)
+    }
+
+    await server.listen()
+
+    expect(candidatePorts.length).toBeGreaterThanOrEqual(2)
+    expect(isBrowserSafeWebSocketPort(server.port)).toBe(true)
+    const { ws } = await handshake(`ws://127.0.0.1:${server.port}`, TEST_TOKEN)
+    openSockets.push(ws)
+    expect(server.getConnectedClientCount()).toBe(1)
+  })
 
   it('accepts valid token', async () => {
     server = createServer()

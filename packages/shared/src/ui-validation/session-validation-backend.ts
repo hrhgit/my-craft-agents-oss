@@ -415,6 +415,9 @@ function deterministicBackend(
       : PiSessionManager.create(workspaceRoot, dirname(sessionFile), { id: sessionId })
     piSession.appendMessage(userMessage as never)
     piSession.appendMessage(assistantMessage as never)
+    // Publication probes the canonical JSONL as soon as the first backend
+    // event is observed, so queued Pi writes must be durable before yielding.
+    await piSession.flush()
     const builder = emitCanonicalProjectionEvents(sessionId, state.runId, userMessage, assistantMessage, emitProjection)
 
     if (mode.kind === 'fail-publication-metadata') {

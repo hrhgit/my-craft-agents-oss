@@ -25,7 +25,7 @@ validation:
   - { id: mortise-ui-regression, kind: unit, command: "bun run test:mortise-ui", description: "Run the AI-facing mortise-ui CLI regressions.", triggers: [owned-change], required: true, evidence: "Bun test exit status and output." }
   - { id: validation-fast-contract, kind: contract, command: "bun run test:ui-validation:fast", description: "Verify fast validation semantics across host layers.", triggers: [contract-change], required: true, evidence: "Cross-layer test exit status and output." }
   - { id: validation-runtime-integration, kind: integration, command: "bun run test:ui-validation:runtime-contract", description: "Exercise the validation runtime contract end to end.", triggers: [runtime-change, release], required: true, evidence: "Runtime contract result and retained diagnostics." }
-scope_digest: 290968135e761f058da29785682a736cf6a9f33d
+scope_digest: 3a7bfa0e7d22778be62eb40c87e03ba97df842f8
 ---
 
 ## Purpose
@@ -56,6 +56,7 @@ Run CLI, controller, build cache, process identity, semantic, native readiness, 
 Automation can pass against fixtures while physical rendering fails; stale native references can target the wrong control or process.
 
 ## Semantic history
+- 2026-07-24: Made the deterministic first-turn backend flush Pi's canonical Session JSONL before emitting any observable event so physical publication tests cannot outrun assistant durability.
 - 2026-07-23: Cut validation profiles over to `mortise-config/agent`; clone mode accepts only an explicit Mortise profile, while fixture and isolated runs never read independent Pi state.
 - 2026-07-23: Added authenticated, selected-window renderer performance diagnostics with bounded aggregate-only sampling and reliable lifecycle-test teardown under full-suite load.
 - 2026-07-23: Made profile preparation await canonical fixture Session durability before the UI validation Host can start.
