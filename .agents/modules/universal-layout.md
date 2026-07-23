@@ -20,9 +20,9 @@ related: [apps/electron/src/renderer/components/right-workbench/**, apps/electro
 depends_on: [workspace-state, shared-contracts]
 collaborates_with: [browser-runtime, file-workbench, native-desktop]
 validation:
-  - { id: universal-layout-regression, kind: unit, command: "bun test apps/electron/src/renderer/components/app-shell apps/electron/src/shared/__tests__/app-layout.test.ts", description: "Run universal layout and app-shell regressions.", triggers: [owned-change], required: true, evidence: "Bun test exit status and output." }
+  - { id: universal-layout-regression, kind: unit, command: "bun test apps/electron/src/renderer/components/app-shell apps/electron/src/renderer/lib/__tests__/draft-write-queue.test.ts apps/electron/src/renderer/lib/__tests__/window-close-flush.test.ts apps/electron/src/shared/__tests__/app-layout.test.ts", description: "Run universal layout, app-shell, and renderer persistence regressions.", triggers: [owned-change], required: true, evidence: "Bun test exit status and output." }
   - { id: universal-layout-physical, kind: physical, command: "bun run test:ui-validation:electron", description: "Exercise docking and layout behavior through the shared Developer Kit host.", triggers: [ui-change, layout-change, release], required: false, evidence: "Developer Kit run output and retained UI evidence." }
-scope_digest: 71db49afe7212ae4de740a3f4c3f481febd36a93
+scope_digest: 016cd82297acb8ba6dbcd45bfa783d8a7d323f3f
 ---
 
 ## Purpose
@@ -53,6 +53,7 @@ Run unified dock, navigation, workspace sidebar, geometry, detach, and layout se
 Persisted layouts can reference removed content; native views can occlude drag targets and floating surfaces.
 
 ## Semantic history
+- 2026-07-24: Routed the shared draft record through one ordered asynchronous writer and registered window-close flushing so older debounced writes cannot overwrite a later published-draft clear.
 - 2026-07-23: Made current-Session chat search host-yielding and cursor-paged: initial/divergent indexes publish atomically after asynchronous chunking, deterministic identity/content snapshots protect the sealed prefix while streaming reindexes only mutable tails, navigation preserves active match identity across lazy pages, and exact semantic-target highlighting stays hard-bounded with the mounted neighborhood.
 - 2026-07-23: Unified dock layout durability behind one scope-bound asynchronous coordinator that keeps model-change hot paths serialization-free, coalesces the latest model at idle, and flushes at interaction-end, workspace-transition, window-close, and scope-dispose boundaries.
 - 2026-07-22: Added a dedicated settlement recovery status that disables composer submission without presenting Stop semantics and invokes only the payload-free Session settlement command.

@@ -31,8 +31,10 @@ import { useUpdateChecker } from '@/hooks/useUpdateChecker'
 import { NavigationProvider } from '@/contexts/NavigationContext'
 import { navigate, routes } from './lib/navigate'
 import { attachmentFromContentRef, hasDraftContent, toDraftRef } from './lib/drafts'
+import { DraftWriteQueue } from './lib/draft-write-queue'
 import { stripMarkdown } from './utils/text'
 import { coerceInputText } from './lib/input-text'
+import { registerWindowCloseFlusher } from './lib/window-close-flush'
 import { getPiAgentEndHandoff } from './lib/pi-projection-handoff'
 import { getSessionsToRefreshAfterStaleReconnect } from './lib/reconnect-recovery'
 import { formatSessionLoadFailure, shouldTreatSessionLoadFailureAsTransportFallback } from './lib/session-load'
@@ -1530,6 +1532,7 @@ export default function App() {
 
   // Handle input draft changes per session with debounced persistence
   const draftSaveTimeoutRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
+  const draftWriteQueueRef = useRef<DraftWriteQueue | null>(null)
 
   // Cleanup draft save timers on unmount to prevent memory leaks
   useEffect(() => {
@@ -1593,6 +1596,14 @@ export default function App() {
     return results.filter((a): a is FileAttachment => a !== null)
   }, [])
 
+  const persistDraft = useCallback((sessionId: string): Promise<void> => {
+    const draft = sessionDraftsRef.current.get(sessionId) ?? { text: '' }
+    const queue = draftWriteQueueRef.current ??= new DraftWriteQueue((draftId, snapshot) => (
+      window.electronAPI.setDraft(draftId, snapshot)
+    ))
+    return queue.write(sessionId, draft)
+  }, [])
+
   // Write a debounced snapshot of the current ref entry to disk.
   const schedulePersistDraft = useCallback((sessionId: string) => {
     const existingTimeout = draftSaveTimeoutRef.current.get(sessionId)
@@ -1600,12 +1611,13 @@ export default function App() {
       clearTimeout(existingTimeout)
     }
     const timeout = setTimeout(() => {
-      const draft = sessionDraftsRef.current.get(sessionId) ?? { text: '' }
-      window.electronAPI.setDraft(sessionId, draft)
       draftSaveTimeoutRef.current.delete(sessionId)
+      void persistDraft(sessionId).catch(error => {
+        console.warn('[drafts] Failed to persist draft:', error)
+      })
     }, DRAFT_SAVE_DEBOUNCE_MS)
     draftSaveTimeoutRef.current.set(sessionId, timeout)
-  }, [])
+  }, [persistDraft])
 
   const handleInputChange = useCallback((sessionId: string, value: string) => {
     const text = coerceInputText(value)
@@ -1649,6 +1661,27 @@ export default function App() {
     }
     schedulePersistDraft(sessionId)
   }, [schedulePersistDraft])
+
+  const clearDraft = useCallback(async (sessionId: string): Promise<void> => {
+    const timeout = draftSaveTimeoutRef.current.get(sessionId)
+    if (timeout) clearTimeout(timeout)
+    draftSaveTimeoutRef.current.delete(sessionId)
+    sessionDraftsRef.current.delete(sessionId)
+    await persistDraft(sessionId)
+  }, [persistDraft])
+
+  const flushPendingDrafts = useCallback(async (): Promise<void> => {
+    const pendingIds = [...draftSaveTimeoutRef.current.keys()]
+    for (const sessionId of pendingIds) {
+      const timeout = draftSaveTimeoutRef.current.get(sessionId)
+      if (timeout) clearTimeout(timeout)
+      draftSaveTimeoutRef.current.delete(sessionId)
+    }
+    await Promise.all(pendingIds.map(sessionId => persistDraft(sessionId)))
+    await draftWriteQueueRef.current?.flush()
+  }, [persistDraft])
+
+  useEffect(() => registerWindowCloseFlusher(flushPendingDrafts), [flushPendingDrafts])
 
   // Open the workspace-scoped draft page. A real session is created only when
   // the first message is submitted from that page.
@@ -1988,6 +2021,7 @@ export default function App() {
     getDraft,
     getDraftAttachmentRefs,
     hydrateDraftAttachments,
+    clearDraft,
     sessionOptions,
     // Session callbacks
     onCreateSession: handleCreateSession,
@@ -2029,6 +2063,7 @@ export default function App() {
     getDraft,
     getDraftAttachmentRefs,
     hydrateDraftAttachments,
+    clearDraft,
     sessionOptions,
     handleCreateSession,
     handleCreateAndSendFirstTurn,

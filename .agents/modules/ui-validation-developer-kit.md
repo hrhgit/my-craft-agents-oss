@@ -25,7 +25,7 @@ validation:
   - { id: mortise-ui-regression, kind: unit, command: "bun run test:mortise-ui", description: "Run the AI-facing mortise-ui CLI regressions.", triggers: [owned-change], required: true, evidence: "Bun test exit status and output." }
   - { id: validation-fast-contract, kind: contract, command: "bun run test:ui-validation:fast", description: "Verify fast validation semantics across host layers.", triggers: [contract-change], required: true, evidence: "Cross-layer test exit status and output." }
   - { id: validation-runtime-integration, kind: integration, command: "bun run test:ui-validation:runtime-contract", description: "Exercise the validation runtime contract end to end.", triggers: [runtime-change, release], required: true, evidence: "Runtime contract result and retained diagnostics." }
-scope_digest: 3a7bfa0e7d22778be62eb40c87e03ba97df842f8
+scope_digest: 49b2726cac53343bc7de330437b8417073540b30
 ---
 
 ## Purpose
@@ -56,6 +56,7 @@ Run CLI, controller, build cache, process identity, semantic, native readiness, 
 Automation can pass against fixtures while physical rendering fails; stale native references can target the wrong control or process.
 
 ## Semantic history
+- 2026-07-24: Kept the renderer playground adapter aligned with the asynchronous durable draft-clear contract used by real first-turn publication.
 - 2026-07-24: Made the deterministic first-turn backend flush Pi's canonical Session JSONL before emitting any observable event so physical publication tests cannot outrun assistant durability.
 - 2026-07-23: Cut validation profiles over to `mortise-config/agent`; clone mode accepts only an explicit Mortise profile, while fixture and isolated runs never read independent Pi state.
 - 2026-07-23: Added authenticated, selected-window renderer performance diagnostics with bounded aggregate-only sampling and reliable lifecycle-test teardown under full-suite load.
@@ -73,6 +74,5 @@ Automation can pass against fixtures while physical rendering fails; stale nativ
 - 2026-07-21: Updated messaging and browser playground fixtures to emit only current required access fields and canonical browser_tool commands.
 - 2026-07-21: Added a canceled skill-import stub to the renderer playground API surface.
 - 2026-07-20: Removed the Sources route surface and legacy workspace icon dependency from validation fixtures; fixture workspaces now create their root directly without creating a sources directory.
-- 2026-07-14: Added UI validation host, extension semantics, and RPC lifecycle support.
 - 2026-07-18: Added immutable build cache, native readiness, and expanded AI-facing surfaces.
 - 2026-07-19: Hardened process identity for concurrent source runs.

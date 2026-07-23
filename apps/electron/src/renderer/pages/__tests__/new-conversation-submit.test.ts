@@ -65,6 +65,25 @@ describe('new conversation first-turn submission', () => {
     expect(commitPublishedSession).not.toHaveBeenCalled()
   })
 
+  it('waits for durable published-draft cleanup before resolving', async () => {
+    const cleanup = Promise.withResolvers<void>()
+    const commitPublishedSession = mock(async () => cleanup.promise)
+    const preserveDraft = mock(() => undefined)
+
+    const submission = runFirstTurnDraftSubmission(
+      async () => publishedResult,
+      commitPublishedSession,
+      preserveDraft,
+    )
+
+    await Promise.resolve()
+    expect(commitPublishedSession).toHaveBeenCalledWith(publishedResult)
+    expect(preserveDraft).not.toHaveBeenCalled()
+
+    cleanup.resolve()
+    await expect(submission).resolves.toBe(publishedResult)
+  })
+
   it('parses retryable and terminal-only unpublished durability failures', () => {
     const retryable = Object.assign(new Error('projection failed'), {
       code: 'SESSION_PUBLICATION_DURABILITY_FAILED',

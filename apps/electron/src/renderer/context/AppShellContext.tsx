@@ -59,6 +59,8 @@ export interface AppShellContextType {
   getDraftAttachmentRefs: (sessionId: string) => import('@mortise/shared/config').DraftAttachmentRef[]
   /** Hydrate persisted attachment refs into full FileAttachment objects (async, reads files) */
   hydrateDraftAttachments: (sessionId: string) => Promise<FileAttachment[]>
+  /** Clear one draft only after its pending persistence writes have settled. */
+  clearDraft: (sessionId: string) => Promise<void>
   /** All skills for this workspace - provided by AppShell component (for @mentions) */
   skills?: LoadedSkill[]
   /** Canonical root of the active workspace, used for workspace-scoped resolution. */

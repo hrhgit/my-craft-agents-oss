@@ -102,7 +102,7 @@ export function parseUnpublishedPublicationFailure(error: unknown): UnpublishedP
 
 export async function runFirstTurnDraftSubmission(
   createAndSendFirstTurn: () => Promise<CreateAndSendFirstTurnResult>,
-  commitPublishedSession: (result: CreateAndSendFirstTurnResult) => void,
+  commitPublishedSession: (result: CreateAndSendFirstTurnResult) => void | Promise<void>,
   preserveDraft: () => void,
 ): Promise<CreateAndSendFirstTurnResult> {
   let result: CreateAndSendFirstTurnResult
@@ -113,7 +113,7 @@ export async function runFirstTurnDraftSubmission(
     throw error
   }
 
-  commitPublishedSession(result)
+  await commitPublishedSession(result)
   return result
 }
 
@@ -213,6 +213,7 @@ const NewConversationPage = React.memo(function NewConversationPage({ draftId }:
     hydrateDraftAttachments,
     onInputChange,
     onAttachmentsChange,
+    clearDraft,
     skills = [],
     enabledModes,
     isCompactMode,
@@ -314,12 +315,18 @@ const NewConversationPage = React.memo(function NewConversationPage({ draftId }:
             createOptions: attempt.options,
             sendOptions: attempt.skillSlugs?.length ? { skillSlugs: attempt.skillSlugs } : undefined,
           }),
-          ({ session }) => {
+          async ({ session }) => {
             setPublicationFailure(null)
             setInputValue('')
             setAttachmentsValue([])
-            onInputChange(draftStorageKey, '')
-            onAttachmentsChange(draftStorageKey, [])
+            try {
+              await clearDraft(draftStorageKey)
+            } catch (error) {
+              // The Session is already durable at this point. Keep the published
+              // navigation truthful while making cleanup failure visible.
+              console.error('[NewConversationPage] Failed to clear published draft:', error)
+              toast.error(t('toast.failedToClearDraft', 'Session created, but the draft could not be cleared.'))
+            }
             navigate(routes.view.allSessions(session.id))
           },
           () => {
@@ -342,7 +349,7 @@ const NewConversationPage = React.memo(function NewConversationPage({ draftId }:
         setSubmitting(false)
       }
     })()
-  }, [draftStorageKey, onAttachmentsChange, onCreateAndSendFirstTurn, onInputChange, t, workspaceId])
+  }, [clearDraft, draftStorageKey, onAttachmentsChange, onCreateAndSendFirstTurn, onInputChange, t, workspaceId])
 
   const handleSubmit = React.useCallback(async (attempt: import('@/components/app-shell/input/composer-submission').ComposerSubmissionAttempt) => {
     submitFirstTurnAttempt(snapshotFirstTurnPublicationAttempt(

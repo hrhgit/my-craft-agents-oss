@@ -18,7 +18,7 @@ collaborates_with: [session-lifecycle, session-tooling, shared-ui-i18n]
 validation:
   - { id: conversation-regression, kind: unit, command: "bun test packages/ui/src/components/chat packages/ui/src/components/annotations apps/electron/src/renderer/pages/__tests__/new-conversation-submit.test.ts", description: "Run conversation, annotation, and new-conversation draft regressions.", triggers: [owned-change], required: true, evidence: "Bun test exit status and output." }
   - { id: conversation-physical, kind: physical, command: "bun run test:ui-validation:electron", description: "Exercise conversation behavior through the shared Developer Kit host.", triggers: [ui-change, release], required: false, evidence: "Developer Kit run output and retained UI evidence." }
-scope_digest: 83b1dc0314c46abfcc1c9bc0b3a78fa7e3701cdf
+scope_digest: b63dfc4f6ca2b3a71b99b91448d471b80fffa940
 ---
 
 ## Purpose
@@ -49,6 +49,7 @@ Run turn grouping, plan, annotation, composer, remote interaction, and chat page
 Event projections can create duplicate or prematurely terminal turns; rich extension content can disrupt composer focus.
 
 ## Semantic history
+- 2026-07-24: Made first-turn publication await the ordered durable clear of the workspace draft before navigating, while keeping an already-published Session truthful if draft cleanup itself fails.
 - 2026-07-23: Removed legacy Pi and workspace Session-path tooltip compatibility; inline file badges now shorten only the current Mortise Agent sidecar layout.
 - 2026-07-23: Bound shared conversation-search navigation and match reporting to the focused panel, and made response/tool search targets semantically addressable with controlled reveal of collapsed activity groups.
 - 2026-07-22: Kept transcript and attempt projection owned by Pi while routing durable Host `complete` through the conversation processor as the canonical boundary that clears settlement failure and processing state.
