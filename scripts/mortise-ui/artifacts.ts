@@ -8,6 +8,7 @@ import { isProcessAlive, matchesProcessIdentity } from './process-identity.ts'
 
 const MANIFEST_LOCK_TIMEOUT_MS = 30_000
 const MANIFEST_LOCK_STALE_MS = 30_000
+const MANIFEST_LOCK_REAP_PROBE_INTERVAL_MS = 250
 const MANIFEST_LOCK_OWNER_FILE = 'owner.json'
 const MANIFEST_LOCK_REAPER_DIR = '.reaping'
 
@@ -133,6 +134,7 @@ function acquireManifestLock(manifestPath: string, options: FileLockOptions = {}
   const timeoutMs = options.timeoutMs ?? MANIFEST_LOCK_TIMEOUT_MS
   const staleMs = options.staleMs ?? MANIFEST_LOCK_STALE_MS
   const deadline = Date.now() + timeoutMs
+  let nextReapProbeAt = 0
 
   while (true) {
     try {
@@ -157,14 +159,27 @@ function acquireManifestLock(manifestPath: string, options: FileLockOptions = {}
       if (errorCode(error) !== 'EEXIST') throw error
     }
 
-    try {
-      if (tryReapStaleLock(lockPath, staleMs)) continue
-    } catch (error) {
-      if (errorCode(error) === 'ENOENT') continue
-      throw error
+    const now = Date.now()
+    if (now >= nextReapProbeAt) {
+      // Probing a live owner reads its marker. On Windows, doing that on every
+      // contention poll can prevent the owner from renaming the lock directory.
+      // A probe is still immediate for dead-owner recovery, then rate-limited.
+      try {
+        if (tryReapStaleLock(lockPath, staleMs)) {
+          nextReapProbeAt = 0
+          continue
+        }
+      } catch (error) {
+        if (errorCode(error) === 'ENOENT') {
+          nextReapProbeAt = 0
+          continue
+        }
+        throw error
+      }
+      nextReapProbeAt = now + MANIFEST_LOCK_REAP_PROBE_INTERVAL_MS
     }
 
-    if (Date.now() >= deadline) {
+    if (now >= deadline) {
       throw Object.assign(new Error(`Timed out waiting for file lock: ${manifestPath}`), {
         code: 'ELOCKED',
       })

@@ -104,7 +104,6 @@ try {
   await actBySemanticId(current, `navigation.session_${workspaceId}_${existingSessionId}`, 'click')
   await ok(current, 'ui.wait', { predicate: { kind: 'state', scope: 'session', entityId: existingSessionId, phase: 'ready' }, timeoutMs: 60_000 })
   await submitExisting(current, existingRetryText)
-  await settle(current)
   await assertExistingSubmissionFailure(current, existingRetryText)
   assertCanonicalMessages(existingFile, beforeExistingRetry, 'rejected ordinary send changed canonical JSONL')
   const rejectedAttemptId = assertExistingRejectedWithoutFalseSuccess(current)
@@ -286,23 +285,38 @@ function assertRejectedWithoutFalseSuccess(run: MortiseUiRunManifest): void {
 }
 
 async function assertExistingSubmissionFailure(run: MortiseUiRunManifest, expectedText: string): Promise<void> {
+  const failureSemanticId = `composer.${existingSessionId}.submission-failed`
+  await ok(run, 'ui.wait', {
+    predicate: { kind: 'node', target: { semanticId: failureSemanticId } },
+    timeoutMs: 60_000,
+  })
+  await waitForComposerFingerprint(run, `composer.${existingSessionId}.input`, expectedText)
   const snapshot = await ok<Snapshot>(run, 'ui.snapshot')
   const nodes = Object.values(snapshot.regions).flat()
   const input = nodes.find(node => node.semanticId === `composer.${existingSessionId}.input`)
   if (input?.value !== '[REDACTED]') throw new Error('Composer semantic value did not preserve its sensitive-value redaction boundary.')
-  const fingerprint = await ok<{ length: number; sha256: string }>(run, 'ui.valueFingerprint', {
-    semanticId: `composer.${existingSessionId}.input`,
-  })
-  const expectedHash = createHash('sha256').update(expectedText).digest('hex')
-  if (fingerprint.length !== expectedText.length || fingerprint.sha256 !== expectedHash) {
-    throw new Error(`Rejected ordinary send did not restore the exact composer payload fingerprint: ${JSON.stringify(fingerprint)}.`)
-  }
-  const failure = nodes.find(node => node.semanticId === `composer.${existingSessionId}.submission-failed`)
+  const failure = nodes.find(node => node.semanticId === failureSemanticId)
   if (!failure || !failure.name.includes('could not be saved')) {
     throw new Error('Rejected ordinary send did not expose a persistent semantic failure.')
   }
   const retry = nodes.find(node => node.semanticId === `composer.${existingSessionId}.submission-failed.retry`)
   if (!retry?.actions.includes('click')) throw new Error('Rejected ordinary send did not expose a physical retry action.')
+}
+
+async function waitForComposerFingerprint(
+  run: MortiseUiRunManifest,
+  semanticId: string,
+  expectedText: string,
+): Promise<void> {
+  const expectedHash = createHash('sha256').update(expectedText).digest('hex')
+  const deadline = Date.now() + 60_000
+  let fingerprint: { length: number; sha256: string } | undefined
+  while (Date.now() < deadline) {
+    fingerprint = await ok<{ length: number; sha256: string }>(run, 'ui.valueFingerprint', { semanticId })
+    if (fingerprint.length === expectedText.length && fingerprint.sha256 === expectedHash) return
+    await Bun.sleep(50)
+  }
+  throw new Error(`Rejected ordinary send did not restore the exact composer payload fingerprint: ${JSON.stringify(fingerprint)}.`)
 }
 
 interface RuntimeEntry {
