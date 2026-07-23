@@ -128,7 +128,7 @@ validation:
   - { id: monorepo-contract, kind: contract, command: "bun run validate:monorepo", description: "Verify monorepo package and dependency contracts.", triggers: [contract-change], required: true, evidence: "Validation exit status and diagnostics." }
   - { id: production-bundles, kind: integration, command: "bun run validate:production-bundles", description: "Run the complete production Electron build consumed by packaging.", triggers: [ci-change, release], required: true, evidence: "Production main, workspace server, preload, renderer, and resource build exit status." }
   - { id: ci-integration, kind: integration, command: "bun run validate:ci", description: "Run the repository CI validation composition.", triggers: [release, ci-change], required: true, evidence: "CI validation exit status and output." }
-scope_digest: d09e687f7a32340c5b25fa46599073d7a5e718b9
+scope_digest: df58f73b668f15ccb4e4566d4c52cea7b577d74e
 ---
 
 ## Purpose
@@ -159,6 +159,7 @@ Run the in-memory production Node bundle gate frequently, retain the complete pr
 Bundled binaries and lockfiles are large shared surfaces; concurrent regeneration can overwrite another build's artifacts.
 
 ## Semantic history
+- 2026-07-23: Expanded external delegation beyond low-judgment work when scope, architecture direction, acceptance, and recovery are frozen, including complete isolated physical-validation workflows with primary evidence review.
 - 2026-07-23: Made external write delegation fail closed on invalid assignment worktrees: primary-supplied clean bases, dedicated worktrees, scoped final commits, clean handoffs, and pre-candidate raw performance baselines are now mandatory acceptance inputs.
 - 2026-07-23: Split the optimization program into an active-only ledger, concise grandfathered archive, and owner-bounded delegation packets with reproducible external evidence handoffs and primary architecture-comparison gates.
 - 2026-07-23: Recorded OPT-018 as the confirmed Mortise-only headless-runtime architecture: repository-local Pi will shed its independent TUI/CLI product surface while UI-neutral Agent and RPC semantics remain canonical.
@@ -176,6 +177,5 @@ Bundled binaries and lockfiles are large shared surfaces; concurrent regeneratio
 - 2026-07-21: Moved network-interceptor rich-tool configuration reads from the retired JSON cache to the shared SQLite-backed global configuration authority.
 - 2026-07-21: Added a production portability gate that rejects source-checkout paths in Session MCP bundles and staged Electron assets.
 - 2026-07-21: Updated packaged extension documentation to describe direct versioned contribution and interaction flows without widget or RemoteUI compatibility adapters.
-- 2026-07-21: Added a cross-platform Python 3 launcher for document-tool smoke tests so the canonical CI gate executes on Windows and Unix.
 - 2026-07-21: Made Electron production packaging stage and accept exactly one compiled, versioned Pi runtime; removed the environment-selected JS fallback and reject legacy JS candidates during asset and afterPack validation.
 - 2026-07-21: Finalized option A for all former Craft/upstream compatibility choices: canonical Mortise-only runtime and config behavior, no legacy artwork/config migration requirement, current-Mortise schema negotiation retained, and destructive user-data cleanup gated by a dated absolute-path manifest plus explicit confirmation.

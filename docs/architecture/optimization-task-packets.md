@@ -1,6 +1,6 @@
 # Mortise Optimization Task Packets
 
-These packets isolate bounded work that another agent can complete without choosing Mortise architecture. The primary agent retains integration, architecture comparison, cross-module review, evidence audit, and all OPT status changes.
+These packets isolate externally executable work whose scope, architecture direction, acceptance, and recovery boundary are frozen. Delegation may cover substantial implementation, research, build, performance, or physical validation when it saves primary-agent context or token cost; difficulty alone is not an exclusion. The primary agent retains cross-owner integration, architecture decisions not already frozen by a packet, evidence audit, remediation, and all OPT status changes.
 
 ## Delegation contract
 
@@ -13,6 +13,8 @@ Every write packet finishes as an inspectable commit, preferably one task commit
 External agents do not edit `.agents/modules/*.md`, refresh scope digests, change OPT status, or integrate another owner's patch unless a packet explicitly lists that file. They report semantic/module-record impact; the primary performs affected-owner review, atomic cross-owner integration, module-history updates, and digest refresh after final contents settle.
 
 The primary reviewer applies the acceptance gate in the active checklist. Passing tests alone is insufficient. Reject changes that expand file scope without approval, invent compatibility, alter a public schema, consume ignored artifacts, weaken tests, or make unrelated refactors.
+
+Physical validation may be assigned externally when the packet pins the source/build identity, isolated profile or explicitly approved state, platform/viewport, complete action sequence, expected invariants, teardown, and required semantic/native/screenshot/log/process evidence. The external agent executes the complete workflow and collects evidence; the primary reviews it and makes the acceptance decision. Never use real user data or destructive operations merely to save review effort.
 
 Minimal dispatch prompt:
 
@@ -81,7 +83,7 @@ The queue assumes the primary has first frozen a base revision and assigned isol
 
 | Queue | Packets | Release condition |
 |---|---|---|
-| Ready for independent low-judgment work | `SES-E1-SL`, `EXT-BR-01-HSC`, `EXT-BR-02`, `EXT-LEG-01-ER`, `EXT-LEG-01-PI`, `EXT-LEG-02`, `AUT-E1-MSG`, pre-split `HEAD-E1` | Primary freezes base/worktree; each agent returns an evidence handoff and does not self-accept. |
+| Ready for independent external execution | `SES-E1-SL`, `EXT-BR-01-HSC`, `EXT-BR-02`, `EXT-LEG-01-ER`, `EXT-LEG-01-PI`, `EXT-LEG-02`, `AUT-E1-MSG`, pre-split `HEAD-E1` | Primary freezes base/worktree and all unresolved decision/evidence inputs; each agent returns an attributable handoff and does not self-accept. |
 | Follow-up mechanical work | `SES-E1-AS`, `SES-E1-ND`, `EXT-BR-01-BR`, `EXT-LEG-01-CFG`, `AUT-E2` | Apply the stated prerequisite or private combined base; shared-file and cross-owner changes are integrated atomically. |
 | Evidence blocked by primary architecture | `AUT-E1-HSC`, `AUT-E1-SL`, `AUT-E3`, post-split `HEAD-E1`, `HEAD-E2`, `HEAD-E3` | Primary freezes the V3/headless/producer boundaries and completes the listed sequencing before dispatch. |
 | Evidence blocked by clean binary producer | `EXT-BR-03` | OPT-017 producer is integrated and a clean source-built runtime is available; no ignored executable is accepted as evidence. |
