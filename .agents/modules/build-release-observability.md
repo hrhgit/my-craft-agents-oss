@@ -128,7 +128,7 @@ validation:
   - { id: monorepo-contract, kind: contract, command: "bun run validate:monorepo", description: "Verify monorepo package and dependency contracts.", triggers: [contract-change], required: true, evidence: "Validation exit status and diagnostics." }
   - { id: production-bundles, kind: integration, command: "bun run validate:production-bundles", description: "Run the complete production Electron build consumed by packaging.", triggers: [ci-change, release], required: true, evidence: "Production main, workspace server, preload, renderer, and resource build exit status." }
   - { id: ci-integration, kind: integration, command: "bun run validate:ci", description: "Run the repository CI validation composition.", triggers: [release, ci-change], required: true, evidence: "CI validation exit status and output." }
-scope_digest: 3e28ddfd39b974c516e341feefd98be8c7eac855
+scope_digest: 3dbe4917101d628ec1d495f9617a6473658972d9
 ---
 
 ## Purpose
@@ -159,7 +159,7 @@ Run the in-memory production Node bundle gate frequently, retain the complete pr
 Bundled binaries and lockfiles are large shared surfaces; concurrent regeneration can overwrite another build's artifacts.
 
 ## Semantic history
-- 2026-07-23: Reframed the active recovery queue as three independently recoverable external packets: a host-neutral schema fix, complete isolated Electron acceptance, and clean-checkout build/source-start evidence, with primary integration and final acceptance retained.
+- 2026-07-23: Reframed the active recovery queue as two independently recoverable external packets for a host-neutral schema fix and clean-checkout build/source-start evidence; retained isolated Electron acceptance with the primary because the typed fixture does not seed reserved workspace skill metadata.
 - 2026-07-23: Expanded external delegation beyond low-judgment work when scope, architecture direction, acceptance, and recovery are frozen, including complete isolated physical-validation workflows with primary evidence review.
 - 2026-07-23: Made external write delegation fail closed on invalid assignment worktrees: primary-supplied clean bases, dedicated worktrees, scoped final commits, clean handoffs, and pre-candidate raw performance baselines are now mandatory acceptance inputs.
 - 2026-07-23: Split the optimization program into an active-only ledger, concise grandfathered archive, and owner-bounded delegation packets with reproducible external evidence handoffs and primary architecture-comparison gates.

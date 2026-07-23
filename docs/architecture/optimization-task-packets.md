@@ -76,7 +76,7 @@ List unresolved dependencies, assumptions, deliberate omissions, remaining match
 5. Resolve `OPT-017`'s canonical binary producer and clean-checkout build defect before `EXT-BR-03`; otherwise installer evidence can accidentally certify a stale ignored executable.
 6. Run the pre-split half of `HEAD-E1` before `HEAD-P1`. Complete `HEAD-P1`, then `HEAD-P2`, then `HEAD-P3`. After the OPT-017 producer is integrated, run the post-split half of `HEAD-E1`, followed by `HEAD-E2` and finally `HEAD-E3`. Only one `build-release-observability` writer may modify shared build entrypoints at a time.
 7. The primary agent runs route/impact review, clean-checkout production gates, surface-proportional runtime acceptance, and the active checklist audit after each epic converges.
-8. In the current recovery pass, `EXT-LEG-01-ST`, `SES-E2-INT`, and `EXT-BR-04` use the same primary-frozen base but separate worktrees. They are independent: one produces a scoped code commit, while the two evidence-only packets leave source unchanged and return retained artifacts for primary review.
+8. In the current recovery pass, `EXT-LEG-01-ST` and `EXT-BR-04` use the same primary-frozen base but separate worktrees. They are independent: one produces a scoped code commit and the evidence-only packet leaves source unchanged. The primary retains `SES-P2-INT` because the current typed fixture contract rejects reserved workspace `.mortise` metadata and cannot yet seed the required skill state without crossing the validation boundary.
 
 ## Assignment queue
 
@@ -84,7 +84,8 @@ The queue assumes the primary has first frozen a base revision and assigned isol
 
 | Queue | Packets | Release condition |
 |---|---|---|
-| Ready for current external execution | `EXT-LEG-01-ST`, `SES-E2-INT`, `EXT-BR-04` | Use the exact common base and three dedicated worktrees supplied by the primary. The implementation packet returns one scoped commit; evidence-only packets return no source commit and leave their worktrees clean. |
+| Ready for current external execution | `EXT-LEG-01-ST`, `EXT-BR-04` | Use the exact common base and dedicated worktrees supplied by the primary. The implementation packet returns one scoped commit; the evidence-only packet returns no source commit and leaves its worktree clean. |
+| Primary physical acceptance | `SES-P2-INT` | The primary must use a product-mediated skill import path or first add a reviewed typed fixture capability; out-of-band writes to reserved `.mortise` metadata are not admissible evidence. |
 | Awaiting a new primary-frozen packet or prerequisite | `AUT-E1-MSG`, `AUT-E2`, pre-split `HEAD-E1` | Do not reuse an older assignment implicitly. The primary must confirm the current base, exact scope, and evidence inputs before dispatch. |
 | Evidence blocked by primary architecture | `AUT-E1-HSC`, `AUT-E1-SL`, `AUT-E3`, post-split `HEAD-E1`, `HEAD-E2`, `HEAD-E3` | Primary freezes the V3/headless/producer boundaries and completes the listed sequencing before dispatch. |
 | Evidence blocked by clean binary producer | `EXT-BR-03` | OPT-017 producer is integrated and a clean source-built runtime is available; no ignored executable is accepted as evidence. |
@@ -129,21 +130,6 @@ The queue assumes the primary has first frozen a base revision and assigned isol
 - **Commands / evidence:** Isolated branch rollback test; Electron type check; fixture-shape scan; `git diff --check`.
 - **Primary acceptance:** The test passes with no `workingDirectory` fixture field and still exercises the same rollback/projection behavior.
 - **Stop / escalate:** Stop if production code imported by the test still requires the field; report the dependency to the primary instead of mocking around it.
-
-### SES-E2-INT - Isolated Electron acceptance for workspace-root and draft Session authority
-
-- **Epic / class:** OPT-010 / evidence-only physical acceptance.
-- **Prerequisite / order:** Run from the exact primary-frozen source revision after `SES-E1-SL`, `SES-E1-AS`, and `SES-E1-ND` have landed. Independent of `EXT-LEG-01-ST` and `EXT-BR-04`.
-- **Execution owner / consulted modules:** `ui-validation-developer-kit` executes the source-only control plane; read and apply the acceptance invariants from `session-lifecycle` and `app-settings-security`. No module receives implementation ownership.
-- **Exact source scope (read/execute only):** `docs/testing.md`; `scripts/mortise-ui/**`; `scripts/e2e/ui-validation/session-publication.ts`; current workspace/session/settings production paths discovered through routing. Custom fixture inputs and retained evidence must live outside tracked source files.
-- **Objective:** Prove on real source-development Electron that the selected workspace is the only file/skill authority, an ordinary new conversation remains an unpublished draft before first-assistant publication, and the isolated run leaves no phantom Session, Pi-root dependency, or live process after teardown.
-- **Pinned environment:** Windows Electron; `--profile fixture`; `--window-mode background` unless a required advertised native action is foreground-only; immutable `buildId`/`buildDir` and exact source revision from the start/run manifest. Do not use WebUI as substitute evidence.
-- **Required fixture:** Two bounded disposable workspaces with distinct marker files and distinct `.mortise/skills/<id>/SKILL.md` resources, plus existing Sessions in each workspace. Do not use, clone, or mutate a real user profile. Do not add `.pi` fallback data to make the flow pass.
-- **Exact action sequence:** Validate the fixture schema; start the run; retain `status --full`, `runs inspect`, relevant capabilities, and a full semantic snapshot; switch workspace A -> B -> A through advertised semantic targets; in each workspace open its marker file and the advertised skills surface and prove only that workspace's marker/skill is resolved; create an ordinary new conversation and prove before send that the composer is usable while Session-file and sidebar counts are unchanged; switch away/back and confirm no phantom item; run `bun run test:ui-validation:session-publication` to exercise first-assistant publication/failure semantics through the production-entry Developer Host; capture final semantic/native evidence; stop the run.
-- **Evidence:** Action receipts and bounded semantic trees for every state claim; renderer screenshots only for file/skills composition and absence-of-overlap claims; run/build/profile identity; before/during/after Session and workspace `.mortise` filesystem inventories; relevant `runtime.log`/host logs; publication-suite log; final process scan; profile-removal receipt; final clean Git status. A screenshot alone proves none of the persistence or authority claims.
-- **Primary acceptance:** Workspace switching changes file and skill resolution without cross-workspace leakage; the blank conversation has no durable file or sidebar identity before publication; the physical publication suite proves failure leaves no Session and success publishes exactly once at the first-assistant boundary; no project/global `.pi` path is read, created, or used as fallback within the isolated run; teardown removes the profile and all owned processes.
-- **Forbidden deviations:** No product edits, renderer-state mutation, arbitrary JavaScript/DOM probing, mock-only replacement, real-profile clone, fixed sleeps, WebUI substitution, manual handoff in the middle of the workflow, or destructive cleanup outside the run-owned profile/output.
-- **Stop / escalate:** If the current advertised CLI/GUI cannot expose workspace-local skill resolution, draft state, filesystem identity, or required Electron evidence, mark the corresponding gate unsupported and return `blocked`; do not infer it from source or fabricate an impossible state.
 
 ### EXT-BR-01-HSC - Declare the server-core test-only Pi dependency
 
@@ -232,7 +218,7 @@ The queue assumes the primary has first frozen a base revision and assigned isol
 - **Objective:** Replace the retired `max` member in `SpawnSessionSchema.thinkingLevel` with the missing current `minimal` member.
 - **Canonical direction:** The host-neutral session-tool schema accepts exactly `off | minimal | low | medium | high | xhigh`, matching the current Mortise contract by value without importing a host package.
 - **Forbidden deviations:** Do not add `session-tools-core -> shared`, another dependency, an alias, normalization, fallback, migration, case folding, schema duplication outside the listed test, or unrelated tool-definition edits.
-- **Commands / evidence:** Focused test `bun test packages/session-tools-core/src/tool-defs-thinking-level.test.ts`; module regression `bun test packages/session-tools-core packages/session-mcp-server`; `bun run --cwd packages/session-tools-core typecheck`; production/reference scan for the exact spawn schema; dependency scan proving no `@mortise/shared` edge; scoped `git diff --check`.
+- **Commands / evidence:** Focused test `bun test packages/session-tools-core/src/tool-defs-thinking-level.test.ts`; module regression `bun test packages/session-tools-core packages/session-mcp-server`; `cd packages/session-tools-core && bun run typecheck`; production/reference scan for the exact spawn schema; dependency scan proving no `@mortise/shared` edge; scoped `git diff --check`.
 - **Primary acceptance:** Positive tests parse all six current values; negative tests reject `think` and `max`; the inferred/output schema contains no retired value; the package remains host-neutral and the final commit changes exactly the two listed files.
 - **Stop / escalate:** Stop if a current production caller still emits `think` or `max`, or if satisfying the test requires importing the shared package; return exact caller/dependency evidence without adding compatibility.
 
@@ -265,7 +251,7 @@ The queue assumes the primary has first frozen a base revision and assigned isol
 ### EXT-BR-04 - Clean-checkout dependency, bundle, and source-start acceptance
 
 - **Epic / class:** OPT-014 / evidence-only clean-build acceptance.
-- **Prerequisite / order:** Run from the exact primary-frozen revision in a dedicated clean worktree with no pre-existing dependencies or build outputs. Independent of `EXT-LEG-01-ST` and `SES-E2-INT`; installer certification remains blocked by OPT-017.
+- **Prerequisite / order:** Run from the exact primary-frozen revision in a dedicated clean worktree with no pre-existing dependencies or build outputs. Independent of `EXT-LEG-01-ST`; installer certification remains blocked by OPT-017.
 - **Sole owner module:** `build-release-observability`.
 - **Exact source scope (read/execute only):** root and workspace manifests; `bun.lock`; `pi/package-lock.json`; canonical build/graph/production-bundle entrypoints; source-only `mortise-ui` initialization path. Retained logs and inventories may be written only to ignored output or an external evidence directory.
 - **Objective:** Produce attributable clean-revision evidence that dependency declarations, the canonical package graph, build validation, production Node bundles, monorepo validation, and a source-development Electron initialization all operate from declared inputs without source edits or stale checkout artifacts.
@@ -386,6 +372,7 @@ External agents may collect evidence or review a proposal, but they must not cho
 
 | ID | Affected owner modules | Canonical decision and non-negotiable boundary |
 |---|---|---|
+| SES-P2-INT | session-lifecycle + app-settings-security + ui-validation-developer-kit | The primary performs isolated source-Electron workspace/draft/first-assistant acceptance. Workspace skill state must enter through a normal product import flow or a separately reviewed typed fixture extension; the current fixture deliberately rejects `.mortise/**`, so direct reserved-metadata injection is forbidden. Retain semantic/native evidence, screenshots only for visual claims, persistence/log/process receipts, and complete run-owned cleanup. |
 | AUT-P1 | automations | Inject one mandatory workspace V3 host into dispatchers. No dispatcher constructs, discovers, or silently falls back to another host. |
 | AUT-P2 | automations | Import extension/resource definitions through one host-owned atomic store transaction with validation, optimistic concurrency, idempotent operation identity, and no secondary reader/writer. |
 | AUT-P3 | automations | Define one versioned renderer DTO and bounded batch/change protocol; renderer state is a projection, never another scheduler/store. |
