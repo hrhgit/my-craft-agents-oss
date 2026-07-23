@@ -6,7 +6,15 @@ This file is the concise evidence archive for verified architecture items. Archi
 
 The structured `architecture-v2` gate in `optimization-acceptance-checklist.md` applies to every newly accepted or reopened item after 2026-07-23. A new archive entry must record base/final revisions, routed owners and primary reviewer, the acceptance-gate version, exact commands/environment, and a durable evidence-manifest location plus SHA-256. Gitignored local output paths and run IDs are locators, not standalone durable evidence.
 
-The rows below were accepted before that report schema and are retained as grandfathered `legacy-v1` completion records. Their existing run IDs and local artifact paths are corroborating locators. Any code change within an invariant's owned runtime, contract, persistence, packaging, or validated dependency surface, any failed current gate, or any reopened invariant requires a retrospective `architecture-v2` review before the item can be archived again; unrelated code changes do not invalidate the record, and the old record cannot waive a current gate.
+The final table contains items accepted before that report schema and retained as grandfathered `legacy-v1` completion records. Their existing run IDs and local artifact paths are corroborating locators. Any code change within an invariant's owned runtime, contract, persistence, packaging, or validated dependency surface, any failed current gate, or any reopened invariant requires a retrospective `architecture-v2` review before the item can be archived again; unrelated code changes do not invalidate the record, and the old record cannot waive a current gate.
+
+## Architecture-v2 acceptances
+
+| ID | Verified invariant | Review identity and durable evidence |
+|---|---|---|
+| OPT-016 | Mortise runtime uses only current Mortise contracts and roots, never imports historical Sessions, rejects retired thinking levels and Session tool aliases, and keeps user-owned cleanup outside runtime behavior. | Baseline `5fb41ca6d8e6092f77e0403f3cc9a2fc5f4a02e4`; accepted code revision `a640418eb2f1113cab104028f44556c2addcc6e0`; primary review under `architecture-v2`; manifest [`optimization-evidence/opt-016-2026-07-24.md`](./optimization-evidence/opt-016-2026-07-24.md), SHA-256 `eb532e283f280b0f25f41ab720b9db81d9628b572eaa3f63e2a32e50185b023d`. |
+
+## Legacy-v1 acceptances
 
 | ID | Verified invariant | Automated evidence | Runtime / physical evidence |
 |---|---|---|---|

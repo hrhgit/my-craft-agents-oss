@@ -70,13 +70,13 @@ List unresolved dependencies, assumptions, deliberate omissions, remaining match
 ## Execution order
 
 1. Run `SES-E1-SL` first, then `SES-E1-AS` and `SES-E1-ND` against the approved Session boundary. Each packet is independently owned; the primary agent integrates and runs the cross-module Session contract.
-2. Prepare `EXT-BR-01-HSC`, then let `EXT-BR-01-BR` generate the Electron manifest and lockfile in a private integration worktree containing the HSC patch; the primary publishes all three files atomically. `EXT-BR-02` is otherwise independent. Prepare `EXT-LEG-01-ER` and `EXT-LEG-01-CFG` against the same frozen base and let the primary integrate them atomically; neither owner adds a temporary compatibility bridge to make its patch independently green. `EXT-LEG-01-PI` and `EXT-LEG-02` are independent after their caller scans. `EXT-LEG-01-ST` closes the remaining session-tool schema mismatch after those alias removals; all four thinking cleanup packets must land before the zero-alias acceptance scan.
+2. Prepare `EXT-BR-01-HSC`, then let `EXT-BR-01-BR` generate the Electron manifest and lockfile in a private integration worktree containing the HSC patch; the primary publishes all three files atomically. `EXT-BR-02` is otherwise independent.
 3. For the V2 automation entry, run `AUT-E1-MSG` as the caller/interface preflight. The primary then freezes `executeAutomationPromptAction` as the canonical V3 replacement and assigns `AUT-E1-HSC` and `AUT-E1-SL` against the same base. Those two removal patches are integrated atomically; neither agent may design a bridge or merge a temporarily incompatible interface. Run `AUT-E2` only after `SES-E1-ND` is integrated because both packets edit the same native test file.
 4. Run `AUT-P1`; then `AUT-P2` and `AUT-P4` may proceed in parallel; run `AUT-P3` after their contracts settle. Run `AUT-E3` only after all three `AUT-E1` packets, `AUT-E2`, and `AUT-P1..P4` are integrated.
 5. Resolve `OPT-017`'s canonical binary producer and clean-checkout build defect before `EXT-BR-03`; otherwise installer evidence can accidentally certify a stale ignored executable.
 6. Run the pre-split half of `HEAD-E1` before `HEAD-P1`. Complete `HEAD-P1`, then `HEAD-P2`, then `HEAD-P3`. After the OPT-017 producer is integrated, run the post-split half of `HEAD-E1`, followed by `HEAD-E2` and finally `HEAD-E3`. Only one `build-release-observability` writer may modify shared build entrypoints at a time.
 7. The primary agent runs route/impact review, clean-checkout production gates, surface-proportional runtime acceptance, and the active checklist audit after each epic converges.
-8. In the current recovery pass, `EXT-LEG-01-ST` and `EXT-BR-04` use the same primary-frozen base but separate worktrees. They are independent: one produces a scoped code commit and the evidence-only packet leaves source unchanged. The primary retains `SES-P2-INT` because the current typed fixture contract rejects reserved workspace `.mortise` metadata and cannot yet seed the required skill state without crossing the validation boundary.
+8. In the current recovery pass, `EXT-BR-04` is evidence-only and leaves source unchanged. The primary retains `SES-P2-INT` because the current typed fixture contract rejects reserved workspace `.mortise` metadata and cannot yet seed the required skill state without crossing the validation boundary.
 
 ## Assignment queue
 
@@ -84,7 +84,7 @@ The queue assumes the primary has first frozen a base revision and assigned isol
 
 | Queue | Packets | Release condition |
 |---|---|---|
-| Ready for current external execution | `EXT-LEG-01-ST`, `EXT-BR-04` | Use the exact common base and dedicated worktrees supplied by the primary. The implementation packet returns one scoped commit; the evidence-only packet returns no source commit and leaves its worktree clean. |
+| Ready for current external execution | `EXT-BR-04` | Use the exact primary-frozen base and dedicated worktree. This evidence-only packet returns no source commit and leaves its worktree clean. |
 | Primary physical acceptance | `SES-P2-INT` | The primary must use a product-mediated skill import path or first add a reviewed typed fixture capability; out-of-band writes to reserved `.mortise` metadata are not admissible evidence. |
 | Awaiting a new primary-frozen packet or prerequisite | `AUT-E1-MSG`, `AUT-E2`, pre-split `HEAD-E1` | Do not reuse an older assignment implicitly. The primary must confirm the current base, exact scope, and evidence inputs before dispatch. |
 | Evidence blocked by primary architecture | `AUT-E1-HSC`, `AUT-E1-SL`, `AUT-E3`, post-split `HEAD-E1`, `HEAD-E2`, `HEAD-E3` | Primary freezes the V3/headless/producer boundaries and completes the listed sequencing before dispatch. |
@@ -170,71 +170,6 @@ The queue assumes the primary has first frozen a base revision and assigned isol
 - **Primary acceptance:** The budget is at least 2x the base warm p95 but remains finite, failures name the responsible phase/path, and final warm/cold distributions have no more than 5% unexplained regression from the recorded baseline.
 - **Stop / escalate:** Stop if scans exhibit nonlinear growth, exceed the proposed budget, or require a root command change; report profiling evidence or request a separately approved `package.json` expansion instead of hiding the problem.
 
-### EXT-LEG-01-ER - Remove shared thinking-level aliases
-
-- **Epic / class:** OPT-016 / mechanical compatibility removal.
-- **Prerequisite / order:** Caller scan first. Prepare against the same frozen base as `EXT-LEG-01-CFG`; primary integrates those two patches atomically. Independent of the Pi host packet.
-- **Sole owner module:** `extension-runtime`.
-- **Exact files:** `packages/shared/src/agent/thinking-levels.ts`; new `packages/shared/src/agent/__tests__/thinking-levels.test.ts`.
-- **Objective:** Remove `think -> medium` and `max -> xhigh` normalization from `normalizeThinkingLevel`; return the existing invalid/undefined result for both retired values.
-- **Canonical direction:** The shared thinking-level helper accepts only `THINKING_LEVEL_IDS`; it does not migrate or rewrite persisted values.
-- **Forbidden deviations:** No alias, migration, case-folding, silent rewrite, fallback, or changes to current values.
-- **Commands / evidence:** Shared production caller scan; focused positive/negative thinking-level tests; shared type check; zero-mapping scan; record the known cross-owner config-test dependency; `git diff --check`. The primary runs the complete config gate on the atomically combined patches.
-- **Primary acceptance:** Every current level remains accepted, both retired values produce the current invalid result, and shared runtime source contains no mapping for either value.
-- **Stop / escalate:** Stop if a current caller still emits either retired value; return its exact symbol/location for owner migration.
-
-### EXT-LEG-01-PI - Remove the embedded Pi host-facade alias
-
-- **Epic / class:** OPT-016 / mechanical compatibility removal.
-- **Prerequisite / order:** Caller scan first; independent of `EXT-LEG-01-ER`, but land before the final zero-alias acceptance scan.
-- **Sole owner module:** `pi-coding-runtime`.
-- **Exact files:** `pi/packages/coding-agent/src/core/host-facade.ts`; new `pi/packages/coding-agent/test/host-facade-thinking-level.test.ts`.
-- **Objective:** Remove `max -> xhigh` normalization from `normalizeHostThinkingLevel`; reject `max` as invalid host/runtime input.
-- **Canonical direction:** The embedded host facade accepts only the current `HostThinkingLevel` set and returns its existing typed `invalid_input` failure for every other value.
-- **Forbidden deviations:** No alias, migration, case-folding, silent rewrite, fallback, or changes to current values; do not edit terminal/TUI code.
-- **Commands / evidence:** Host-facade caller scan; focused positive/negative host-facade tests; Pi coding-runtime check/type test; zero-mapping scan; `git diff --check`.
-- **Primary acceptance:** Every current level remains accepted, `max` is typed-rejected, and the embedded host facade contains no mapping for it.
-- **Stop / escalate:** Stop if a current host/RPC caller still emits `max`; return its exact symbol/location for owner migration.
-
-### EXT-LEG-01-CFG - Reject retired thinking values in settings
-
-- **Epic / class:** OPT-016 / configuration compatibility removal.
-- **Prerequisite / order:** Prepare against the same frozen base as `EXT-LEG-01-ER`; primary integrates those two patches atomically. `EXT-LEG-01-PI` remains independent but all three land before the zero-alias scan.
-- **Sole owner module:** `app-settings-security`.
-- **Exact files:** `packages/shared/src/config/__tests__/default-thinking-level.test.ts`.
-- **Objective:** Update configuration coverage so `think` and `max` are rejected by the existing setter and invalid persisted values follow the current default/validation semantics after the shared helper change.
-- **Canonical direction:** Only `THINKING_LEVEL_IDS` are accepted. Persisted/config inputs use the same current validation and typed/default failure semantics as any other invalid value.
-- **Forbidden deviations:** No aliases, migration, case-folding, silent rewrite, or special fallback for the retired values.
-- **Commands / evidence:** Production caller scan for the literals; mutation proof that the revised expectations reject the old alias behavior; record the expected cross-owner helper dependency; zero-alias scan and `git diff --check`. The primary runs focused default-setting tests and shared type check on the atomically combined patches.
-- **Primary acceptance:** Positive tests cover every current level; negative tests reject `think` and `max`; production source contains no mapping for either literal.
-- **Stop / escalate:** Stop if a current UI or production default emits either value; report it for owner migration without adding a bridge.
-
-### EXT-LEG-01-ST - Align the spawn-session thinking-level schema
-
-- **Epic / class:** OPT-016 / mechanical contract repair.
-- **Prerequisite / order:** Run after the shared/config/Pi thinking-alias removals are present in the assigned base; independent of physical and build acceptance.
-- **Sole owner module:** `session-tooling`.
-- **Exact files:** `packages/session-tools-core/src/tool-defs.ts`; new `packages/session-tools-core/src/tool-defs-thinking-level.test.ts`.
-- **Objective:** Replace the retired `max` member in `SpawnSessionSchema.thinkingLevel` with the missing current `minimal` member.
-- **Canonical direction:** The host-neutral session-tool schema accepts exactly `off | minimal | low | medium | high | xhigh`, matching the current Mortise contract by value without importing a host package.
-- **Forbidden deviations:** Do not add `session-tools-core -> shared`, another dependency, an alias, normalization, fallback, migration, case folding, schema duplication outside the listed test, or unrelated tool-definition edits.
-- **Commands / evidence:** If this clean worktree has no dependencies, first run `bun install --frozen-lockfile` and prove it leaves both lockfiles unchanged; then run focused test `bun test packages/session-tools-core/src/tool-defs-thinking-level.test.ts`, module regression `bun test packages/session-tools-core packages/session-mcp-server`, and `cd packages/session-tools-core && bun run typecheck`; retain a production/reference scan for the exact spawn schema, a dependency scan proving no `@mortise/shared` edge, and scoped `git diff --check`.
-- **Primary acceptance:** Positive tests parse all six current values; negative tests reject `think` and `max`; the inferred/output schema contains no retired value; the package remains host-neutral and the final commit changes exactly the two listed files.
-- **Stop / escalate:** Stop if a current production caller still emits `think` or `max`, or if satisfying the test requires importing the shared package; return exact caller/dependency evidence without adding compatibility.
-
-### EXT-LEG-02 - Rename the Craft-era local identifier
-
-- **Epic / class:** OPT-016 / mechanical symbol cleanup.
-- **Prerequisite / order:** Independent.
-- **Sole owner module:** `session-lifecycle`.
-- **Exact files:** `packages/shared/src/sessions/tree-jsonl.ts`.
-- **Objective:** Rename both `_craftIdOnDisk` bindings to a Mortise-neutral local name.
-- **Canonical direction:** This is a local-symbol-only rename. Serialized JSONL fields, IDs, projection behavior, and schema version remain byte-for-byte compatible with current Mortise data.
-- **Forbidden deviations:** Do not change a persisted key, schema, ID selection rule, reader/writer behavior, or surrounding refactor.
-- **Commands / evidence:** `rg -n "_craftIdOnDisk" packages/shared/src/sessions/tree-jsonl.ts`; focused tree/JSONL tests; shared type check; inspect the diff as a pure rename.
-- **Primary acceptance:** Zero old symbol references, identical behavior and serialized shape, and no non-rename code changes.
-- **Stop / escalate:** Stop if the name is externally exported, reflected, or serialized; report the contract before changing it.
-
 ### EXT-BR-03 - Isolated compiled-runtime installer evidence
 
 - **Epic / class:** OPT-011 / evidence-only packaging acceptance.
@@ -251,7 +186,7 @@ The queue assumes the primary has first frozen a base revision and assigned isol
 ### EXT-BR-04 - Clean-checkout dependency, bundle, and source-start acceptance
 
 - **Epic / class:** OPT-014 / evidence-only clean-build acceptance.
-- **Prerequisite / order:** Run from the exact primary-frozen revision in a dedicated clean worktree with no pre-existing dependencies or build outputs. Independent of `EXT-LEG-01-ST`; installer certification remains blocked by OPT-017.
+- **Prerequisite / order:** Run from the exact primary-frozen revision in a dedicated clean worktree with no pre-existing dependencies or build outputs. Installer certification remains blocked by OPT-017.
 - **Sole owner module:** `build-release-observability`.
 - **Exact source scope (read/execute only):** root and workspace manifests; `bun.lock`; `pi/package-lock.json`; canonical build/graph/production-bundle entrypoints; source-only `mortise-ui` initialization path. Retained logs and inventories may be written only to ignored output or an external evidence directory.
 - **Objective:** Produce attributable clean-revision evidence that dependency declarations, the canonical package graph, build validation, production Node bundles, monorepo validation, and a source-development Electron initialization all operate from declared inputs without source edits or stale checkout artifacts.
