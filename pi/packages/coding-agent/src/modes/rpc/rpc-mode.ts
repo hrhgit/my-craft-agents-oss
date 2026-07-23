@@ -1917,9 +1917,9 @@ export async function runRpcMode(
 						extensionPaths: command.extensionPaths,
 					})
 				: await createAgentSessionRuntime(globalHostFactory!.createRuntime, {
-					cwd: sessionManager.getCwd(),
-					agentDir: command.agentDir ?? globalHostFactory!.agentDir,
-					projectConfigDir: command.projectConfigDir,
+						cwd: sessionManager.getCwd(),
+						agentDir: command.agentDir ?? globalHostFactory!.agentDir,
+						projectConfigDir: command.projectConfigDir,
 						sessionManager,
 						sessionStartEvent: {
 							type: "session_start",

@@ -1034,9 +1034,10 @@ interface HostSkillsArgs {
 	skillPaths?: string[];
 }
 
-function getDefaultSkillRoots(
-	args: { cwd?: string; agentDir?: string; projectConfigDir?: string } = {},
-): { user: string; project: string } {
+function getDefaultSkillRoots(args: { cwd?: string; agentDir?: string; projectConfigDir?: string } = {}): {
+	user: string;
+	project: string;
+} {
 	const cwd = args.cwd ?? process.cwd();
 	const agentDir = args.agentDir ?? getAgentDir();
 	return {

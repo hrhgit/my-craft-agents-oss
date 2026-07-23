@@ -242,7 +242,10 @@ export async function showDeprecationWarnings(warnings: string[]): Promise<void>
  *
  * @returns Object with migration results and deprecation warnings
  */
-export function runMigrations(cwd: string, projectConfigDir = getProjectConfigDir()): {
+export function runMigrations(
+	cwd: string,
+	projectConfigDir = getProjectConfigDir(),
+): {
 	deprecationWarnings: string[];
 } {
 	migrateSessionsFromAgentRoot();

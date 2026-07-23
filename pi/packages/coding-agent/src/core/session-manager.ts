@@ -1550,7 +1550,7 @@ export class SessionManager {
 		return readEntryFromFileTail(this.sessionFile, entryId);
 	}
 
-	_persist(entry: SessionEntry): void {
+	_persist(): void {
 		if (!this.persist || !this.sessionFile) return;
 
 		const hasAssistant = this.fileEntries.some((candidate) =>
@@ -1575,7 +1575,7 @@ export class SessionManager {
 		this.fileEntries.push(entry);
 		this.byId.set(entry.id, entry);
 		this.leafId = entry.id;
-		this._persist(entry);
+		this._persist();
 	}
 
 	/** Append a message as child of current leaf, then advance leaf. Returns entry id.
@@ -1877,9 +1877,8 @@ export class SessionManager {
 			const ids = new Set(
 				latest.filter((entry): entry is SessionEntry => entry.type !== "session").map((entry) => entry.id),
 			);
-			let parentId = [...latest]
-				.reverse()
-				.find((entry): entry is SessionEntry => entry.type !== "session")?.id ?? null;
+			let parentId =
+				[...latest].reverse().find((entry): entry is SessionEntry => entry.type !== "session")?.id ?? null;
 			if (options.name !== undefined) {
 				const entry: SessionInfoEntry = {
 					type: "session_info",

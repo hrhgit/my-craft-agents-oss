@@ -8,10 +8,7 @@ import { SettingsManager } from "../src/core/settings-manager.ts";
 function writeSkill(root: string, name: string): void {
 	const dir = join(root, "skills", name);
 	mkdirSync(dir, { recursive: true });
-	writeFileSync(
-		join(dir, "SKILL.md"),
-		`---\nname: ${name}\ndescription: ${name} description\n---\n${name} body\n`,
-	);
+	writeFileSync(join(dir, "SKILL.md"), `---\nname: ${name}\ndescription: ${name} description\n---\n${name} body\n`);
 }
 
 describe("project config directory isolation", () => {

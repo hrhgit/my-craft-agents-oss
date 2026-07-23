@@ -343,7 +343,11 @@ export class SettingsManager {
 	}
 
 	/** Create a SettingsManager that loads from files */
-	static create(cwd: string, agentDir: string = getAgentDir(), projectConfigDir = getProjectConfigDir()): SettingsManager {
+	static create(
+		cwd: string,
+		agentDir: string = getAgentDir(),
+		projectConfigDir = getProjectConfigDir(),
+	): SettingsManager {
 		const storage = new FileSettingsStorage(cwd, agentDir, projectConfigDir);
 		return SettingsManager.fromStorage(storage);
 	}

@@ -179,9 +179,7 @@ describe("SessionManager async durability", () => {
 			session.appendCustomEntry("backpressure", index);
 		}
 		expect(session.getDurabilityState().backpressured).toBe(true);
-		expect(() => session.appendCustomEntry("backpressure", "overflow")).toThrow(
-			SessionPersistenceBackpressureError,
-		);
+		expect(() => session.appendCustomEntry("backpressure", "overflow")).toThrow(SessionPersistenceBackpressureError);
 
 		await session.flush();
 		expect(session.getDurabilityState().pendingEntries).toBe(0);
