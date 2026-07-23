@@ -28,7 +28,7 @@ validation:
   - { id: settings-security-regression, kind: unit, command: "bun test --isolate packages/shared/src/config packages/shared/src/auth packages/shared/src/credentials", description: "Run settings, authentication, and credential regressions with per-file module isolation.", triggers: [owned-change], required: true, evidence: "Bun test exit status and output." }
   - { id: electron-settings-contract, kind: contract, command: "bun run typecheck:electron", description: "Verify Electron settings contracts compile.", triggers: [contract-change], required: true, evidence: "TypeScript compiler exit status and diagnostics." }
   - { id: settings-physical, kind: physical, command: "bun run test:ui-validation:electron", description: "Exercise settings behavior through the shared Developer Kit host.", triggers: [ui-change, release], required: false, evidence: "Developer Kit run output and retained UI evidence." }
-scope_digest: d834bfc9ac0a7e63b26874f2f23e07e3bfbd80f1
+scope_digest: 66354acb56fced6bbc5676dfb73c18ba19186a89
 ---
 
 ## Purpose
@@ -59,6 +59,7 @@ Run config, credential, permission, onboarding, and renderer settings tests.
 Configuration schema changes can silently weaken defaults; browser and desktop authentication have different trust boundaries. SQLite state changes must continue to preserve capability fencing, optimistic concurrency, idempotent operations, and atomic writes across concurrently running supported Mortise versions.
 
 ## Semantic history
+- 2026-07-24: Locked global thinking defaults and settings validation to the six current levels; retired `think` and `max` inputs are rejected without migration or persistence.
 - 2026-07-23: Made `.mortise` the sole Mortise project resource root for settings, skills, and extensions; removed shared `PI_PROJECT_*` path aliases and rejected project `.pi/skills` as a config path.
 - 2026-07-23: Separated Mortise's Agent root from independent Pi and added a cross-process serialized, one-time extension-only import that explicitly excludes sessions, providers, credentials, defaults, and unrelated settings.
 - 2026-07-21: Made SQLite the sole runtime authority for global config and session drafts, exposed its profile-independent state contract, and removed retired JSON imports, materialization, backups, sync baselines, and file watchers.

@@ -92,8 +92,6 @@ owns:
   - scripts/install-app.ps1
   - scripts/install-app.sh
   - scripts/install-server.sh
-  - scripts/migrate-legacy-craft-user-data.ts
-  - scripts/migrate-legacy-craft-user-data.test.ts
   - scripts/mortise-logs/**
   - scripts/run-isolated-tests.ts
   - scripts/shared-backend-discovery*.ts
@@ -128,7 +126,7 @@ validation:
   - { id: monorepo-contract, kind: contract, command: "bun run validate:monorepo", description: "Verify monorepo package and dependency contracts.", triggers: [contract-change], required: true, evidence: "Validation exit status and diagnostics." }
   - { id: production-bundles, kind: integration, command: "bun run validate:production-bundles", description: "Run the complete production Electron build consumed by packaging.", triggers: [ci-change, release], required: true, evidence: "Production main, workspace server, preload, renderer, and resource build exit status." }
   - { id: ci-integration, kind: integration, command: "bun run validate:ci", description: "Run the repository CI validation composition.", triggers: [release, ci-change], required: true, evidence: "CI validation exit status and output." }
-scope_digest: d4c93f8a3a0478444d7d330bcdd6a9bd3021557c
+scope_digest: 9567d8356340cab878ffd04732835a06bdccedd4
 ---
 
 ## Purpose
@@ -159,6 +157,7 @@ Run the in-memory production Node bundle gate frequently, retain the complete pr
 Bundled binaries and lockfiles are large shared surfaces; concurrent regeneration can overwrite another build's artifacts.
 
 ## Semantic history
+- 2026-07-24: Removed ownership declarations for the deleted Craft user-data migration scripts and made the packaged workspace thinking default a current Mortise value.
 - 2026-07-23: Reframed the active recovery queue as two independently recoverable external packets for a host-neutral schema fix and clean-checkout build/source-start evidence; retained isolated Electron acceptance with the primary because the typed fixture does not seed reserved workspace skill metadata.
 - 2026-07-23: Expanded external delegation beyond low-judgment work when scope, architecture direction, acceptance, and recovery are frozen, including complete isolated physical-validation workflows with primary evidence review.
 - 2026-07-23: Made external write delegation fail closed on invalid assignment worktrees: primary-supplied clean bases, dedicated worktrees, scoped final commits, clean handoffs, and pre-candidate raw performance baselines are now mandatory acceptance inputs.
@@ -178,4 +177,3 @@ Bundled binaries and lockfiles are large shared surfaces; concurrent regeneratio
 - 2026-07-21: Moved network-interceptor rich-tool configuration reads from the retired JSON cache to the shared SQLite-backed global configuration authority.
 - 2026-07-21: Added a production portability gate that rejects source-checkout paths in Session MCP bundles and staged Electron assets.
 - 2026-07-21: Updated packaged extension documentation to describe direct versioned contribution and interaction flows without widget or RemoteUI compatibility adapters.
-- 2026-07-21: Made Electron production packaging stage and accept exactly one compiled, versioned Pi runtime; removed the environment-selected JS fallback and reject legacy JS candidates during asset and afterPack validation.

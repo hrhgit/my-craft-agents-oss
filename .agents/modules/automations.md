@@ -18,7 +18,7 @@ depends_on: [workspace-state, session-lifecycle]
 collaborates_with: []
 validation:
   - { id: regression, kind: unit, command: "bun test packages/shared/src/automations packages/shared/src/scheduler apps/electron/src/renderer/components/automations", description: "Run automation and scheduler regressions.", triggers: [owned-change], required: true, evidence: "Bun test exit status and output." }
-scope_digest: e6f416642eeeaa162793da5354e1613822281355
+scope_digest: 6c7aef6ed1a20ef016f4872fba8e985fd0969f3c
 ---
 
 ## Purpose

@@ -35,7 +35,7 @@ collaborates_with: [conversation-ui]
 validation:
   - { id: shared-ui-regression, kind: unit, command: "bun test packages/ui", description: "Run shared UI regressions.", triggers: [owned-change], required: true, evidence: "Bun test exit status and output." }
   - { id: i18n-contract, kind: contract, command: "bun run lint:i18n:parity && bun run lint:i18n:sorted", description: "Verify locale parity and deterministic sorting.", triggers: [locale-change, contract-change], required: true, evidence: "Lint exit status and diagnostics." }
-scope_digest: 6388bd61ba6d8323645d678e6d1a16b85beb2270
+scope_digest: 8599e5142898ecf41293817a4852cf4f1244ccdc
 ---
 
 ## Purpose

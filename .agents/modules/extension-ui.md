@@ -21,7 +21,7 @@ collaborates_with: [extension-runtime, ui-validation-developer-kit]
 validation:
   - { id: extension-ui-regression, kind: unit, command: "bun test apps/electron/src/renderer/components/extensions packages/shared/src/protocol/extension-contributions.test.ts", description: "Run extension contribution UI regressions.", triggers: [owned-change], required: true, evidence: "Bun test exit status and output." }
   - { id: extension-ui-physical, kind: physical, command: "bun run test:ui-validation:extension", description: "Exercise extension UI through the shared Developer Kit host.", triggers: [ui-change, extension-contract-change, release], required: false, evidence: "Developer Kit run output and retained extension UI evidence." }
-scope_digest: 1648b2d20d83fcb5e28a6cc383a0e798cd1a9f0f
+scope_digest: 5c2ddacf6aadc93d6cde539c5959a66bc9d06abb
 ---
 
 ## Purpose

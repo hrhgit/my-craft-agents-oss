@@ -22,7 +22,7 @@ collaborates_with: [browser-runtime, file-workbench, native-desktop]
 validation:
   - { id: universal-layout-regression, kind: unit, command: "bun test apps/electron/src/renderer/components/app-shell apps/electron/src/shared/__tests__/app-layout.test.ts", description: "Run universal layout and app-shell regressions.", triggers: [owned-change], required: true, evidence: "Bun test exit status and output." }
   - { id: universal-layout-physical, kind: physical, command: "bun run test:ui-validation:electron", description: "Exercise docking and layout behavior through the shared Developer Kit host.", triggers: [ui-change, layout-change, release], required: false, evidence: "Developer Kit run output and retained UI evidence." }
-scope_digest: 28a7510518b21881135161d948d1f8ab5686357d
+scope_digest: 71db49afe7212ae4de740a3f4c3f481febd36a93
 ---
 
 ## Purpose

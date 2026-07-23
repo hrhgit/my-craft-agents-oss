@@ -53,7 +53,7 @@ validation:
   - { id: native-desktop-regression, kind: unit, command: "bun test --isolate apps/electron/src/main apps/electron/src/transport", description: "Run Electron main-process and transport regressions with per-file module isolation.", triggers: [owned-change], required: true, evidence: "Bun test exit status and output." }
   - { id: electron-native-contract, kind: contract, command: "bun run typecheck:electron", description: "Verify Electron native contracts compile.", triggers: [contract-change], required: true, evidence: "TypeScript compiler exit status and diagnostics." }
   - { id: native-desktop-physical, kind: physical, command: "bun run test:ui-validation:electron", description: "Exercise native desktop behavior through the shared Developer Kit host.", triggers: [native-change, release], required: false, evidence: "Developer Kit run output and retained native UI evidence." }
-scope_digest: ccee52dfd520f28fa75f5f89d58e3b9a13c155a4
+scope_digest: c8f38d58e5c6cd671575f584d3b2148c1db3cb73
 ---
 
 ## Purpose
@@ -84,6 +84,7 @@ Run main, IPC, transport parity, window lifecycle, close flushing, and Electron 
 Windows process and file semantics differ from Unix; IPC surface expansion can cross a privilege boundary.
 
 ## Semantic history
+- 2026-07-24: Consolidated renderer logging into the Mortise bootstrap preload, disabled electron-log's second preload registration, and locked desktop settings tests to reject retired thinking values.
 - 2026-07-23: Bound Electron startup and its embedded Pi GlobalHost to the Mortise Agent root, ran extension-only import before backend initialization, and made legacy import failures diagnostic but non-blocking.
 - 2026-07-23: Moved canonical AppLayout persistence to a coalescing asynchronous revision writer; layout RPC durability and committed exit now await flush while renderer drag/resize mutations remain memory-only.
 - 2026-07-22: Moved the always-on messaging and auto-update logs to independent bounded asynchronous writers with severity-aware backpressure, observable failures, rotation, and committed-exit flushing.

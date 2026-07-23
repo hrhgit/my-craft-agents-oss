@@ -15,7 +15,7 @@ collaborates_with: []
 validation:
   - { id: pi-coding-regression, kind: unit, command: "npm --prefix pi test --workspace @mortise/pi-coding-agent", description: "Run Pi coding runtime regressions.", triggers: [owned-change], required: true, evidence: "Workspace test exit status and output." }
   - { id: pi-workspace-contract, kind: contract, command: "npm --prefix pi run build:workspace", description: "Build Pi workspaces to verify package contracts.", triggers: [contract-change], required: true, evidence: "Workspace build exit status and diagnostics." }
-scope_digest: 74e2768faafbd628cbf51331e80b3bc0fe8fe480
+scope_digest: aa5073644bd886531944408b526fae5c6fb2d2df
 ---
 
 ## Purpose
@@ -46,6 +46,7 @@ Run coding-runtime and workspace contract tests plus downstream Agent Loop, Sess
 The current mixed entrypoint and extension type surface can pull TUI code into the embedded graph even when Mortise starts in RPC mode. Removing presentation code can accidentally alter event ordering, cancellation, durability, compaction, or extension cleanup semantics; retaining shared launchers, exports, package metadata, assets, or resolver candidates can silently preserve a second product path. External-Pi compatibility pressure must not reintroduce aliases or fallbacks into the Mortise runtime.
 
 ## Semantic history
+- 2026-07-24: Locked the embedded host thinking-level boundary to the six current values and retained typed rejection for retired values without aliases or migration.
 - 2026-07-23: Declared this repository's `pi/` subtree a Mortise-only embedded headless runtime, preserved canonical UI-neutral Agent and RPC semantics, and classified TUI, interactive, standalone CLI, launcher, updater, and separate Pi product surfaces as non-production removal scope with no compatibility fallback.
 - 2026-07-23: Parameterized the project config root across startup, RPC runtimes, settings, packages, and resources so embedded Mortise runtimes use `.mortise` exclusively while standalone Pi retains `.pi` as its default.
 - 2026-07-23: Added an explicit hidden-only draft publication boundary and made cold host metadata updates merge under the canonical Session lock so concurrent active-runtime appends are preserved.

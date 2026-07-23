@@ -33,7 +33,7 @@ collaborates_with: [web-viewer-clients]
 validation:
   - { id: server-cli-regression, kind: unit, command: "bun test apps/cli packages/server packages/server-core", description: "Run headless server and CLI regressions.", triggers: [owned-change], required: true, evidence: "Bun test exit status and output." }
   - { id: server-cli-contract, kind: contract, command: "bun run typecheck:all", description: "Verify repository-wide server and CLI type contracts.", triggers: [contract-change], required: true, evidence: "TypeScript compiler exit status and diagnostics." }
-scope_digest: dc653f38995d6d8a2bc7b893775f50cf0c8ead4e
+scope_digest: f0af56e928c5a885381dc748573921215b07f4bb
 ---
 
 ## Purpose
@@ -64,6 +64,7 @@ Run server-core, server smoke, CLI command, streaming, spawner, and transport te
 Client/server version skew affects capabilities; stale endpoint discovery can connect a client to the wrong backend.
 
 ## Semantic history
+- 2026-07-24: Made server registration parse only complete protocol-v2 records and remove live legacy or unsupported-version registrations instead of treating them as current locks.
 - 2026-07-23: Removed startup-time Pi extension migration entirely; headless Mortise startup uses only Mortise-owned roots and never reads or imports the independent Pi Agent root.
 - 2026-07-23: Bounded Session content search at the ripgrep process boundary by completing only a deterministic newest-first `maxSessions` prefix before termination, with bounded accumulation and stable result ordering.
 - 2026-07-22: Exposed a payload-free Session settlement retry contract so RPC clients can resume host durability without resending an already accepted user message.
@@ -83,4 +84,3 @@ Client/server version skew affects capabilities; stale endpoint discovery can co
 - 2026-07-20: Required confirmation for automation reads that expose prompts, webhook configuration, run snapshots, or isolated-Agent output.
 - 2026-07-20: Added the unified Automations V3 RPC and CLI surface plus loopback CloudEvents ingress with workspace-scoped token lifecycle.
 - 2026-07-12: Unified WebUI and Electron session runtime behind server-core.
-- 2026-07-18: Completed monorepo CI setup for shared server execution.

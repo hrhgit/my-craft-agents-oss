@@ -18,7 +18,7 @@ collaborates_with: [session-lifecycle, session-tooling, shared-ui-i18n]
 validation:
   - { id: conversation-regression, kind: unit, command: "bun test packages/ui/src/components/chat packages/ui/src/components/annotations apps/electron/src/renderer/pages/__tests__/new-conversation-submit.test.ts", description: "Run conversation, annotation, and new-conversation draft regressions.", triggers: [owned-change], required: true, evidence: "Bun test exit status and output." }
   - { id: conversation-physical, kind: physical, command: "bun run test:ui-validation:electron", description: "Exercise conversation behavior through the shared Developer Kit host.", triggers: [ui-change, release], required: false, evidence: "Developer Kit run output and retained UI evidence." }
-scope_digest: 6149f9451e848b753567981b1503ee4b775e5562
+scope_digest: 83b1dc0314c46abfcc1c9bc0b3a78fa7e3701cdf
 ---
 
 ## Purpose

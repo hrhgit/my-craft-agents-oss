@@ -19,7 +19,7 @@ depends_on: [shared-contracts]
 collaborates_with: []
 validation:
   - { id: workspace-state-regression, kind: unit, command: "bun test packages/shared/src/workspaces packages/shared/src/storage packages/server-core/src/handlers/rpc/files.test.ts", description: "Run workspace state, storage, and file RPC regressions.", triggers: [owned-change], required: true, evidence: "Bun test exit status and output." }
-scope_digest: e642ae918e6ae2ce2387a18c9a76e10267bab368
+scope_digest: 516f3fa65331b47a37802b8b960bf6a915ccf4fd
 ---
 
 ## Purpose
