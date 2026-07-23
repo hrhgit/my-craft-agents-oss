@@ -126,7 +126,7 @@ validation:
   - { id: monorepo-contract, kind: contract, command: "bun run validate:monorepo", description: "Verify monorepo package and dependency contracts.", triggers: [contract-change], required: true, evidence: "Validation exit status and diagnostics." }
   - { id: production-bundles, kind: integration, command: "bun run validate:production-bundles", description: "Run the complete production Electron build consumed by packaging.", triggers: [ci-change, release], required: true, evidence: "Production main, workspace server, preload, renderer, and resource build exit status." }
   - { id: ci-integration, kind: integration, command: "bun run validate:ci", description: "Run the repository CI validation composition.", triggers: [release, ci-change], required: true, evidence: "CI validation exit status and output." }
-scope_digest: 9567d8356340cab878ffd04732835a06bdccedd4
+scope_digest: b29521cde6ed8bf3b9fe3b09e6840c172098f700
 ---
 
 ## Purpose
@@ -157,6 +157,7 @@ Run the in-memory production Node bundle gate frequently, retain the complete pr
 Bundled binaries and lockfiles are large shared surfaces; concurrent regeneration can overwrite another build's artifacts.
 
 ## Semantic history
+- 2026-07-24: Reconciled the legacy cleanup inventory with the completed canonical contracts and kept future user-owned data deletion outside runtime acceptance behind fresh exact-path confirmation.
 - 2026-07-24: Removed ownership declarations for the deleted Craft user-data migration scripts and made the packaged workspace thinking default a current Mortise value.
 - 2026-07-23: Reframed the active recovery queue as two independently recoverable external packets for a host-neutral schema fix and clean-checkout build/source-start evidence; retained isolated Electron acceptance with the primary because the typed fixture does not seed reserved workspace skill metadata.
 - 2026-07-23: Expanded external delegation beyond low-judgment work when scope, architecture direction, acceptance, and recovery are frozen, including complete isolated physical-validation workflows with primary evidence review.
@@ -176,4 +177,3 @@ Bundled binaries and lockfiles are large shared surfaces; concurrent regeneratio
 - 2026-07-21: Declared audited export-only UI barrels side-effect-free for Rollup tree shaking and made production renderer builds enforce budgets against each HTML entry's complete transitive static dependency graph rather than individual chunk names.
 - 2026-07-21: Moved network-interceptor rich-tool configuration reads from the retired JSON cache to the shared SQLite-backed global configuration authority.
 - 2026-07-21: Added a production portability gate that rejects source-checkout paths in Session MCP bundles and staged Electron assets.
-- 2026-07-21: Updated packaged extension documentation to describe direct versioned contribution and interaction flows without widget or RemoteUI compatibility adapters.

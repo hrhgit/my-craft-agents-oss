@@ -553,7 +553,7 @@ const SESSION_TOOL_DISPLAY_NAMES: Record<string, string> = {
   unbind_messaging_channel: 'Unbind Messaging Channel',
 }
 
-async function resolveToolDisplayMeta(
+export async function resolveToolDisplayMeta(
   toolName: string,
   toolInput: Record<string, unknown> | undefined,
   workspaceRootPath: string,
@@ -574,9 +574,8 @@ async function resolveToolDisplayMeta(
       const serverSlug = parts[1]
       const toolSlug = parts.slice(2).join('__')
 
-      // Legacy session names and current documentation MCP tools.
+      // Only current Mortise documentation tools remain namespaced MCP tools.
       const internalMcpServers: Record<string, Record<string, string>> = {
-        'session': SESSION_TOOL_DISPLAY_NAMES,
         'mortise-docs': {
           'SearchMortise': 'Search Docs',
         },
@@ -943,6 +942,12 @@ export function createManagedSession(
   managed.sdkCwd = managed.sdkCwd ?? workspace.rootPath
 
   return managed
+}
+
+export function resolveSessionThinkingLevel(value: unknown, fallback: ThinkingLevel): ThinkingLevel {
+  if (value === undefined) return fallback
+  if (!isValidThinkingLevel(value)) throw new InvalidSessionThinkingLevelError(value)
+  return value
 }
 
 export type SubmittedPlanMessage = Message & { planPath: string }
@@ -2742,11 +2747,12 @@ export class SessionManager implements ISessionManager {
       ?? wsConfig?.defaults?.permissionMode
       ?? globalDefaults.workspaceDefaults.permissionMode
 
-    // AI defaults are global: an explicit session value takes precedence.
-    // normalizeThinkingLevel() tolerates undefined/unknown inputs.
-    const defaultThinkingLevel =
-      normalizeThinkingLevel(options?.thinkingLevel)
-      ?? getDefaultThinkingLevel()
+    // AI defaults are global. An explicit Session value must already be part of
+    // the current contract; retired values never silently fall back to default.
+    const defaultThinkingLevel = resolveSessionThinkingLevel(
+      options?.thinkingLevel,
+      getDefaultThinkingLevel(),
+    )
     const requestedProvider = options?.provider
     const sessionProvider = hasConfiguredPiProvider(requestedProvider)
       ? requestedProvider

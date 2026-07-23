@@ -17,7 +17,7 @@ collaborates_with: [extension-runtime, conversation-ui]
 validation:
   - { id: session-tooling-regression, kind: unit, command: "bun test packages/session-tools-core packages/session-mcp-server", description: "Run session tool and MCP server regressions.", triggers: [owned-change], required: true, evidence: "Bun test exit status and output." }
   - { id: session-tool-contract, kind: contract, command: "bun run typecheck:all", description: "Verify session tool contracts compile across consumers.", triggers: [contract-change], required: true, evidence: "TypeScript compiler exit status and diagnostics." }
-scope_digest: fa82d6b26c8d85df00317d508d2824a43cd0a26e
+scope_digest: 960239564d19ee77b325fbe009d8557da8250e7a
 ---
 
 ## Purpose

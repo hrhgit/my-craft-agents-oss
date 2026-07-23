@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { executeBashWithOperations } from "../src/core/bash-executor.ts";
 import { createBashTool, createLocalBashOperations } from "../src/core/tools/bash.ts";
@@ -25,7 +26,16 @@ function createInheritedStdioCommand(pidFile: string): string {
 	);
 }
 
-function cleanupDetachedChild(pidFile: string): void {
+function isProcessAlive(pid: number): boolean {
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch (error) {
+		return (error as NodeJS.ErrnoException).code === "EPERM";
+	}
+}
+
+async function cleanupDetachedChild(pidFile: string): Promise<void> {
 	if (!existsSync(pidFile)) {
 		return;
 	}
@@ -36,6 +46,14 @@ function cleanupDetachedChild(pidFile: string): void {
 			execFileSync("taskkill", ["/F", "/T", "/PID", String(pid)], { stdio: "ignore" });
 		} catch {
 			// Process may have already exited.
+		}
+
+		const deadline = Date.now() + 5000;
+		while (isProcessAlive(pid)) {
+			if (Date.now() >= deadline) {
+				throw new Error(`Detached test child ${pid} did not exit after taskkill`);
+			}
+			await delay(50);
 		}
 	}
 }
@@ -78,7 +96,7 @@ describe.skipIf(process.platform !== "win32")("Windows child-process close handl
 	});
 
 	afterEach(() => {
-		rmSync(testDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+		rmSync(testDir, { recursive: true, force: true, maxRetries: 50, retryDelay: 100 });
 	});
 
 	it("executeBash resolves after the shell exits even if inherited stdio handles stay open", async () => {
@@ -102,7 +120,7 @@ describe.skipIf(process.platform !== "win32")("Windows child-process close handl
 			expect(result.cancelled).toBe(false);
 		} finally {
 			controller.abort();
-			cleanupDetachedChild(pidFile);
+			await cleanupDetachedChild(pidFile);
 		}
 	});
 
@@ -120,7 +138,7 @@ describe.skipIf(process.platform !== "win32")("Windows child-process close handl
 			expect(getTextOutput(result)).toContain("child-exiting");
 		} finally {
 			controller.abort();
-			cleanupDetachedChild(pidFile);
+			await cleanupDetachedChild(pidFile);
 		}
 	});
 });

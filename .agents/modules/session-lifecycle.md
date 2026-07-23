@@ -17,7 +17,7 @@ depends_on: [workspace-state, pi-agent-engine]
 collaborates_with: [conversation-ui]
 validation:
   - { id: session-lifecycle-regression, kind: unit, command: "bun test packages/shared/src/sessions packages/shared/tests/persistence-queue.test.ts packages/server-core/src/sessions packages/server-core/src/handlers/rpc/sessions apps/electron/src/renderer/lib/__tests__/drafts.test.ts", description: "Run session lifecycle, durability queue, projection, Session RPC, and draft regressions.", triggers: [owned-change], required: true, evidence: "Bun test exit status and output." }
-scope_digest: f95bfb164873f52786bf3c8c3719e36c043c6e26
+scope_digest: a8bc4bc5bd621fd602d538e11a37bbd3240f4435
 ---
 
 ## Purpose
@@ -48,6 +48,7 @@ Run session storage, persistence queue, projection, send durability, and draft t
 Publishing metadata or projection before Pi's assistant-backed JSONL exists can create visible phantom sessions; event ordering can make a running session appear terminated.
 
 ## Semantic history
+- 2026-07-24: Made explicit Session-create thinking levels reject retired or invalid values instead of silently falling back, and removed the retired namespaced session-tool display reader from current projections.
 - 2026-07-24: Rejected invalid or retired thinking metadata at Session restore and JSONL ingress, and separated pristine unconfigured authentication from configured-but-missing provider errors.
 - 2026-07-23: Moved Mortise Session storage to the Mortise-owned Agent root without importing or falling back to independent Pi Session history.
 - 2026-07-23: Made canonical Session metadata and Mortise overlay writes fully async; cold metadata updates now merge against the latest lock-scoped Pi JSONL so concurrent active appends survive, ordinary drafts remain fileless until first-assistant publication, and only explicitly hidden Sessions may publish header-only state.
@@ -67,4 +68,3 @@ Publishing metadata or projection before Pi's assistant-backed JSONL exists can 
 - 2026-07-21: Removed legacy plan-role, id-only Session bundle, and thinking-level restore compatibility; file-backed plan submissions now expose canonical assistant messages carrying `PlanArtifactV1` while retaining `planPath` as the active execution target.
 - 2026-07-21: Routed Session `showInFinder` through an advertised requesting-client capability or the injected platform, with a typed unavailable error instead of false success.
 - 2026-07-21: Removed persisted and runtime `session.workingDirectory` authority; Session storage and SessionManager now derive paths only from the workspace root and reject the removed field with a typed contract error.
-- 2026-07-21: Made turn settlement await metadata and projection durability before emitting UI completion or starting queued replay, with explicit ordering regression coverage.

@@ -112,9 +112,9 @@ validateSpawn('Pi compiled binary version smoke test', ['--version'], {
   command: piCompiledBinary,
   cwd: piRuntimeRoot,
 });
-const piSmokeAgentDir = join(ELECTRON_DIR, 'dist', '.pi-smoke-agent');
-rmSync(piSmokeAgentDir, { recursive: true, force: true });
-mkdirSync(piSmokeAgentDir, { recursive: true });
+const mortiseSmokeAgentDir = join(ELECTRON_DIR, 'dist', '.mortise-agent-smoke');
+rmSync(mortiseSmokeAgentDir, { recursive: true, force: true });
+mkdirSync(mortiseSmokeAgentDir, { recursive: true });
 try {
   validateSpawn('Pi compiled binary RPC smoke test', [
     '--mode', 'rpc',
@@ -128,10 +128,10 @@ try {
     command: piCompiledBinary,
     cwd: piRuntimeRoot,
     input: '{"id":"capabilities","type":"get_capabilities"}\n',
-    env: { PI_CODING_AGENT_DIR: piSmokeAgentDir },
+    env: { PI_CODING_AGENT_DIR: mortiseSmokeAgentDir },
   });
 } finally {
-  rmSync(piSmokeAgentDir, { recursive: true, force: true });
+  rmSync(mortiseSmokeAgentDir, { recursive: true, force: true });
 }
 
 console.log('Staged Electron assets validated');

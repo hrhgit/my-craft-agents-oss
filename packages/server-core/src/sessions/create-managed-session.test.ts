@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'bun:test'
-import { createManagedSession, InvalidSessionThinkingLevelError } from './SessionManager.ts'
+import {
+  createManagedSession,
+  InvalidSessionThinkingLevelError,
+  resolveSessionThinkingLevel,
+  resolveToolDisplayMeta,
+  SessionManager,
+} from './SessionManager.ts'
 
 describe('createManagedSession', () => {
   const workspace = {
@@ -20,7 +26,7 @@ describe('createManagedSession', () => {
     const managed = createManagedSession({
       mortiseId: 'session_current',
       thinkingLevel: 'medium',
-    }, workspace as any)
+    }, workspace as never)
 
     expect(managed.thinkingLevel).toBe('medium')
   })
@@ -30,5 +36,37 @@ describe('createManagedSession', () => {
       mortiseId: 'session_invalid',
       thinkingLevel: 'ultra' as never,
     }, workspace as never)).toThrow(InvalidSessionThinkingLevelError)
+  })
+
+  it('rejects retired explicit creation input instead of silently using the default', () => {
+    expect(() => resolveSessionThinkingLevel('think', 'medium')).toThrow(InvalidSessionThinkingLevelError)
+    expect(() => resolveSessionThinkingLevel('max', 'medium')).toThrow(InvalidSessionThinkingLevelError)
+    expect(resolveSessionThinkingLevel(undefined, 'medium')).toBe('medium')
+    expect(resolveSessionThinkingLevel('minimal', 'medium')).toBe('minimal')
+  })
+
+  it('rejects retired thinking input through the Session creation boundary', async () => {
+    const manager = new SessionManager({ resolveWorkspaceByNameOrId: () => workspace as never })
+    const createWithUntrustedInput = manager.createSession.bind(manager) as unknown as (
+      workspaceId: string,
+      options: { hidden: true; thinkingLevel: string },
+    ) => Promise<unknown>
+
+    await expect(createWithUntrustedInput(workspace.id, {
+      hidden: true,
+      thinkingLevel: 'think',
+    })).rejects.toMatchObject({
+      name: 'InvalidSessionThinkingLevelError',
+      code: 'SESSION_THINKING_LEVEL_INVALID',
+      thinkingLevel: 'think',
+    })
+  })
+
+  it('does not render retired namespaced session tools as current internal tools', async () => {
+    await expect(resolveToolDisplayMeta('mcp__session__config_validate', {}, workspace.rootPath)).resolves.toBeUndefined()
+    await expect(resolveToolDisplayMeta('config_validate', {}, workspace.rootPath)).resolves.toMatchObject({
+      displayName: 'Validate Config',
+      category: 'native',
+    })
   })
 })
