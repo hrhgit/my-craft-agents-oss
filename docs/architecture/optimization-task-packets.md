@@ -70,12 +70,13 @@ List unresolved dependencies, assumptions, deliberate omissions, remaining match
 ## Execution order
 
 1. Run `SES-E1-SL` first, then `SES-E1-AS` and `SES-E1-ND` against the approved Session boundary. Each packet is independently owned; the primary agent integrates and runs the cross-module Session contract.
-2. Prepare `EXT-BR-01-HSC`, then let `EXT-BR-01-BR` generate the Electron manifest and lockfile in a private integration worktree containing the HSC patch; the primary publishes all three files atomically. `EXT-BR-02` is otherwise independent. Prepare `EXT-LEG-01-ER` and `EXT-LEG-01-CFG` against the same frozen base and let the primary integrate them atomically; neither owner adds a temporary compatibility bridge to make its patch independently green. `EXT-LEG-01-PI` and `EXT-LEG-02` are independent after their caller scans. All three thinking-alias packets must land before the zero-alias acceptance scan.
+2. Prepare `EXT-BR-01-HSC`, then let `EXT-BR-01-BR` generate the Electron manifest and lockfile in a private integration worktree containing the HSC patch; the primary publishes all three files atomically. `EXT-BR-02` is otherwise independent. Prepare `EXT-LEG-01-ER` and `EXT-LEG-01-CFG` against the same frozen base and let the primary integrate them atomically; neither owner adds a temporary compatibility bridge to make its patch independently green. `EXT-LEG-01-PI` and `EXT-LEG-02` are independent after their caller scans. `EXT-LEG-01-ST` closes the remaining session-tool schema mismatch after those alias removals; all four thinking cleanup packets must land before the zero-alias acceptance scan.
 3. For the V2 automation entry, run `AUT-E1-MSG` as the caller/interface preflight. The primary then freezes `executeAutomationPromptAction` as the canonical V3 replacement and assigns `AUT-E1-HSC` and `AUT-E1-SL` against the same base. Those two removal patches are integrated atomically; neither agent may design a bridge or merge a temporarily incompatible interface. Run `AUT-E2` only after `SES-E1-ND` is integrated because both packets edit the same native test file.
 4. Run `AUT-P1`; then `AUT-P2` and `AUT-P4` may proceed in parallel; run `AUT-P3` after their contracts settle. Run `AUT-E3` only after all three `AUT-E1` packets, `AUT-E2`, and `AUT-P1..P4` are integrated.
 5. Resolve `OPT-017`'s canonical binary producer and clean-checkout build defect before `EXT-BR-03`; otherwise installer evidence can accidentally certify a stale ignored executable.
 6. Run the pre-split half of `HEAD-E1` before `HEAD-P1`. Complete `HEAD-P1`, then `HEAD-P2`, then `HEAD-P3`. After the OPT-017 producer is integrated, run the post-split half of `HEAD-E1`, followed by `HEAD-E2` and finally `HEAD-E3`. Only one `build-release-observability` writer may modify shared build entrypoints at a time.
 7. The primary agent runs route/impact review, clean-checkout production gates, surface-proportional runtime acceptance, and the active checklist audit after each epic converges.
+8. In the current recovery pass, `EXT-LEG-01-ST`, `SES-E2-INT`, and `EXT-BR-04` use the same primary-frozen base but separate worktrees. They are independent: one produces a scoped code commit, while the two evidence-only packets leave source unchanged and return retained artifacts for primary review.
 
 ## Assignment queue
 
@@ -83,8 +84,8 @@ The queue assumes the primary has first frozen a base revision and assigned isol
 
 | Queue | Packets | Release condition |
 |---|---|---|
-| Ready for independent external execution | `SES-E1-SL`, `EXT-BR-01-HSC`, `EXT-BR-02`, `EXT-LEG-01-ER`, `EXT-LEG-01-PI`, `EXT-LEG-02`, `AUT-E1-MSG`, pre-split `HEAD-E1` | Primary freezes base/worktree and all unresolved decision/evidence inputs; each agent returns an attributable handoff and does not self-accept. |
-| Follow-up mechanical work | `SES-E1-AS`, `SES-E1-ND`, `EXT-BR-01-BR`, `EXT-LEG-01-CFG`, `AUT-E2` | Apply the stated prerequisite or private combined base; shared-file and cross-owner changes are integrated atomically. |
+| Ready for current external execution | `EXT-LEG-01-ST`, `SES-E2-INT`, `EXT-BR-04` | Use the exact common base and three dedicated worktrees supplied by the primary. The implementation packet returns one scoped commit; evidence-only packets return no source commit and leave their worktrees clean. |
+| Awaiting a new primary-frozen packet or prerequisite | `AUT-E1-MSG`, `AUT-E2`, pre-split `HEAD-E1` | Do not reuse an older assignment implicitly. The primary must confirm the current base, exact scope, and evidence inputs before dispatch. |
 | Evidence blocked by primary architecture | `AUT-E1-HSC`, `AUT-E1-SL`, `AUT-E3`, post-split `HEAD-E1`, `HEAD-E2`, `HEAD-E3` | Primary freezes the V3/headless/producer boundaries and completes the listed sequencing before dispatch. |
 | Evidence blocked by clean binary producer | `EXT-BR-03` | OPT-017 producer is integrated and a clean source-built runtime is available; no ignored executable is accepted as evidence. |
 
@@ -128,6 +129,21 @@ The queue assumes the primary has first frozen a base revision and assigned isol
 - **Commands / evidence:** Isolated branch rollback test; Electron type check; fixture-shape scan; `git diff --check`.
 - **Primary acceptance:** The test passes with no `workingDirectory` fixture field and still exercises the same rollback/projection behavior.
 - **Stop / escalate:** Stop if production code imported by the test still requires the field; report the dependency to the primary instead of mocking around it.
+
+### SES-E2-INT - Isolated Electron acceptance for workspace-root and draft Session authority
+
+- **Epic / class:** OPT-010 / evidence-only physical acceptance.
+- **Prerequisite / order:** Run from the exact primary-frozen source revision after `SES-E1-SL`, `SES-E1-AS`, and `SES-E1-ND` have landed. Independent of `EXT-LEG-01-ST` and `EXT-BR-04`.
+- **Execution owner / consulted modules:** `ui-validation-developer-kit` executes the source-only control plane; read and apply the acceptance invariants from `session-lifecycle` and `app-settings-security`. No module receives implementation ownership.
+- **Exact source scope (read/execute only):** `docs/testing.md`; `scripts/mortise-ui/**`; `scripts/e2e/ui-validation/session-publication.ts`; current workspace/session/settings production paths discovered through routing. Custom fixture inputs and retained evidence must live outside tracked source files.
+- **Objective:** Prove on real source-development Electron that the selected workspace is the only file/skill authority, an ordinary new conversation remains an unpublished draft before first-assistant publication, and the isolated run leaves no phantom Session, Pi-root dependency, or live process after teardown.
+- **Pinned environment:** Windows Electron; `--profile fixture`; `--window-mode background` unless a required advertised native action is foreground-only; immutable `buildId`/`buildDir` and exact source revision from the start/run manifest. Do not use WebUI as substitute evidence.
+- **Required fixture:** Two bounded disposable workspaces with distinct marker files and distinct `.mortise/skills/<id>/SKILL.md` resources, plus existing Sessions in each workspace. Do not use, clone, or mutate a real user profile. Do not add `.pi` fallback data to make the flow pass.
+- **Exact action sequence:** Validate the fixture schema; start the run; retain `status --full`, `runs inspect`, relevant capabilities, and a full semantic snapshot; switch workspace A -> B -> A through advertised semantic targets; in each workspace open its marker file and the advertised skills surface and prove only that workspace's marker/skill is resolved; create an ordinary new conversation and prove before send that the composer is usable while Session-file and sidebar counts are unchanged; switch away/back and confirm no phantom item; run `bun run test:ui-validation:session-publication` to exercise first-assistant publication/failure semantics through the production-entry Developer Host; capture final semantic/native evidence; stop the run.
+- **Evidence:** Action receipts and bounded semantic trees for every state claim; renderer screenshots only for file/skills composition and absence-of-overlap claims; run/build/profile identity; before/during/after Session and workspace `.mortise` filesystem inventories; relevant `runtime.log`/host logs; publication-suite log; final process scan; profile-removal receipt; final clean Git status. A screenshot alone proves none of the persistence or authority claims.
+- **Primary acceptance:** Workspace switching changes file and skill resolution without cross-workspace leakage; the blank conversation has no durable file or sidebar identity before publication; the physical publication suite proves failure leaves no Session and success publishes exactly once at the first-assistant boundary; no project/global `.pi` path is read, created, or used as fallback within the isolated run; teardown removes the profile and all owned processes.
+- **Forbidden deviations:** No product edits, renderer-state mutation, arbitrary JavaScript/DOM probing, mock-only replacement, real-profile clone, fixed sleeps, WebUI substitution, manual handoff in the middle of the workflow, or destructive cleanup outside the run-owned profile/output.
+- **Stop / escalate:** If the current advertised CLI/GUI cannot expose workspace-local skill resolution, draft state, filesystem identity, or required Electron evidence, mark the corresponding gate unsupported and return `blocked`; do not infer it from source or fabricate an impossible state.
 
 ### EXT-BR-01-HSC - Declare the server-core test-only Pi dependency
 
@@ -207,6 +223,19 @@ The queue assumes the primary has first frozen a base revision and assigned isol
 - **Primary acceptance:** Positive tests cover every current level; negative tests reject `think` and `max`; production source contains no mapping for either literal.
 - **Stop / escalate:** Stop if a current UI or production default emits either value; report it for owner migration without adding a bridge.
 
+### EXT-LEG-01-ST - Align the spawn-session thinking-level schema
+
+- **Epic / class:** OPT-016 / mechanical contract repair.
+- **Prerequisite / order:** Run after the shared/config/Pi thinking-alias removals are present in the assigned base; independent of physical and build acceptance.
+- **Sole owner module:** `session-tooling`.
+- **Exact files:** `packages/session-tools-core/src/tool-defs.ts`; new `packages/session-tools-core/src/tool-defs-thinking-level.test.ts`.
+- **Objective:** Replace the retired `max` member in `SpawnSessionSchema.thinkingLevel` with the missing current `minimal` member.
+- **Canonical direction:** The host-neutral session-tool schema accepts exactly `off | minimal | low | medium | high | xhigh`, matching the current Mortise contract by value without importing a host package.
+- **Forbidden deviations:** Do not add `session-tools-core -> shared`, another dependency, an alias, normalization, fallback, migration, case folding, schema duplication outside the listed test, or unrelated tool-definition edits.
+- **Commands / evidence:** Focused test `bun test packages/session-tools-core/src/tool-defs-thinking-level.test.ts`; module regression `bun test packages/session-tools-core packages/session-mcp-server`; `bun run --cwd packages/session-tools-core typecheck`; production/reference scan for the exact spawn schema; dependency scan proving no `@mortise/shared` edge; scoped `git diff --check`.
+- **Primary acceptance:** Positive tests parse all six current values; negative tests reject `think` and `max`; the inferred/output schema contains no retired value; the package remains host-neutral and the final commit changes exactly the two listed files.
+- **Stop / escalate:** Stop if a current production caller still emits `think` or `max`, or if satisfying the test requires importing the shared package; return exact caller/dependency evidence without adding compatibility.
+
 ### EXT-LEG-02 - Rename the Craft-era local identifier
 
 - **Epic / class:** OPT-016 / mechanical symbol cleanup.
@@ -232,6 +261,20 @@ The queue assumes the primary has first frozen a base revision and assigned isol
 - **Commands / evidence:** Focused resolver and afterPack tests; target-platform installer command; artifact inventory/hash; isolated installed launch with retired resolver variables set and unset; filtered `runtime.log`; clean process/profile teardown.
 - **Primary acceptance:** The installer contains exactly one compiled runtime, logs its expected path/version, ignores retired selectors, exposes no JS candidate, and missing/tampered binary tests fail explicitly.
 - **Stop / escalate:** Stop if provenance cannot be tied to the clean build identity, signing/install authority is unavailable, or the installer consumes any pre-existing runtime.
+
+### EXT-BR-04 - Clean-checkout dependency, bundle, and source-start acceptance
+
+- **Epic / class:** OPT-014 / evidence-only clean-build acceptance.
+- **Prerequisite / order:** Run from the exact primary-frozen revision in a dedicated clean worktree with no pre-existing dependencies or build outputs. Independent of `EXT-LEG-01-ST` and `SES-E2-INT`; installer certification remains blocked by OPT-017.
+- **Sole owner module:** `build-release-observability`.
+- **Exact source scope (read/execute only):** root and workspace manifests; `bun.lock`; `pi/package-lock.json`; canonical build/graph/production-bundle entrypoints; source-only `mortise-ui` initialization path. Retained logs and inventories may be written only to ignored output or an external evidence directory.
+- **Objective:** Produce attributable clean-revision evidence that dependency declarations, the canonical package graph, build validation, production Node bundles, monorepo validation, and a source-development Electron initialization all operate from declared inputs without source edits or stale checkout artifacts.
+- **Required sequence:** Retain the clean preflight and ignored/untracked inventory; run `npm --prefix pi ci --ignore-scripts` and `bun install --frozen-lockfile`; audit both lockfiles and the manifest/lockfile edges for the Electron/server-core Pi test dependency while proving `session-tools-core` has no `@mortise/shared` edge; run `bun run test:build-validation`; run `bun run validate:production-node-bundles`; run `bun run validate:monorepo`; start one background fixture Electron run with source `mortise-ui`, retain its immutable build identity/status/semantic-ready snapshot, then stop it and verify process/profile cleanup.
+- **Evidence:** Exact commands, exit codes, durations, complete logs, source revision, environment/tool versions, pre/post ignored/untracked inventories, lockfile hashes, produced Node bundle/metafile hashes and provenance, package-graph diagnostics, monorepo sub-gate counts, `mortise-ui` build/run identity, startup logs, semantic readiness receipt, cleanup/process receipt, and final empty tracked/untracked Git status.
+- **Primary acceptance:** Frozen installs make no lockfile/source change; both manifest graphs and source-import graph are acyclic; intended test-only edges are declared without runtime coupling; production Node bundles originate from the assigned revision; monorepo validation and source-development initialization are green; no stale ignored input is silently accepted for any claim made by this packet.
+- **Forbidden deviations:** No source/manifest/lockfile edits, lockfile regeneration, test weakening, cache substitution, reuse of another worktree's dependencies/output, ignored binary claimed as source-built installer evidence, WebUI substitution for Electron startup, or unreported skipped/failed gate.
+- **Known blocked gate:** Do not claim installer or packaged-runtime acceptance while OPT-017 still permits an ignored/stale Pi binary input. Record installer evidence as `blocked by OPT-017` unless the assigned base already contains a separately accepted canonical source-pinned producer.
+- **Stop / escalate:** Stop the affected gate and retain diagnostics if a frozen install changes files, a build consumes unowned/stale output, source initialization cannot identify its pinned build, or cleanup leaves a process/profile behind. Continue only independent gates whose evidence remains valid.
 
 ### AUT-E1-MSG - Prove messaging no longer depends on the V2 prompt entry
 
