@@ -452,6 +452,25 @@ plansFolderPath: C:\\Users\\32858\\.pi\\agent\\sessions\\demo\\.mortise\\plans
     expect(await Bun.file(sessionFile).text()).toBe(before)
   })
 
+  it('rejects retired thinking metadata without rewriting the file', async () => {
+    writeJsonl(sessionFile, [{
+      type: 'session',
+      version: 3,
+      id: 'retired-thinking',
+      timestamp: '2026-07-01T00:00:00.000Z',
+      cwd: '/work/project',
+      mortise: {
+        id: 'retired-thinking',
+        thinkingLevel: 'think',
+      },
+    }])
+
+    const before = await Bun.file(sessionFile).text()
+    expect(readTreeSessionHeader(sessionFile)).toBeNull()
+    expect(readSessionJsonl(sessionFile)).toBeNull()
+    expect(await Bun.file(sessionFile).text()).toBe(before)
+  })
+
   it('persists projection-derived computed metadata instead of recalculating it from overlays', async () => {
     const stored = readSessionJsonl(sessionFile)
     expect(stored).not.toBeNull()

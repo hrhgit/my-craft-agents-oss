@@ -6,6 +6,18 @@ import { pathToFileURL } from 'url'
 import { THINKING_LEVEL_IDS } from '../../agent/thinking-levels.ts'
 
 const STORAGE_MODULE_PATH = pathToFileURL(join(import.meta.dir, '..', 'storage.ts')).href
+const BUNDLED_CONFIG_DEFAULTS_PATH = join(
+  import.meta.dir,
+  '..',
+  '..',
+  '..',
+  '..',
+  '..',
+  'apps',
+  'electron',
+  'resources',
+  'config-defaults.json',
+)
 
 function setupWorkspaceConfigDir() {
   const configDir = mkdtempSync(join(tmpdir(), 'mortise-config-thinking-'))
@@ -83,6 +95,18 @@ function runEval(configDir: string, code: string): string {
 }
 
 describe('default thinking level storage', () => {
+  it('ships a current thinking level in the bundled defaults', () => {
+    const bundledDefaults = JSON.parse(readFileSync(BUNDLED_CONFIG_DEFAULTS_PATH, 'utf-8')) as {
+      workspaceDefaults?: { thinkingLevel?: unknown }
+    }
+    const bundledLevel = bundledDefaults.workspaceDefaults?.thinkingLevel
+
+    expect(THINKING_LEVEL_IDS).toContain(bundledLevel as (typeof THINKING_LEVEL_IDS)[number])
+    expect(bundledLevel).toBe('medium')
+    expect(bundledLevel).not.toBe('think')
+    expect(bundledLevel).not.toBe('max')
+  })
+
   it('falls back to bundled default when no app-level default is set', () => {
     const { configDir } = setupWorkspaceConfigDir()
     const output = runEval(configDir, "console.log(String(getDefaultThinkingLevel()))")

@@ -115,6 +115,33 @@ export { sanitizeForTitle }
 // Module-level platform ref — set once during init via setSessionPlatform()
 let _platform: PlatformServices | null = null
 
+export class InvalidSessionThinkingLevelError extends TypeError {
+  readonly code = 'SESSION_THINKING_LEVEL_INVALID' as const
+  readonly thinkingLevel: unknown
+
+  constructor(thinkingLevel: unknown) {
+    super(`Session thinkingLevel is not supported: ${String(thinkingLevel)}`)
+    this.name = 'InvalidSessionThinkingLevelError'
+    this.thinkingLevel = thinkingLevel
+  }
+}
+
+export type AuthProviderResolution =
+  | { status: 'unconfigured' }
+  | { status: 'missing'; slug: string }
+  | { status: 'configured'; slug: string }
+
+export function resolveAuthProviderForReinitialization(
+  explicitProvider: string | undefined,
+  defaultProvider: string | undefined,
+  providers: Readonly<Record<string, unknown>>,
+): AuthProviderResolution {
+  const slug = explicitProvider || defaultProvider
+  if (!slug) return { status: 'unconfigured' }
+  if (providers[slug] === undefined) return { status: 'missing', slug }
+  return { status: 'configured', slug }
+}
+
 export class SessionProjectionPersistenceError extends Error {
   readonly code = 'SESSION_PROJECTION_PERSISTENCE_FAILED' as const
   readonly retryable = true
@@ -876,10 +903,6 @@ export function createManagedSession(
     Object.entries(s).filter(([, v]) => v !== undefined)
   ) as Partial<ManagedSession>
 
-  if ('thinkingLevel' in sourceFields && !isValidThinkingLevel(sourceFields.thinkingLevel)) {
-    delete sourceFields.thinkingLevel
-  }
-
   const managed = {
     // Spread all session-like fields from source (name, permissionMode, model, etc.)
     // This ensures new persistent fields automatically flow through without manual copying.
@@ -901,6 +924,10 @@ export function createManagedSession(
     // Caller overrides (permissionMode defaults, thinkingLevel, messagesLoaded, etc.)
     ...overrides,
   } as ManagedSession
+
+  if (managed.thinkingLevel !== undefined && !isValidThinkingLevel(managed.thinkingLevel)) {
+    throw new InvalidSessionThinkingLevelError(managed.thinkingLevel)
+  }
 
   if (managed.branchFromMessageId && !managed.branchContextStrategy) {
     managed.branchContextStrategy = managed.branchFromSdkSessionId
@@ -1750,22 +1777,26 @@ export class SessionManager implements ISessionManager {
    */
   async reinitializeAuth(provider?: string): Promise<void> {
     try {
-      // Get the connection to use (explicit parameter or default)
-      const slug = provider || readPiGlobalSettings().defaultProvider
-      if (!slug) {
-        sessionLog.warn('No provider key available for reinitializeAuth')
-      }
-      const connection = slug ? readPiGlobalProviders()[slug] : null
+      const resolution = resolveAuthProviderForReinitialization(
+        provider,
+        readPiGlobalSettings().defaultProvider,
+        readPiGlobalProviders(),
+      )
 
       // Restore managed auth env vars to their baseline before applying this connection.
       resetManagedAnthropicAuthEnvVars()
 
-      if (!connection) {
-        sessionLog.error(`No provider found for key: ${slug}`)
+      if (resolution.status === 'unconfigured') {
+        sessionLog.info('No provider configured; managed authentication state cleared')
         return
       }
 
-      sessionLog.info(`Reinitializing auth for provider: ${slug}`)
+      if (resolution.status === 'missing') {
+        sessionLog.error(`No provider found for key: ${resolution.slug}`)
+        return
+      }
+
+      sessionLog.info(`Reinitializing auth for provider: ${resolution.slug}`)
 
       // Pi is the only runtime provider. Credential routing is handled natively
       // by PiAgent via ~/.mortise/agent/auth.json — no env-var injection needed here.

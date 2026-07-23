@@ -5,7 +5,9 @@ import { join } from 'node:path'
 
 const noop = () => {}
 const scopedLogger = { info: noop, warn: noop, error: noop, debug: noop }
+const initialize = mock(() => {})
 const electronLog = {
+  initialize,
   transports: {
     file: { format: undefined, maxSize: 0, level: 'debug', getFile: () => undefined },
     console: { format: undefined, level: 'debug' },
@@ -15,7 +17,7 @@ const electronLog = {
 
 mock.module('electron-log/main', () => ({ default: electronLog }))
 
-const { BoundedAsyncDedicatedLogWriter } = await import('../logger')
+const { BoundedAsyncDedicatedLogWriter, initializeRendererLoggingBridge } = await import('../logger')
 
 const tempDirs: string[] = []
 
@@ -26,7 +28,16 @@ function tempPath(name = 'dedicated.log'): string {
 }
 
 afterEach(() => {
+  initialize.mockClear()
   for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true })
+})
+
+describe('renderer logging bridge', () => {
+  it('uses the Mortise bootstrap preload instead of registering another preload', () => {
+    initializeRendererLoggingBridge()
+
+    expect(initialize).toHaveBeenCalledWith({ preload: false })
+  })
 })
 
 describe('BoundedAsyncDedicatedLogWriter', () => {

@@ -91,7 +91,7 @@ export const SpawnSessionSchema = z.object({
   provider: z.string().optional().describe('Pi provider key (e.g., "anthropic", "openai")'),
   model: z.string().optional().describe('Model ID override'),
   permissionMode: z.enum(['safe', 'ask', 'allow-all']).optional().describe('Permission mode for the new session'),
-  thinkingLevel: z.enum(['off', 'low', 'medium', 'high', 'xhigh', 'max']).optional()
+  thinkingLevel: z.enum(['off', 'minimal', 'low', 'medium', 'high', 'xhigh']).optional()
     .describe('Reasoning level for the new session. Silently ignored on non-reasoning models (e.g. gpt-4o, gemini-2.5-flash). Omit to inherit the global default.'),
   attachments: z.array(z.object({
     path: z.string().describe('Absolute file path on disk'),

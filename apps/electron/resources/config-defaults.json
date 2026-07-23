@@ -37,7 +37,7 @@
     }
   },
   "workspaceDefaults": {
-    "thinkingLevel": "think",
+    "thinkingLevel": "medium",
     "permissionMode": "allow-all",
     "cyclablePermissionModes": ["safe", "allow-all"]
   }

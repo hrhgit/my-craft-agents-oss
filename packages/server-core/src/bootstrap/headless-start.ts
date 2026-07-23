@@ -152,7 +152,7 @@ const DEFAULT_LOCK_NAME = '.server.lock'
 interface LockPayload {
   pid: number
   startedAt: number
-  protocolVersion?: number
+  protocolVersion: number
   /** OS process creation time, used to detect same-boot PID reuse on Windows. */
   processStartedAt?: number
 }
@@ -200,7 +200,7 @@ function getProcessStartTime(pid: number): number | null {
 }
 
 /**
- * Parse the lock file content (JSON format: `{pid, startedAt}`).
+ * Parse only the current Mortise server-registration protocol.
  */
 function parseLockContent(raw: string): LockPayload | null {
   const trimmed = raw.trim()
@@ -208,15 +208,20 @@ function parseLockContent(raw: string): LockPayload | null {
   try {
     const parsed = JSON.parse(trimmed) as Record<string, unknown>
     const pid = typeof parsed.pid === 'number' ? parsed.pid : NaN
-    const startedAt = typeof parsed.startedAt === 'number' ? parsed.startedAt : 0
+    const startedAt = typeof parsed.startedAt === 'number' ? parsed.startedAt : NaN
     const processStartedAt = typeof parsed.processStartedAt === 'number' && Number.isFinite(parsed.processStartedAt)
       ? parsed.processStartedAt
       : undefined
-    const protocolVersion = typeof parsed.protocolVersion === 'number' ? parsed.protocolVersion : undefined
-    if (!isNaN(pid)) return {
+    if (
+      parsed.protocolVersion === SERVER_REGISTRY_PROTOCOL
+      && Number.isInteger(pid)
+      && pid > 0
+      && Number.isFinite(startedAt)
+      && startedAt > 0
+    ) return {
       pid,
       startedAt,
-      ...(protocolVersion !== undefined ? { protocolVersion } : {}),
+      protocolVersion: SERVER_REGISTRY_PROTOCOL,
       ...(processStartedAt !== undefined ? { processStartedAt } : {}),
     }
   } catch { /* invalid JSON */ }
@@ -248,7 +253,6 @@ export function isProcessIdentityMismatch(
  * the PID has been reused by an unrelated process.
  */
 function isLockFromPreviousBoot(startedAt: number): boolean {
-  if (startedAt <= 0) return false // legacy lock without timestamp — can't tell
   const bootTime = Date.now() - osUptime() * 1000
   return startedAt < bootTime
 }
@@ -287,7 +291,6 @@ function writeCoordinator(lockFile: string, payload: LockPayload): void {
 export function acquireServerLock(logger: PlatformServices['logger'], lockFile: string): void {
   void logger
   withFileLockSync(`${lockFile}.registry`, () => {
-    const existing = existsSync(lockFile) ? parseLockContent(readFileSync(lockFile, 'utf8')) : null
     const directory = registrationDirectory(lockFile)
     mkdirSync(directory, { recursive: true })
     for (const filePath of registrationFiles(lockFile)) {

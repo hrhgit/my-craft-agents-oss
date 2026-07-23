@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { createManagedSession } from './SessionManager.ts'
+import { createManagedSession, InvalidSessionThinkingLevelError } from './SessionManager.ts'
 
 describe('createManagedSession', () => {
   const workspace = {
@@ -9,13 +9,11 @@ describe('createManagedSession', () => {
     createdAt: Date.now(),
   }
 
-  it('drops removed thinkingLevel values instead of migrating them on restore', () => {
-    const managed = createManagedSession({
-      mortiseId: 'session_legacy',
-      thinkingLevel: 'think' as any,
-    }, workspace as any)
-
-    expect(managed.thinkingLevel).toBeUndefined()
+  it('rejects retired thinkingLevel values instead of migrating them on restore', () => {
+    expect(() => createManagedSession({
+      mortiseId: 'session_retired',
+      thinkingLevel: 'think' as never,
+    }, workspace as never)).toThrow(InvalidSessionThinkingLevelError)
   })
 
   it('preserves a canonical thinking level on restore', () => {
@@ -27,12 +25,10 @@ describe('createManagedSession', () => {
     expect(managed.thinkingLevel).toBe('medium')
   })
 
-  it('drops invalid thinking levels instead of leaking them into runtime state', () => {
-    const managed = createManagedSession({
+  it('rejects invalid thinking levels instead of leaking them into runtime state', () => {
+    expect(() => createManagedSession({
       mortiseId: 'session_invalid',
-      thinkingLevel: 'ultra' as any,
-    }, workspace as any)
-
-    expect(managed.thinkingLevel).toBeUndefined()
+      thinkingLevel: 'ultra' as never,
+    }, workspace as never)).toThrow(InvalidSessionThinkingLevelError)
   })
 })

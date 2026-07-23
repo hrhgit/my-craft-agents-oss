@@ -17,6 +17,7 @@
  */
 
 import '@sentry/electron/preload'
+import 'electron-log/preload'
 import { contextBridge, ipcRenderer, shell, webUtils } from 'electron'
 import { WsRpcClient, type TransportConnectionState } from '@mortise/server-core/transport'
 import { RoutedClient } from '../transport/routed-client'

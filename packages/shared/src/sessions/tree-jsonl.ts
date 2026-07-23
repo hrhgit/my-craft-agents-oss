@@ -26,6 +26,7 @@ import { atomicWriteFile } from '../utils/files.ts';
 import { stripLeadingMortiseInjectedUserContext } from '../prompts/strip-injected-user-context.ts';
 import { applyPlanCustomMessageToStored } from './plan-artifact-projection.ts';
 import type { PlanModeStateV1 } from '@mortise/core/types';
+import { isValidThinkingLevel } from '../agent/thinking-levels.ts';
 
 /**
  * On-disk shape of Mortise extension fields in Pi tree JSONL v3 header.
@@ -431,6 +432,7 @@ export function isTreeSessionHeader(value: unknown): value is TreeSessionHeader 
     || typeof value.cwd !== 'string') return false;
   const mortise = value.mortise;
   if (isRecord(mortise) && REMOVED_MORTISE_METADATA_FIELDS.some(field => field in mortise)) return false;
+  if (isRecord(mortise) && 'thinkingLevel' in mortise && !isValidThinkingLevel(mortise.thinkingLevel)) return false;
   return true;
 }
 

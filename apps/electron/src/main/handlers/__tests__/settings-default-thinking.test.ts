@@ -5,7 +5,7 @@ import type { HandlerDeps } from '../handler-deps'
 
 type HandlerFn = (ctx: { clientId: string }, ...args: any[]) => Promise<any> | any
 
-const getDefaultThinkingLevelMock = mock(() => 'think')
+const getDefaultThinkingLevelMock = mock(() => 'medium')
 const setDefaultThinkingLevelMock = mock((_level: string) => true)
 const getMidStreamBehaviorMock = mock(() => 'steer')
 const setMidStreamBehaviorMock = mock((_behavior: string) => true)
@@ -84,7 +84,7 @@ describe('settings default thinking RPC handlers', () => {
     expect(getHandler).toBeTruthy()
 
     const result = await getHandler!({ clientId: 'client-1' })
-    expect(result).toBe('think')
+    expect(result).toBe('medium')
     expect(getDefaultThinkingLevelMock).toHaveBeenCalledTimes(1)
   })
 
@@ -98,13 +98,12 @@ describe('settings default thinking RPC handlers', () => {
     expect(setDefaultThinkingLevelMock).toHaveBeenCalledTimes(1)
   })
 
-  it('normalizes legacy max before persistence', async () => {
+  it.each(['think', 'max'])('rejects retired thinking level %s before persistence', async (level) => {
     const setHandler = handlers.get(RPC_CHANNELS.settings.SET_DEFAULT_THINKING_LEVEL)
     expect(setHandler).toBeTruthy()
 
-    const result = await setHandler!({ clientId: 'client-1' }, 'max')
-    expect(result).toEqual({ success: true })
-    expect(setDefaultThinkingLevelMock).toHaveBeenCalledWith('xhigh')
+    await expect(setHandler!({ clientId: 'client-1' }, level)).rejects.toThrow('Invalid thinking level')
+    expect(setDefaultThinkingLevelMock).not.toHaveBeenCalled()
   })
 
   it('rejects invalid thinking level values before persistence', async () => {

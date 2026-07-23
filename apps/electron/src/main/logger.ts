@@ -76,6 +76,13 @@ export const handlerLog = log.scope('handler')
 export const windowLog = log.scope('window')
 export const agentLog = log.scope('agent')
 export const searchLog = log.scope('search')
+export const rootLog = log
+
+export function initializeRendererLoggingBridge(): void {
+  // Mortise owns one preload. The existing bootstrap preload installs the
+  // renderer bridge, so electron-log must not register a second preload.
+  log.initialize({ preload: false })
+}
 
 const CONFIG_DIR = process.env.MORTISE_CONFIG_DIR || join(homedir(), '.mortise')
 

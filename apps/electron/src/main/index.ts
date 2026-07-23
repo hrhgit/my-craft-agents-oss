@@ -136,7 +136,7 @@ import { handleDeepLink } from './deep-link'
 import { BrowserPaneManager } from './browser-pane-manager'
 import { createBrowserCapabilityAdapter } from './browser-capability-adapter'
 import { registerThumbnailScheme, registerThumbnailHandler } from './thumbnail-protocol'
-import log, { isDebugMode, mainLog, getLogFilePath, getMessagingGatewayLogFilePath, messagingGatewayLog, autoUpdateLog, flushDedicatedLogs, flushDedicatedLogsSync } from './logger'
+import { isDebugMode, mainLog, getLogFilePath, getMessagingGatewayLogFilePath, messagingGatewayLog, autoUpdateLog, flushDedicatedLogs, flushDedicatedLogsSync, initializeRendererLoggingBridge, rootLog } from './logger'
 import { setPerfEnabled, enableDebug } from '@mortise/shared/utils'
 import { initNotificationService, initBadgeIcon, initInstanceBadge, updateBadgeCount, showNotification } from './notifications'
 import { setAutoUpdateEventSink, isUpdating, setBeforeUpdateQuitHook } from './auto-update'
@@ -165,7 +165,7 @@ if (__MORTISE_UI_VALIDATION_BUILD__ && process.env.MORTISE_UI_TEST_HOST === '1' 
 }
 
 // Initialize electron-log for renderer process support
-log.initialize()
+initializeRendererLoggingBridge()
 
 const electronResourcePaths = resolveElectronResourcePaths({
   isPackaged: app.isPackaged,
@@ -575,7 +575,7 @@ app.whenReady().then(async () => {
       nativeImage,
       shell,
       nativeTheme,
-      logger: log,
+      logger: rootLog,
       isDebugMode,
       getLogFilePath,
       captureError: (err) => Sentry.captureException(err),

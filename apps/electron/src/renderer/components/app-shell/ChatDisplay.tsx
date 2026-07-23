@@ -180,7 +180,7 @@ interface ChatDisplayProps {
     options?: import('../../../shared/types').PermissionResponseOptions
   ) => void
   // Thinking level (session-level setting)
-  /** Current thinking level ('off', 'think', 'max') */
+  /** Current thinking level ('off', 'minimal', 'low', 'medium', 'high', 'xhigh') */
   thinkingLevel?: ThinkingLevel
   /** Callback when thinking level changes */
   onThinkingLevelChange?: (level: ThinkingLevel) => void
