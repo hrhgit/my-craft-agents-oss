@@ -5,7 +5,10 @@ import {
   createProductionBundleEnvironment,
   productionBundleCommand,
 } from '../validate-production-bundles'
-import { createProductionNodeBundleTargets } from '../validate-production-node-bundles'
+import {
+  createProductionNodeBundleTargets,
+  resolvePiWorkspaceSourceImport,
+} from '../validate-production-node-bundles'
 
 const repositoryRoot = resolve(import.meta.dir, '../../..')
 
@@ -29,7 +32,21 @@ describe('production bundle validation composition', () => {
       expect(target.options.alias?.['@mortise/shared/protocol']).toBe(
         resolve(repositoryRoot, 'packages/shared/src/protocol/production.ts'),
       )
+      expect(target.options.plugins?.map(plugin => plugin.name)).toContain('mortise-pi-workspace-source')
     }
+  })
+
+  test('resolves public Pi workspace exports from source without requiring generated dist files', () => {
+    expect(resolvePiWorkspaceSourceImport('@mortise/pi-coding-agent/rpc', repositoryRoot)).toBe(
+      resolve(repositoryRoot, 'pi/packages/coding-agent/src/modes/rpc/public.ts'),
+    )
+    expect(resolvePiWorkspaceSourceImport('@mortise/pi-ai/oauth', repositoryRoot)).toBe(
+      resolve(repositoryRoot, 'pi/packages/ai/src/oauth.ts'),
+    )
+    expect(resolvePiWorkspaceSourceImport('@mortise/pi-tui', repositoryRoot)).toBe(
+      resolve(repositoryRoot, 'pi/packages/tui/src/index.ts'),
+    )
+    expect(resolvePiWorkspaceSourceImport('@mortise/shared', repositoryRoot)).toBeUndefined()
   })
 
   test('forces the packaging production mode and executes the canonical Electron build', () => {

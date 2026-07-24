@@ -1,8 +1,70 @@
-import { build, type BuildOptions } from 'esbuild'
+import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { build, type BuildOptions, type Plugin } from 'esbuild'
 
 const repositoryRoot = resolve(import.meta.dir, '../..')
 const productionProtocolEntry = resolve(repositoryRoot, 'packages/shared/src/protocol/production.ts')
+const piWorkspacePackages = new Map([
+  ['@mortise/pi-agent-core', 'pi/packages/agent'],
+  ['@mortise/pi-ai', 'pi/packages/ai'],
+  ['@mortise/pi-coding-agent', 'pi/packages/coding-agent'],
+  ['@mortise/pi-tui', 'pi/packages/tui'],
+])
+
+interface PiWorkspacePackageManifest {
+  main?: string
+  exports?: Record<string, string | { import?: string; default?: string }>
+}
+
+function exportedImportTarget(
+  manifest: PiWorkspacePackageManifest,
+  subpath: string,
+): string | undefined {
+  const exported = manifest.exports?.[subpath]
+  if (typeof exported === 'string') return exported
+  if (exported) return exported.import ?? exported.default
+  return subpath === '.' ? manifest.main : undefined
+}
+
+export function resolvePiWorkspaceSourceImport(
+  specifier: string,
+  root = repositoryRoot,
+): string | undefined {
+  const workspacePackage = [...piWorkspacePackages].find(([name]) => (
+    specifier === name || specifier.startsWith(`${name}/`)
+  ))
+  if (!workspacePackage) return undefined
+
+  const [packageName, relativeDirectory] = workspacePackage
+  const packageDirectory = resolve(root, relativeDirectory)
+  const manifest = JSON.parse(
+    readFileSync(resolve(packageDirectory, 'package.json'), 'utf8'),
+  ) as PiWorkspacePackageManifest
+  const subpath = specifier === packageName ? '.' : `.${specifier.slice(packageName.length)}`
+  const builtTarget = exportedImportTarget(manifest, subpath)
+  const match = builtTarget?.match(/^(?:\.\/)?dist\/(.+)\.(?:mjs|cjs|js)$/)
+  if (!match) {
+    throw new Error(`Pi workspace import ${specifier} has no public compiled JavaScript export`)
+  }
+
+  for (const extension of ['.ts', '.tsx', '.mts', '.cts']) {
+    const sourcePath = resolve(packageDirectory, `src/${match[1]}${extension}`)
+    if (existsSync(sourcePath)) return sourcePath
+  }
+  throw new Error(`Pi workspace import ${specifier} has no source entry for ${builtTarget}`)
+}
+
+function createPiWorkspaceSourcePlugin(root: string): Plugin {
+  return {
+    name: 'mortise-pi-workspace-source',
+    setup(buildContext) {
+      buildContext.onResolve({ filter: /^@mortise\/pi-/ }, args => {
+        const sourcePath = resolvePiWorkspaceSourceImport(args.path, root)
+        return sourcePath ? { path: sourcePath } : undefined
+      })
+    },
+  }
+}
 
 export interface ProductionNodeBundleTarget {
   label: string
@@ -27,6 +89,7 @@ export function createProductionNodeBundleTargets(root = repositoryRoot): Produc
         target: 'node20',
         external: ['electron'],
         alias: { '@mortise/shared/protocol': protocolEntry },
+        plugins: [createPiWorkspaceSourcePlugin(root)],
         define: productionDefines,
         banner: {
           js: "import { createRequire as __mortiseCreateRequire } from 'node:module'; import { fileURLToPath as __mortiseFileURLToPath } from 'node:url'; import { dirname as __mortiseDirname } from 'node:path'; var require = __mortiseCreateRequire(import.meta.url); var __filename = __mortiseFileURLToPath(import.meta.url); var __dirname = __mortiseDirname(__filename);",
@@ -50,6 +113,7 @@ export function createProductionNodeBundleTargets(root = repositoryRoot): Produc
           'node-fetch': resolve(root, 'apps/electron/src/main/shims/node-fetch.cjs'),
           'abort-controller': resolve(root, 'apps/electron/src/main/shims/abort-controller.cjs'),
         },
+        plugins: [createPiWorkspaceSourcePlugin(root)],
         define: {
           ...productionDefines,
           '__MORTISE_UI_VALIDATION_BUILD__': 'false',
@@ -81,6 +145,7 @@ export function createProductionNodeBundleTargets(root = repositoryRoot): Produc
         format: 'cjs',
         external: ['electron'],
         alias: { '@mortise/shared/protocol': protocolEntry },
+        plugins: [createPiWorkspaceSourcePlugin(root)],
         define: {
           ...productionDefines,
           '__MORTISE_UI_VALIDATION_BUILD__': 'false',
