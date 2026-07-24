@@ -127,7 +127,7 @@ validation:
   - { id: monorepo-contract, kind: contract, command: "bun run validate:monorepo", description: "Verify monorepo package and dependency contracts.", triggers: [contract-change], required: true, evidence: "Validation exit status and diagnostics." }
   - { id: production-bundles, kind: integration, command: "bun run validate:production-bundles", description: "Run the complete production Electron build consumed by packaging.", triggers: [ci-change, release], required: true, evidence: "Production main, workspace server, preload, renderer, and resource build exit status." }
   - { id: ci-integration, kind: integration, command: "bun run validate:ci", description: "Run the repository CI validation composition.", triggers: [release, ci-change], required: true, evidence: "CI validation exit status and output." }
-scope_digest: b74190a86a28feeb58545fbdde9f9be652a54ca9
+scope_digest: 2dc704f25f3677db24119c34319d485d9dbb644b
 ---
 
 ## Purpose
@@ -158,7 +158,7 @@ Run the in-memory production Node bundle gate frequently, retain the complete pr
 Bundled binaries and lockfiles are large shared surfaces; concurrent regeneration can overwrite another build's artifacts.
 
 ## Semantic history
-- 2026-07-24: Replaced the CI package-graph gate's full TypeScript AST traversal with structured dependency preprocessing and constant-time workspace package resolution, restoring the frozen scan budget without weakening supported import forms.
+- 2026-07-24: Replaced the CI package-graph gate's full TypeScript AST traversal with deterministic concurrent source pre-reading, structured dependency preprocessing, and constant-time workspace package resolution, restoring the frozen scan budget without weakening supported import forms.
 - 2026-07-24: Archived OPT-010 after current-owner contracts and isolated Electron runs proved workspace-root authority, assistant-backed publication, rejection recovery, restart persistence, and complete cleanup.
 - 2026-07-24: Added durable architecture-v2 acceptance manifests so archived optimization claims bind code revisions, routed ownership, reproducible commands, and hashed local evidence without treating ignored output paths as the acceptance record.
 - 2026-07-24: Reconciled the legacy cleanup inventory with the completed canonical contracts and kept future user-owned data deletion outside runtime acceptance behind fresh exact-path confirmation.

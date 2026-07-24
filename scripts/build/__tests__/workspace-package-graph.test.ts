@@ -155,12 +155,26 @@ async function sourceDependencyGraph(
     const declared = new Set(dependencyNames(pkg.manifest, true))
     const imported = new Set<string>()
     const glob = new Bun.Glob('src/**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}')
+    const packageFiles: Array<{ absoluteFile: string; fileId: string }> = []
 
     for await (const file of glob.scan({ cwd: pkg.directory, onlyFiles: true })) {
       const absoluteFile = resolve(pkg.directory, file)
       const fileId = relative(repositoryRoot, absoluteFile).replaceAll('\\', '/')
-      const fileStart = performance.now()
-      const source = readFileSync(absoluteFile, 'utf8')
+      packageFiles.push({ absoluteFile, fileId })
+    }
+
+    const sources = await Promise.all(
+      packageFiles
+        .sort((a, b) => a.fileId.localeCompare(b.fileId))
+        .map(async file => {
+          const readStart = performance.now()
+          const source = await Bun.file(file.absoluteFile).text()
+          return { ...file, source, readMs: performance.now() - readStart }
+        }),
+    )
+
+    for (const { fileId, source, readMs } of sources) {
+      const parseStart = performance.now()
       for (const specifier of moduleSpecifiers(source)) {
         const parts = specifier.split('/')
         const packageNameRoot = specifier.startsWith('@') ? parts.slice(0, 2).join('/') : parts[0]
@@ -171,7 +185,7 @@ async function sourceDependencyGraph(
           undeclared.push(`${fileId}: ${dependency}`)
         }
       }
-      const fileMs = Number((performance.now() - fileStart).toFixed(2))
+      const fileMs = Number((readMs + performance.now() - parseStart).toFixed(2))
       slowestFile = keepSlower(slowestFile, { id: fileId, ms: fileMs })
     }
     graph.set(packageName, [...imported].sort())
