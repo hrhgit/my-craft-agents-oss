@@ -117,38 +117,10 @@ function findCycle(graph: ReadonlyMap<string, readonly string[]>): string[] | nu
   return null
 }
 
-function moduleSpecifiers(source: string, fileName: string): string[] {
-  const sourceFile = ts.createSourceFile(
-    fileName,
-    source,
-    ts.ScriptTarget.Latest,
-    false,
-    fileName.endsWith('x') ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
-  )
-  const specifiers = new Set<string>()
-
-  const addLiteral = (node: ts.Node | undefined): void => {
-    if (node && ts.isStringLiteralLike(node)) specifiers.add(node.text)
-  }
-
-  const visit = (node: ts.Node): void => {
-    if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) {
-      addLiteral(node.moduleSpecifier)
-    } else if (ts.isImportEqualsDeclaration(node)
-      && ts.isExternalModuleReference(node.moduleReference)) {
-      addLiteral(node.moduleReference.expression)
-    } else if (ts.isCallExpression(node)
-      && (node.expression.kind === ts.SyntaxKind.ImportKeyword
-        || (ts.isIdentifier(node.expression) && node.expression.text === 'require'))) {
-      addLiteral(node.arguments[0])
-    } else if (ts.isImportTypeNode(node) && ts.isLiteralTypeNode(node.argument)) {
-      addLiteral(node.argument.literal)
-    }
-    ts.forEachChild(node, visit)
-  }
-
-  visit(sourceFile)
-  return [...specifiers]
+function moduleSpecifiers(source: string): string[] {
+  return [...new Set(
+    ts.preProcessFile(source, true, true).importedFiles.map(reference => reference.fileName),
+  )]
 }
 
 async function sourceDependencyGraph(
@@ -159,7 +131,9 @@ async function sourceDependencyGraph(
   slowestPackage: SlowestEntry | null
   slowestFile: SlowestEntry | null
 }> {
-  const packageNames = packages.map(pkg => pkg.manifest.name).filter((name): name is string => Boolean(name))
+  const packageNames = new Set(
+    packages.map(pkg => pkg.manifest.name).filter((name): name is string => Boolean(name)),
+  )
   const graph = new Map<string, string[]>()
   const undeclared: string[] = []
   let slowestPackage: SlowestEntry | null = null
@@ -187,8 +161,10 @@ async function sourceDependencyGraph(
       const fileId = relative(repositoryRoot, absoluteFile).replaceAll('\\', '/')
       const fileStart = performance.now()
       const source = readFileSync(absoluteFile, 'utf8')
-      for (const specifier of moduleSpecifiers(source, absoluteFile)) {
-        const dependency = packageNames.find(name => specifier === name || specifier.startsWith(`${name}/`))
+      for (const specifier of moduleSpecifiers(source)) {
+        const parts = specifier.split('/')
+        const packageNameRoot = specifier.startsWith('@') ? parts.slice(0, 2).join('/') : parts[0]
+        const dependency = packageNames.has(packageNameRoot) ? packageNameRoot : undefined
         if (!dependency || dependency === packageName) continue
         imported.add(dependency)
         if (!declared.has(dependency)) {
@@ -207,6 +183,28 @@ async function sourceDependencyGraph(
 }
 
 describe('workspace package graph', () => {
+  test('extracts module references without treating comments or strings as imports', () => {
+    const source = [
+      'import "@mortise/core"',
+      'export { value } from "@mortise/shared/protocol"',
+      'const lazy = import("@mortise/ui")',
+      'const commonJs = require("@mortise/server-core")',
+      'import piAi = require("@mortise/pi-ai")',
+      'type SessionTools = import("@mortise/session-tools-core").SessionTools',
+      'const ignored = \'import "@mortise/not-real"\'',
+      '// require("@mortise/also-not-real")',
+    ].join('\n')
+
+    expect(moduleSpecifiers(source)).toEqual([
+      '@mortise/core',
+      '@mortise/shared/protocol',
+      '@mortise/ui',
+      '@mortise/server-core',
+      '@mortise/pi-ai',
+      '@mortise/session-tools-core',
+    ])
+  })
+
   test('has no manifest or source-import dependency cycles', async () => {
     const timings: PhaseTiming[] = []
     const overallStart = performance.now()

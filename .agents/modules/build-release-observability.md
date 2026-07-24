@@ -127,7 +127,7 @@ validation:
   - { id: monorepo-contract, kind: contract, command: "bun run validate:monorepo", description: "Verify monorepo package and dependency contracts.", triggers: [contract-change], required: true, evidence: "Validation exit status and diagnostics." }
   - { id: production-bundles, kind: integration, command: "bun run validate:production-bundles", description: "Run the complete production Electron build consumed by packaging.", triggers: [ci-change, release], required: true, evidence: "Production main, workspace server, preload, renderer, and resource build exit status." }
   - { id: ci-integration, kind: integration, command: "bun run validate:ci", description: "Run the repository CI validation composition.", triggers: [release, ci-change], required: true, evidence: "CI validation exit status and output." }
-scope_digest: b61a913301c3a7317ca047d69e53951754e153bb
+scope_digest: b74190a86a28feeb58545fbdde9f9be652a54ca9
 ---
 
 ## Purpose
@@ -158,6 +158,8 @@ Run the in-memory production Node bundle gate frequently, retain the complete pr
 Bundled binaries and lockfiles are large shared surfaces; concurrent regeneration can overwrite another build's artifacts.
 
 ## Semantic history
+- 2026-07-24: Replaced the CI package-graph gate's full TypeScript AST traversal with structured dependency preprocessing and constant-time workspace package resolution, restoring the frozen scan budget without weakening supported import forms.
+- 2026-07-24: Archived OPT-010 after current-owner contracts and isolated Electron runs proved workspace-root authority, assistant-backed publication, rejection recovery, restart persistence, and complete cleanup.
 - 2026-07-24: Added durable architecture-v2 acceptance manifests so archived optimization claims bind code revisions, routed ownership, reproducible commands, and hashed local evidence without treating ignored output paths as the acceptance record.
 - 2026-07-24: Reconciled the legacy cleanup inventory with the completed canonical contracts and kept future user-owned data deletion outside runtime acceptance behind fresh exact-path confirmation.
 - 2026-07-24: Removed ownership declarations for the deleted Craft user-data migration scripts and made the packaged workspace thinking default a current Mortise value.
@@ -176,5 +178,3 @@ Bundled binaries and lockfiles are large shared surfaces; concurrent regeneratio
 - 2026-07-22: Verified typed publication and existing-Session durability recovery through six isolated production-entry runs, including pre-accept retry, settlement-only recovery, retained baseline cleanup, and same-profile restart without duplicate canonical writes.
 - 2026-07-22: Verified draft-only first-turn Session publication with retained failure, same-profile restart, successful assistant-backed publication, and reload evidence from the production-entry Developer Host.
 - 2026-07-22: Added a canonical workspace package-graph gate that enumerates root workspaces, rejects runtime/build/source-import cycles and undeclared cross-package imports, and runs in CI build validation.
-- 2026-07-21: Declared audited export-only UI barrels side-effect-free for Rollup tree shaking and made production renderer builds enforce budgets against each HTML entry's complete transitive static dependency graph rather than individual chunk names.
-- 2026-07-21: Moved network-interceptor rich-tool configuration reads from the retired JSON cache to the shared SQLite-backed global configuration authority.

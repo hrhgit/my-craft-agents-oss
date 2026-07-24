@@ -12,6 +12,7 @@ The final table contains items accepted before that report schema and retained a
 
 | ID | Verified invariant | Review identity and durable evidence |
 |---|---|---|
+| OPT-010 | The selected workspace root is the sole Session path authority; retired `session.workingDirectory` input is typed-rejected, drafts remain unpublished until first-assistant durability, and failure/retry/restart preserve one canonical Session. | Reviewed implementation checkpoint `84b160a53706ef77efba02ca3bd55bef7a4ed396`; accepted code revision `29699ce24006a34c676f47a3524e402019f2a3c8`; primary review under `architecture-v2`; manifest [`optimization-evidence/opt-010-2026-07-24.md`](./optimization-evidence/opt-010-2026-07-24.md), SHA-256 `1936194080910cc7f818453b05aa2573c31bab7a4c6b634c39ed971dbd4a8c61`. |
 | OPT-016 | Mortise runtime uses only current Mortise contracts and roots, never imports historical Sessions, rejects retired thinking levels and Session tool aliases, and keeps user-owned cleanup outside runtime behavior. | Baseline `5fb41ca6d8e6092f77e0403f3cc9a2fc5f4a02e4`; accepted code revision `a640418eb2f1113cab104028f44556c2addcc6e0`; primary review under `architecture-v2`; manifest [`optimization-evidence/opt-016-2026-07-24.md`](./optimization-evidence/opt-016-2026-07-24.md), SHA-256 `eb532e283f280b0f25f41ab720b9db81d9628b572eaa3f63e2a32e50185b023d`. |
 
 ## Legacy-v1 acceptances

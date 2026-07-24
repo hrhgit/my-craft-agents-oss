@@ -1,22 +1,20 @@
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import type { AddressInfo } from "node:net";
 import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
 import { streamAnthropic } from "../src/providers/anthropic.ts";
 import type { Context, Model, Tool } from "../src/types.ts";
 
 interface CapturedRequest {
-	headers: IncomingMessage["headers"];
+	headers: Record<string, string>;
 	body: Record<string, unknown>;
 }
 
-function createModel(baseUrl: string, compat?: Model<"anthropic-messages">["compat"]): Model<"anthropic-messages"> {
+function createModel(compat?: Model<"anthropic-messages">["compat"]): Model<"anthropic-messages"> {
 	return {
 		id: "claude-opus-4-8",
 		name: "Claude Opus 4.8",
 		api: "anthropic-messages",
 		provider: "test-anthropic",
-		baseUrl,
+		baseUrl: "https://api.anthropic.test",
 		reasoning: true,
 		input: ["text"],
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
@@ -39,49 +37,31 @@ function createContext(tools: Tool[] = [tool]): Context {
 	};
 }
 
-async function readRequestBody(request: IncomingMessage): Promise<Record<string, unknown>> {
-	const chunks: Buffer[] = [];
-	for await (const chunk of request) {
-		chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-	}
-	return JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, unknown>;
-}
-
-function writeEmptySseResponse(response: ServerResponse): void {
-	response.writeHead(200, { "content-type": "text/event-stream" });
-	response.end();
-}
-
 async function captureAnthropicRequest(
 	compat: Model<"anthropic-messages">["compat"],
 	context: Context,
 ): Promise<CapturedRequest> {
 	let capturedRequest: CapturedRequest | undefined;
-
-	const server = createServer(async (request, response) => {
+	const httpFetch = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+		const request = new Request(input, init);
 		capturedRequest = {
-			headers: request.headers,
-			body: await readRequestBody(request),
+			headers: Object.fromEntries(request.headers.entries()),
+			body: (await request.json()) as Record<string, unknown>,
 		};
-		writeEmptySseResponse(response);
+		return new Response("", {
+			status: 200,
+			headers: { "content-type": "text/event-stream" },
+		});
+	};
+
+	const stream = streamAnthropic(createModel(compat), context, {
+		apiKey: "test-key",
+		cacheRetention: "none",
+		httpFetch: httpFetch as typeof fetch,
 	});
 
-	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-	const address = server.address() as AddressInfo;
-
-	try {
-		const stream = streamAnthropic(createModel(`http://127.0.0.1:${address.port}`, compat), context, {
-			apiKey: "test-key",
-			cacheRetention: "none",
-		});
-
-		for await (const event of stream) {
-			if (event.type === "done" || event.type === "error") break;
-		}
-	} finally {
-		await new Promise<void>((resolve, reject) => {
-			server.close((error) => (error ? reject(error) : resolve()));
-		});
+	for await (const event of stream) {
+		if (event.type === "done" || event.type === "error") break;
 	}
 
 	if (!capturedRequest) {

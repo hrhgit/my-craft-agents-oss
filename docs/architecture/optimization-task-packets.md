@@ -69,14 +69,13 @@ List unresolved dependencies, assumptions, deliberate omissions, remaining match
 
 ## Execution order
 
-1. Run `SES-E1-SL` first, then `SES-E1-AS` and `SES-E1-ND` against the approved Session boundary. Each packet is independently owned; the primary agent integrates and runs the cross-module Session contract.
-2. Prepare `EXT-BR-01-HSC`, then let `EXT-BR-01-BR` generate the Electron manifest and lockfile in a private integration worktree containing the HSC patch; the primary publishes all three files atomically. `EXT-BR-02` is otherwise independent.
-3. For the V2 automation entry, run `AUT-E1-MSG` as the caller/interface preflight. The primary then freezes `executeAutomationPromptAction` as the canonical V3 replacement and assigns `AUT-E1-HSC` and `AUT-E1-SL` against the same base. Those two removal patches are integrated atomically; neither agent may design a bridge or merge a temporarily incompatible interface. Run `AUT-E2` only after `SES-E1-ND` is integrated because both packets edit the same native test file.
-4. Run `AUT-P1`; then `AUT-P2` and `AUT-P4` may proceed in parallel; run `AUT-P3` after their contracts settle. Run `AUT-E3` only after all three `AUT-E1` packets, `AUT-E2`, and `AUT-P1..P4` are integrated.
-5. Resolve `OPT-017`'s canonical binary producer and clean-checkout build defect before `EXT-BR-03`; otherwise installer evidence can accidentally certify a stale ignored executable.
-6. Run the pre-split half of `HEAD-E1` before `HEAD-P1`. Complete `HEAD-P1`, then `HEAD-P2`, then `HEAD-P3`. After the OPT-017 producer is integrated, run the post-split half of `HEAD-E1`, followed by `HEAD-E2` and finally `HEAD-E3`. Only one `build-release-observability` writer may modify shared build entrypoints at a time.
-7. The primary agent runs route/impact review, clean-checkout production gates, surface-proportional runtime acceptance, and the active checklist audit after each epic converges.
-8. In the current recovery pass, `EXT-BR-04` is evidence-only and leaves source unchanged. The primary retains `SES-P2-INT` because the current typed fixture contract rejects reserved workspace `.mortise` metadata and cannot yet seed the required skill state without crossing the validation boundary.
+1. Prepare `EXT-BR-01-HSC`, then let `EXT-BR-01-BR` generate the Electron manifest and lockfile in a private integration worktree containing the HSC patch; the primary publishes all three files atomically. `EXT-BR-02` is otherwise independent.
+2. For the V2 automation entry, run `AUT-E1-MSG` as the caller/interface preflight. The primary then freezes `executeAutomationPromptAction` as the canonical V3 replacement and assigns `AUT-E1-HSC` and `AUT-E1-SL` against the same base. Those two removal patches are integrated atomically; neither agent may design a bridge or merge a temporarily incompatible interface.
+3. Run `AUT-P1`; then `AUT-P2` and `AUT-P4` may proceed in parallel; run `AUT-P3` after their contracts settle. Run `AUT-E3` only after all three `AUT-E1` packets, `AUT-E2`, and `AUT-P1..P4` are integrated.
+4. Resolve `OPT-017`'s canonical binary producer and clean-checkout build defect before `EXT-BR-03`; otherwise installer evidence can accidentally certify a stale ignored executable.
+5. Run the pre-split half of `HEAD-E1` before `HEAD-P1`. Complete `HEAD-P1`, then `HEAD-P2`, then `HEAD-P3`. After the OPT-017 producer is integrated, run the post-split half of `HEAD-E1`, followed by `HEAD-E2` and finally `HEAD-E3`. Only one `build-release-observability` writer may modify shared build entrypoints at a time.
+6. The primary agent runs route/impact review, clean-checkout production gates, surface-proportional runtime acceptance, and the active checklist audit after each epic converges.
+7. In the current recovery pass, `EXT-BR-04` is evidence-only and leaves source unchanged.
 
 ## Assignment queue
 
@@ -85,51 +84,11 @@ The queue assumes the primary has first frozen a base revision and assigned isol
 | Queue | Packets | Release condition |
 |---|---|---|
 | Ready for current external execution | `EXT-BR-04` | Use the exact primary-frozen base and dedicated worktree. This evidence-only packet returns no source commit and leaves its worktree clean. |
-| Primary physical acceptance | `SES-P2-INT` | The primary must use a product-mediated skill import path or first add a reviewed typed fixture capability; out-of-band writes to reserved `.mortise` metadata are not admissible evidence. |
 | Awaiting a new primary-frozen packet or prerequisite | `AUT-E1-MSG`, `AUT-E2`, pre-split `HEAD-E1` | Do not reuse an older assignment implicitly. The primary must confirm the current base, exact scope, and evidence inputs before dispatch. |
 | Evidence blocked by primary architecture | `AUT-E1-HSC`, `AUT-E1-SL`, `AUT-E3`, post-split `HEAD-E1`, `HEAD-E2`, `HEAD-E3` | Primary freezes the V3/headless/producer boundaries and completes the listed sequencing before dispatch. |
 | Evidence blocked by clean binary producer | `EXT-BR-03` | OPT-017 producer is integrated and a clean source-built runtime is available; no ignored executable is accepted as evidence. |
 
 ## External packets
-
-### SES-E1-SL - Remove residual Session-owned working-directory behavior
-
-- **Epic / class:** OPT-010 / mechanical removal.
-- **Prerequisite / order:** First Session packet; run a caller/reference scan before deletion. Primary approval of workspace root as the sole authority is already recorded in the active checklist.
-- **Sole owner module:** `session-lifecycle`.
-- **Exact files:** `packages/server-core/src/sessions/SessionManager.ts`; `packages/server-core/src/sessions/session-working-directory-contract.test.ts`.
-- **Objective:** Remove the silent persisted-field scrubber and obsolete `updateWorkingDirectory` method, then remove/update only tests that preserve those behaviors.
-- **Canonical direction:** Preserve the typed create-boundary `RemovedSessionFieldError('workingDirectory')`. Workspace root remains the only authority.
-- **Forbidden deviations:** Do not remove typed rejection; do not add migration, alias, fallback, or silent ignore; do not remove generic local variables named `workingDirectory` when they mean a workspace-root parameter.
-- **Commands / evidence:** `rg -n "workingDirectory|updateWorkingDirectory" packages/server-core/src/sessions`; focused Session contract tests; server type check; `git diff --check`.
-- **Primary acceptance:** Current create input remains typed-rejected, no Session runtime/persistence path scrubs or mutates the removed field, workspace-root helpers remain intact, and negative tests fail if the field returns.
-- **Stop / escalate:** Stop if a current production caller invokes the obsolete method; report the caller without choosing a replacement.
-
-### SES-E1-AS - Remove the settings projection field
-
-- **Epic / class:** OPT-010 / mechanical DTO cleanup.
-- **Prerequisite / order:** After `SES-E1-SL` defines the final Session boundary; caller scan must show no current consumer needs the field.
-- **Sole owner module:** `app-settings-security`.
-- **Exact files:** `packages/server-core/src/handlers/rpc/settings.ts`; new `packages/server-core/src/handlers/rpc/settings-workspace-contract.test.ts`.
-- **Objective:** Remove `workingDirectory: workspace.rootPath` from the settings response.
-- **Canonical direction:** Settings expose workspace identity through current workspace contracts, not a Session-level working-directory compatibility field.
-- **Forbidden deviations:** Do not rename or alias the field, add a fallback reader, change workspace selection semantics, or edit Session implementation files.
-- **Commands / evidence:** Production consumer scan for the response field; focused `settings-workspace-contract.test.ts`; server/Electron type checks; response-shape evidence; `git diff --check`.
-- **Primary acceptance:** The current DTO omits the field, no consumer reads it, and workspace selection continues through the canonical workspace contract.
-- **Stop / escalate:** Stop if a production consumer exists; return its exact symbol/location for a primary-owned interface decision.
-
-### SES-E1-ND - Remove the Electron test mock field
-
-- **Epic / class:** OPT-010 / native test-fixture cleanup.
-- **Prerequisite / order:** After `SES-E1-SL`; may run in parallel with `SES-E1-AS`.
-- **Sole owner module:** `native-desktop`.
-- **Exact files:** `apps/electron/src/main/__tests__/session-branch-rollback.isolated.ts`.
-- **Objective:** Remove the stale `workingDirectory` field from the test Session fixture without changing branch behavior.
-- **Canonical direction:** The fixture models the current Mortise Session shape and uses `workspaceRootPath` for workspace ownership.
-- **Forbidden deviations:** Do not add a compatibility property, broad `any` adapter, or alter branch rollback/runtime behavior.
-- **Commands / evidence:** Isolated branch rollback test; Electron type check; fixture-shape scan; `git diff --check`.
-- **Primary acceptance:** The test passes with no `workingDirectory` fixture field and still exercises the same rollback/projection behavior.
-- **Stop / escalate:** Stop if production code imported by the test still requires the field; report the dependency to the primary instead of mocking around it.
 
 ### EXT-BR-01-HSC - Declare the server-core test-only Pi dependency
 
@@ -239,7 +198,7 @@ The queue assumes the primary has first frozen a base revision and assigned isol
 ### AUT-E2 - Replace the deleted automation test mock
 
 - **Epic / class:** OPT-015 / test-fixture repair.
-- **Prerequisite / order:** After `SES-E1-ND` is integrated, because both edit this file. Confirm the current V3 host fixture API; complete before AUT-E3.
+- **Prerequisite / order:** The Session fixture prerequisite is complete. Confirm the current V3 host fixture API; complete before AUT-E3.
 - **Sole owner module:** `native-desktop`.
 - **Exact files:** `apps/electron/src/main/__tests__/session-branch-rollback.isolated.ts`.
 - **Objective:** Remove mock exports for deleted `AutomationSystem`, `AUTOMATIONS_CONFIG_FILE`, and `automations.json`; supply only the minimal V3 host surface the branch test actually loads.
@@ -307,7 +266,6 @@ External agents may collect evidence or review a proposal, but they must not cho
 
 | ID | Affected owner modules | Canonical decision and non-negotiable boundary |
 |---|---|---|
-| SES-P2-INT | session-lifecycle + app-settings-security + ui-validation-developer-kit | The primary performs isolated source-Electron workspace/draft/first-assistant acceptance. Workspace skill state must enter through a normal product import flow or a separately reviewed typed fixture extension; the current fixture deliberately rejects `.mortise/**`, so direct reserved-metadata injection is forbidden. Retain semantic/native evidence, screenshots only for visual claims, persistence/log/process receipts, and complete run-owned cleanup. |
 | AUT-P1 | automations | Inject one mandatory workspace V3 host into dispatchers. No dispatcher constructs, discovers, or silently falls back to another host. |
 | AUT-P2 | automations | Import extension/resource definitions through one host-owned atomic store transaction with validation, optimistic concurrency, idempotent operation identity, and no secondary reader/writer. |
 | AUT-P3 | automations | Define one versioned renderer DTO and bounded batch/change protocol; renderer state is a projection, never another scheduler/store. |
