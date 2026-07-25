@@ -1,7 +1,7 @@
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { MORTISE_UI_PROTOCOL_VERSION, type MortiseUiRequest, type MortiseUiResponse } from './protocol.ts'
-import { writeJsonAtomic } from './files.ts'
+import { writeJsonAtomic } from '../build/files.ts'
 
 const runId = process.env.MORTISE_UI_RUN_ID!
 const surface = process.env.MORTISE_UI_SURFACE as 'electron' | 'webui'

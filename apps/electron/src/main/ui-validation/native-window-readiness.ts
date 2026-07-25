@@ -114,7 +114,7 @@ export class ElectronNativeWindowController {
           )
         }
       }
-      const receipt = await this.driver.action(request)
+      const receipt = await this.driver.action(request, options)
       return this.windowMode === 'background'
         ? { ...receipt, warnings: [...receipt.warnings, 'Background UIA pattern operation has no foreground hit-test evidence.'] }
         : receipt

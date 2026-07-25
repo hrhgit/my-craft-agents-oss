@@ -16,7 +16,7 @@ depends_on: [pi-coding-runtime, shared-contracts, app-settings-security]
 collaborates_with: [extension-ui, session-tooling]
 validation:
   - { id: extension-runtime-regression, kind: unit, command: "bun test packages/shared/src/agent packages/server-core/src/handlers/pi-extension-bridge.test.ts", description: "Run extension runtime and bridge regressions.", triggers: [owned-change], required: true, evidence: "Bun test exit status and output." }
-scope_digest: f1e61435ab64cd0c9fb80c395a866e290e5b7c8c
+scope_digest: 77ec1269d8668429ecf8dc6f1c86785ab44dd7f3
 ---
 
 ## Purpose
@@ -47,6 +47,7 @@ Run host recovery, routing, extension bridge, reload, and capability tests.
 Subprocess failure can be misreported as session failure; extensions can evolve faster than a packaged host facade.
 
 ## Semantic history
+- 2026-07-25: Made immutable host mode an explicit validated runtime contract for backend startup, resolving Pi, Bun/Node, ripgrep, Session services, and tool environments only from the sealed capsule instead of packaged flags, PATH, or live-tree fallbacks.
 - 2026-07-23: Pinned Mortise GlobalHost startup, session runtimes, isolated runtimes, and in-process skill resolution to the Mortise project root, eliminating workspace `.pi` fallback at the embedded Pi boundary.
 - 2026-07-23: Bound shared Pi GlobalHost discovery and child process configuration to each Mortise runtime's explicit Agent root, preventing Electron-like callers from falling back to independent Pi storage.
 - 2026-07-22: Forwarded Pi's canonical user-message durability acknowledgement ahead of logical settlement, including during abort suppression, so Host completion cannot overtake the persisted JSONL write.

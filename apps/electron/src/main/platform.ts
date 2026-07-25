@@ -6,6 +6,7 @@
  */
 
 import type { PlatformServices } from '../runtime/platform'
+import { resolveImmutableRuntimeLayout, type ResolveImmutableRuntimeLayoutOptions } from '@mortise/session-tools-core/runtime'
 
 export interface ElectronPlatformOptions {
   app: Electron.App
@@ -18,13 +19,42 @@ export interface ElectronPlatformOptions {
   captureError?: (error: Error) => void
 }
 
+export function resolveElectronRuntimeContext(
+  app: Electron.App,
+  options: Omit<ResolveImmutableRuntimeLayoutOptions, 'expectedAppRootPath'> = {},
+): Pick<
+  PlatformServices,
+  'appRootPath' | 'resourcesPath' | 'resourcesBasePath' | 'isPackaged' | 'immutableRuntime'
+> {
+  const immutableLayout = !app.isPackaged
+    ? resolveImmutableRuntimeLayout({
+        ...options,
+        expectedAppRootPath: app.getAppPath(),
+        expectedExecutablePath: options.expectedExecutablePath ?? process.execPath,
+      })
+    : undefined
+  if (!immutableLayout) {
+    return {
+      appRootPath: app.isPackaged ? app.getAppPath() : process.cwd(),
+      resourcesPath: process.resourcesPath,
+      isPackaged: app.isPackaged,
+    }
+  }
+
+  return {
+    appRootPath: immutableLayout.appRootPath,
+    resourcesPath: immutableLayout.resourcesPath,
+    resourcesBasePath: immutableLayout.resourcesBasePath,
+    isPackaged: false,
+    immutableRuntime: immutableLayout,
+  }
+}
+
 export function createElectronPlatform(opts: ElectronPlatformOptions): PlatformServices {
   const { app, nativeImage, shell, nativeTheme, logger } = opts
 
   return {
-    appRootPath: app.isPackaged ? app.getAppPath() : process.cwd(),
-    resourcesPath: process.resourcesPath,
-    isPackaged: app.isPackaged,
+    ...resolveElectronRuntimeContext(app),
     appVersion: app.getVersion(),
     openExternal: (url) => shell.openExternal(url),
     openPath: (p) => shell.openPath(p).then(() => {}),

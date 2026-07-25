@@ -25,7 +25,7 @@ validation:
   - { id: mortise-ui-regression, kind: unit, command: "bun run test:mortise-ui", description: "Run the AI-facing mortise-ui CLI regressions.", triggers: [owned-change], required: true, evidence: "Bun test exit status and output." }
   - { id: validation-fast-contract, kind: contract, command: "bun run test:ui-validation:fast", description: "Verify fast validation semantics across host layers.", triggers: [contract-change], required: true, evidence: "Cross-layer test exit status and output." }
   - { id: validation-runtime-integration, kind: integration, command: "bun run test:ui-validation:runtime-contract", description: "Exercise the validation runtime contract end to end.", triggers: [runtime-change, release], required: true, evidence: "Runtime contract result and retained diagnostics." }
-scope_digest: 52443aeafb102c2739ed36b1ac0c4639c0437e2d
+scope_digest: 57fde39a835996e60c140555dd65e0e862f0f544
 ---
 
 ## Purpose
@@ -56,6 +56,11 @@ Run CLI, controller, build cache, process identity, semantic, native readiness, 
 Automation can pass against fixtures while physical rendering fails; stale native references can target the wrong control or process.
 
 ## Semantic history
+- 2026-07-25: Removed Playwright locator actionability as a second raw-host readiness authority; the smoke now validates finite target geometry, sends real CDP mouse input, and proves the renderer transition without forced clicks or synthetic DOM activation, so background frame throttling cannot deadlock physical-input evidence.
+- 2026-07-25: Classified known transient Windows UIA RPC faults and retry readiness snapshots plus idempotent window-state actions only inside the existing request deadline; top-level focus uses a PID-verified HWND, and descendant actions resolve runtime IDs only inside that owner window's UIA subtree instead of Desktop Root, while permanent failures and non-idempotent actions remain fail-closed and no timeout was widened.
+- 2026-07-25: Moved stable renderer selector resolution into the Electron surface driver so the one live snapshot used by an action also owns its current ref and revision; explicit refs remain fail-closed, while host and physical extension smoke no longer pass a stale intermediate ref across the boundary.
+- 2026-07-25: Made active scenario source the sole reset, clock, status, and evidence authority so an available AppShell bridge cannot capture playground or extension lifecycle operations; physical smoke now targets protocol-stable interaction semantics.
+- 2026-07-25: Removed the UI-owned build authority; `mortise-ui` and the packaged Developer Host now pin and verify build-owned immutable source/build provenance, share the canonical lock/process primitives, and reject endpoint source-identity drift.
 - 2026-07-24: Rate-limited live-lock reaping probes so concurrent artifact writers no longer contend with Windows directory-lock release, while preserving immediate dead-owner recovery and explicit lock timeout behavior.
 - 2026-07-24: Bound ordinary Session-rejection acceptance to the persistent failure semantic and exact redacted composer fingerprint rather than transport-idle timing.
 - 2026-07-24: Kept the renderer playground adapter aligned with the asynchronous durable draft-clear contract used by real first-turn publication.
@@ -71,8 +76,3 @@ Automation can pass against fixtures while physical rendering fails; stale nativ
 - 2026-07-22: Added transferable same-profile restarts with fresh run identity and a Node-only one-shot first-turn backend restricted to provisional Sessions, with cross-process single-winner lease claims and physical failure/success/reload publication acceptance.
 - 2026-07-21: Reconciled DOM, accessibility, and business semantics by resolved element identity, and bound WebUI refs to decision-relevant semantic revisions instead of incidental DOM mutations.
 - 2026-07-21: Moved the complete playground component registry behind its own dynamic boundary so validation-only demos do not inflate the main renderer startup graph.
-- 2026-07-21: Made fixture and clone profiles SQLite-only for Mortise configuration, with consistent database snapshots and no legacy config, drafts, or sync-baseline files.
-- 2026-07-21: Migrated the interaction playground and physical validation scenario from legacy RemoteUI fixtures to a real Extension Interaction V1 request.
-- 2026-07-21: Updated messaging and browser playground fixtures to emit only current required access fields and canonical browser_tool commands.
-- 2026-07-21: Added a canceled skill-import stub to the renderer playground API surface.
-- 2026-07-20: Removed the Sources route surface and legacy workspace icon dependency from validation fixtures; fixture workspaces now create their root directly without creating a sources directory.

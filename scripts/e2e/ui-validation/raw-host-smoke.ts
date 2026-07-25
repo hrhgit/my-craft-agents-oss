@@ -1,14 +1,22 @@
 import { mkdir, mkdtemp, rename, rm, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:net'
-import { spawn, type ChildProcess } from 'node:child_process'
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
-import { createRequire } from 'node:module'
 import { randomBytes, randomUUID } from 'node:crypto'
-import { chromium, type Browser, type Page } from 'playwright-core'
+import { chromium, type Browser, type Locator, type Page } from 'playwright-core'
 import WebSocket from 'ws'
 import { readEndpointManifest } from '../../mortise-ui/client.ts'
 import { prepareProfile } from '../../mortise-ui/profile.ts'
+import {
+  acquireElectronBuild,
+  createElectronBuildRuntimeEnvironment,
+  releaseElectronBuild,
+  resolveElectronBuildExecutable,
+} from '../../build/electron-build-cache.ts'
+import { getProcessStartTime } from '../../build/process-identity.ts'
+import type { MortiseUiProcessIdentity } from '../../build/process-identity.ts'
+import { terminateOwnedProcessTrees } from '../../mortise-ui/controller.ts'
 
 interface RawResponse<T = unknown> {
   v: number
@@ -38,8 +46,6 @@ interface SnapshotResult {
 const runRoot = await mkdtemp(join(tmpdir(), 'mortise-ui-raw-host-'))
 const resultPath = resolve(process.env.MORTISE_UI_RAW_SMOKE_RESULT ?? join(process.cwd(), 'output', 'mortise-ui', 'raw-host-smoke-last.json'))
 const debugPort = await reserveLoopbackPort()
-const electronExecutable = String(createRequire(import.meta.url)('electron'))
-const electronApp = resolve(process.cwd(), 'apps', 'electron')
 const runId = `raw-${Date.now()}-${randomBytes(4).toString('hex')}`
 const runDir = join(runRoot, runId)
 const profileDir = join(runDir, 'profile')
@@ -54,16 +60,32 @@ let cdpTransport: CdpConnectionTransport | undefined
 let rendererDiagnostic: Record<string, unknown> | undefined
 let successSummary: Record<string, unknown> | undefined
 let failure: unknown
+let cleanupFailure: Error | undefined
+let buildLease: ReturnType<typeof acquireElectronBuild> | undefined
+let hostSpawned = false
 
 try {
   await mkdir(artifactsDir, { recursive: true })
+  await writeFile(join(runDir, 'run.json'), `${JSON.stringify({
+    status: 'ready',
+    runId,
+    launcherPid: process.pid,
+    createdAt: new Date().toISOString(),
+  }, null, 2)}\n`, 'utf8')
+  buildLease = acquireElectronBuild({
+    runId,
+    runDir,
+    repoRoot: process.cwd(),
+    mode: 'ui-validation',
+  })
+  const electronExecutable = resolveElectronBuildExecutable(buildLease)
   const profile = await prepareProfile({ profileDir, mode: 'isolated' })
   host = spawn(electronExecutable, [
     `--remote-debugging-port=${debugPort}`,
     '--remote-debugging-address=127.0.0.1',
     '--remote-allow-origins=*',
     `--user-data-dir=${profile.electronUserDataDir}`,
-    electronApp,
+    buildLease.appDir,
   ], {
     cwd: process.cwd(),
     windowsHide: true,
@@ -82,10 +104,30 @@ try {
       MORTISE_UI_PROTOCOL_VERSION: '1',
       MORTISE_UI_ELECTRON_USER_DATA_DIR: profile.electronUserDataDir,
       MORTISE_UI_TEST_HOST: '1',
+      ...createElectronBuildRuntimeEnvironment(buildLease, { uiValidation: true }),
     },
   })
+  await waitForHostSpawn(host)
+  hostSpawned = true
+  const hostStartedAt = getProcessStartTime(host.pid) ?? Date.now()
+  await writeFile(join(runDir, 'run.json'), `${JSON.stringify({
+    status: 'ready',
+    runId,
+    launcherPid: process.pid,
+    hostPid: host.pid,
+    hostStartedAt,
+    buildId: buildLease.buildId,
+    sourceId: buildLease.manifest.sourceId,
+    createdAt: new Date().toISOString(),
+  }, null, 2)}\n`, 'utf8')
   host.stderr?.on('data', chunk => { hostStderr = boundedLog(hostStderr, String(chunk)) })
-  const endpoint = await waitForHostEndpoint(endpointManifestPath, host, 90_000)
+  const endpoint = await waitForHostEndpoint(
+    endpointManifestPath,
+    host,
+    buildLease.buildId,
+    buildLease.manifest.sourceId,
+    90_000,
+  )
   endpointUrl = endpoint.url
 
   const rejected = await rawHostRequest(endpoint.url, runId, 'ui.snapshot', {}, undefined)
@@ -120,7 +162,7 @@ try {
   rendererDiagnostic = { url: page.url(), title: await page.title(), targetCount: await target.count(), body: bodyBefore.slice(0, 2_000) }
   await target.waitFor({ state: 'visible', timeout: 15_000 })
   const targetName = (await target.innerText()).trim()
-  await target.click()
+  await clickPhysicalRendererTarget(page, target)
   await target.waitFor({ state: 'hidden', timeout: 15_000 })
 
   const snapshotId = randomUUID()
@@ -139,6 +181,7 @@ try {
     runId,
     debugPort,
     rendererUrl: page.url(),
+    build: { buildId: buildLease.buildId, sourceId: buildLease.manifest.sourceId },
     protocol: { requestIdEchoed: true, seq: snapshot.body.seq, revision: snapshot.body.revision, unauthenticatedRejected: true, unknownEndpointRejected: true },
     physicalInput: { testId: 'onboarding-provider-api_key', name: targetName, advanced: true },
   }
@@ -147,16 +190,49 @@ try {
   throw error
 } finally {
   await browser?.close().catch(() => undefined)
-  if (host) {
-    if (endpointUrl && host.exitCode === null) {
+  let hostExited = host === undefined || !hostSpawned
+  if (host && hostSpawned) {
+    let ownedProcesses: MortiseUiProcessIdentity[] = []
+    let processTreeFailure: Error | undefined
+    try {
+      ownedProcesses = collectOwnedProcessTree(host.pid)
+    } catch (error) {
+      processTreeFailure = error instanceof Error ? error : new Error(String(error))
+      ownedProcesses = host.pid
+        ? [{ pid: host.pid, startedAt: getProcessStartTime(host.pid), recordedAt: Date.now() }]
+        : []
+    }
+    if (endpointUrl && !hostHasExited(host)) {
       await rawHostRequest(endpointUrl, runId, 'app.shutdown', {}, token).catch(() => undefined)
     }
-    await waitForHostExit(host, 5_000)
-    if (host.exitCode === null) host.kill('SIGTERM')
-    await waitForHostExit(host, 2_000)
-    if (host.exitCode === null) host.kill('SIGKILL')
+    hostExited = await waitForHostExit(host, 5_000)
+    const remainingPids = await terminateOwnedProcessTrees(ownedProcesses)
+    hostExited = !processTreeFailure && remainingPids.length === 0
+    if (processTreeFailure) {
+      cleanupFailure = new Error(
+        `Electron process tree enumeration failed; descendant shutdown cannot be proven and the build lease was retained: ${processTreeFailure.message}`,
+        { cause: processTreeFailure },
+      )
+    } else if (!hostExited) {
+      cleanupFailure = new Error(`Electron process tree did not exit: ${remainingPids.join(', ')}; build lease retained.`)
+    }
   }
-  await rm(runRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }).catch(() => undefined)
+  if (buildLease && hostExited) {
+    try {
+      releaseElectronBuild(buildLease)
+    } catch (error) {
+      cleanupFailure = error instanceof Error ? error : new Error(String(error))
+    }
+  }
+  if (cleanupFailure) {
+    failure = failure
+      ? new AggregateError([failure, cleanupFailure], 'Raw Host smoke and cleanup both failed.')
+      : cleanupFailure
+    successSummary = undefined
+  }
+  if (!cleanupFailure) {
+    await rm(runRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }).catch(() => undefined)
+  }
   await atomicResult(resultPath, successSummary ?? {
     ok: false,
     error: failure instanceof Error ? failure.stack ?? failure.message : String(failure ?? 'Smoke test ended without a result.'),
@@ -166,6 +242,45 @@ try {
   }).catch(() => undefined)
 }
 
+function collectOwnedProcessTree(rootPid: number | undefined): MortiseUiProcessIdentity[] {
+  if (!rootPid) return []
+  const recordedAt = Date.now()
+  if (process.platform !== 'win32') {
+    return [{ pid: rootPid, startedAt: getProcessStartTime(rootPid), recordedAt }]
+  }
+  const result = spawnSync('powershell.exe', [
+    '-NoLogo',
+    '-NoProfile',
+    '-NonInteractive',
+    '-Command',
+    'Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId | ConvertTo-Json -Compress',
+  ], { encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] })
+  if (result.status !== 0 || !result.stdout.trim()) {
+    throw new Error(`Windows process enumeration failed with exit code ${result.status ?? 'unknown'}.`)
+  }
+  try {
+    const parsed = JSON.parse(result.stdout) as
+      | { ProcessId: number; ParentProcessId: number }
+      | Array<{ ProcessId: number; ParentProcessId: number }>
+    const rows = Array.isArray(parsed) ? parsed : [parsed]
+    const owned = new Set([rootPid])
+    let changed = true
+    while (changed) {
+      changed = false
+      for (const row of rows) {
+        if (owned.has(row.ParentProcessId) && !owned.has(row.ProcessId)) {
+          owned.add(row.ProcessId)
+          changed = true
+        }
+      }
+    }
+    return [...owned].map(pid => ({ pid, startedAt: getProcessStartTime(pid), recordedAt }))
+  } catch (error) {
+    throw new Error('Windows process enumeration returned invalid JSON.', { cause: error })
+  }
+}
+
+if (cleanupFailure) throw cleanupFailure
 if (successSummary) process.stdout.write(`${JSON.stringify(successSummary)}\n`)
 
 async function rawHostRequest<T>(
@@ -223,6 +338,15 @@ async function findRendererPage(target: Browser, timeoutMs: number): Promise<Pag
   throw new Error('Playwright CDP did not expose the real Electron renderer page.')
 }
 
+async function clickPhysicalRendererTarget(page: Page, target: Locator): Promise<void> {
+  const bounds = await target.boundingBox()
+  if (!bounds || ![bounds.x, bounds.y, bounds.width, bounds.height].every(Number.isFinite)
+    || bounds.width <= 0 || bounds.height <= 0) {
+    throw new Error('Raw Electron renderer target has no finite clickable geometry.')
+  }
+  await page.mouse.click(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2)
+}
+
 async function waitForCdp(port: number, timeoutMs: number): Promise<void> {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
@@ -259,12 +383,24 @@ async function atomicResult(path: string, result: Record<string, unknown>): Prom
   await rename(temporary, path)
 }
 
-async function waitForHostEndpoint(path: string, child: ChildProcess, timeoutMs: number) {
+async function waitForHostEndpoint(
+  path: string,
+  child: ChildProcess,
+  expectedBuildId: string,
+  expectedSourceId: string,
+  timeoutMs: number,
+) {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
     try {
       const endpoint = readEndpointManifest(path)
-      if (endpoint.runId !== runId || endpoint.pid !== child.pid || endpoint.surface !== 'electron') throw new Error('Test Host endpoint identity mismatch.')
+      if (
+        endpoint.runId !== runId
+        || endpoint.pid !== child.pid
+        || endpoint.surface !== 'electron'
+        || endpoint.buildId !== expectedBuildId
+        || endpoint.sourceId !== expectedSourceId
+      ) throw new Error('Test Host endpoint identity mismatch.')
       return endpoint
     } catch (error) {
       if (child.exitCode !== null) throw new Error(`Electron exited before Test Host readiness (${child.exitCode}): ${hostStderr}`, { cause: error })
@@ -274,12 +410,41 @@ async function waitForHostEndpoint(path: string, child: ChildProcess, timeoutMs:
   throw new Error(`Timed out waiting for source Electron Test Host: ${hostStderr}`)
 }
 
-async function waitForHostExit(child: ChildProcess, timeoutMs: number): Promise<void> {
-  if (child.exitCode !== null) return
-  await Promise.race([
-    new Promise<void>(resolveExit => child.once('exit', () => resolveExit())),
-    new Promise<void>(resolveTimeout => setTimeout(resolveTimeout, timeoutMs)),
-  ])
+function hostHasExited(child: ChildProcess): boolean {
+  return child.exitCode !== null || child.signalCode !== null
+}
+
+async function waitForHostSpawn(child: ChildProcess): Promise<void> {
+  await new Promise<void>((resolveSpawn, rejectSpawn) => {
+    const onSpawn = () => {
+      child.off('error', onError)
+      resolveSpawn()
+    }
+    const onError = (error: Error) => {
+      child.off('spawn', onSpawn)
+      rejectSpawn(new Error(`Electron failed to spawn: ${error.message}`, { cause: error }))
+    }
+    child.once('spawn', onSpawn)
+    child.once('error', onError)
+  })
+  child.on('error', error => {
+    hostStderr = boundedLog(hostStderr, `\nElectron process error: ${error.stack ?? error.message}\n`)
+  })
+}
+
+async function waitForHostExit(child: ChildProcess, timeoutMs: number): Promise<boolean> {
+  if (hostHasExited(child)) return true
+  return await new Promise<boolean>(resolveExit => {
+    const onExit = () => {
+      clearTimeout(timeout)
+      resolveExit(true)
+    }
+    const timeout = setTimeout(() => {
+      child.off('exit', onExit)
+      resolveExit(hostHasExited(child))
+    }, timeoutMs)
+    child.once('exit', onExit)
+  })
 }
 
 function boundedLog(current: string, chunk: string): string {

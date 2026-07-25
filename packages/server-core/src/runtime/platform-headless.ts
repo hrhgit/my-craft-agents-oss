@@ -7,13 +7,14 @@
  */
 
 import { join } from 'path'
+import { resolveImmutableRuntimeLayout } from '@mortise/session-tools-core/runtime'
 import type { PlatformServices, Logger } from './platform'
 
 /**
  * Simple console-based logger matching the Logger interface.
  * Prefixes each line with ISO timestamp and level for structured grepping.
  */
-function createConsoleLogger(): Logger {
+function createConsoleLogger(env: NodeJS.ProcessEnv): Logger {
   const fmt = (level: string, args: unknown[]) => {
     const ts = new Date().toISOString()
     const parts = args.map(a => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' ')
@@ -24,7 +25,7 @@ function createConsoleLogger(): Logger {
     warn: (...args) => console.warn(fmt('warn', args)),
     error: (...args) => console.error(fmt('error', args)),
     debug: (...args) => {
-      if (process.env.MORTISE_DEBUG === 'true' || process.env.MORTISE_IS_PACKAGED !== 'true') {
+      if (env.MORTISE_DEBUG === 'true' || env.MORTISE_IS_PACKAGED !== 'true') {
         console.debug(fmt('debug', args))
       }
     },
@@ -38,18 +39,38 @@ function createConsoleLogger(): Logger {
  * - MORTISE_APP_ROOT — override appRootPath (default: cwd)
  * - MORTISE_RESOURCES_PATH — override resourcesPath (default: cwd/resources)
  * - MORTISE_IS_PACKAGED — 'true' for production (default: false)
+ * - MORTISE_RUNTIME_IMMUTABLE — '1' for a sealed source-build capsule
+ * - MORTISE_RUNTIME_* — canonical sealed-capsule layout
  * - MORTISE_VERSION — app version string (default: '0.0.0-dev')
  * - MORTISE_DEBUG — 'true' to enable debug logging
  */
-export function createHeadlessPlatform(options?: { appVersion?: string }): PlatformServices {
-  const logger = createConsoleLogger()
-  const isDebugMode = process.env.MORTISE_DEBUG === 'true' || process.env.MORTISE_IS_PACKAGED !== 'true'
+export function createHeadlessPlatform(options?: {
+  appVersion?: string
+  env?: NodeJS.ProcessEnv
+  executablePath?: string
+  platform?: NodeJS.Platform
+  arch?: string
+}): PlatformServices {
+  const env = options?.env ?? process.env
+  const logger = createConsoleLogger(env)
+  const isDebugMode = env.MORTISE_DEBUG === 'true' || env.MORTISE_IS_PACKAGED !== 'true'
+  const immutableLayout = resolveImmutableRuntimeLayout({
+    env,
+    expectedExecutablePath: options?.executablePath ?? process.execPath,
+    platform: options?.platform,
+    arch: options?.arch,
+  })
+  const appRootPath = immutableLayout?.appRootPath ?? env.MORTISE_APP_ROOT ?? process.cwd()
+  const resourcesPath = immutableLayout?.resourcesPath ?? env.MORTISE_RESOURCES_PATH ?? join(process.cwd(), 'resources')
+  const resourcesBasePath = immutableLayout?.resourcesBasePath ?? env.MORTISE_RESOURCES_BASE
 
   return {
-    appRootPath: process.env.MORTISE_APP_ROOT || process.cwd(),
-    resourcesPath: process.env.MORTISE_RESOURCES_PATH || join(process.cwd(), 'resources'),
-    isPackaged: process.env.MORTISE_IS_PACKAGED === 'true',
-    appVersion: process.env.MORTISE_VERSION || options?.appVersion || '0.0.0-dev',
+    appRootPath,
+    resourcesPath,
+    resourcesBasePath,
+    isPackaged: env.MORTISE_IS_PACKAGED === 'true',
+    immutableRuntime: immutableLayout,
+    appVersion: env.MORTISE_VERSION || options?.appVersion || '0.0.0-dev',
 
     imageProcessor: {
       async getMetadata(buffer) {

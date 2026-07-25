@@ -171,6 +171,47 @@ describe('ElectronUiSurfaceDriver window actions', () => {
       { webContentsId: 71 },
     ])
   })
+
+  it('resolves a stable selector from the same live snapshot used by the action', async () => {
+    const main = fakeWindow(73, 'Main')
+    const driver = new ElectronUiSurfaceDriver(fakeWindowManager([
+      { window: main.window, workspaceId: 'workspace-1', role: 'main' },
+    ])) as any
+    const clicked: string[] = []
+    const node = {
+      ref: 'r2:save',
+      semanticId: 'settings.save',
+      role: 'button',
+      name: 'Save',
+      state: {},
+      actions: ['click'],
+    }
+    const state = {
+      revision: 1,
+      refs: new Map(),
+      cdp: { clickElement: async (ref: string) => { clicked.push(ref) } },
+    }
+    driver.stateFor = () => state
+    driver.snapshot = async () => {
+      state.revision = 2
+      state.refs = new Map([[node.ref, { cdpRef: 'node-2', node }]])
+      return {
+        revision: 2,
+        window: { webContentsId: 73 },
+        regions: { navigation: [], sidebar: [], main: [node], dialog: [], notification: [] },
+        truncated: false,
+      }
+    }
+
+    const receipt = await driver.action({}, {
+      target: { semanticId: 'settings.save' },
+      action: 'click',
+      mode: 'physical',
+    })
+
+    expect(clicked).toEqual(['node-2'])
+    expect(receipt).toMatchObject({ beforeRevision: 2, targetResolved: { ref: 'r2:save' } })
+  })
 })
 
 function fakeWindow(id: number, title: string, initial: { visible?: boolean; minimized?: boolean } = {}) {

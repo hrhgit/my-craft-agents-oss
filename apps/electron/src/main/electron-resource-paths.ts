@@ -18,6 +18,7 @@ export interface ResolveElectronResourcePathsOptions {
   resourcesPath: string
   bundledAssetsRoot: string
   sourceResourcesPath?: string
+  sourceRuntimePath?: string
   platform?: NodeJS.Platform
 }
 
@@ -41,6 +42,12 @@ export function resolveElectronResourcePaths(
     ? join(options.appPath, 'resources')
     : appResourcesPath
   const externalResourcesPath = options.resourcesPath
+  const sourceBunPath = options.sourceRuntimePath
+    ? join(options.sourceRuntimePath, 'bun', executable)
+    : undefined
+  if (sourceBunPath && !existsSync(sourceBunPath)) {
+    throw new Error(`Immutable Electron Bun runtime is missing: ${sourceBunPath}`)
+  }
 
   return {
     appResourcesPath,
@@ -49,11 +56,13 @@ export function resolveElectronResourcePaths(
     browserExtensionPath: join(appResourcesPath, 'pi-extensions', 'browser.js'),
     messagingExtensionPath: join(appResourcesPath, 'pi-extensions', 'messaging.js'),
     commandDocsPath: join(appResourcesPath, 'docs', 'mortise-cli.md'),
-    bunBinaryPath: firstExisting([
+    bunBinaryPath: sourceBunPath ?? firstExisting([
       process.env.MORTISE_BUN ?? '',
       join(externalResourcesPath, 'vendor', 'bun', executable),
       join(options.appPath, 'vendor', 'bun', executable),
     ].filter(Boolean)),
-    messagingWorkerPath: join(externalResourcesPath, 'messaging-whatsapp-worker', 'worker.cjs'),
+    messagingWorkerPath: options.sourceRuntimePath
+      ? join(options.sourceRuntimePath, 'messaging-whatsapp-worker', 'worker.cjs')
+      : join(externalResourcesPath, 'messaging-whatsapp-worker', 'worker.cjs'),
   }
 }

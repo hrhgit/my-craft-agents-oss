@@ -19,9 +19,9 @@ related: [apps/electron/src/renderer/components/app-shell/**, pi/packages/coding
 depends_on: [extension-runtime, shared-contracts]
 collaborates_with: [extension-runtime, ui-validation-developer-kit]
 validation:
-  - { id: extension-ui-regression, kind: unit, command: "bun test apps/electron/src/renderer/components/extensions packages/shared/src/protocol/extension-contributions.test.ts", description: "Run extension contribution UI regressions.", triggers: [owned-change], required: true, evidence: "Bun test exit status and output." }
+  - { id: extension-ui-regression, kind: unit, command: "bun test --isolate apps/electron/src/renderer/components/extensions packages/shared/src/protocol/extension-contributions.test.ts", description: "Run extension contribution UI regressions with per-file module isolation.", triggers: [owned-change], required: true, evidence: "Bun test exit status and output." }
   - { id: extension-ui-physical, kind: physical, command: "bun run test:ui-validation:extension", description: "Exercise extension UI through the shared Developer Kit host.", triggers: [ui-change, extension-contract-change, release], required: false, evidence: "Developer Kit run output and retained extension UI evidence." }
-scope_digest: 5c2ddacf6aadc93d6cde539c5959a66bc9d06abb
+scope_digest: 760737103fb8713c2343f1ee4d0ed0c310765fbe
 ---
 
 ## Purpose
@@ -52,6 +52,8 @@ Run contribution protocol, interaction store, sandbox, renderer routing, and ext
 Contribution version skew can leave stale interaction state; excessive freedom can compromise host layout or accessibility.
 
 ## Semantic history
+- 2026-07-25: Published host-rendered interaction fields, options, text inputs, and actions through stable protocol-ID semantic identities and the canonical input primitive capability declarations.
+- 2026-07-25: Isolated extension UI test files so a component mock cannot contaminate another file's production export contract during module validation.
 - 2026-07-21: Removed legacy widget and RemoteUI renderer models, retaining one versioned contribution surface and one typed interaction composer with queued lifecycle handling.
 - 2026-07-13: Added versioned Pi extension UI contributions and placement policy.
 - 2026-07-14: Synchronized extension interaction state and validation semantics.

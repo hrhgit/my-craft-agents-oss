@@ -11,6 +11,7 @@ import { tmpdir } from 'node:os';
 import { resolveBackendRuntimePaths } from '../internal/runtime-resolver.ts';
 import { resolveBackendHostTooling } from '../factory.ts';
 import type { BackendHostRuntimeContext } from '../types.ts';
+import { resolveImmutableRuntimeLayout } from '@mortise/session-tools-core/runtime';
 
 describe('resolveBackendRuntimePaths', () => {
   it('returns only the supported backend runtime path keys', () => {
@@ -33,6 +34,52 @@ describe('resolveBackendRuntimePaths', () => {
     ]);
 
     rmSync(resourcesPath, { recursive: true, force: true });
+  });
+
+  it('resolves an immutable source runtime only from its capsule', () => {
+    const appRoot = join(tmpdir(), `immutable-runtime-${process.pid}`);
+    const resourcesPath = join(appRoot, 'dist', 'resources');
+    const runtimePath = join(appRoot, 'dist', 'packaging-inputs', 'runtime');
+    const electronRuntimePath = process.platform === 'win32'
+      ? join(runtimePath, 'electron', 'electron.exe')
+      : process.platform === 'darwin'
+        ? join(runtimePath, 'electron', 'Electron.app', 'Contents', 'MacOS', 'Electron')
+        : join(runtimePath, 'electron', 'electron');
+    const sessionServerPath = join(resourcesPath, 'session-mcp-server', 'index.js');
+    const piCliPath = join(resourcesPath, 'pi-runtime', process.platform === 'win32' ? 'pi.exe' : 'pi');
+    const ripgrepPath = join(runtimePath, 'ripgrep', 'bin', process.platform === 'win32' ? 'rg.exe' : 'rg');
+    for (const path of [sessionServerPath, piCliPath, ripgrepPath, electronRuntimePath]) {
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, 'capsule artifact');
+    }
+    const immutableRuntime = resolveImmutableRuntimeLayout({
+      env: {
+        MORTISE_RUNTIME_IMMUTABLE: '1',
+        MORTISE_RUNTIME_APP_ROOT: appRoot,
+        MORTISE_RUNTIME_RESOURCES_DIR: resourcesPath,
+        MORTISE_RUNTIME_RESOURCES_BASE: join(appRoot, 'dist'),
+        MORTISE_RUNTIME_BUNDLE_PATH: runtimePath,
+        MORTISE_RUNTIME_ELECTRON_PATH: electronRuntimePath,
+        MORTISE_RUNTIME_NODE_PATH: electronRuntimePath,
+      },
+      requireAssets: false,
+    });
+    if (!immutableRuntime) throw new Error('Expected immutable runtime fixture.');
+    const hostRuntime: BackendHostRuntimeContext = {
+      appRootPath: appRoot,
+      resourcesPath,
+      resourcesBasePath: join(appRoot, 'dist'),
+      immutableRuntime,
+      isPackaged: false,
+    };
+
+    expect(resolveBackendRuntimePaths(hostRuntime)).toMatchObject({
+      sessionServerPath,
+      piCliPath,
+      nodeRuntimePath: electronRuntimePath,
+    });
+    expect(resolveBackendHostTooling({ hostRuntime }).ripgrepPath).toBe(ripgrepPath);
+    rmSync(appRoot, { recursive: true, force: true });
   });
 });
 

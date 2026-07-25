@@ -21,6 +21,7 @@ import type {
   BackendHostRuntimeContext,
   ModelProvider,
 } from './types.ts';
+import { createImmutableRuntimeEnvironment } from '@mortise/session-tools-core/runtime';
 import { PiAgent } from '../pi-agent.ts';
 import {
   hasPiGlobalProviderAuth,
@@ -119,9 +120,13 @@ export function createBackendFromResolvedContext(args: {
 
   driver.prepareRuntime?.(buildArgs);
   const runtime = driver.buildRuntime(buildArgs);
+  const immutableRuntimeEnv = hostRuntime.immutableRuntime
+    ? createImmutableRuntimeEnvironment(hostRuntime.immutableRuntime)
+    : {};
 
   const config: ResolvedBackendConfig = {
     ...coreConfig,
+    envOverrides: { ...coreConfig.envOverrides, ...immutableRuntimeEnv },
     provider: context.provider,
     providerType: context.providerConfig?.baseUrl ? 'pi_custom' : getDefaultProviderType(context.provider),
     authType: context.authType || getDefaultAuthType(context.provider),

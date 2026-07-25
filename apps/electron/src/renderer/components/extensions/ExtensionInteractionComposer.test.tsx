@@ -74,4 +74,34 @@ describe('ExtensionInteractionComposer', () => {
     expect(markup).toContain('aria-label="Display name"')
     expect(markup).toContain('aria-label="Release notes"')
   })
+
+  it('publishes stable validation identities from protocol field and option ids', () => {
+    const event: ExtensionInteractionBridgeRequestV1 = {
+      type: 'extension_interaction_request',
+      requestId: 'choice-input',
+      extensionId: 'ask-user',
+      runtimeId: 'runtime',
+      sessionId: 'session',
+      request: {
+        schemaVersion: 1,
+        fields: [{
+          id: 'approach',
+          kind: 'choice',
+          label: 'Localized field copy',
+          options: [{ id: 'prototype', label: 'Localized option copy', description: 'Copy may change independently.' }],
+          allowOther: true,
+          allowComment: true,
+        }],
+      },
+    }
+
+    const markup = renderToStaticMarkup(<ExtensionInteractionComposer event={event} onRespond={() => {}} />)
+    expect(markup).toContain('data-mortise-semantic-id="extension.interaction.field.approach"')
+    expect(markup).toContain('data-mortise-semantic-id="extension.interaction.field.approach.option.prototype"')
+    expect(markup).toContain('data-mortise-semantic-id="extension.interaction.field.approach.other"')
+    expect(markup).toContain('data-mortise-semantic-id="extension.interaction.field.approach.comment"')
+    expect(markup).toContain('data-mortise-semantic-id="extension.interaction.submit"')
+    expect(markup).toContain('data-mortise-ui-interactions="shortcut clipboard ime rich-text"')
+    expect(markup).not.toContain('data-mortise-semantic-id="Localized option copy"')
+  })
 })

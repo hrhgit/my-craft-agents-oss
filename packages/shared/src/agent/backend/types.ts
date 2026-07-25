@@ -24,6 +24,7 @@ import type { PermissionMode } from '../mode-manager.ts';
 import type { Workspace } from '../../config/storage.ts';
 import type { SessionHeader as Session } from '../../sessions/types.ts';
 import type { AgentRuntimeProfile } from '../../config/agent-settings.ts';
+import type { ImmutableRuntimeLayout } from '@mortise/session-tools-core/runtime';
 
 // Import AbortReason and RecoveryMessage from core module (single source of truth)
 import { AbortReason, type RecoveryMessage } from '../core/index.ts';
@@ -190,10 +191,12 @@ export interface BackendHostRuntimeContext {
   appRootPath: string;
   /** Optional resources path (needed for packaged Windows runtime resolution) */
   resourcesPath?: string;
+  /** Base containing app resources, including capsule-owned uv/Python tooling. */
+  resourcesBasePath?: string;
   /** Whether the host app is running as a packaged build */
   isPackaged: boolean;
-  /** Optional runtime override for Node/Bun executable */
-  nodeRuntimePath?: string;
+  /** Validated sealed-capsule layout. Presence is the immutable-mode discriminator. */
+  immutableRuntime?: ImmutableRuntimeLayout;
 }
 
 /**

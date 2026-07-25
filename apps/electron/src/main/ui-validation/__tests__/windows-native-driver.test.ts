@@ -1,10 +1,12 @@
 import { EventEmitter } from 'node:events'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
+import { readFileSync } from 'node:fs'
 import { PassThrough } from 'node:stream'
 import { describe, expect, it, mock } from 'bun:test'
 
 mock.module('electron', () => ({ clipboard: { writeText() {} } }))
 const { WindowsNativeUiDriver, runPowerShellUiAutomation } = await import('../windows-native-driver')
+const { ElectronUiDriverError } = await import('../electron-surface-driver')
 
 function fakeChild(pid = 4321): ChildProcessWithoutNullStreams {
   const child = new EventEmitter() as ChildProcessWithoutNullStreams
@@ -22,13 +24,24 @@ function fakeChild(pid = 4321): ChildProcessWithoutNullStreams {
 }
 
 describe('WindowsNativeUiDriver', () => {
+  it('keeps Desktop Root discovery snapshot-only and fails closed without an owner window', () => {
+    const source = readFileSync(
+      new URL('../../../../../../scripts/mortise-ui/windows-uia-driver.ps1', import.meta.url),
+      'utf8',
+    )
+
+    expect(source).toContain("if ([long]$request.ownerNativeWindowHandle -le 0) { throw 'Native action requires an owner window handle.' }")
+    expect(source).toContain('$ownerRoot = Get-VerifiedNativeRoot $request.ownerNativeWindowHandle')
+    expect(source.match(/RootElement\.FindAll\(/g)).toHaveLength(1)
+  })
+
   it('binds refs to revisions and reports native verification', async () => {
     let name = 'Open'
     const requests: Record<string, unknown>[] = []
     const driver = new WindowsNativeUiDriver(42, async request => {
       requests.push(request)
       if (request.operation === 'action') { name = 'Opened'; return { ok: true } }
-      return { windows: [{ runtimeId: '1', role: 'Window', name: 'Mortise', enabled: true, focused: true, children: [
+      return { windows: [{ runtimeId: '1', role: 'Window', name: 'Mortise', nativeWindowHandle: 9001, enabled: true, focused: true, children: [
         { runtimeId: '1.2', role: 'Button', name, enabled: true, focused: false, patterns: ['Invoke'], children: [] },
       ] }] }
     }, 'win32')
@@ -41,7 +54,9 @@ describe('WindowsNativeUiDriver', () => {
     const receipt = await driver.action({ revision: snapshot.revision, ref: target.ref, action: 'click' })
     expect(receipt.verificationLevel).toBe('native-verified')
     expect(receipt.afterRevision).toBeGreaterThan(receipt.beforeRevision)
-    expect(requests.some(request => request.operation === 'action' && request.runtimeId === '1.2')).toBeTrue()
+    expect(requests.some(request => request.operation === 'action'
+      && request.runtimeId === '1.2'
+      && request.ownerNativeWindowHandle === 9001)).toBeTrue()
   })
 
   it('rejects stale refs and unsupported platforms', async () => {
@@ -82,6 +97,76 @@ describe('WindowsNativeUiDriver', () => {
     const result = await driver.waitForNode(node => node.name === 'Folder picker', { timeoutMs: 500 })
     expect(result.node.actions).toContain('close')
     expect(reads).toBe(2)
+  })
+
+  it('absorbs typed transient UIA enumeration failures within the native readiness budget', async () => {
+    let reads = 0
+    const driver = new WindowsNativeUiDriver(42, async () => {
+      reads += 1
+      if (reads === 1) {
+        throw new ElectronUiDriverError('DRIVER_DISCONNECTED', 'RPC_E_SERVERFAULT', { transient: true })
+      }
+      return { windows: [{ runtimeId: '1', role: 'Window', name: 'Mortise', enabled: true, focused: true, children: [] }] }
+    }, 'win32')
+
+    const result = await driver.waitForNode(node => node.name === 'Mortise', { timeoutMs: 500 })
+
+    expect(result.node.name).toBe('Mortise')
+    expect(reads).toBe(2)
+  })
+
+  it('retries a typed transient failure for an idempotent native action', async () => {
+    let actionAttempts = 0
+    const actionRequests: Record<string, unknown>[] = []
+    const driver = new WindowsNativeUiDriver(42, async request => {
+      if (request.operation === 'action') {
+        actionRequests.push(request)
+        actionAttempts += 1
+        if (actionAttempts === 1) {
+          throw new ElectronUiDriverError('DRIVER_DISCONNECTED', 'RPC_E_SERVERFAULT', { transient: true })
+        }
+        return { ok: true }
+      }
+      return { windows: [{ runtimeId: '1', role: 'Window', name: 'Mortise', nativeWindowHandle: 9001, enabled: true, focused: true, patterns: ['Window'], children: [] }] }
+    }, 'win32')
+    const snapshot = await driver.snapshot()
+    const target = snapshot.windows[0]!.nodes[0]!
+
+    await driver.action({ revision: snapshot.revision, ref: target.ref, action: 'focus' }, { timeoutMs: 500 })
+
+    expect(actionAttempts).toBe(2)
+    expect(actionRequests[0]).toMatchObject({ processId: 42, nativeWindowHandle: 9001, ownerNativeWindowHandle: 9001, action: 'focus' })
+  })
+
+  it('does not replay a non-idempotent native action after a transient failure', async () => {
+    let actionAttempts = 0
+    const driver = new WindowsNativeUiDriver(42, async request => {
+      if (request.operation === 'action') {
+        actionAttempts += 1
+        throw new ElectronUiDriverError('DRIVER_DISCONNECTED', 'RPC_E_SERVERFAULT', { transient: true })
+      }
+      return { windows: [{ runtimeId: '1', role: 'Button', name: 'Run', enabled: true, focused: true, patterns: ['Invoke'], children: [] }] }
+    }, 'win32')
+    const snapshot = await driver.snapshot()
+    const target = snapshot.windows[0]!.nodes[0]!
+
+    await expect(driver.action({ revision: snapshot.revision, ref: target.ref, action: 'click' }, { timeoutMs: 500 }))
+      .rejects.toMatchObject({ code: 'DRIVER_DISCONNECTED' })
+    expect(actionAttempts).toBe(1)
+  })
+
+  it('does not retry permanent native driver failures', async () => {
+    let reads = 0
+    const driver = new WindowsNativeUiDriver(42, async () => {
+      reads += 1
+      throw new ElectronUiDriverError('DRIVER_DISCONNECTED', 'powershell.exe was not found')
+    }, 'win32')
+
+    await expect(driver.waitForNode(() => true, { timeoutMs: 500 })).rejects.toMatchObject({
+      code: 'DRIVER_DISCONNECTED',
+      message: expect.stringContaining('powershell.exe was not found'),
+    })
+    expect(reads).toBe(1)
   })
 
   it('advertises only pattern-backed operations as background-safe', async () => {

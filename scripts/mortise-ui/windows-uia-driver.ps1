@@ -12,6 +12,7 @@ using System.Runtime.InteropServices;
 public static class MortiseUiNativeWindow {
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr handle);
   [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr handle, int command);
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr handle, out uint processId);
 }
 '@
 
@@ -70,15 +71,14 @@ $condition = New-Object System.Windows.Automation.PropertyCondition(
   [System.Windows.Automation.AutomationElement]::ProcessIdProperty,
   [int]$request.processId
 )
-$roots = [System.Windows.Automation.AutomationElement]::RootElement.FindAll(
-  [System.Windows.Automation.TreeScope]::Children,
-  $condition
-)
-
 if ($request.operation -eq 'snapshot') {
   $maxNodes = [Math]::Min([Math]::Max([int]$request.maxNodes, 1), 1000)
   $script:nodeCount = 0
   $windows = @()
+  $roots = [System.Windows.Automation.AutomationElement]::RootElement.FindAll(
+    [System.Windows.Automation.TreeScope]::Children,
+    $condition
+  )
   foreach ($root in $roots) {
     $converted = Convert-Element $root $maxNodes
     if ($null -eq $converted) { continue }
@@ -101,11 +101,29 @@ if ($request.operation -eq 'snapshot') {
   exit 0
 }
 
+function Get-VerifiedNativeRoot($handleValue) {
+  $handle = [IntPtr][long]$handleValue
+  [uint32]$ownerProcessId = 0
+  [MortiseUiNativeWindow]::GetWindowThreadProcessId($handle, [ref]$ownerProcessId) | Out-Null
+  if ($ownerProcessId -ne [uint32]$request.processId) { throw 'Native window handle no longer belongs to the target process.' }
+  return [System.Windows.Automation.AutomationElement]::FromHandle($handle)
+}
+
 if ($request.operation -ne 'action') { throw 'Unsupported operation.' }
+if ($request.action -eq 'focus' -and [long]$request.nativeWindowHandle -gt 0) {
+  $handle = [IntPtr][long]$request.nativeWindowHandle
+  Get-VerifiedNativeRoot $request.nativeWindowHandle | Out-Null
+  [MortiseUiNativeWindow]::ShowWindow($handle, 9) | Out-Null
+  [MortiseUiNativeWindow]::SetForegroundWindow($handle) | Out-Null
+  [ordered]@{ ok = $true } | ConvertTo-Json -Compress
+  exit 0
+}
+if ([long]$request.ownerNativeWindowHandle -le 0) { throw 'Native action requires an owner window handle.' }
 $target = $null
-$all = [System.Windows.Automation.AutomationElement]::RootElement.FindAll(
+$ownerRoot = Get-VerifiedNativeRoot $request.ownerNativeWindowHandle
+$all = $ownerRoot.FindAll(
   [System.Windows.Automation.TreeScope]::Subtree,
-  $condition
+  [System.Windows.Automation.Condition]::TrueCondition
 )
 foreach ($element in $all) {
   $runtimeId = (($element.GetRuntimeId() | ForEach-Object { [string]$_ }) -join '.')

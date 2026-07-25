@@ -4,12 +4,16 @@ import { spawn, spawnSync } from 'node:child_process'
 import { dirname, join, resolve } from 'node:path'
 import { UI_VALIDATION_DEFAULT_TIMEOUT_MS, UI_VALIDATION_MAX_WAIT_MS } from '@mortise/shared/ui-validation'
 import { MORTISE_UI_PROTOCOL_VERSION, type MortiseUiFailureDiagnostics, type MortiseUiHistoryEntry, type MortiseUiProfileMode, type MortiseUiResponse, type MortiseUiRunManifest, type MortiseUiStartupPhase, type MortiseUiSurface, type MortiseUiWindowMode } from './protocol.ts'
-import { ensureDir, writeJsonAtomic } from './files.ts'
+import { withFileLock } from '../build/file-lock.ts'
+import { ensureDir, writeJsonAtomic } from '../build/files.ts'
+import { getProcessStartTime, isProcessAlive, matchesProcessIdentity, type MortiseUiProcessIdentity } from '../build/process-identity.ts'
 import type { MortiseUiFixtureSpec } from './fixture.ts'
 import { redactText } from './redaction.ts'
 import { createMortiseUiSurfaceDriver, readEndpointManifest, requestMortiseUiHost } from './client.ts'
-import { withFileLock } from './artifacts.ts'
-import { getProcessStartTime, isProcessAlive, matchesProcessIdentity, type MortiseUiProcessIdentity } from './process-identity.ts'
+import {
+  ELECTRON_BUILD_PRODUCER_VERSION,
+  ELECTRON_BUILD_SCHEMA_VERSION,
+} from '../build/electron-build-cache.ts'
 
 export const DEFAULT_MORTISE_UI_RUN_ROOT = resolve(process.env.MORTISE_UI_RUN_ROOT ?? join(process.cwd(), 'output', 'mortise-ui'))
 export const DEFAULT_MORTISE_UI_START_WAIT_MS = 600_000
@@ -53,6 +57,35 @@ function resolveDeveloperHostExecutable(): string | null {
       ? [join(kitRoot, 'dev-host', 'Mortise Developer Host.app', 'Contents', 'MacOS', 'Mortise Developer Host')]
       : [join(kitRoot, 'dev-host', 'mortise-developer-host')]
   return candidates.find(existsSync) ?? null
+}
+
+export function readPackagedDeveloperHostIdentity(executableValue: string): { buildId: string; sourceId: string } {
+  const executable = resolve(executableValue)
+  const provenancePath = process.platform === 'darwin'
+    ? resolve(dirname(executable), '..', 'Resources', 'app', 'dist', 'build-provenance.json')
+    : join(dirname(executable), 'resources', 'app', 'dist', 'build-provenance.json')
+  let provenance: {
+    schemaVersion?: unknown
+    producerVersion?: unknown
+    buildId?: unknown
+    sourceId?: unknown
+    mode?: unknown
+  }
+  try {
+    provenance = JSON.parse(readFileSync(provenancePath, 'utf8')) as typeof provenance
+  } catch {
+    throw new Error(`Packaged Developer Host provenance is missing or invalid: ${provenancePath}`)
+  }
+  if (
+    provenance.schemaVersion !== ELECTRON_BUILD_SCHEMA_VERSION
+    || provenance.producerVersion !== ELECTRON_BUILD_PRODUCER_VERSION
+    || provenance.mode !== 'ui-validation'
+    || typeof provenance.buildId !== 'string'
+    || !/^[0-9a-f]{64}$/.test(provenance.buildId)
+    || typeof provenance.sourceId !== 'string'
+    || !/^[0-9a-f]{64}$/.test(provenance.sourceId)
+  ) throw new Error(`Packaged Developer Host provenance is not compatible: ${provenancePath}`)
+  return { buildId: provenance.buildId, sourceId: provenance.sourceId }
 }
 
 function makeRunId(): string {
@@ -213,6 +246,9 @@ export async function startMortiseUiRun(args: {
   }
   const adapterCommand = args.adapterCommand ?? getDefaultAdapterCommand(args.surface)
   if (adapterCommand.length === 0 || !adapterCommand[0]) throw new Error('An adapter command is required')
+  const packagedHostIdentity = args.surface === 'electron' && adapterCommand.length === 1
+    ? readPackagedDeveloperHostIdentity(adapterCommand[0])
+    : undefined
   const label = validateRunLabel(args.label)
   const runId = makeRunId()
   const runRoot = resolve(args.runRoot ?? DEFAULT_MORTISE_UI_RUN_ROOT)
@@ -252,6 +288,7 @@ export async function startMortiseUiRun(args: {
     stdoutPath,
     stderrPath,
     adapterCommand: adapterCommand.map(part => redactText(part, [token])),
+    ...packagedHostIdentity,
     ...(typeof args.scenario?.name === 'string' ? {
       initialScenario: {
         name: args.scenario.name,
@@ -321,6 +358,8 @@ export async function startMortiseUiRun(args: {
         MORTISE_UI_WINDOW_MODE: windowMode,
         MORTISE_UI_VALIDATION_BUILD: '1',
         MORTISE_UI_TEST_HOST: '1',
+        ...(manifest.buildId ? { MORTISE_UI_BUILD_ID: manifest.buildId } : {}),
+        ...(manifest.sourceId ? { MORTISE_BUILD_SOURCE_ID: manifest.sourceId } : {}),
       },
     })
   } catch (error) {
@@ -355,6 +394,7 @@ export async function startMortiseUiRun(args: {
         || endpoint.surface !== args.surface
         || !isProcessAlive(endpoint.pid)
         || (currentManifest.buildId !== undefined && endpoint.buildId !== currentManifest.buildId)
+        || (currentManifest.sourceId !== undefined && endpoint.sourceId !== currentManifest.sourceId)
       ) {
         const error = 'Host endpoint manifest identity does not match the controller run'
         const failed = await failMortiseUiStart(runDir, 'endpoint', error, [child.pid, endpoint.pid], !args.reuseProfile)
@@ -629,7 +669,7 @@ async function terminateAndCleanFailedRun(
   }
 }
 
-async function terminateOwnedProcessTrees(processes: MortiseUiProcessIdentity[]): Promise<number[]> {
+export async function terminateOwnedProcessTrees(processes: MortiseUiProcessIdentity[]): Promise<number[]> {
   const identities = uniqueProcessIdentities(processes)
   const roots = identities.filter(matchesProcessIdentity).map(identity => identity.pid!)
   if (process.platform === 'win32') {

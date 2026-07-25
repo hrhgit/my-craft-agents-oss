@@ -1,3 +1,5 @@
+import type { ImmutableRuntimeLayout } from '@mortise/session-tools-core/runtime'
+
 /**
  * Platform services — dependency injection seam.
  *
@@ -40,7 +42,9 @@ export interface PlatformServices {
   // -- Path resolution --
   appRootPath: string
   resourcesPath: string
+  resourcesBasePath?: string
   isPackaged: boolean
+  immutableRuntime?: ImmutableRuntimeLayout
 
   // -- App metadata --
   appVersion: string

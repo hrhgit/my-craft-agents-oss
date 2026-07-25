@@ -8,6 +8,8 @@ import type {
   ExtensionInteractionResponseV1,
 } from '@mortise/shared/protocol'
 import { cn } from '@/lib/utils'
+import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
 
 export type InteractionDraft =
   | { kind: 'confirm'; value: boolean }
@@ -17,6 +19,17 @@ export type InteractionDraft =
 export interface ExtensionInteractionComposerProps {
   event: ExtensionInteractionBridgeRequestV1
   onRespond: (response: ExtensionInteractionResponseV1) => void
+}
+
+function interactionSemanticPart(value: string): string {
+  if (/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value)) return value
+  const readable = value.replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 96) || 'item'
+  let hash = 2166136261
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index)
+    hash = Math.imul(hash, 16777619)
+  }
+  return `${readable}.${(hash >>> 0).toString(36)}`
 }
 
 export function createInteractionDraft(field: ExtensionInteractionFieldV1): InteractionDraft {
@@ -110,6 +123,7 @@ export function ExtensionInteractionComposer({ event, onRespond }: ExtensionInte
       aria-label={request.title ?? request.description ?? event.extensionId}
       className="overflow-hidden rounded-lg border border-border/70 bg-background shadow-middle"
       data-extension-interaction
+      data-mortise-semantic-id="extension.interaction"
     >
       <form
         onCompositionStart={() => { compositionActiveRef.current = true }}
@@ -128,6 +142,7 @@ export function ExtensionInteractionComposer({ event, onRespond }: ExtensionInte
             <button
               type="button"
               onClick={cancel}
+              data-mortise-semantic-id="extension.interaction.cancel.header"
               className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               aria-label={request.cancelLabel ?? t('common.cancel')}
               title={request.cancelLabel ?? t('common.cancel')}
@@ -142,6 +157,7 @@ export function ExtensionInteractionComposer({ event, onRespond }: ExtensionInte
             <InteractionField
               key={field.id}
               field={field}
+              semanticId={`extension.interaction.field.${interactionSemanticPart(field.id)}`}
               draft={drafts[field.id] ?? createInteractionDraft(field)}
               onChange={update => updateDraft(field.id, update)}
             />
@@ -152,6 +168,7 @@ export function ExtensionInteractionComposer({ event, onRespond }: ExtensionInte
           <button
             type="button"
             onClick={cancel}
+            data-mortise-semantic-id="extension.interaction.cancel.footer"
             className="h-8 rounded-md px-3 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             {request.cancelLabel ?? t('common.cancel')}
@@ -159,6 +176,7 @@ export function ExtensionInteractionComposer({ event, onRespond }: ExtensionInte
           <button
             type="submit"
             disabled={!canSubmit}
+            data-mortise-semantic-id="extension.interaction.submit"
             className="inline-flex h-8 min-w-8 items-center justify-center gap-2 rounded-md bg-foreground px-3 text-xs font-medium text-background transition-[opacity,transform] hover:opacity-90 active:scale-[0.98] disabled:cursor-default disabled:opacity-25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
           >
             <ArrowUp className="h-3.5 w-3.5" />
@@ -172,15 +190,17 @@ export function ExtensionInteractionComposer({ event, onRespond }: ExtensionInte
 
 function InteractionField({
   field,
+  semanticId,
   draft,
   onChange,
 }: {
   field: ExtensionInteractionFieldV1
+  semanticId: string
   draft: InteractionDraft
   onChange: (update: (draft: InteractionDraft) => InteractionDraft) => void
 }) {
   return (
-    <fieldset className="min-w-0" data-interaction-field={field.id}>
+    <fieldset className="min-w-0" data-interaction-field={field.id} data-mortise-semantic-id={semanticId}>
       {field.kind !== 'confirm' && (
         <>
           <legend className="text-sm font-medium leading-5 text-foreground">
@@ -195,6 +215,7 @@ function InteractionField({
         <label className="mt-2 flex min-h-10 cursor-pointer items-center gap-3 rounded-md border border-border/60 bg-muted/25 px-3 py-2 text-sm transition-colors hover:bg-muted/45 focus-within:ring-2 focus-within:ring-ring/35">
           <input
             type="checkbox"
+            data-mortise-semantic-id={`${semanticId}.confirm`}
             checked={draft.value}
             onChange={changeEvent => onChange(() => ({ kind: 'confirm', value: changeEvent.target.checked }))}
             className="h-4 w-4 shrink-0 accent-foreground"
@@ -220,6 +241,7 @@ function InteractionField({
               >
                 <input
                   type={field.multiple ? 'checkbox' : 'radio'}
+                  data-mortise-semantic-id={`${semanticId}.option.${interactionSemanticPart(option.id)}`}
                   name={field.multiple ? undefined : `interaction-${field.id}`}
                   checked={selected}
                   onChange={() => onChange(current => selectInteractionOption(current, option.id, Boolean(field.multiple)))}
@@ -233,7 +255,8 @@ function InteractionField({
             )
           })}
           {field.allowOther && (
-            <textarea
+            <Textarea
+              semanticId={`${semanticId}.other`}
               value={draft.otherText}
               onChange={changeEvent => onChange(current => setInteractionOtherText(current, changeEvent.target.value, Boolean(field.multiple)))}
               rows={1}
@@ -243,7 +266,8 @@ function InteractionField({
             />
           )}
           {field.allowComment && (
-            <textarea
+            <Textarea
+              semanticId={`${semanticId}.comment`}
               value={draft.comment}
               onChange={changeEvent => onChange(current => current.kind === 'choice' ? { ...current, comment: changeEvent.target.value } : current)}
               rows={1}
@@ -257,8 +281,9 @@ function InteractionField({
 
       {field.kind === 'text' && draft.kind === 'text' && (
         field.multiline && !field.sensitive ? (
-          <textarea
+          <Textarea
             aria-label={field.label}
+            semanticId={`${semanticId}.input`}
             value={draft.value}
             onChange={changeEvent => onChange(() => ({ kind: 'text', value: changeEvent.target.value }))}
             rows={3}
@@ -268,8 +293,9 @@ function InteractionField({
             className="mt-2 max-h-40 min-h-20 w-full resize-none rounded-md border border-border/70 bg-muted/35 px-3 py-2 text-sm leading-5 outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring/35"
           />
         ) : (
-          <input
+          <Input
             aria-label={field.label}
+            semanticId={`${semanticId}.input`}
             type={field.sensitive ? 'password' : 'text'}
             value={draft.value}
             onChange={changeEvent => onChange(() => ({ kind: 'text', value: changeEvent.target.value }))}

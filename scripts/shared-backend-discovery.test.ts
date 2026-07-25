@@ -29,8 +29,11 @@ describe('Electron shared backend discovery', () => {
 
     expect(devLauncher).toContain('configureSharedBackend(process.env, DEFAULT_CONFIG_DIR)')
     expect(startLauncher).toContain('configureSharedBackend(env, defaultConfigDir)')
+    expect(startLauncher).toContain('acquireElectronBuild')
+    expect(startLauncher).toContain('cmd: [electronBin, lease.appDir]')
     expect(electronMain).toContain('const sharedBackend = await readLiveServerConnection()')
     expect(packageJson.scripts['electron:start']).toContain('scripts/electron-start.ts')
+    expect(packageJson.scripts['electron:start']).not.toContain('electron:build')
   })
 
   it('preserves an explicitly configured server', async () => {

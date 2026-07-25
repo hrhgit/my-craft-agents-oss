@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { isProcessIdentityMismatch } from '../process-identity.ts'
+import { isProcessIdentityMismatch } from '../../build/process-identity.ts'
 
 describe('mortise-ui process identity', () => {
   it('accepts the recorded process and rejects a reused PID identity', () => {

@@ -1,6 +1,7 @@
 import { requestMortiseUiHost } from '../../mortise-ui/client.ts'
 import { startMortiseUiRun, stopMortiseUiRun } from '../../mortise-ui/controller.ts'
 import type { MortiseUiRunManifest } from '../../mortise-ui/protocol.ts'
+import { UI_VALIDATION_MAX_WAIT_MS } from '@mortise/shared/ui-validation'
 
 interface SnapshotNode {
   ref: string
@@ -27,7 +28,6 @@ try {
   manifest = await startMortiseUiRun({
     surface: 'electron',
     profileMode: 'fixture',
-    waitMs: 180_000,
     ...(process.env.MORTISE_UI_SKIP_BUILD === '1' ? { extraEnv: { MORTISE_UI_SKIP_BUILD: '1' } } : {}),
   })
 
@@ -120,7 +120,12 @@ async function ok<T = Record<string, unknown>>(
   const startedAt = Date.now()
   process.stderr.write(`[runtime-contract] ${command} started\n`)
   try {
-    const response = await requestMortiseUiHost<T>({ ...run, command, params, timeoutMs: 60_000 })
+    const response = await requestMortiseUiHost<T>({
+      ...run,
+      command,
+      params,
+      timeoutMs: UI_VALIDATION_MAX_WAIT_MS,
+    })
     if (!response.ok) throw new Error(`${command}: ${response.error.code}: ${response.error.message}`)
     process.stderr.write(`[runtime-contract] ${command} completed in ${Date.now() - startedAt}ms\n`)
     return response.result

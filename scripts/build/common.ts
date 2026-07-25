@@ -3,7 +3,7 @@
  */
 
 import { $ } from 'bun';
-import { execSync } from 'child_process';
+import { execFileSync, execSync } from 'child_process';
 import {
   existsSync,
   mkdirSync,
@@ -13,14 +13,18 @@ import {
   readdirSync,
   readFileSync,
   realpathSync,
+  renameSync,
   statSync,
   chmodSync,
+  writeFileSync,
 } from 'fs';
 import { builtinModules } from 'module';
 import { join, dirname, relative, resolve, sep } from 'path';
 import { createHash } from 'crypto';
+import { randomUUID } from 'crypto';
 import { assertNoUiValidationProductionRuntime } from './ui-validation-boundary';
 import { assertNoSourceRootReferences } from './bundle-portability';
+import { withFileLock } from './file-lock';
 
 export type Platform = 'darwin' | 'win32' | 'linux';
 export type Arch = 'x64' | 'arm64';
@@ -47,6 +51,17 @@ export const BUN_VERSION = 'bun-v1.3.9';
  * Update this when upgrading uv. Check latest at: https://github.com/astral-sh/uv/releases
  */
 export const UV_VERSION = '0.10.6';
+const UV_TOOLCHAIN_CACHE_SCHEMA_VERSION = 1;
+
+interface CachedUvManifest {
+  schemaVersion: typeof UV_TOOLCHAIN_CACHE_SCHEMA_VERSION;
+  version: string;
+  platform: Platform;
+  arch: Arch;
+  binary: string;
+  sizeBytes: number;
+  sha256: string;
+}
 
 /**
  * Get platform key for resources/bin folder naming.
@@ -212,6 +227,16 @@ export async function downloadUv(config: BuildConfig): Promise<void> {
   // Skip when already provisioned
   if (existsSync(targetPath)) {
     console.log(`uv already present at ${targetPath}`);
+    return;
+  }
+
+  const toolchainCache = process.env.MORTISE_BUILD_TOOLCHAIN_CACHE_DIR;
+  if (toolchainCache) {
+    const cachedUv = ensureCachedUv(config, toolchainCache);
+    mkdirSync(targetDir, { recursive: true });
+    copyFileSync(cachedUv, targetPath);
+    if (platform !== 'win32') chmodSync(targetPath, 0o755);
+    console.log(`uv ${UV_VERSION} restored from verified toolchain cache to ${targetPath} ✓`);
     return;
   }
 
@@ -978,11 +1003,144 @@ function stagePiBinaryRuntime(config: BuildConfig, runtimeRoot: string): void {
 }
 
 export function copyPiRuntime(config: BuildConfig): void {
+  if (!/^[0-9a-f]{64}$/.test(process.env.MORTISE_BUILD_SOURCE_ID ?? '')) {
+    throw new Error('Pi runtime staging requires a canonical immutable build source identity.')
+  }
   const runtimeRoot = join(config.electronDir, 'dist', 'resources', 'pi-runtime');
   // Electron production packages have one runtime shape: the compiled,
   // versioned Pi executable. The JS staging function remains an explicit
   // headless/server build input and cannot be selected by Electron packaging.
   stagePiBinaryRuntime(config, runtimeRoot);
+}
+
+export function publishVerifiedUvToolchain(
+  cacheRoot: string,
+  config: Pick<BuildConfig, 'platform' | 'arch'>,
+  sourceBinary: string,
+  expectedSha256: string,
+): string {
+  const cache = uvCachePaths(cacheRoot, config.platform, config.arch);
+  return withFileLock(cache.lock, () => publishVerifiedUvToolchainLocked(
+    cache,
+    config,
+    sourceBinary,
+    expectedSha256,
+  ), { timeoutMs: 600_000, staleMs: 600_000 });
+}
+
+function publishVerifiedUvToolchainLocked(
+  cache: ReturnType<typeof uvCachePaths>,
+  config: Pick<BuildConfig, 'platform' | 'arch'>,
+  sourceBinary: string,
+  expectedSha256: string,
+): string {
+  const existing = readValidCachedUv(cache.binary, cache.manifest, config.platform, config.arch);
+  if (existing) return existing;
+  if (!existsSync(sourceBinary)) throw new Error(`Verified uv source binary is missing: ${sourceBinary}`);
+  const content = readFileSync(sourceBinary);
+  const sha256 = createHash('sha256').update(content).digest('hex');
+  if (sha256 !== expectedSha256.toLowerCase()) {
+    throw new Error(`Verified uv source hash mismatch: expected ${expectedSha256}, observed ${sha256}`);
+  }
+  mkdirSync(cache.directory, { recursive: true });
+  const token = `${process.pid}-${randomUUID()}`;
+  const stagingBinary = `${cache.binary}.${token}.tmp`;
+  const stagingManifest = `${cache.manifest}.${token}.tmp`;
+  try {
+    copyFileSync(sourceBinary, stagingBinary);
+    writeFileSync(stagingManifest, `${JSON.stringify({
+      schemaVersion: UV_TOOLCHAIN_CACHE_SCHEMA_VERSION,
+      version: UV_VERSION,
+      platform: config.platform,
+      arch: config.arch,
+      binary: cache.binaryName,
+      sizeBytes: content.byteLength,
+      sha256,
+    } satisfies CachedUvManifest, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+    renameSync(stagingBinary, cache.binary);
+    renameSync(stagingManifest, cache.manifest);
+  } finally {
+    rmSync(stagingBinary, { force: true });
+    rmSync(stagingManifest, { force: true });
+  }
+  return cache.binary;
+}
+
+function ensureCachedUv(config: BuildConfig, cacheRoot: string): string {
+  const cache = uvCachePaths(cacheRoot, config.platform, config.arch);
+  const existing = readValidCachedUv(cache.binary, cache.manifest, config.platform, config.arch);
+  if (existing) return existing;
+
+  return withFileLock(cache.lock, () => {
+    const lockedExisting = readValidCachedUv(cache.binary, cache.manifest, config.platform, config.arch);
+    if (lockedExisting) return lockedExisting;
+    mkdirSync(cache.directory, { recursive: true });
+    const stagingDir = join(cache.directory, `.download-${process.pid}-${randomUUID()}`);
+    mkdirSync(stagingDir, { recursive: true });
+    try {
+      const uvDownload = getUvDownloadName(config.platform, config.arch);
+      const assetUrl = `https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/${uvDownload}`;
+      const assetPath = join(stagingDir, uvDownload);
+      const checksumPath = join(stagingDir, `${uvDownload}.sha256`);
+      const extractDir = join(stagingDir, 'extract');
+      console.log(`Downloading uv ${UV_VERSION} for ${config.platform}-${config.arch} into toolchain cache...`);
+      execFileSync('curl', ['-fsSL', '--retry', '3', '--retry-delay', '2', '-o', assetPath, assetUrl], { stdio: 'inherit' });
+      execFileSync('curl', ['-fsSL', '--retry', '3', '--retry-delay', '2', '-o', checksumPath, `${assetUrl}.sha256`], { stdio: 'inherit' });
+      const hashMatch = readFileSync(checksumPath, 'utf8').match(/[a-fA-F0-9]{64}/);
+      if (!hashMatch) throw new Error(`Unable to parse checksum from ${checksumPath}`);
+      const archiveSha256 = createHash('sha256').update(readFileSync(assetPath)).digest('hex');
+      if (archiveSha256 !== hashMatch[0].toLowerCase()) throw new Error('uv checksum verification failed');
+      mkdirSync(extractDir, { recursive: true });
+      if (uvDownload.endsWith('.zip')) {
+        execFileSync('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', `Expand-Archive -LiteralPath '${assetPath.replaceAll("'", "''")}' -DestinationPath '${extractDir.replaceAll("'", "''")}' -Force`], { stdio: 'inherit' });
+      } else {
+        execFileSync('tar', ['-xzf', assetPath, '-C', extractDir], { stdio: 'inherit' });
+      }
+      const extractedUv = findFileRecursive(extractDir, cache.binaryName);
+      if (!extractedUv) throw new Error(`Unable to locate ${cache.binaryName} in extracted archive`);
+      const binarySha256 = createHash('sha256').update(readFileSync(extractedUv)).digest('hex');
+      return publishVerifiedUvToolchainLocked(cache, config, extractedUv, binarySha256);
+    } finally {
+      rmSync(stagingDir, { recursive: true, force: true });
+    }
+  }, { timeoutMs: 600_000, staleMs: 600_000 });
+}
+
+function uvCachePaths(cacheRoot: string, platform: Platform, arch: Arch) {
+  const binaryName = platform === 'win32' ? 'uv.exe' : 'uv';
+  const directory = join(resolve(cacheRoot), 'uv', UV_VERSION, getPlatformKey(platform, arch));
+  return {
+    directory,
+    binaryName,
+    binary: join(directory, binaryName),
+    manifest: join(directory, 'uv.json'),
+    lock: join(resolve(cacheRoot), 'locks', `uv-${UV_VERSION}-${getPlatformKey(platform, arch)}`),
+  };
+}
+
+function readValidCachedUv(
+  binaryPath: string,
+  manifestPath: string,
+  platform: Platform,
+  arch: Arch,
+): string | undefined {
+  try {
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as CachedUvManifest;
+    const content = readFileSync(binaryPath);
+    const sha256 = createHash('sha256').update(content).digest('hex');
+    if (
+      manifest.schemaVersion !== UV_TOOLCHAIN_CACHE_SCHEMA_VERSION
+      || manifest.version !== UV_VERSION
+      || manifest.platform !== platform
+      || manifest.arch !== arch
+      || manifest.binary !== (platform === 'win32' ? 'uv.exe' : 'uv')
+      || manifest.sizeBytes !== content.byteLength
+      || manifest.sha256 !== sha256
+    ) return undefined;
+    return binaryPath;
+  } catch {
+    return undefined;
+  }
 }
 
 /**

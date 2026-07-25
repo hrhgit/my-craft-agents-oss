@@ -147,10 +147,10 @@ export class AppShellScenarioService {
     return result
   }
 
-  async reset(): Promise<void> {
+  async reset(): Promise<AppShellScenarioState> {
     await this.scenarios.reset(this)
     this.faults.clear()
-    this.dispatch({ type: 'reset' })
+    return this.state
   }
 
   advance(ms: number): number {
@@ -160,19 +160,23 @@ export class AppShellScenarioService {
   }
 
   async retryTransport(): Promise<void> {
+    const clock = this.activeClock()
     try {
-      await this.services.invoke('transport.connect', this, {}, this.activeClock())
+      await this.services.invoke('transport.connect', this, {}, clock)
     } catch {
+      if (!this.isCurrentClock(clock)) return
       this.dispatch({ type: 'show.transport', state: transport('failed') })
       this.dispatch({ type: 'service.outcome', operation: 'transport.connect', outcome: 'failed' })
     }
   }
 
   async reloadExtension(): Promise<void> {
+    const clock = this.activeClock()
     this.dispatch({ type: 'show.extension', phase: 'reloading' })
     try {
-      await this.services.invoke('extension.reload', this, {}, this.activeClock())
+      await this.services.invoke('extension.reload', this, {}, clock)
     } catch {
+      if (!this.isCurrentClock(clock)) return
       this.dispatch({ type: 'show.extension', phase: 'error' })
       this.dispatch({ type: 'service.outcome', operation: 'extension.reload', outcome: 'failed' })
     }
@@ -186,6 +190,12 @@ export class AppShellScenarioService {
 
   private isCurrentClock(clock: UiValidationClock): boolean {
     return this.scenarios.activeClock === clock
+  }
+
+  private commitForClock(clock: UiValidationClock, event: ScenarioEvent): boolean {
+    if (!this.isCurrentClock(clock)) return false
+    this.dispatch(event)
+    return true
   }
 
   private emit(): void { for (const listener of this.listeners) listener() }
@@ -217,48 +227,55 @@ export class AppShellScenarioService {
       id: 'transport.connect', validate: noInput,
       invoke: async (service, _input, clock) => {
         const effect = await service.faults.consume('transport.connect', { surface: 'app-shell' }, clock)
-        if (effect?.kind === 'drop') return service.recordServiceOutcome('transport.connect', 'dropped')
+        if (!service.isCurrentClock(clock)) return
+        if (effect?.kind === 'drop') return service.recordServiceOutcomeForClock(clock, 'transport.connect', 'dropped')
         if (effect?.kind === 'disconnect') {
-          service.dispatch({ type: 'show.transport', state: transport('failed') })
-          return service.recordServiceOutcome('transport.connect', 'disconnected')
+          service.commitForClock(clock, { type: 'show.transport', state: transport('failed') })
+          return service.recordServiceOutcomeForClock(clock, 'transport.connect', 'disconnected')
         }
         await clock.delay(100, undefined, 'retry')
-        service.dispatch({ type: 'transport.retrying' })
-        return service.recordServiceOutcome('transport.connect', 'completed')
+        service.commitForClock(clock, { type: 'transport.retrying' })
+        return service.recordServiceOutcomeForClock(clock, 'transport.connect', 'completed')
       },
     })
     this.services.register({
       id: 'session.stream', validate: noInput,
       invoke: async (service, _input, clock) => {
         const effect = await service.faults.consume('session.stream', { sessionId: SCENARIO_SESSION_ID }, clock)
-        if (effect?.kind === 'drop') return service.recordServiceOutcome('session.stream', 'dropped')
+        if (!service.isCurrentClock(clock)) return
+        if (effect?.kind === 'drop') return service.recordServiceOutcomeForClock(clock, 'session.stream', 'dropped')
         if (effect?.kind === 'disconnect') {
-          service.dispatch({ type: 'stream.failed' })
-          return service.recordServiceOutcome('session.stream', 'disconnected')
+          service.commitForClock(clock, { type: 'stream.failed' })
+          return service.recordServiceOutcomeForClock(clock, 'session.stream', 'disconnected')
         }
         await clock.delay(1_000, undefined, 'scheduler')
-        service.dispatch({ type: 'stream.completed' })
-        return service.recordServiceOutcome('session.stream', 'completed')
+        service.commitForClock(clock, { type: 'stream.completed' })
+        return service.recordServiceOutcomeForClock(clock, 'session.stream', 'completed')
       },
     })
     this.services.register({
       id: 'extension.reload', validate: noInput,
       invoke: async (service, _input, clock) => {
         const effect = await service.faults.consume('extension.reload', { extensionId: SCENARIO_EXTENSION_ID }, clock)
-        if (effect?.kind === 'drop') return service.recordServiceOutcome('extension.reload', 'dropped')
+        if (!service.isCurrentClock(clock)) return
+        if (effect?.kind === 'drop') return service.recordServiceOutcomeForClock(clock, 'extension.reload', 'dropped')
         if (effect?.kind === 'disconnect') {
-          service.dispatch({ type: 'show.extension', phase: 'error' })
-          return service.recordServiceOutcome('extension.reload', 'disconnected')
+          service.commitForClock(clock, { type: 'show.extension', phase: 'error' })
+          return service.recordServiceOutcomeForClock(clock, 'extension.reload', 'disconnected')
         }
         await clock.delay(250, undefined, 'debounce')
-        service.dispatch({ type: 'extension.reloaded' })
-        return service.recordServiceOutcome('extension.reload', 'completed')
+        service.commitForClock(clock, { type: 'extension.reloaded' })
+        return service.recordServiceOutcomeForClock(clock, 'extension.reload', 'completed')
       },
     })
   }
 
   private recordServiceOutcome(operation: string, outcome: 'completed' | 'failed' | 'disconnected' | 'dropped'): void {
     this.dispatch({ type: 'service.outcome', operation, outcome })
+  }
+
+  private recordServiceOutcomeForClock(clock: UiValidationClock, operation: string, outcome: 'completed' | 'failed' | 'disconnected' | 'dropped'): void {
+    this.commitForClock(clock, { type: 'service.outcome', operation, outcome })
   }
 
   private registerScenarios(): void {
@@ -344,7 +361,7 @@ export interface AppShellScenarioBridgeV1 {
     clock: ReturnType<UiValidationClock['describe']> | { mode: 'none'; virtualizedDomains: []; nonVirtualizedDomains: ['os', 'network']; pending: {} }
   }
   apply(input: unknown): Promise<UiValidationScenarioApplyResult>
-  reset(): Promise<void>
+  reset(): Promise<AppShellScenarioState>
   clock: { advance(ms: number): number }
   fault: { set(input: UiValidationFaultSetRequest): ReturnType<UiValidationFaultRegistry['set']>; clear(faultId?: string): void }
 }

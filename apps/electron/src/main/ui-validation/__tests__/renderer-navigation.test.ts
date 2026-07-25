@@ -109,4 +109,20 @@ describe('loadRendererTarget', () => {
     }, webContents.url, { timeoutMs: 500 })
     expect(loads).toBe(0)
   })
+
+  it('accepts index bootstrap route parameters after the requested document loads', async () => {
+    const webContents = new FakeWebContents()
+    webContents.url = 'file:///app/playground.html?scenario=component'
+    const target = 'file:///app/index.html'
+    await expect(loadRendererTarget({
+      isDestroyed: () => false,
+      webContents,
+      loadURL: async () => {
+        queueMicrotask(() => {
+          webContents.url = 'file:///app/index.html?workspaceId=w1#session=s1'
+          webContents.emit('did-finish-load')
+        })
+      },
+    }, target, { timeoutMs: 500 })).resolves.toBeUndefined()
+  })
 })

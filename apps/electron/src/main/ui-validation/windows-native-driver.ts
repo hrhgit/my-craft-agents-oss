@@ -11,6 +11,7 @@ export interface WindowsNativeNode {
   name: string
   automationId?: string
   nativeWindowHandle?: number
+  ownerNativeWindowHandle?: number
   enabled: boolean
   focused: boolean
   bounds?: { x: number; y: number; width: number; height: number }
@@ -90,29 +91,35 @@ export class WindowsNativeUiDriver {
     }
     this.refs = new Map()
     let count = 0
-    const windows = raw.windows.map((window, windowIndex) => ({
-      name: bounded(window.name, 500),
-      role: bounded(window.role, 100),
-      nodes: flatten([window], []).flatMap(rawNode => {
-        if (count++ >= MAX_NATIVE_NODES) return []
-        const ref = `n${this.revision}:${createHash('sha256').update(rawNode.runtimeId).digest('hex').slice(0, 20)}`
-        const node: WindowsNativeNode = {
-          ref,
-          runtimeId: rawNode.runtimeId,
-          role: bounded(rawNode.role, 100),
-          name: bounded(rawNode.name, 500),
-          ...(rawNode.automationId ? { automationId: bounded(rawNode.automationId, 300) } : {}),
-          ...(validNativeWindowHandle(rawNode.nativeWindowHandle) ? { nativeWindowHandle: rawNode.nativeWindowHandle } : {}),
-          enabled: rawNode.enabled !== false,
-          focused: rawNode.focused === true,
-          ...(validBounds(rawNode.bounds) ? { bounds: rawNode.bounds } : {}),
-          actions: nativeActions(rawNode),
-          backgroundActions: backgroundNativeActions(rawNode),
-        }
-        this.refs.set(ref, node)
-        return [node]
-      }),
-    }))
+    const windows = raw.windows.map(window => {
+      const ownerNativeWindowHandle = validNativeWindowHandle(window.nativeWindowHandle)
+        ? window.nativeWindowHandle
+        : undefined
+      return {
+        name: bounded(window.name, 500),
+        role: bounded(window.role, 100),
+        nodes: flatten([window], []).flatMap(rawNode => {
+          if (count++ >= MAX_NATIVE_NODES) return []
+          const ref = `n${this.revision}:${createHash('sha256').update(rawNode.runtimeId).digest('hex').slice(0, 20)}`
+          const node: WindowsNativeNode = {
+            ref,
+            runtimeId: rawNode.runtimeId,
+            role: bounded(rawNode.role, 100),
+            name: bounded(rawNode.name, 500),
+            ...(rawNode.automationId ? { automationId: bounded(rawNode.automationId, 300) } : {}),
+            ...(validNativeWindowHandle(rawNode.nativeWindowHandle) ? { nativeWindowHandle: rawNode.nativeWindowHandle } : {}),
+            ...(ownerNativeWindowHandle ? { ownerNativeWindowHandle } : {}),
+            enabled: rawNode.enabled !== false,
+            focused: rawNode.focused === true,
+            ...(validBounds(rawNode.bounds) ? { bounds: rawNode.bounds } : {}),
+            actions: nativeActions(rawNode),
+            backgroundActions: backgroundNativeActions(rawNode),
+          }
+          this.refs.set(ref, node)
+          return [node]
+        }),
+      }
+    })
     return {
       revision: this.revision,
       processId: this.processId,
@@ -122,22 +129,39 @@ export class WindowsNativeUiDriver {
     }
   }
 
-  async action(request: WindowsNativeActionRequest): Promise<WindowsNativeActionReceipt> {
+  async action(
+    request: WindowsNativeActionRequest,
+    options: { timeoutMs?: number; signal?: AbortSignal } = {},
+  ): Promise<WindowsNativeActionReceipt> {
     const target = this.resolvePublishedTarget(request)
     if (!target.enabled) throw new ElectronUiDriverError('DISABLED', `Native target ${request.ref} is disabled.`)
     if (!target.actions.includes(request.action)) throw new ElectronUiDriverError('UNSUPPORTED', `${request.action} is not valid for native ${target.role}.`)
     if ((request.action === 'fill' || request.action === 'select') && request.value === undefined) {
       throw new ElectronUiDriverError('UNSUPPORTED', `${request.action} requires value.`)
     }
-    await this.runner({
-      v: 1,
-      operation: 'action',
-      processId: this.processId,
-      runtimeId: target.runtimeId,
-      action: request.action,
-      ...(request.value !== undefined ? { value: request.value.slice(0, 10_000) } : {}),
+    const timeoutMs = boundedNativeTimeout(options.timeoutMs)
+    const deadline = Date.now() + timeoutMs
+    const invoke = async () => await this.runner({
+        v: 1,
+        operation: 'action',
+        processId: this.processId,
+        runtimeId: target.runtimeId,
+        ...(target.nativeWindowHandle ? { nativeWindowHandle: target.nativeWindowHandle } : {}),
+        ...(target.ownerNativeWindowHandle ? { ownerNativeWindowHandle: target.ownerNativeWindowHandle } : {}),
+        action: request.action,
+        ...(request.value !== undefined ? { value: request.value.slice(0, 10_000) } : {}),
+      })
+    if (isRetryableNativeAction(request.action)) {
+      await retryTransientNativeOperation(invoke, { deadline, timeoutMs, signal: options.signal, operation: `native ${request.action}` })
+    } else {
+      await invoke()
+    }
+    const after = await retryTransientNativeOperation(() => this.snapshot(), {
+      deadline,
+      timeoutMs,
+      signal: options.signal,
+      operation: 'native post-action snapshot',
     })
-    const after = await this.snapshot()
     return {
       actionId: randomUUID(),
       verificationLevel: 'native-verified',
@@ -162,19 +186,23 @@ export class WindowsNativeUiDriver {
     predicate: (node: WindowsNativeNode) => boolean,
     options: { timeoutMs?: number; signal?: AbortSignal } = {},
   ): Promise<{ snapshot: WindowsNativeSnapshot; node: WindowsNativeNode }> {
-    const timeoutMs = options.timeoutMs ?? UI_VALIDATION_DEFAULT_TIMEOUT_MS
-    if (!Number.isFinite(timeoutMs) || timeoutMs < 1 || timeoutMs > UI_VALIDATION_MAX_WAIT_MS) {
-      throw new ElectronUiDriverError('INVALID_REQUEST', `Native wait timeout must be between 1 and ${UI_VALIDATION_MAX_WAIT_MS}ms.`)
-    }
+    const timeoutMs = boundedNativeTimeout(options.timeoutMs)
     const deadline = Date.now() + timeoutMs
     let delayMs = 10
     while (true) {
       if (options.signal?.aborted) throw new ElectronUiDriverError('DRIVER_DISCONNECTED', 'Native wait was aborted.')
-      const snapshot = await this.snapshot()
+      const snapshot = await retryTransientNativeOperation(() => this.snapshot(), {
+        deadline,
+        timeoutMs,
+        signal: options.signal,
+        operation: 'native readiness snapshot',
+      })
       const node = snapshot.windows.flatMap(window => window.nodes).find(predicate)
       if (node) return { snapshot, node }
       const remaining = deadline - Date.now()
-      if (remaining <= 0) throw new ElectronUiDriverError('TIMEOUT', `Native target did not appear within ${timeoutMs}ms.`)
+      if (remaining <= 0) {
+        throw new ElectronUiDriverError('TIMEOUT', `Native target did not appear within ${timeoutMs}ms.`)
+      }
       await abortableDelay(Math.min(delayMs, remaining), options.signal)
       delayMs = Math.min(250, delayMs * 2)
     }
@@ -249,7 +277,13 @@ export async function runPowerShellUiAutomation(
   const stderr = streamText(child.stderr)
   child.stdin.end(JSON.stringify(request))
   const [exitCode, stdoutText, stderrText] = await Promise.all([exit, stdout, stderr])
-  if (exitCode !== 0) throw new ElectronUiDriverError('DRIVER_DISCONNECTED', `Windows UI Automation failed: ${stderrText.slice(0, 2_000)}`)
+  if (exitCode !== 0) {
+    throw new ElectronUiDriverError(
+      'DRIVER_DISCONNECTED',
+      `Windows UI Automation failed: ${stderrText.slice(0, 2_000)}`,
+      { transient: isTransientWindowsUiAutomationFailure(stderrText) },
+    )
+  }
   try { return JSON.parse(stdoutText) } catch (error) {
     const normalized = stdoutText.trim().replace(/[\r\n]+/g, ' ')
     const head = normalized.slice(0, 250)
@@ -354,4 +388,49 @@ async function abortableDelay(ms: number, signal?: AbortSignal): Promise<void> {
     }, ms)
     signal?.addEventListener('abort', onAbort, { once: true })
   })
+}
+
+function isTransientNativeDriverFailure(error: unknown): error is ElectronUiDriverError {
+  return error instanceof ElectronUiDriverError
+    && error.code === 'DRIVER_DISCONNECTED'
+    && error.details?.transient === true
+}
+
+function isTransientWindowsUiAutomationFailure(stderr: string): boolean {
+  return /\bRPC_E_(?:SERVERFAULT|CALL_REJECTED|DISCONNECTED|SERVERCALL_RETRYLATER)\b|\b0x80010105\b|\b0x80010001\b|\b0x80010108\b|\b0x8001010A\b/i.test(stderr)
+}
+
+function isRetryableNativeAction(action: WindowsNativeActionRequest['action']): boolean {
+  return action === 'focus' || action === 'minimize' || action === 'maximize' || action === 'restore'
+}
+
+function boundedNativeTimeout(value: number | undefined): number {
+  const timeoutMs = value ?? UI_VALIDATION_DEFAULT_TIMEOUT_MS
+  if (!Number.isFinite(timeoutMs) || timeoutMs < 1 || timeoutMs > UI_VALIDATION_MAX_WAIT_MS) {
+    throw new ElectronUiDriverError('INVALID_REQUEST', `Native wait timeout must be between 1 and ${UI_VALIDATION_MAX_WAIT_MS}ms.`)
+  }
+  return timeoutMs
+}
+
+async function retryTransientNativeOperation<T>(
+  operation: () => Promise<T>,
+  options: { deadline: number; timeoutMs: number; signal?: AbortSignal; operation: string },
+): Promise<T> {
+  let delayMs = 10
+  while (true) {
+    if (options.signal?.aborted) throw new ElectronUiDriverError('DRIVER_DISCONNECTED', 'Native operation was aborted.')
+    try {
+      return await operation()
+    } catch (error) {
+      if (!isTransientNativeDriverFailure(error)) throw error
+      const remaining = options.deadline - Date.now()
+      if (remaining <= 0) {
+        throw new ElectronUiDriverError('TIMEOUT', `${options.operation} did not recover within ${options.timeoutMs}ms.`, {
+          lastError: error.message,
+        })
+      }
+      await abortableDelay(Math.min(delayMs, remaining), options.signal)
+      delayMs = Math.min(250, delayMs * 2)
+    }
+  }
 }

@@ -10,7 +10,9 @@ import { extensionUIValidationEntityId } from '@mortise/shared/protocol'
 import {
   ElectronUiDriverError,
   ElectronUiSurfaceDriver,
+  type UiDriverActionOptions,
   type UiDriverSnapshot,
+  type UiDriverStableTarget,
   type UiDriverWindowSelector,
   type UiVerificationLevel,
 } from './electron-surface-driver'
@@ -26,7 +28,7 @@ import { captureMainProcessDiagnostics } from './main-process-diagnostics'
 import { APP_SHELL_SCENARIO_IDS, AppShellScenarioAdapterError, ElectronAppShellScenarioAdapter, appShellScenarioApplyRequest } from './app-shell-scenario-adapter'
 import { loadRendererTarget, rendererPageUrl } from './renderer-navigation'
 import { uiTestHostHttpErrorEnvelope } from './http-error-envelope'
-import { findRendererSnapshotTargets, resolveRendererSnapshotTarget } from './snapshot-target'
+import { findRendererSnapshotTargets } from './snapshot-target'
 import { parseElectronActionParams, parseElectronWaitParams, parseRendererPerformanceDuration } from './test-host-request'
 import { ElectronBackgroundWindowController, parseElectronUiWindowMode } from './background-window-mode'
 import { parseBrowserViewKeyAction } from './browser-view-key-action'
@@ -69,6 +71,18 @@ interface ExtensionTarget {
   runtimeId?: string
   definitionId?: string
 }
+
+interface ActiveScenarioBase {
+  id: string
+  seed: number
+  clock: string
+  clockDomains?: string[]
+}
+
+type ActiveScenario =
+  | (ActiveScenarioBase & { source: 'app-shell'; state?: unknown })
+  | (ActiveScenarioBase & { source: 'playground'; variant?: string })
+  | (ActiveScenarioBase & { source: 'extension'; target: ExtensionTarget; input?: Record<string, unknown> })
 
 export async function startUiTestHost(options: UiTestHostOptions): Promise<UiTestHost | null> {
   if (process.env.MORTISE_UI_TEST_HOST !== '1') return null
@@ -162,17 +176,8 @@ export async function startUiTestHost(options: UiTestHostOptions): Promise<UiTes
   let revision = 0
   let lastSnapshot: UiDriverSnapshot | undefined
   const snapshotHistory = new Map<number, UiDriverSnapshot>()
-  let activeScenario: {
-    id: string
-    source?: 'app-shell' | 'playground' | 'extension'
-    variant?: string
-    seed: number
-    clock: string
-    clockDomains?: string[]
-    target?: ExtensionTarget
-    input?: Record<string, unknown>
-    state?: unknown
-  } | undefined
+  let activeScenario: ActiveScenario | undefined
+  let scenarioSurfaceOwner: 'app-shell' | 'playground' | undefined
   let closing = false
   let runVerificationLevel: UiVerificationLevel = 'scenario-verified'
   const activeWaits = new Set<AbortController>()
@@ -290,7 +295,7 @@ export async function startUiTestHost(options: UiTestHostOptions): Promise<UiTes
       const nativeWindowId = selectedWindowId(options.windowManager, selector, false)
       const nativeWindow = nativeWindowId === undefined ? undefined : options.windowManager.getWindowByWebContentsId(nativeWindowId)
       const nativeWindowStatuses = options.windowManager.getAllWindows().map(entry => nativeWindows.status(entry.window))
-      const appShellScenario = activeScenario && APP_SHELL_SCENARIO_IDS.has(activeScenario.id as never)
+      const appShellScenario = activeScenario?.source === 'app-shell'
         ? await callAppShellScenarioAdapter(() => appShellScenarioAdapter(selector).snapshot())
         : undefined
       return {
@@ -430,35 +435,25 @@ export async function startUiTestHost(options: UiTestHostOptions): Promise<UiTes
           verificationLevel: 'scenario-verified',
         }, params, actionSelector, beforeEventSeq, signal)
       }
-      const target = typeof params.target === 'object' && params.target !== null
-        ? params.target as Record<string, unknown>
-        : params
-      let actionRevision = typeof params.revision === 'number' ? requiredNumber(params.revision, 'revision') : undefined
-      let actionRef = typeof target.ref === 'string' ? requiredString(target.ref, 'target.ref') : undefined
-      if (
-        typeof target.ref !== 'string'
-        && (
-          typeof target.semanticId === 'string'
-          || typeof target.testId === 'string'
-          || typeof target.role === 'string'
-        )
-      ) {
-        const current = rememberSnapshot(await compositeSnapshot(actionSelector))
-        const matched = resolveRendererSnapshotTarget(Object.values(current.regions).flat(), target)
-        actionRevision = current.revision
-        actionRef = matched.ref
-      }
       const beforeEventSeq = stateBridge.events().latestSeq
-      const action = await driver.action(actionSelector, {
-        revision: actionRevision ?? requiredNumber(params.revision, 'revision'),
-        ref: actionRef ?? requiredString(target.ref, 'target.ref'),
+      const actionRequest: UiDriverActionOptions = {
         action: requiredAction(params.action),
         ...(params.mode === 'semantic' || params.mode === 'physical' ? { mode: params.mode } : {}),
         ...(typeof params.value === 'string' ? { value: params.value } : {}),
         ...(typeof params.key === 'string' ? { key: params.key } : {}),
         ...(Array.isArray(params.modifiers) ? { modifiers: params.modifiers as never } : {}),
         ...(isPoint(params.to) ? { to: params.to } : {}),
-      })
+      }
+      const action = 'ref' in parsedAction.target
+        ? await driver.action(actionSelector, {
+            ...actionRequest,
+            revision: requiredNumber(parsedAction.revision, 'revision'),
+            ref: parsedAction.target.ref,
+          })
+        : await driver.action(actionSelector, {
+            ...actionRequest,
+            target: parsedAction.target as UiDriverStableTarget,
+          })
       lastSnapshot = rememberSnapshot(await compositeSnapshot(actionSelector))
       return await settleActionReceipt({ ...action, afterRevision: lastSnapshot.revision }, params, actionSelector, beforeEventSeq, signal)
     }
@@ -672,10 +667,10 @@ export async function startUiTestHost(options: UiTestHostOptions): Promise<UiTes
       return { webContentsId: created.webContents.id, workspaceId, role: 'child-session', sessionId }
     }
     if (command === 'clock.advance') {
-      ensureActiveAppShellScenario()
+      const scenario = requireActiveAppShellScenario()
       const now = await callAppShellScenarioAdapter(() => appShellScenarioAdapter(selector).advance(requiredNumber(params.ms, 'ms')))
       const scenarioState = await callAppShellScenarioAdapter(() => appShellScenarioAdapter(selector).snapshot()) as { revision?: unknown; clock?: { mode?: unknown } }
-      if (activeScenario) activeScenario = { ...activeScenario, state: scenarioState }
+      activeScenario = { ...scenario, state: scenarioState }
       return { now, state: scenarioState, revision: typeof scenarioState.revision === 'number' ? scenarioState.revision : revision, verificationLevel: 'scenario-verified' }
     }
     if (command === 'session-validation.arm') {
@@ -734,17 +729,7 @@ export async function startUiTestHost(options: UiTestHostOptions): Promise<UiTes
     if (command === 'scenario.reset' && extensionTarget) {
       if (!extensionTarget.definitionId) throw new ElectronUiDriverError('TARGET_NOT_FOUND', 'Extension scenario target requires definitionId.')
       const scenarioId = requiredScenarioId(params.id ?? params.name ?? params.scenario)
-      const beforeEventSeq = stateBridge.events().latestSeq
-      const beforeDefinitionRevision = await currentExtensionDefinitionRevision(extensionTarget, selector)
-      const result = await callExtensionAdapter(() => extensionAdapter(selector).execute({
-        ...extensionTarget,
-        definitionId: extensionTarget.definitionId!,
-        kind: 'scenario',
-        id: scenarioId,
-        phase: 'teardown',
-        ...(isRecord(params.input) ? { input: params.input } : {}),
-      }))
-      await waitForExtensionCommandSettle(extensionTarget, selector, beforeEventSeq, beforeDefinitionRevision, params, signal)
+      const result = await resetExtensionScenario(extensionTarget, scenarioId, isRecord(params.input) ? params.input : undefined, selector, params, signal)
       if (activeScenario?.source === 'extension'
         && activeScenario.id === scenarioId
         && sameExtensionTarget(activeScenario.target, extensionTarget)) {
@@ -791,6 +776,7 @@ export async function startUiTestHost(options: UiTestHostOptions): Promise<UiTes
           timeoutMs: numberOr(params.timeoutMs, UI_TEST_HOST_DEFAULT_WAIT_MS), signal,
         })
         lastSnapshot = rememberSnapshot(await driver.snapshot({ webContentsId: window.webContents.id }))
+        scenarioSurfaceOwner = undefined
         return { reset: true, revision: lastSnapshot.revision, verificationLevel: 'scenario-verified' }
       }
       const scenarioId = requiredScenarioId(params.id ?? params.name ?? params.scenario)
@@ -806,6 +792,7 @@ export async function startUiTestHost(options: UiTestHostOptions): Promise<UiTes
         const clockMode = scenarioState.clock?.mode === 'frozen' ? 'frozen' : 'real'
         const clockDomains = Array.isArray(scenarioState.clock?.virtualizedDomains) ? scenarioState.clock.virtualizedDomains.filter((value): value is string => typeof value === 'string') : []
         activeScenario = { id: scenarioId, source: 'app-shell', seed: typeof result.seed === 'number' ? result.seed : 0, clock: clockMode, clockDomains, state: scenarioState }
+        scenarioSurfaceOwner = 'app-shell'
         lastSnapshot = rememberSnapshot(await driver.snapshot({ webContentsId: window.webContents.id }))
         return {
           ...result,
@@ -847,6 +834,7 @@ export async function startUiTestHost(options: UiTestHostOptions): Promise<UiTes
         seed: Number.isSafeInteger(params.seed) ? params.seed as number : 0,
         clock: clock?.mode === 'frozen' ? 'frozen' : 'real',
       }
+      scenarioSurfaceOwner = 'playground'
       return {
         scenarioId,
         seed: Number.isSafeInteger(params.seed) ? params.seed : 0,
@@ -857,16 +845,28 @@ export async function startUiTestHost(options: UiTestHostOptions): Promise<UiTes
       }
     }
     if (command === 'scenario.reset') {
-      if (activeScenario && APP_SHELL_SCENARIO_IDS.has(activeScenario.id as never)) {
-        const adapter = appShellScenarioAdapter(selector)
-        await callAppShellScenarioAdapter(() => adapter.reset())
-        const window = resolveManagedWindow(options.windowManager, selector)
-        await loadRendererTarget(window, rendererPageUrl(window.webContents.getURL(), 'index.html').toString(), {
-          timeoutMs: numberOr(params.timeoutMs, UI_TEST_HOST_DEFAULT_WAIT_MS), signal,
-        })
-        lastSnapshot = rememberSnapshot(await driver.snapshot({ webContentsId: window.webContents.id }))
+      if (activeScenario?.source === 'extension') {
+        const scenario = activeScenario
+        const result = await resetExtensionScenario(scenario.target, scenario.id, scenario.input, selector, params, signal)
         activeScenario = undefined
-        return { reset: true, revision: lastSnapshot.revision, verificationLevel: 'scenario-verified' }
+        return { result, scenarioId: scenario.id, phase: 'teardown', revision: stateBridge.snapshot().revision, verificationLevel: 'scenario-verified' }
+      }
+      if (activeScenario?.source === 'app-shell' || (!activeScenario && scenarioSurfaceOwner === 'app-shell')) {
+        const result = await callAppShellScenarioAdapter(() => appShellScenarioAdapter(selector).reset())
+        const window = resolveManagedWindow(options.windowManager, selector)
+        lastSnapshot = rememberSnapshot(await driver.waitForSnapshot(
+          { webContentsId: window.webContents.id },
+          snapshot => {
+            const nodes = Object.values(snapshot.regions).flat()
+            return nodes.some(node => node.testId === 'scenario.app-shell')
+              && nodes.some(node => node.name === 'No scenario applied')
+              && !nodes.some(node => node.testId === 'scenario.real-app-shell')
+          },
+          numberOr(params.timeoutMs, UI_TEST_HOST_DEFAULT_WAIT_MS),
+        ))
+        activeScenario = undefined
+        scenarioSurfaceOwner = 'app-shell'
+        return { reset: true, result, revision: lastSnapshot.revision, verificationLevel: 'scenario-verified' }
       }
       const window = resolveManagedWindow(options.windowManager, selector)
       await loadRendererTarget(window, rendererPageUrl(window.webContents.getURL(), 'index.html').toString(), {
@@ -874,6 +874,7 @@ export async function startUiTestHost(options: UiTestHostOptions): Promise<UiTes
       })
       lastSnapshot = rememberSnapshot(await driver.snapshot({ webContentsId: window.webContents.id }))
       activeScenario = undefined
+      scenarioSurfaceOwner = undefined
       return { reset: true, revision: lastSnapshot.revision, verificationLevel: 'scenario-verified' }
     }
     if (command === 'shutdown' || command === 'stop') {
@@ -946,8 +947,32 @@ export async function startUiTestHost(options: UiTestHostOptions): Promise<UiTes
     return adapter
   }
 
-  function ensureActiveAppShellScenario(): void {
-    if (!activeScenario || !APP_SHELL_SCENARIO_IDS.has(activeScenario.id as never)) throw new ElectronUiDriverError('NOT_READY', 'No AppShell scenario is active.')
+  function requireActiveAppShellScenario(): Extract<ActiveScenario, { source: 'app-shell' }> {
+    if (activeScenario?.source !== 'app-shell') throw new ElectronUiDriverError('NOT_READY', 'No AppShell scenario is active.')
+    return activeScenario
+  }
+
+  async function resetExtensionScenario(
+    target: ExtensionTarget,
+    scenarioId: string,
+    input: Record<string, unknown> | undefined,
+    selector: UiDriverWindowSelector,
+    params: Record<string, unknown>,
+    signal?: AbortSignal,
+  ): Promise<unknown> {
+    if (!target.definitionId) throw new ElectronUiDriverError('TARGET_NOT_FOUND', 'Extension scenario target requires definitionId.')
+    const beforeEventSeq = stateBridge.events().latestSeq
+    const beforeDefinitionRevision = await currentExtensionDefinitionRevision(target, selector)
+    const result = await callExtensionAdapter(() => extensionAdapter(selector).execute({
+      ...target,
+      definitionId: target.definitionId!,
+      kind: 'scenario',
+      id: scenarioId,
+      phase: 'teardown',
+      ...(input ? { input } : {}),
+    }))
+    await waitForExtensionCommandSettle(target, selector, beforeEventSeq, beforeDefinitionRevision, params, signal)
+    return result
   }
 
   async function waitForExtension(target: ExtensionTarget, selector: UiDriverWindowSelector, params: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
@@ -1169,7 +1194,7 @@ export async function startUiTestHost(options: UiTestHostOptions): Promise<UiTes
     const state = stateBridge.snapshot(selectedWindowId(options.windowManager, selector, false))
     const route = state.states.find(item => item.scope === 'route' && item.phase !== 'disposed')?.detail
     let scenarioEvidence = activeScenario ?? null
-    if (activeScenario && APP_SHELL_SCENARIO_IDS.has(activeScenario.id as never)) {
+    if (activeScenario?.source === 'app-shell') {
       const scenarioState = await callAppShellScenarioAdapter(() => appShellScenarioAdapter(selector).snapshot())
       activeScenario = { ...activeScenario, state: scenarioState }
       scenarioEvidence = activeScenario
@@ -1202,6 +1227,7 @@ export async function startUiTestHost(options: UiTestHostOptions): Promise<UiTes
     pid: process.pid,
     readyAt: new Date().toISOString(),
     ...(process.env.MORTISE_UI_BUILD_ID ? { buildId: process.env.MORTISE_UI_BUILD_ID } : {}),
+    ...(process.env.MORTISE_BUILD_SOURCE_ID ? { sourceId: process.env.MORTISE_BUILD_SOURCE_ID } : {}),
   })
 
   async function close(): Promise<void> {

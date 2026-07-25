@@ -95,6 +95,7 @@ function redactBrowserUrl(value: string): string {
 import { join, delimiter } from 'path'
 import { existsSync, readFileSync } from 'fs'
 import { RPC_CHANNELS } from '@mortise/shared/protocol'
+import { clearRuntimeLayoutProcessEnvironment } from '@mortise/session-tools-core/runtime'
 import { SessionManager, setSessionPlatform, setSessionRuntimeHooks, type SessionBackendFactory } from '@mortise/server-core/sessions'
 import { createAutomationWorkspaceCapabilityProvider, createBrowserCommandProvider, createBrowserControlProvider, createBrowserOperationsProvider, createBrowserProvider, createFilePreviewProvider, createFilesProvider, createMessagingSessionCapabilityProvider, createSessionShareCapabilityProvider, createSessionTransferCapabilityProvider, createSystemNotificationProvider, getWorkspaceAllowedDirs, validateFilePath } from '@mortise/server-core'
 import { executeAutomationWorkspaceOperationV1 } from '@mortise/server-core/handlers/rpc/automations'
@@ -104,7 +105,7 @@ import { nodeHttpAdapter } from '@mortise/server-core/webui'
 import { registerAllRpcHandlers } from './handlers/index'
 import { registerCoreRpcHandlers, cleanupClientFileWatches } from '@mortise/server-core/handlers/rpc'
 import type { PlatformServices } from '../runtime/platform'
-import { createElectronPlatform } from './platform'
+import { createElectronPlatform, resolveElectronRuntimeContext } from './platform'
 import type { HandlerDeps } from './handlers/handler-deps'
 import {
   bootstrapServer,
@@ -167,12 +168,16 @@ if (__MORTISE_UI_VALIDATION_BUILD__ && process.env.MORTISE_UI_TEST_HOST === '1' 
 // Initialize electron-log for renderer process support
 initializeRendererLoggingBridge()
 
+const electronRuntime = resolveElectronRuntimeContext(app)
+if (!electronRuntime.immutableRuntime) clearRuntimeLayoutProcessEnvironment(process.env)
+const immutableSourceRuntime = !!electronRuntime.immutableRuntime
 const electronResourcePaths = resolveElectronResourcePaths({
   isPackaged: app.isPackaged,
-  appPath: app.getAppPath(),
+  appPath: electronRuntime.appRootPath,
   resourcesPath: process.resourcesPath,
   bundledAssetsRoot: __dirname,
-  sourceResourcesPath: process.env.MORTISE_UI_RUNTIME_RESOURCES_DIR,
+  sourceResourcesPath: immutableSourceRuntime ? electronRuntime.resourcesPath : undefined,
+  sourceRuntimePath: electronRuntime.immutableRuntime?.runtimePath,
 })
 
 // Host-capability tools are Pi extensions, explicitly injected into every Mortise runtime.
@@ -208,10 +213,12 @@ if (isDebugMode) {
 
   // Runtime resolver hints for shared session tools
   process.env.MORTISE_IS_PACKAGED = app.isPackaged ? '1' : '0'
-  process.env.MORTISE_RESOURCES_BASE = process.env.MORTISE_UI_RUNTIME_RESOURCES_BASE
-    ?? (app.isPackaged ? app.getAppPath() : join(__dirname, '..'))
-  process.env.MORTISE_APP_ROOT = process.env.MORTISE_UI_RUNTIME_APP_ROOT
-    ?? (app.isPackaged ? app.getAppPath() : process.cwd())
+  process.env.MORTISE_RESOURCES_BASE = immutableSourceRuntime
+    ? process.env.MORTISE_RUNTIME_RESOURCES_BASE
+    : app.isPackaged ? app.getAppPath() : join(__dirname, '..')
+  process.env.MORTISE_APP_ROOT = immutableSourceRuntime
+    ? process.env.MORTISE_RUNTIME_APP_ROOT
+    : app.isPackaged ? app.getAppPath() : process.cwd()
 
   process.env.MORTISE_UV = bundledUvExists ? uvBinary : (fallbackUv ?? uvBinary)
 
@@ -452,13 +459,7 @@ app.whenReady().then(async () => {
   setBundledAssetsRoot(__dirname)
 
   // Initialize backend runtime bootstrapping (Codex vendor root, Pi agent server paths).
-  initializeBackendHostRuntime({
-    hostRuntime: {
-      appRootPath: process.env.MORTISE_UI_RUNTIME_APP_ROOT ?? (app.isPackaged ? app.getAppPath() : process.cwd()),
-      resourcesPath: process.resourcesPath,
-      isPackaged: app.isPackaged,
-    },
-  })
+  initializeBackendHostRuntime({ hostRuntime: electronRuntime })
 
   // Register PowerShell validator root so it can find the bundled parser script
   // (Windows only: validates PowerShell commands in Explore mode using AST analysis)
@@ -953,9 +954,7 @@ app.whenReady().then(async () => {
             // monorepo; in packaged builds it's shipped via extraResources
             // (see apps/electron/electron-builder.yml).
             whatsapp: {
-              workerEntry: app.isPackaged
-                ? join(process.resourcesPath, 'messaging-whatsapp-worker', 'worker.cjs')
-                : join(process.cwd(), 'packages', 'messaging-whatsapp-worker', 'dist', 'worker.cjs'),
+              workerEntry: electronResourcePaths.messagingWorkerPath,
               pairingMode: 'qr',
             },
           })
@@ -1413,9 +1412,10 @@ app.whenReady().then(async () => {
             bundledAssetsRoot: __dirname,
             version: app.getVersion(),
             runtimeCachePath: join(app.getPath('userData'), 'runtime-cache'),
-            nodeBinary: process.execPath,
-            useNodeRuntime: process.env.MORTISE_UI_BUILD_ID !== undefined,
+            nodeBinary: electronRuntime.immutableRuntime?.nodeRuntimePath ?? process.execPath,
+            useNodeRuntime: !!electronRuntime.immutableRuntime,
             messagingWorkerPath: electronResourcePaths.messagingWorkerPath,
+            immutableRuntime: electronRuntime.immutableRuntime,
             startupTimeoutMs: Number.isFinite(timeoutMs) ? timeoutMs : undefined,
           })
 

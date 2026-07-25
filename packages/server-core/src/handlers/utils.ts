@@ -86,7 +86,9 @@ export function buildBackendHostRuntimeContext(platform: PlatformServices) {
   return {
     appRootPath: platform.appRootPath,
     resourcesPath: platform.resourcesPath,
+    resourcesBasePath: platform.resourcesBasePath,
     isPackaged: platform.isPackaged,
+    immutableRuntime: platform.immutableRuntime,
   }
 }
 

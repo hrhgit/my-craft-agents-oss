@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { isAbsolute, join, resolve } from 'node:path';
+import type { ImmutableRuntimeLayout } from './immutable-runtime.ts';
 
 export type ScriptRuntimeLanguage = 'python3' | 'node' | 'bun';
 
@@ -29,6 +30,9 @@ export interface ResolveScriptRuntimeContext {
    * - dev: <repo>/apps/electron
    */
   resourcesBasePath?: string;
+
+  /** Validated sealed-capsule layout. Presence is the immutable-mode discriminator. */
+  immutableRuntime?: ImmutableRuntimeLayout;
 }
 
 function resolveBinaryOnPath(binary: string): string | null {
@@ -66,6 +70,35 @@ function inferPackagedMode(ctx?: ResolveScriptRuntimeContext): boolean {
   if (typeof ctx?.isPackaged === 'boolean') return ctx.isPackaged;
   const value = process.env.MORTISE_IS_PACKAGED?.trim().toLowerCase();
   return value === '1' || value === 'true';
+}
+
+function resolveImmutableRuntime(
+  language: ScriptRuntimeLanguage,
+  layout: ImmutableRuntimeLayout,
+): ResolvedScriptRuntime {
+  if (language === 'node') {
+    return {
+      command: layout.nodeRuntimePath,
+      argsPrefix: [],
+      source: 'bundled',
+    };
+  }
+
+  if (language === 'bun') {
+    const binary = process.platform === 'win32' ? 'bun.exe' : 'bun';
+    return {
+      command: join(layout.runtimePath, 'bun', binary),
+      argsPrefix: [],
+      source: 'bundled',
+    };
+  }
+
+  const binary = process.platform === 'win32' ? 'uv.exe' : 'uv';
+  return {
+    command: join(layout.resourcesBasePath, 'resources', 'bin', getPlatformRuntimeDir(), binary),
+    argsPrefix: ['run', '--python', '3.12'],
+    source: 'bundled',
+  };
 }
 
 function getProcessResourcesPath(): string | undefined {
@@ -161,6 +194,7 @@ export function resolveScriptRuntime(
   ctx?: ResolveScriptRuntimeContext,
 ): ResolvedScriptRuntime {
   const isPackaged = inferPackagedMode(ctx);
+  if (ctx?.immutableRuntime) return resolveImmutableRuntime(language, ctx.immutableRuntime);
 
   if (language === 'python3') {
     if (process.env.MORTISE_UV) {

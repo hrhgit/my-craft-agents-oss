@@ -71,6 +71,7 @@ export interface MortiseUiEndpointManifest {
   pid: number
   readyAt: string
   buildId?: string
+  sourceId?: string
 }
 
 export interface MortiseUiRunManifest {
@@ -103,6 +104,7 @@ export interface MortiseUiRunManifest {
   adapterCommand: string[]
   buildId?: string
   buildDir?: string
+  sourceId?: string
   buildError?: string
   error?: string
   lastResponseSeq?: number
@@ -151,6 +153,7 @@ export interface MortiseUiHostAdapterEnvironment {
   MORTISE_UI_WINDOW_MODE: MortiseUiWindowMode
   MORTISE_UI_BUILD_ID?: string
   MORTISE_UI_BUILD_DIR?: string
+  MORTISE_BUILD_SOURCE_ID?: string
 }
 
 export interface MortiseUiSurfaceDriver {

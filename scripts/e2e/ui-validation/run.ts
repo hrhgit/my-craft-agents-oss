@@ -38,11 +38,12 @@ interface NativeMenuSnapshotResult {
   nodes: Array<{ ref: string; role: string; name: string; enabled: boolean; accelerator?: string; actions: string[] }>
 }
 
+const RAPID_PROTOTYPE_SEMANTIC_ID = 'extension.interaction.field.approach.option.prototype'
+
 const manifest = await startMortiseUiRun({
   surface: 'electron',
   profileMode: 'fixture',
   windowMode: 'foreground',
-  waitMs: 180_000,
 })
 
 try {
@@ -160,7 +161,7 @@ try {
   if (unchangedResponse.result.revision !== snapshot.revision || unchangedResponse.result.full || Object.values(unchangedResponse.result.changes).some(items => items.length > 0)) {
     throw new Error('An unchanged UI produced a new revision or non-empty incremental snapshot.')
   }
-  const target = Object.values(snapshot.regions).flat().find((node) => node.role === 'radio' && node.name === 'Rapid prototype')
+  const target = Object.values(snapshot.regions).flat().find((node) => node.semanticId === RAPID_PROTOTYPE_SEMANTIC_ID)
   if (!target) throw new Error('Physical smoke target was not present in the semantic snapshot.')
 
   const action = await requestMortiseUiHost({
@@ -175,7 +176,7 @@ try {
   const assertion = await requestMortiseUiHost({
     ...manifest,
     command: 'ui.assert',
-    params: { predicate: { kind: 'node', target: { role: 'radio', name: 'Rapid prototype' }, state: 'checked', equals: true } },
+    params: { predicate: { kind: 'node', target: { semanticId: RAPID_PROTOTYPE_SEMANTIC_ID }, state: 'checked', equals: true } },
   })
   if (!assertion.ok) throw new Error(`Assertion failed: ${assertion.error.message}`)
 

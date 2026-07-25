@@ -7,6 +7,8 @@ import type { MortiseUiRunManifest, MortiseUiSurface } from '../../mortise-ui/pr
 interface SnapshotNode { ref: string; role: string; name: string; semanticId?: string; testId?: string }
 interface Snapshot { revision: number; regions: Record<string, SnapshotNode[]> }
 
+const RAPID_PROTOTYPE_SEMANTIC_ID = 'extension.interaction.field.approach.option.prototype'
+
 const iterations = boundedInteger(process.env.MORTISE_UI_STABILITY_ITERATIONS, 20, 1, 1_000)
 const surfaces = parseSurfaces(process.env.MORTISE_UI_STABILITY_SURFACES ?? 'electron,webui')
 const summary = {
@@ -48,7 +50,7 @@ for (const surface of surfaces) {
       }
       const nodes = snapshotNodes(snapResponse.result)
       const node = surface === 'electron'
-        ? nodes.find(item => item.role === 'radio' && item.name === 'Rapid prototype')
+        ? nodes.find(item => item.semanticId === RAPID_PROTOTYPE_SEMANTIC_ID)
         : nodes.find(item => item.semanticId === 'navigation.nav_settings')
           ?? nodes.find(item => item.testId === 'onboarding-provider-api_key')
       if (!node) throw new Error('Stability scenario target was not found.')

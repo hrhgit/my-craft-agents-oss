@@ -46,7 +46,6 @@ try {
     surface: 'electron',
     profileMode: 'clone',
     sourceMortiseConfigDir: sourceMortise,
-    waitMs: 180_000,
   })
   const initialWindows = await command<WindowInfo[]>('ui.windows')
   if (initialWindows.length !== 1 || initialWindows[0]?.role !== 'main') {

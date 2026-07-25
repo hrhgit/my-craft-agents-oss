@@ -99,11 +99,11 @@ if (manifest.mountedExtensions?.[0]?.entries[0]?.id !== 'mortise-gui-example') {
 
 try {
   const initial = await command<Snapshot>('ui.snapshot')
-  const publishedSession = nodes(initial).find(node => node.semanticId === `navigation.session_${workspaceId}_${sessionId}`)
+  const publishedSessionSemanticId = `navigation.session_${workspaceId}_${sessionId}`
+  const publishedSession = nodes(initial).find(node => node.semanticId === publishedSessionSemanticId)
   if (!publishedSession) throw new Error(`Published fixture session ${sessionId} was not available in workspace navigation.`)
   await command('ui.action', {
-    revision: initial.revision,
-    target: { ref: publishedSession.ref },
+    target: { semanticId: publishedSessionSemanticId },
     action: 'click',
     mode: 'physical',
     waitUntil: { kind: 'state', scope: 'session', entityId: sessionId, phase: 'ready', timeoutMs: 60_000 },
@@ -144,10 +144,9 @@ try {
 
   const hostSnapshot = await command<Snapshot>('ui.snapshot')
   const physicalUpdate = nodes(hostSnapshot).find(node => node.role === 'button' && node.name === 'Update')
-  if (!physicalUpdate) throw new Error('Host-rendered extension contribution did not expose its Update button.')
+  if (!physicalUpdate?.semanticId) throw new Error('Host-rendered extension contribution did not expose its stable Update semantic.')
   await command('ui.action', {
-    revision: hostSnapshot.revision,
-    target: { ref: physicalUpdate.ref },
+    target: { semanticId: physicalUpdate.semanticId },
     action: 'click',
     mode: 'physical',
     timeoutMs: 30_000,
@@ -183,8 +182,7 @@ try {
   const sandboxButton = nodes(sandboxHostSnapshot).find(node => node.role === 'button' && node.name === 'Increment sandbox count')
   if (!sandboxButton) throw new Error('Sandbox iframe did not expose its physical button through the unified snapshot.')
   await command('ui.action', {
-    revision: sandboxHostSnapshot.revision,
-    target: { ref: sandboxButton.ref },
+    target: { role: 'button', name: 'Increment sandbox count', exact: true },
     action: 'click',
     mode: 'physical',
     waitUntil: { kind: 'text', value: 'Sandbox count: 13', exact: true, timeoutMs: 30_000 },

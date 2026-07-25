@@ -138,6 +138,7 @@
         "@mortise/core": "workspace:*",
         "@mortise/messaging-gateway": "workspace:*",
         "@mortise/server-core": "workspace:*",
+        "@mortise/session-tools-core": "workspace:*",
         "@mortise/shared": "workspace:*",
         "@mortise/ui": "workspace:*",
         "@paper-design/shaders-react": "^0.0.69",
@@ -286,6 +287,7 @@
       "version": "0.1.0",
       "dependencies": {
         "@mortise/core": "workspace:*",
+        "@mortise/session-tools-core": "workspace:*",
         "@mortise/shared": "workspace:*",
         "chokidar": "^3.6.0",
         "jose": "^6.0.0",

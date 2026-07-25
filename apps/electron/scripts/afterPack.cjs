@@ -19,6 +19,7 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const { randomUUID } = require('crypto');
+const { createHash } = require('crypto');
 const { spawn, spawnSync } = require('child_process');
 const WebSocket = require('ws');
 
@@ -56,6 +57,7 @@ function resolvePackagedLayout(context) {
   return {
     platform,
     arch,
+    productFilename: context.packager.appInfo.productFilename,
     resourcesDir,
     appRoot,
     appDist: path.join(appRoot, 'dist'),
@@ -108,8 +110,269 @@ function assertCanonicalPiRuntime(layout) {
   }
 }
 
+function sha256(file) {
+  return createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+}
+
+function authenticodeContentSha256(content) {
+  const bytes = Buffer.from(content);
+  if (bytes.length < 0x40 || bytes[0] !== 0x4d || bytes[1] !== 0x5a) return undefined;
+  const peOffset = bytes.readUInt32LE(0x3c);
+  if (peOffset + 24 > bytes.length || bytes.toString('ascii', peOffset, peOffset + 4) !== 'PE\0\0') return undefined;
+  const optionalHeader = peOffset + 24;
+  if (optionalHeader + 68 > bytes.length) return undefined;
+  const magic = bytes.readUInt16LE(optionalHeader);
+  const dataDirectory = optionalHeader + (magic === 0x20b ? 112 : magic === 0x10b ? 96 : -1);
+  if (dataDirectory < optionalHeader || dataDirectory + 40 > bytes.length) return undefined;
+  const checksumOffset = optionalHeader + 64;
+  const securityDirectoryOffset = dataDirectory + 32;
+  const certificateOffset = bytes.readUInt32LE(securityDirectoryOffset);
+  const certificateSize = bytes.readUInt32LE(securityDirectoryOffset + 4);
+  const certificateEnd = certificateOffset + certificateSize;
+  if (
+    checksumOffset + 4 > securityDirectoryOffset
+    || securityDirectoryOffset + 8 > bytes.length
+    || (certificateOffset !== 0 && (
+      certificateOffset < securityDirectoryOffset + 8
+      || certificateEnd < certificateOffset
+      || certificateEnd > bytes.length
+    ))
+  ) return undefined;
+
+  const hash = createHash('sha256');
+  hash.update(bytes.subarray(0, checksumOffset));
+  hash.update(bytes.subarray(checksumOffset + 4, securityDirectoryOffset));
+  const contentEnd = certificateOffset === 0 ? bytes.length : certificateOffset;
+  hash.update(bytes.subarray(securityDirectoryOffset + 8, contentEnd));
+  if (certificateOffset !== 0 && certificateEnd < bytes.length) hash.update(bytes.subarray(certificateEnd));
+  return hash.digest('hex');
+}
+
+function getAuthenticodeStatus(file) {
+  const result = spawnSync('powershell.exe', [
+    '-NoLogo',
+    '-NoProfile',
+    '-NonInteractive',
+    '-Command',
+    '(Get-AuthenticodeSignature -LiteralPath $env:MORTISE_AUTHENTICODE_FILE).Status.ToString()',
+  ], {
+    encoding: 'utf8',
+    windowsHide: true,
+    env: { ...process.env, MORTISE_AUTHENTICODE_FILE: file },
+  });
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    throw new Error(`Could not verify Authenticode signature for ${file}: ${String(result.stderr ?? '').trim()}`);
+  }
+  return String(result.stdout ?? '').trim();
+}
+
+function assertPackagedArtifactMatches(artifact, packagedPath, options = {}) {
+  assertNonEmptyFile(packagedPath);
+  const content = fs.readFileSync(packagedPath);
+  const packagedHash = createHash('sha256').update(content).digest('hex');
+  const exactMatch = content.byteLength === artifact.sizeBytes && packagedHash === artifact.sha256;
+  const signingRequired = process.env.MORTISE_REQUIRE_CODE_SIGNING === '1';
+  if (exactMatch && (!signingRequired || artifact.authenticodeSha256 === undefined)) return;
+  if (artifact.authenticodeSha256 === undefined) {
+    throw new Error(`Packaged artifact does not match build provenance: ${artifact.path}`);
+  }
+
+  const normalizedHash = authenticodeContentSha256(content);
+  if (normalizedHash !== artifact.authenticodeSha256) {
+    throw new Error(`Packaged artifact does not match build provenance: ${artifact.path}`);
+  }
+  const status = (options.getAuthenticodeStatus ?? getAuthenticodeStatus)(packagedPath);
+  if (status !== 'Valid') {
+    throw new Error(`Packaged Authenticode artifact is not valid (${status}): ${artifact.path}`);
+  }
+}
+
+function restoreRuntimePackageManifest(layout, context) {
+  const frozenManifest = path.join(
+    context.packager.projectDir,
+    'dist',
+    'packaging-inputs',
+    'runtime-package.json',
+  );
+  assertNonEmptyFile(frozenManifest);
+  fs.copyFileSync(frozenManifest, path.join(layout.appRoot, 'package.json'));
+  console.log('Frozen runtime package manifest restored after Electron Builder metadata rewriting');
+}
+
+function assertBuildProvenance(layout) {
+  const provenancePath = path.join(layout.appDist, 'build-provenance.json');
+  assertNonEmptyFile(provenancePath);
+  const provenance = JSON.parse(fs.readFileSync(provenancePath, 'utf8'));
+  if (
+    provenance.schemaVersion !== 5
+    || provenance.producerVersion !== 'electron-production-v4'
+    || !/^[0-9a-f]{64}$/.test(provenance.buildId ?? '')
+    || !/^[0-9a-f]{64}$/.test(provenance.sourceId ?? '')
+    || provenance.platform !== layout.platform
+    || provenance.arch !== layout.arch
+    || !Array.isArray(provenance.artifacts)
+  ) {
+    throw new Error(`Packaged build provenance is invalid: ${provenancePath}`);
+  }
+
+  const packagedPaths = new Set();
+  let excluded = 0;
+  for (const artifact of provenance.artifacts) {
+    if (
+      !artifact
+      || typeof artifact.path !== 'string'
+      || !/^[0-9a-f]{64}$/.test(artifact.sha256 ?? '')
+      || !Number.isSafeInteger(artifact.sizeBytes)
+      || artifact.sizeBytes < 0
+      || (artifact.authenticodeSha256 !== undefined && !/^[0-9a-f]{64}$/.test(artifact.authenticodeSha256))
+    ) {
+      throw new Error(`Packaged build provenance has an invalid artifact: ${String(artifact?.path)}`);
+    }
+    const classification = classifyBuildArtifact(layout, artifact.path);
+    if (classification.excluded) {
+      excluded += 1;
+      continue;
+    }
+    const packagedPath = classification.packagedPath;
+    assertPackagedArtifactMatches(artifact, packagedPath);
+    packagedPaths.add(path.resolve(packagedPath));
+  }
+
+  const provenancePathResolved = path.resolve(provenancePath);
+  const unexpected = [
+    ...filesUnder(layout.appRoot),
+    ...filesUnder(layout.piRuntimeRoot),
+    ...filesUnder(path.join(layout.resourcesDir, 'vendor', 'bun')),
+    ...filesUnder(path.join(layout.resourcesDir, 'messaging-whatsapp-worker')),
+  ].map(file => path.resolve(file)).filter(file => file !== provenancePathResolved && !packagedPaths.has(file));
+  if (unexpected.length > 0) {
+    throw new Error(`Packaged application contains files without build provenance: ${unexpected.join(', ')}`);
+  }
+
+  console.log(`Complete build provenance verified (${provenance.buildId.slice(0, 12)}, ${packagedPaths.size} packaged, ${excluded} build-only)`);
+  return provenance;
+}
+
+function assertDeveloperKitProvenance(layout, sourceId) {
+  const developerKitRoot = path.join(layout.resourcesDir, 'developer-kit');
+  const required = layout.platform === 'win32' && layout.productFilename === 'Mortise';
+  if (!fs.existsSync(developerKitRoot)) {
+    if (required) throw new Error(`Packaged Windows application is missing the Developer Kit: ${developerKitRoot}`);
+    return;
+  }
+  const provenancePath = path.join(developerKitRoot, 'build-provenance.json');
+  assertNonEmptyFile(provenancePath);
+  const provenance = JSON.parse(fs.readFileSync(provenancePath, 'utf8'));
+  if (
+    provenance.schemaVersion !== 1
+    || !/^[0-9a-f]{64}$/.test(provenance.buildId ?? '')
+    || provenance.sourceId !== sourceId
+    || !Array.isArray(provenance.artifacts)
+  ) throw new Error(`Packaged Developer Kit provenance is invalid: ${provenancePath}`);
+
+  const expectedPaths = new Set();
+  let totalBytes = 0;
+  for (const artifact of provenance.artifacts) {
+    if (
+      !artifact
+      || typeof artifact.path !== 'string'
+      || path.isAbsolute(artifact.path)
+      || artifact.path.split('/').includes('..')
+      || !Number.isSafeInteger(artifact.sizeBytes)
+      || artifact.sizeBytes < 0
+      || !/^[0-9a-f]{64}$/.test(artifact.sha256 ?? '')
+      || (artifact.authenticodeSha256 !== undefined && !/^[0-9a-f]{64}$/.test(artifact.authenticodeSha256))
+    ) throw new Error(`Packaged Developer Kit provenance has an invalid artifact: ${String(artifact?.path)}`);
+    const packagedPath = path.join(developerKitRoot, ...artifact.path.split('/'));
+    try {
+      assertPackagedArtifactMatches(artifact, packagedPath);
+    } catch (error) {
+      throw new Error(`Packaged Developer Kit artifact does not match provenance: ${artifact.path}`, { cause: error });
+    }
+    expectedPaths.add(path.resolve(packagedPath));
+    totalBytes += artifact.sizeBytes;
+  }
+  if (provenance.sizeBytes !== totalBytes) throw new Error('Packaged Developer Kit provenance size is invalid.');
+  const unexpected = filesUnder(developerKitRoot)
+    .map(file => path.resolve(file))
+    .filter(file => file !== path.resolve(provenancePath) && !expectedPaths.has(file));
+  if (unexpected.length > 0) {
+    throw new Error(`Packaged Developer Kit contains files without provenance: ${unexpected.join(', ')}`);
+  }
+  console.log(`Developer Kit provenance verified (${provenance.buildId.slice(0, 12)}, ${expectedPaths.size} files)`);
+}
+
+function classifyBuildArtifact(layout, artifactPath) {
+  if (artifactPath === 'package.json') {
+    return { excluded: true };
+  }
+  if (!artifactPath.startsWith('dist/')) {
+    throw new Error(`Build provenance contains an unclassified artifact: ${artifactPath}`);
+  }
+
+  const relativeDist = artifactPath.slice('dist/'.length);
+  if (
+    relativeDist.startsWith('renderer/src/')
+    || relativeDist.endsWith('.map')
+    || relativeDist.endsWith('.d.ts')
+    || relativeDist.startsWith('.')
+    || relativeDist.startsWith('installer-developer-kit/')
+  ) return { excluded: true };
+
+  const packagingPrefix = 'packaging-inputs/';
+  if (relativeDist === `${packagingPrefix}runtime-package.json`) {
+    return { packagedPath: path.join(layout.appRoot, 'package.json') };
+  }
+  if (relativeDist.startsWith(`${packagingPrefix}runtime/ripgrep/`)) {
+    return {
+      packagedPath: path.join(
+        layout.appRoot,
+        'node_modules',
+        '@vscode',
+        'ripgrep',
+        ...relativeDist.slice(`${packagingPrefix}runtime/ripgrep/`.length).split('/'),
+      ),
+    };
+  }
+  const bunPrefix = `${packagingPrefix}runtime/bun/`;
+  if (relativeDist.startsWith(bunPrefix)) {
+    return { packagedPath: path.join(layout.resourcesDir, 'vendor', 'bun', ...relativeDist.slice(bunPrefix.length).split('/')) };
+  }
+  const workerPath = `${packagingPrefix}runtime/messaging-whatsapp-worker/worker.cjs`;
+  if (relativeDist === workerPath) {
+    return { packagedPath: layout.workerEntry };
+  }
+  if (relativeDist.startsWith(packagingPrefix)) return { excluded: true };
+
+  const resourceMappings = [
+    ['resources/pi-runtime/', layout.piRuntimeRoot],
+    ['resources/session-mcp-server/', path.join(layout.appResources, 'session-mcp-server')],
+    ['resources/scripts/', path.join(layout.appResources, 'scripts')],
+    ['resources/bin/', path.join(layout.appResources, 'bin')],
+  ];
+  for (const [prefix, root] of resourceMappings) {
+    if (relativeDist.startsWith(prefix)) {
+      return { packagedPath: path.join(root, ...relativeDist.slice(prefix.length).split('/')) };
+    }
+  }
+  return { packagedPath: path.join(layout.appDist, ...relativeDist.split('/')) };
+}
+
+function filesUnder(root, result = []) {
+  if (!fs.existsSync(root)) return result;
+  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+    const entryPath = path.join(root, entry.name);
+    if (entry.isDirectory()) filesUnder(entryPath, result);
+    else if (entry.isFile()) result.push(entryPath);
+  }
+  return result;
+}
+
 function validatePackagedLayout(layout) {
   assertCanonicalPiRuntime(layout);
+  const provenance = assertBuildProvenance(layout);
+  assertDeveloperKitProvenance(layout, provenance.sourceId);
   const allowedAppEntries = new Set(['dist', 'node_modules', 'package.json', 'resources']);
   const unexpectedAppEntries = fs.readdirSync(layout.appRoot)
     .filter(entry => !allowedAppEntries.has(entry));
@@ -292,7 +555,7 @@ module.exports = async function afterPack(context) {
   if (context.electronPlatformName !== 'darwin') {
     console.log('Skipping Liquid Glass icon (not macOS)');
   } else {
-    const precompiledAssets = path.join(context.packager.projectDir, 'resources', 'Assets.car');
+    const precompiledAssets = path.join(context.packager.projectDir, 'dist', 'resources', 'Assets.car');
 
     console.log(`afterPack: projectDir=${context.packager.projectDir}`);
     console.log(`afterPack: looking for Assets.car at ${precompiledAssets}`);
@@ -312,6 +575,7 @@ module.exports = async function afterPack(context) {
     }
   }
 
+  restoreRuntimePackageManifest(layout, context);
   validatePackagedLayout(layout);
   await smokeWorkspaceServer(layout, context);
 };
@@ -319,5 +583,11 @@ module.exports = async function afterPack(context) {
 module.exports.resolvePackagedLayout = resolvePackagedLayout;
 module.exports.validatePackagedLayout = validatePackagedLayout;
 module.exports.assertCanonicalPiRuntime = assertCanonicalPiRuntime;
+module.exports.assertBuildProvenance = assertBuildProvenance;
+module.exports.classifyBuildArtifact = classifyBuildArtifact;
+module.exports.restoreRuntimePackageManifest = restoreRuntimePackageManifest;
+module.exports.authenticodeContentSha256 = authenticodeContentSha256;
+module.exports.assertPackagedArtifactMatches = assertPackagedArtifactMatches;
+module.exports.assertDeveloperKitProvenance = assertDeveloperKitProvenance;
 module.exports.smokeWorkspaceServer = smokeWorkspaceServer;
 module.exports.probeWorkspaceHandshake = probeWorkspaceHandshake;

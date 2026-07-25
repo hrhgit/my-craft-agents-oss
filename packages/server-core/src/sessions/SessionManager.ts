@@ -383,7 +383,9 @@ function buildBackendHostRuntimeContext(): BackendHostRuntimeContext {
   return {
     appRootPath: _platform.appRootPath,
     resourcesPath: _platform.resourcesPath,
+    resourcesBasePath: _platform.resourcesBasePath,
     isPackaged: _platform.isPackaged,
+    immutableRuntime: _platform.immutableRuntime,
   }
 }
 

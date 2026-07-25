@@ -28,6 +28,10 @@ function firstExistingPath(candidates: string[]): string | undefined {
   return undefined;
 }
 
+function usesBundledRuntime(hostRuntime: BackendHostRuntimeContext): boolean {
+  return hostRuntime.isPackaged || !!hostRuntime.immutableRuntime;
+}
+
 /**
  * Walk up from `base` checking `join(ancestor, relativePath)` at each level.
  * Stops after `maxLevels` ancestors or when hitting the filesystem root.
@@ -46,6 +50,10 @@ function resolveUpwards(base: string, relativePath: string, maxLevels = 4): stri
 
 function resolveBundledRuntimePath(hostRuntime: BackendHostRuntimeContext): string | undefined {
   const bunBinary = process.platform === 'win32' ? 'bun.exe' : 'bun';
+  if (hostRuntime.immutableRuntime) {
+    const immutableBun = join(hostRuntime.immutableRuntime.runtimePath, 'bun', bunBinary);
+    if (existsSync(immutableBun)) return immutableBun;
+  }
   const bunBasePath = process.platform === 'win32'
     ? (hostRuntime.resourcesPath || hostRuntime.appRootPath)
     : hostRuntime.appRootPath;
@@ -55,7 +63,7 @@ function resolveBundledRuntimePath(hostRuntime: BackendHostRuntimeContext): stri
   // Non-packaged (headless server, dev mode): fall back to system bun via PATH.
   // Packaged apps must ship their own bundled bun — never resolve from PATH
   // to avoid picking up an incompatible system install.
-  if (!hostRuntime.isPackaged) {
+  if (!usesBundledRuntime(hostRuntime)) {
     try {
       const whichCmd = process.platform === 'win32' ? 'where' : 'which';
       const systemBun = execFileSync(whichCmd, ['bun'], { encoding: 'utf-8' }).trim();
@@ -66,7 +74,7 @@ function resolveBundledRuntimePath(hostRuntime: BackendHostRuntimeContext): stri
 }
 
 function resolveServerPath(hostRuntime: BackendHostRuntimeContext, serverName: string): string | undefined {
-  if (hostRuntime.isPackaged) {
+  if (usesBundledRuntime(hostRuntime)) {
     return firstExistingPath([
       join(hostRuntime.appRootPath, 'resources', serverName, 'index.js'),
       join(hostRuntime.appRootPath, 'dist', 'resources', serverName, 'index.js'),
@@ -87,9 +95,10 @@ function resolvePiCliPath(hostRuntime: BackendHostRuntimeContext): string | unde
     'cli.js',
   );
 
-  if (hostRuntime.isPackaged) {
+  if (usesBundledRuntime(hostRuntime)) {
+    const runtimeLabel = hostRuntime.isPackaged ? 'Packaged' : 'Immutable';
     if (!hostRuntime.resourcesPath) {
-      throw new Error('Packaged Pi runtime resolution requires resourcesPath');
+      throw new Error(`${runtimeLabel} Pi runtime resolution requires resourcesPath`);
     }
 
     const compiledRuntimePath = join(
@@ -98,7 +107,7 @@ function resolvePiCliPath(hostRuntime: BackendHostRuntimeContext): string | unde
       process.platform === 'win32' ? 'pi.exe' : 'pi',
     );
     if (!existsSync(compiledRuntimePath)) {
-      throw new Error(`Packaged Pi runtime is missing: ${compiledRuntimePath}`);
+      throw new Error(`${runtimeLabel} Pi runtime is missing: ${compiledRuntimePath}`);
     }
     return compiledRuntimePath;
   }
@@ -117,9 +126,13 @@ function resolveRipgrepPath(hostRuntime: BackendHostRuntimeContext): string | un
   const binaryName = process.platform === 'win32' ? 'rg.exe' : 'rg';
   const ripgrepRelative = join('node_modules', '@vscode', 'ripgrep', 'bin', binaryName);
 
-  if (hostRuntime.isPackaged) {
-    const packaged = join(hostRuntime.appRootPath, ripgrepRelative);
-    if (existsSync(packaged)) return packaged;
+  if (usesBundledRuntime(hostRuntime)) {
+    const bundled = firstExistingPath([
+      ...(hostRuntime.immutableRuntime ? [join(hostRuntime.immutableRuntime.runtimePath, 'ripgrep', 'bin', binaryName)] : []),
+      join(hostRuntime.appRootPath, ripgrepRelative),
+    ]);
+    if (bundled) return bundled;
+    return undefined;
   }
 
   const fromHostRoot = resolveUpwards(hostRuntime.appRootPath, ripgrepRelative, 10);
@@ -131,7 +144,7 @@ function resolveRipgrepPath(hostRuntime: BackendHostRuntimeContext): string | un
   // Non-packaged (headless server, dev mode): fall back to system rg via PATH.
   // Packaged apps must use vendored binary only — never resolve from PATH
   // to avoid picking up an incompatible system install.
-  if (!hostRuntime.isPackaged) {
+  if (!usesBundledRuntime(hostRuntime)) {
     try {
       const whichCmd = process.platform === 'win32' ? 'where' : 'which';
       const systemRg = execFileSync(whichCmd, ['rg'], { encoding: 'utf-8' }).trim();
@@ -143,11 +156,11 @@ function resolveRipgrepPath(hostRuntime: BackendHostRuntimeContext): string | un
 }
 
 export function resolveBackendRuntimePaths(hostRuntime: BackendHostRuntimeContext): ResolvedBackendRuntimePaths {
-  const bundledRuntimePath = hostRuntime.nodeRuntimePath || resolveBundledRuntimePath(hostRuntime);
+  const bundledRuntimePath = hostRuntime.immutableRuntime?.nodeRuntimePath || resolveBundledRuntimePath(hostRuntime);
 
   return {
     sessionServerPath: resolveServerPath(hostRuntime, 'session-mcp-server'),
-    nodeRuntimePath: hostRuntime.nodeRuntimePath || bundledRuntimePath || process.execPath,
+    nodeRuntimePath: hostRuntime.immutableRuntime?.nodeRuntimePath || bundledRuntimePath || process.execPath,
     bundledRuntimePath,
     piCliPath: resolvePiCliPath(hostRuntime),
   };

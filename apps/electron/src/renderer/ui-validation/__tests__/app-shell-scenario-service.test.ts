@@ -54,6 +54,41 @@ describe('AppShellScenarioService', () => {
     expect(service.getSnapshot()).toMatchObject({ view: 'idle', lastEvent: 'reset' })
   })
 
+  it('commits one reset transition and keeps repeated reset idempotent', async () => {
+    const service = await createService()
+    await service.apply({ name: 'transport.error' })
+    let notifications = 0
+    const unsubscribe = service.subscribe(() => { notifications += 1 })
+    await service.reset()
+    const first = service.getSnapshot()
+    expect(notifications).toBe(1)
+    expect(first).toMatchObject({ view: 'idle', lastEvent: 'reset' })
+    expect(first.activeScenario).toBeUndefined()
+    await service.reset()
+    expect(service.getSnapshot()).toBe(first)
+    expect(notifications).toBe(1)
+    unsubscribe()
+  })
+
+  it('prevents disposed scenario clocks from writing stale async outcomes after reset', async () => {
+    const service = await createService()
+    await service.apply({ name: 'transport.reconnect', clock: { mode: 'frozen', now: '2026-01-01T00:00:00Z' } })
+    const retry = service.retryTransport()
+    await Promise.resolve()
+    await service.reset()
+    const idle = service.getSnapshot()
+    await retry
+    expect(service.getSnapshot()).toBe(idle)
+
+    await service.apply({ name: 'extension.ready', clock: { mode: 'frozen', now: '2026-01-01T00:00:00Z' } })
+    const reload = service.reloadExtension()
+    await Promise.resolve()
+    await service.reset()
+    const secondIdle = service.getSnapshot()
+    await reload
+    expect(service.getSnapshot()).toBe(secondIdle)
+  })
+
   it('exposes only registered typed state and service primitives', async () => {
     const service = await createService()
     expect(service.primitives.list()).toEqual([

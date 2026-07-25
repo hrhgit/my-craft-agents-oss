@@ -124,10 +124,11 @@ collaborates_with: [module-agent-system, ui-validation-developer-kit]
 validation:
   - { id: diff-check, kind: unit, command: "git diff --check", description: "Reject malformed working-tree patches.", triggers: [owned-change], required: true, evidence: "Git exit status and whitespace diagnostics." }
   - { id: production-node-bundles, kind: unit, command: "bun run validate:production-node-bundles", description: "Compile production workspace-server, Electron-main, and preload bundles in memory through the production protocol entry.", triggers: [owned-change], required: true, evidence: "Per-target in-memory esbuild completion and elapsed time." }
-  - { id: monorepo-contract, kind: contract, command: "bun run validate:monorepo", description: "Verify monorepo package and dependency contracts.", triggers: [contract-change], required: true, evidence: "Validation exit status and diagnostics." }
+  - { id: monorepo-contract, kind: contract, command: "bun run pi:build && bun run pi:check", description: "Build the embedded Pi workspaces and verify their package, import, shrinkwrap, and browser-smoke contracts.", triggers: [contract-change], required: true, evidence: "Pi workspace build and contract-check exit status and diagnostics." }
+  - { id: pi-workspace-regression, kind: integration, command: "bun run pi:test", description: "Run the embedded Pi workspace regression suites without composing a second CI run.", triggers: [release, runtime-change], required: true, evidence: "Pi package regression exit status and output." }
   - { id: production-bundles, kind: integration, command: "bun run validate:production-bundles", description: "Run the complete production Electron build consumed by packaging.", triggers: [ci-change, release], required: true, evidence: "Production main, workspace server, preload, renderer, and resource build exit status." }
   - { id: ci-integration, kind: integration, command: "bun run validate:ci", description: "Run the repository CI validation composition.", triggers: [release, ci-change], required: true, evidence: "CI validation exit status and output." }
-scope_digest: de5be5f57d0fa6bb19a4cddae311e91492f22c0c
+scope_digest: 7dc5d8c5160d0196c679c4de040c14c92e595b45
 ---
 
 ## Purpose
@@ -158,6 +159,8 @@ Run the in-memory production Node bundle gate frequently, retain the complete pr
 Bundled binaries and lockfiles are large shared surfaces; concurrent regeneration can overwrite another build's artifacts.
 
 ## Semantic history
+- 2026-07-25: Made source identity derive from an empty temporary Git index populated only by declared build inputs, so unrelated tracked files and commit-state transitions cannot enter the immutable capsule or change its identity.
+- 2026-07-25: Converged production validation, target packaging, Developer Kit staging, and UI validation on one build-owned immutable Electron producer with closed Bun/Pi dependency capsules, verified external-toolchain caching, SHA-256 artifact manifests, lease-held staging, and no live-checkout fallback; decomposed the full module gate into separately attributed Pi contract, Pi regression, production, and CI commands instead of nesting a duplicate CI run inside one timeout-bound command.
 - 2026-07-24: Made the non-writing production Node bundle gate resolve declared Pi workspace exports from their source entries, so a frozen clean checkout compiles every production boundary without pre-existing generated `dist` files.
 - 2026-07-24: Replaced the CI package-graph gate's full TypeScript AST traversal with deterministic concurrent source pre-reading, structured dependency preprocessing, and constant-time workspace package resolution, restoring the frozen scan budget without weakening supported import forms.
 - 2026-07-24: Archived OPT-010 after current-owner contracts and isolated Electron runs proved workspace-root authority, assistant-backed publication, rejection recovery, restart persistence, and complete cleanup.
@@ -176,5 +179,3 @@ Bundled binaries and lockfiles are large shared surfaces; concurrent regeneratio
 - 2026-07-23: Verified OPT-007 with asynchronous renderer/main layout coordinators, zero storage work on the interaction hot path, foreground narrow resize and drag evidence, and same-profile two-group restart recovery.
 - 2026-07-23: Verified OPT-006 after bounded async Pi Session and runtime/specialized log writers passed shutdown, backpressure, concurrency, rotation, event-loop responsiveness, and representative throughput evidence.
 - 2026-07-22: Recorded awaited compaction sidecar settlement and settlement-only recovery as automated OPT-005 evidence while retaining the physical five-timeline gate before verification.
-- 2026-07-22: Verified typed publication and existing-Session durability recovery through six isolated production-entry runs, including pre-accept retry, settlement-only recovery, retained baseline cleanup, and same-profile restart without duplicate canonical writes.
-- 2026-07-22: Verified draft-only first-turn Session publication with retained failure, same-profile restart, successful assistant-backed publication, and reload evidence from the production-entry Developer Host.

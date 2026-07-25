@@ -6,7 +6,6 @@ param(
 $ErrorActionPreference = "Stop"
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
-$buildScript = Join-Path $repoRoot "apps\electron\scripts\build-win.ps1"
 $releaseDir = Join-Path $repoRoot "apps\electron\release"
 
 function Write-Step {
@@ -25,22 +24,22 @@ function Ensure-Command {
 Ensure-Command "powershell"
 Ensure-Command "bun"
 
-if (-not (Test-Path $buildScript)) {
-  throw "Build script not found: $buildScript"
-}
-
 Write-Step "Repository: $repoRoot"
-Write-Step "Using build script: $buildScript"
+Write-Step "Using canonical command: bun run electron:dist:win"
 Write-Step "Expected output directory: $releaseDir"
 
 if (-not $PSCmdlet.ShouldProcess("Windows installer", "Build package")) {
   return
 }
 
-& powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File $buildScript
-$exitCode = $LASTEXITCODE
-if ($exitCode -ne 0) {
-  throw "Packaging failed with exit code $exitCode."
+Push-Location $repoRoot
+try {
+  bun run electron:dist:win
+  if ($LASTEXITCODE -ne 0) {
+    throw "Packaging failed with exit code $LASTEXITCODE."
+  }
+} finally {
+  Pop-Location
 }
 
 if (-not (Test-Path $releaseDir)) {

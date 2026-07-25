@@ -1,6 +1,8 @@
-import { describe, expect, test } from 'bun:test'
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { afterEach, describe, expect, test } from 'bun:test'
+import { createHash } from 'node:crypto'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 import {
   createProductionBundleEnvironment,
   productionBundleCommand,
@@ -9,14 +11,34 @@ import {
   createProductionNodeBundleTargets,
   resolvePiWorkspaceSourceImport,
 } from '../validate-production-node-bundles'
+import { copyPiRuntime, downloadUv, publishVerifiedUvToolchain } from '../common'
+import {
+  publishElectronPackageArtifacts,
+  reapAbandonedPackageRuns,
+  recoverElectronPackagePublication,
+  resolvePackageTarget,
+} from '../package-electron'
+import { getProcessStartTime } from '../process-identity'
 
 const repositoryRoot = resolve(import.meta.dir, '../../..')
+const temporaryRoots: string[] = []
+
+afterEach(() => {
+  for (const root of temporaryRoots.splice(0)) rmSync(root, { recursive: true, force: true })
+})
 
 function packageScripts(): Record<string, string> {
   const manifest = JSON.parse(readFileSync(resolve(repositoryRoot, 'package.json'), 'utf8')) as {
     scripts?: Record<string, string>
   }
   return manifest.scripts ?? {}
+}
+
+function filesUnder(directory: string): string[] {
+  return readdirSync(directory).flatMap(name => {
+    const path = join(directory, name)
+    return statSync(path).isDirectory() ? filesUnder(path) : [path]
+  })
 }
 
 describe('production bundle validation composition', () => {
@@ -62,6 +84,9 @@ describe('production bundle validation composition', () => {
 
   test('keeps the real production bundle build in the canonical CI gate', () => {
     const scripts = packageScripts()
+    expect(scripts['bootstrap:ci']).toContain('bun run pi:build:binary')
+    expect(scripts['electron:build']).toBe('bun run scripts/build/produce-electron-build.ts')
+    expect(scripts['electron:build:source']).toContain('bun run electron:build:resources')
     expect(scripts['validate:production-node-bundles']).toBe(
       'bun run scripts/build/validate-production-node-bundles.ts',
     )
@@ -73,10 +98,198 @@ describe('production bundle validation composition', () => {
 
   test('keeps installer creation behind explicit target-platform package commands', () => {
     const scripts = packageScripts()
-    expect(scripts['electron:dist:win']).toContain('electron-builder --config electron-builder.yml --win')
-    expect(scripts['electron:dist:mac']).toContain('electron-builder --config electron-builder.yml --mac')
-    expect(scripts['electron:dist:linux']).toContain('electron-builder --config electron-builder.yml --linux')
+    expect(scripts['electron:dist:win']).toBe('bun run scripts/build/package-electron.ts --target win')
+    expect(scripts['electron:dist:mac']).toBe('bun run scripts/build/package-electron.ts --target mac')
+    expect(scripts['electron:dist:linux']).toBe('bun run scripts/build/package-electron.ts --target linux')
     expect(scripts['validate:dev']).not.toContain('electron:dist')
     expect(scripts['validate:ci']).not.toContain('electron:dist')
+  })
+
+  test('delegates app-local lifecycle scripts to the root build authority', () => {
+    const appPackage = JSON.parse(readFileSync(resolve(repositoryRoot, 'apps/electron/package.json'), 'utf8')) as {
+      scripts: Record<string, string>
+    }
+    expect(appPackage.scripts.build).toBe('bun --cwd=../.. run electron:build')
+    expect(appPackage.scripts.start).toBe('bun --cwd=../.. run electron:start')
+    expect(appPackage.scripts['dist:win']).toBe('bun --cwd=../.. run electron:dist:win')
+    expect(appPackage.scripts['dist:mac']).toBe('bun --cwd=../.. run electron:dist:mac')
+    expect(appPackage.scripts['dist:linux']).toBe('bun --cwd=../.. run electron:dist:linux')
+    expect(Object.keys(appPackage.scripts).filter(name => name.startsWith('build:'))).toEqual([])
+    expect(appPackage.scripts['start:win']).toBeUndefined()
+    expect(appPackage.scripts['dist:mac:x64']).toBeUndefined()
+    expect(existsSync(resolve(repositoryRoot, 'apps/electron/scripts/build-dmg.sh'))).toBe(false)
+    expect(existsSync(resolve(repositoryRoot, 'apps/electron/scripts/build-linux.sh'))).toBe(false)
+    expect(existsSync(resolve(repositoryRoot, 'scripts/build/darwin.ts'))).toBe(false)
+    expect(existsSync(resolve(repositoryRoot, 'scripts/build/linux.ts'))).toBe(false)
+    const directBuilderCallers = [
+      ...filesUnder(resolve(repositoryRoot, 'apps/electron/scripts')),
+      ...filesUnder(resolve(repositoryRoot, 'scripts/build')),
+    ]
+      .filter(path => /\.(?:cjs|js|mjs|ps1|sh|ts)$/.test(path))
+      .filter(name => /(?:bunx|npx|bun\s+x)\s+electron-builder/.test(
+        readFileSync(name, 'utf8'),
+      ))
+    expect(directBuilderCallers).toEqual([])
+  })
+
+  test('packages only from an isolated immutable app staging directory', () => {
+    const packageElectron = readFileSync(resolve(repositoryRoot, 'scripts/build/package-electron.ts'), 'utf8')
+    const buildCache = readFileSync(resolve(repositoryRoot, 'scripts/build/electron-build-cache.ts'), 'utf8')
+    expect(packageElectron).toContain("'--projectDir'")
+    expect(packageElectron).toContain('staged.appDir')
+    expect(packageElectron).toContain("'--config.directories.output'")
+    expect(packageElectron).toContain('captureElectronBuildSource')
+    expect(packageElectron).toContain('capturedSource')
+    expect(packageElectron).toContain('staged.appDir,\n        `Electron ${resolvedTarget.target} package`')
+    expect(packageElectron).toContain("MORTISE_BUILD_TOOLCHAIN_CACHE_DIR: join(buildRoot, 'toolchains')")
+    expect(readFileSync(resolve(repositoryRoot, 'scripts/build-developer-kit.ts'), 'utf8'))
+      .toContain('prepareDependencies: true')
+    expect(readFileSync(resolve(repositoryRoot, 'scripts/build-developer-kit.ts'), 'utf8'))
+      .not.toContain('linkDependencies')
+    expect(buildCache).toContain("join(lease.buildRoot, 'packaging-staging')")
+    expect(buildCache).not.toContain("join(resolvedRepoRoot, 'apps', 'electron', 'dist')")
+    expect(buildCache).not.toContain("join(lease.buildRoot, 'working-tree-stage')")
+  })
+
+  test('binds default and explicit packaging to one host architecture', () => {
+    expect(resolvePackageTarget('default', 'win32', 'x64')).toEqual({
+      target: 'win',
+      builderArgs: ['--win', '--x64'],
+    })
+    expect(resolvePackageTarget('default', 'darwin', 'arm64')).toEqual({
+      target: 'mac',
+      builderArgs: ['--mac', '--arm64'],
+    })
+    expect(() => resolvePackageTarget('win', 'win32', 'arm64')).toThrow('x64 only')
+    expect(() => resolvePackageTarget('win', 'darwin', 'arm64')).toThrow('requires a matching')
+  })
+
+  test('publishes isolated package output under a repository-global lock', () => {
+    const root = mkdtempSync(join(tmpdir(), 'mortise-package-publication-'))
+    temporaryRoots.push(root)
+    const staged = join(root, 'run-a', 'output')
+    const release = join(root, 'app', 'release')
+    mkdirSync(staged, { recursive: true })
+    mkdirSync(release, { recursive: true })
+    writeFileSync(join(staged, 'new.exe'), 'new', 'utf8')
+    writeFileSync(join(release, 'old.exe'), 'old', 'utf8')
+
+    publishElectronPackageArtifacts(staged, release, join(root, 'global-publication'))
+
+    expect(existsSync(staged)).toBe(false)
+    expect(readFileSync(join(release, 'new.exe'), 'utf8')).toBe('new')
+    expect(existsSync(join(release, 'old.exe'))).toBe(false)
+  })
+
+  test('recovers an interrupted release swap before publishing the next package', () => {
+    const root = mkdtempSync(join(tmpdir(), 'mortise-package-recovery-'))
+    temporaryRoots.push(root)
+    const staged = join(root, 'run-b', 'output')
+    const release = join(root, 'app', 'release')
+    const backup = `${release}.previous`
+    mkdirSync(staged, { recursive: true })
+    mkdirSync(backup, { recursive: true })
+    writeFileSync(join(staged, 'new.exe'), 'new', 'utf8')
+    writeFileSync(join(backup, 'recoverable.exe'), 'old', 'utf8')
+
+    publishElectronPackageArtifacts(staged, release, join(root, 'global-publication'))
+
+    expect(readFileSync(join(release, 'new.exe'), 'utf8')).toBe('new')
+    expect(existsSync(backup)).toBe(false)
+  })
+
+  test('restores an interrupted release before a subsequent package build can fail', () => {
+    const root = mkdtempSync(join(tmpdir(), 'mortise-package-startup-recovery-'))
+    temporaryRoots.push(root)
+    const release = join(root, 'app', 'release')
+    const backup = `${release}.previous`
+    const publicationLock = join(root, 'global-publication')
+    mkdirSync(backup, { recursive: true })
+    writeFileSync(join(backup, 'recoverable.exe'), 'old', 'utf8')
+
+    recoverElectronPackagePublication(release, publicationLock)
+    expect(readFileSync(join(release, 'recoverable.exe'), 'utf8')).toBe('old')
+    expect(existsSync(backup)).toBe(false)
+
+    expect(() => publishElectronPackageArtifacts(join(root, 'missing-output'), release, publicationLock))
+      .toThrow('missing or empty')
+    expect(readFileSync(join(release, 'recoverable.exe'), 'utf8')).toBe('old')
+  })
+
+  test('reclaims crash-abandoned per-run package output without touching an active run', () => {
+    const root = mkdtempSync(join(tmpdir(), 'mortise-package-run-gc-'))
+    temporaryRoots.push(root)
+    const runsRoot = join(root, 'runs')
+    const abandoned = join(runsRoot, 'package-win-dead')
+    const active = join(runsRoot, 'package-win-active')
+    const unreadable = join(runsRoot, 'package-win-unreadable')
+    mkdirSync(abandoned, { recursive: true })
+    mkdirSync(active, { recursive: true })
+    mkdirSync(unreadable, { recursive: true })
+    writeFileSync(join(abandoned, 'run.json'), JSON.stringify({
+      launcherPid: 2147483647,
+      createdAt: new Date(0).toISOString(),
+    }), 'utf8')
+    writeFileSync(join(abandoned, 'partial.exe'), 'partial', 'utf8')
+    writeFileSync(join(active, 'run.json'), JSON.stringify({
+      launcherPid: process.pid,
+      launcherStartedAt: getProcessStartTime(process.pid),
+      createdAt: new Date().toISOString(),
+    }), 'utf8')
+    writeFileSync(join(unreadable, 'run.json'), '{partial', 'utf8')
+
+    expect(reapAbandonedPackageRuns(runsRoot)).toEqual(['package-win-dead'])
+    expect(existsSync(active)).toBe(true)
+    expect(existsSync(unreadable)).toBe(true)
+  })
+
+  test('rejects direct Pi runtime staging without an immutable source identity', () => {
+    const previous = process.env.MORTISE_BUILD_SOURCE_ID
+    delete process.env.MORTISE_BUILD_SOURCE_ID
+    try {
+      expect(() => copyPiRuntime({
+        platform: 'win32',
+        arch: 'x64',
+        upload: false,
+        uploadLatest: false,
+        uploadScript: false,
+        rootDir: repositoryRoot,
+        electronDir: resolve(repositoryRoot, 'apps/electron'),
+      })).toThrow('canonical immutable build source identity')
+    } finally {
+      if (previous === undefined) delete process.env.MORTISE_BUILD_SOURCE_ID
+      else process.env.MORTISE_BUILD_SOURCE_ID = previous
+    }
+  })
+
+  test('restores uv from a verified build toolchain cache without network access', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'mortise-uv-toolchain-cache-'))
+    temporaryRoots.push(root)
+    const sourceBinary = join(root, 'source', 'uv.exe')
+    mkdirSync(join(sourceBinary, '..'), { recursive: true })
+    writeFileSync(sourceBinary, 'verified uv fixture', 'utf8')
+    const cacheRoot = join(root, 'cache')
+    const sha256 = createHash('sha256').update(readFileSync(sourceBinary)).digest('hex')
+    publishVerifiedUvToolchain(cacheRoot, { platform: 'win32', arch: 'x64' }, sourceBinary, sha256)
+
+    const previous = process.env.MORTISE_BUILD_TOOLCHAIN_CACHE_DIR
+    process.env.MORTISE_BUILD_TOOLCHAIN_CACHE_DIR = cacheRoot
+    try {
+      const electronDir = join(root, 'electron')
+      await downloadUv({
+        platform: 'win32',
+        arch: 'x64',
+        upload: false,
+        uploadLatest: false,
+        uploadScript: false,
+        rootDir: root,
+        electronDir,
+      })
+      expect(readFileSync(join(electronDir, 'resources', 'bin', 'win32-x64', 'uv.exe'), 'utf8'))
+        .toBe('verified uv fixture')
+    } finally {
+      if (previous === undefined) delete process.env.MORTISE_BUILD_TOOLCHAIN_CACHE_DIR
+      else process.env.MORTISE_BUILD_TOOLCHAIN_CACHE_DIR = previous
+    }
   })
 })

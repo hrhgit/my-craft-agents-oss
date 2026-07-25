@@ -49,12 +49,12 @@ export async function loadRendererTarget(
   await waitForCurrentNavigation(window, timeoutMs, options.signal)
   const remainingMs = Math.max(1, deadline - Date.now())
   const target = normalizedUrl(targetUrl)
-  if (normalizedUrl(window.webContents.getURL()) === target && !window.webContents.isLoadingMainFrame()) return
+  if (matchesRendererTarget(window.webContents.getURL(), targetUrl) && !window.webContents.isLoadingMainFrame()) return
 
   await new Promise<void>((resolveNavigation, rejectNavigation) => {
     let settled = false
     const finish = () => {
-      if (normalizedUrl(window.webContents.getURL()) !== target) return
+      if (!matchesRendererTarget(window.webContents.getURL(), target)) return
       cleanup()
       resolveNavigation()
     }
@@ -160,6 +160,20 @@ async function waitForCurrentNavigation(
 
 function normalizedUrl(value: string): string {
   try { return new URL(value).toString() } catch { return value }
+}
+
+function matchesRendererTarget(currentValue: string, targetValue: string): boolean {
+  if (normalizedUrl(currentValue) === normalizedUrl(targetValue)) return true
+  try {
+    const current = new URL(currentValue)
+    const target = new URL(targetValue)
+    if (!target.pathname.endsWith('/index.html')) return false
+    return current.protocol === target.protocol
+      && current.host === target.host
+      && current.pathname === target.pathname
+  } catch {
+    return false
+  }
 }
 
 function isNavigationAborted(error: unknown): boolean {

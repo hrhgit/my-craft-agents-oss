@@ -33,7 +33,7 @@ collaborates_with: [web-viewer-clients]
 validation:
   - { id: server-cli-regression, kind: unit, command: "bun test apps/cli packages/server packages/server-core", description: "Run headless server and CLI regressions.", triggers: [owned-change], required: true, evidence: "Bun test exit status and output." }
   - { id: server-cli-contract, kind: contract, command: "bun run typecheck:all", description: "Verify repository-wide server and CLI type contracts.", triggers: [contract-change], required: true, evidence: "TypeScript compiler exit status and diagnostics." }
-scope_digest: b529261472fd47b210f1ad3567b5f06d9db9dee5
+scope_digest: 5a8ae684f2ab24dc3d30f35167b03ba8ab65b6a8
 ---
 
 ## Purpose
@@ -64,6 +64,7 @@ Run server-core, server smoke, CLI command, streaming, spawner, and transport te
 Client/server version skew affects capabilities; stale endpoint discovery can connect a client to the wrong backend.
 
 ## Semantic history
+- 2026-07-25: Made headless platform construction validate the sealed runtime layout once and propagate it through backend, search, Session, and script-runtime consumers so immutable builds cannot fall back to process PATH or live checkout resources.
 - 2026-07-24: Made RPC listener allocation reject Fetch-blocked WebSocket ports and retry browser-unsafe ephemeral bindings before advertising readiness to Electron or WebUI clients.
 - 2026-07-24: Made server registration parse only complete protocol-v2 records and remove live legacy or unsupported-version registrations instead of treating them as current locks.
 - 2026-07-23: Removed startup-time Pi extension migration entirely; headless Mortise startup uses only Mortise-owned roots and never reads or imports the independent Pi Agent root.
@@ -83,4 +84,3 @@ Client/server version skew affects capabilities; stale endpoint discovery can co
 - 2026-07-21: Made listener binding the bootstrap readiness commit and added rollback for partially initialized server resources and registrations.
 - 2026-07-20: Removed Data Sources commands, flags, and current-product documentation from the headless CLI while preserving generic MCP and extension interaction support.
 - 2026-07-20: Required confirmation for automation reads that expose prompts, webhook configuration, run snapshots, or isolated-Agent output.
-- 2026-07-20: Added the unified Automations V3 RPC and CLI surface plus loopback CloudEvents ingress with workspace-scoped token lifecycle.

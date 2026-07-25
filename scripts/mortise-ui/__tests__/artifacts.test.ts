@@ -13,7 +13,7 @@ import {
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { readArtifactManifest, recordArtifact } from '../artifacts.ts'
-import { writeJsonAtomic } from '../files.ts'
+import { writeJsonAtomic } from '../../build/files.ts'
 import { MORTISE_UI_PROTOCOL_VERSION } from '../protocol.ts'
 
 const roots: string[] = []

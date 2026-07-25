@@ -17,7 +17,7 @@ collaborates_with: [extension-runtime, conversation-ui]
 validation:
   - { id: session-tooling-regression, kind: unit, command: "bun test packages/session-tools-core packages/session-mcp-server", description: "Run session tool and MCP server regressions.", triggers: [owned-change], required: true, evidence: "Bun test exit status and output." }
   - { id: session-tool-contract, kind: contract, command: "bun run typecheck:all", description: "Verify session tool contracts compile across consumers.", triggers: [contract-change], required: true, evidence: "TypeScript compiler exit status and diagnostics." }
-scope_digest: 960239564d19ee77b325fbe009d8557da8250e7a
+scope_digest: c37a3a9eab189bd5a58d5fefe05146f568db4525
 ---
 
 ## Purpose
@@ -48,6 +48,7 @@ Run package tests and downstream agent host tests for schema or lifecycle change
 Tool schema drift can break model calls without TypeScript errors; delegated sessions can outlive parent expectations.
 
 ## Semantic history
+- 2026-07-25: Established `@mortise/session-tools-core/runtime` as the host-neutral sealed-runtime authority, validating capsule identity and resolving Node, Bun, uv/Python, resource, and subprocess environments without shared-package or PATH fallbacks.
 - 2026-07-24: Made `spawn_session.thinkingLevel` expose exactly the six current Mortise values in both Zod and exported MCP JSON Schema, rejecting retired values without a shared-package dependency.
 - 2026-07-23: Moved the Session MCP server's Session and global-skill roots to the Mortise-owned Agent root and removed independent Pi path compatibility from the generated production bundle.
 - 2026-07-21: Removed the host-neutral config validator's retired JSON fallback; SQLite config and aggregate validation now require an injected authoritative validator and fail explicitly when unavailable.

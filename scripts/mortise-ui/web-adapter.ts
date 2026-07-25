@@ -32,7 +32,7 @@ import {
   type UiValidationWaitPredicate,
 } from '@mortise/shared/ui-validation'
 import { redactValue } from './redaction.ts'
-import { writeJsonAtomic } from './files.ts'
+import { writeJsonAtomic } from '../build/files.ts'
 import {
   buildWebAccessibilityDescriptor,
   buildWebSemanticSnapshot,

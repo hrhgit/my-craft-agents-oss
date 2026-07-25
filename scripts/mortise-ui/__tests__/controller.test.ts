@@ -3,7 +3,11 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { UI_VALIDATION_MAX_WAIT_MS } from '@mortise/shared/ui-validation'
-import { DEFAULT_MORTISE_UI_START_WAIT_MS, getDefaultAdapterCommand, getMortiseUiRunStatus, readRunManifest, resolveRunDir, restartMortiseUiRun, startMortiseUiRun, stopMortiseUiRun, updateRunManifest } from '../controller.ts'
+import {
+  ELECTRON_BUILD_PRODUCER_VERSION,
+  ELECTRON_BUILD_SCHEMA_VERSION,
+} from '../../build/electron-build-cache.ts'
+import { DEFAULT_MORTISE_UI_START_WAIT_MS, getDefaultAdapterCommand, getMortiseUiRunStatus, readPackagedDeveloperHostIdentity, readRunManifest, resolveRunDir, restartMortiseUiRun, startMortiseUiRun, stopMortiseUiRun, updateRunManifest } from '../controller.ts'
 import { requestMortiseUiHost } from '../client.ts'
 import { collectLocalEvidence, registerReturnedArtifacts } from '../evidence.ts'
 
@@ -26,8 +30,28 @@ describe('mortise-ui controller', () => {
     const root = mkdtempSync(join(tmpdir(), 'mortise-ui-dev-host-')); roots.push(root)
     const executable = join(root, 'Mortise Developer Host.exe')
     writeFileSync(executable, 'fixture', 'utf8')
+    const provenancePath = join(root, 'resources', 'app', 'dist', 'build-provenance.json')
+    mkdirSync(join(provenancePath, '..'), { recursive: true })
+    writeFileSync(provenancePath, JSON.stringify({
+      schemaVersion: ELECTRON_BUILD_SCHEMA_VERSION,
+      producerVersion: ELECTRON_BUILD_PRODUCER_VERSION,
+      mode: 'ui-validation',
+      buildId: 'a'.repeat(64),
+      sourceId: 'b'.repeat(64),
+    }))
     process.env.MORTISE_DEV_HOST_PATH = executable
     expect(getDefaultAdapterCommand('electron')).toEqual([executable])
+    expect(readPackagedDeveloperHostIdentity(executable)).toEqual({
+      buildId: 'a'.repeat(64),
+      sourceId: 'b'.repeat(64),
+    })
+  })
+
+  it('rejects a configured Developer Host without immutable provenance', () => {
+    const root = mkdtempSync(join(tmpdir(), 'mortise-ui-unprovenanced-host-')); roots.push(root)
+    const executable = join(root, 'Mortise Developer Host.exe')
+    writeFileSync(executable, 'fixture', 'utf8')
+    expect(() => readPackagedDeveloperHostIdentity(executable)).toThrow('provenance is missing or invalid')
   })
 
   it('requires explicit source profiles for clone mode', async () => {

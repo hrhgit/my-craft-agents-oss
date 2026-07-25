@@ -29,6 +29,7 @@
   },
   "dependencies": {
     "@mortise/core": "workspace:*",
+    "@mortise/session-tools-core": "workspace:*",
     "@mortise/shared": "workspace:*",
     "chokidar": "^3.6.0",
     "jose": "^6.0.0",

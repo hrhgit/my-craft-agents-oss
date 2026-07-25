@@ -79,11 +79,12 @@ try {
   $env:MORTISE_DEV_HOST_BUILD = "1"
   Invoke-Checked { bun run pi:build } "Pi workspace build"
   Invoke-Checked { bun run pi:build:binary } "Pi binary build"
-  Invoke-Checked { bun run electron:build } "Developer Host build"
+  Invoke-Checked { bun run electron:build:source } "Developer Host build"
+  Invoke-Checked { bun run scripts/build/write-electron-build-provenance.ts } "Developer Host provenance"
 
   Push-Location $electronDir
   try {
-    Invoke-Checked { bunx electron-builder --config electron-builder.devhost.yml --win --x64 --dir } "Developer Host packaging"
+    Invoke-Checked { bunx electron-builder --config dist/packaging-inputs/electron-builder.devhost.yml --win --x64 --dir } "Developer Host packaging"
   } finally {
     Pop-Location
   }

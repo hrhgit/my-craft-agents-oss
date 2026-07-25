@@ -10,10 +10,10 @@ npmRebuild: false
 
 directories:
   output: release-devhost
-  buildResources: resources
+  buildResources: dist/resources
 
 win:
-  icon: resources/icon.ico
+  icon: dist/resources/icon.ico
   target:
     - target: nsis
       arch:

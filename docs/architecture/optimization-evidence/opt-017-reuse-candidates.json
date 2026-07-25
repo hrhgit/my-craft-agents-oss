@@ -1,0 +1,40 @@
+{
+  "candidates": [
+    {
+      "name": "Turborepo",
+      "stars": 30772,
+      "last_commit_days": 0,
+      "license": "MIT",
+      "release_recency": 2,
+      "docs_score": 9,
+      "quality_signals": 9,
+      "fit_score": 3,
+      "archived": false,
+      "source_url": "https://github.com/vercel/turborepo"
+    },
+    {
+      "name": "Nx",
+      "stars": 29128,
+      "last_commit_days": 0,
+      "license": "MIT",
+      "release_recency": 11,
+      "docs_score": 9,
+      "quality_signals": 9,
+      "fit_score": 3,
+      "archived": false,
+      "source_url": "https://github.com/nrwl/nx"
+    },
+    {
+      "name": "Lage",
+      "stars": 815,
+      "last_commit_days": 1,
+      "license": "MIT",
+      "release_recency": 14,
+      "docs_score": 8,
+      "quality_signals": 8,
+      "fit_score": 2,
+      "archived": false,
+      "source_url": "https://github.com/microsoft/lage"
+    }
+  ]
+}

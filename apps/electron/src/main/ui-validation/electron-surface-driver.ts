@@ -9,6 +9,7 @@ import { captureRendererDriverDiagnosticFallback } from './main-process-diagnost
 import type { ManagedWindow, ManagedWindowRole, WindowManager } from '../window-manager'
 import { ElectronUiDriverError } from './electron-ui-driver-error'
 import type { BrowserViewSurfaceSnapshot } from './browser-view-surface-adapter'
+import { resolveRendererSnapshotTarget } from './snapshot-target'
 
 export { ElectronUiDriverError } from './electron-ui-driver-error'
 
@@ -66,9 +67,7 @@ export interface UiDriverSnapshot {
   embeddedSurfaces?: BrowserViewSurfaceSnapshot[]
 }
 
-export interface UiDriverActionRequest {
-  revision: number
-  ref: string
+export interface UiDriverActionOptions {
   action: 'click' | 'fill' | 'select' | 'press' | 'drag' | 'shortcut' | 'clipboard' | 'ime' | 'rich-text'
   mode?: 'semantic' | 'physical'
   value?: string
@@ -76,6 +75,16 @@ export interface UiDriverActionRequest {
   modifiers?: Array<'shift' | 'control' | 'alt' | 'meta'>
   to?: { x: number; y: number }
 }
+
+export type UiDriverStableTarget =
+  | { semanticId: string }
+  | { testId: string }
+  | { role: string; name?: string; exact?: boolean }
+
+export type UiDriverActionRequest = UiDriverActionOptions & (
+  | { revision: number; ref: string; target?: never }
+  | { target: UiDriverStableTarget; revision?: never; ref?: never }
+)
 
 export interface UiDriverActionReceipt {
   actionId: string
@@ -343,23 +352,28 @@ export class ElectronUiSurfaceDriver {
     // Refresh the live AX tree before trusting a revision-bound ref. A renderer
     // mutation between snapshot and action must invalidate the old ref even if
     // the caller did not explicitly request another snapshot.
-    await this.snapshot(boundSelector)
-    if (request.revision !== state.revision) {
-      throw new ElectronUiDriverError('STALE_REF', `Ref belongs to revision ${request.revision}; current revision is ${state.revision}.`, {
-        requestedRevision: request.revision,
+    const current = await this.snapshot(boundSelector)
+    const stableTarget = request.target
+    const actionRevision = stableTarget ? current.revision : request.revision
+    const actionRef = stableTarget
+      ? resolveRendererSnapshotTarget(Object.values(current.regions).flat(), stableTarget).ref
+      : request.ref
+    if (actionRevision !== state.revision) {
+      throw new ElectronUiDriverError('STALE_REF', `Ref belongs to revision ${actionRevision}; current revision is ${state.revision}.`, {
+        requestedRevision: actionRevision,
         currentRevision: state.revision,
       })
     }
-    const refRevision = /^r(\d+):/.exec(request.ref)?.[1]
+    const refRevision = /^r(\d+):/.exec(actionRef)?.[1]
     if (refRevision === undefined || Number(refRevision) !== state.revision) {
-      throw new ElectronUiDriverError('STALE_REF', `Target ref ${request.ref} does not belong to revision ${state.revision}.`, {
-        ref: request.ref,
+      throw new ElectronUiDriverError('STALE_REF', `Target ref ${actionRef} does not belong to revision ${state.revision}.`, {
+        ref: actionRef,
         currentRevision: state.revision,
       })
     }
-    const resolved = state.refs.get(request.ref)
-    if (!resolved) throw new ElectronUiDriverError('TARGET_NOT_FOUND', `Unknown target ref ${request.ref}.`)
-    if (resolved.node.state.disabled) throw new ElectronUiDriverError('DISABLED', `Target ${request.ref} is disabled.`)
+    const resolved = state.refs.get(actionRef)
+    if (!resolved) throw new ElectronUiDriverError('TARGET_NOT_FOUND', `Unknown target ref ${actionRef}.`)
+    if (resolved.node.state.disabled) throw new ElectronUiDriverError('DISABLED', `Target ${actionRef} is disabled.`)
     if (!resolved.node.actions.includes(request.action)) {
       throw new ElectronUiDriverError('UNSUPPORTED', `${request.action} is not valid for ${resolved.node.role}.`)
     }
@@ -446,7 +460,7 @@ export class ElectronUiSurfaceDriver {
       verificationLevel: physicalAction ? 'renderer-verified' : 'scenario-verified',
       beforeRevision,
       afterRevision: after.revision,
-      targetResolved: { ref: request.ref, role: resolved.node.role, name: resolved.node.name },
+      targetResolved: { ref: actionRef, role: resolved.node.role, name: resolved.node.name },
       settledBy: mode === 'semantic' ? ['semantic-command-ack', 'accessibility-snapshot'] : ['input-dispatched', 'accessibility-snapshot'],
       warnings: request.action === 'select' && mode === 'physical' ? ['select uses the component selection adapter and is scenario-verified'] : [],
       mode,

@@ -1,7 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
 import {
-  copyFileSync,
   cpSync,
   existsSync,
   lstatSync,
@@ -11,13 +10,14 @@ import {
   realpathSync,
   rmSync,
   statSync,
-  symlinkSync,
   writeFileSync,
 } from 'node:fs'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 const SOURCE_SNAPSHOT_SCHEMA_VERSION = 1
+export const MATERIALIZED_BUILD_SOURCE_PROVENANCE = '.mortise-build-source.json'
 const ABANDONED_SNAPSHOT_MS = 60 * 60 * 1_000
+const PI_DEPENDENCY_ROOT = 'pi'
 const DEFAULT_SOURCE_PATHS = [
   'package.json',
   'bun.lock',
@@ -33,7 +33,6 @@ const DEFAULT_SOURCE_PATHS = [
   'build-developer-kit.cmd',
   'docs/testing.md',
 ] as const
-const LOCAL_DEPENDENCY_DIRECTORIES = new Set(['.cache', '.vite', '.vite-temp'])
 
 export interface CaptureBuildSourceOptions {
   repoRoot: string
@@ -45,7 +44,7 @@ export interface CaptureBuildSourceOptions {
 
 export interface MaterializeBuildSourceOptions {
   parentDir: string
-  linkDependencies?: boolean
+  prepareDependencies?: boolean
 }
 
 export interface MaterializedBuildSource {
@@ -59,6 +58,12 @@ export interface CapturedBuildSource {
   treeId: string
   materialize(options: MaterializeBuildSourceOptions): MaterializedBuildSource
   dispose(): void
+}
+
+interface MaterializedBuildSourceProvenance {
+  schemaVersion: typeof SOURCE_SNAPSHOT_SCHEMA_VERSION
+  sourceId: string
+  treeId: string
 }
 
 /**
@@ -91,10 +96,14 @@ export function captureBuildSource(options: CaptureBuildSourceOptions): Captured
       GIT_OBJECT_DIRECTORY: objectDirectory,
       GIT_ALTERNATE_OBJECT_DIRECTORIES: alternates,
     }
-    const hasHead = run('git', ['rev-parse', '--verify', 'HEAD'], repoRoot, process.env, true).status === 0
-    runGit(hasHead ? ['read-tree', 'HEAD'] : ['read-tree', '--empty'], repoRoot, gitEnv)
+    // The capsule tree contains only declared build inputs, independent of what
+    // unrelated paths happen to be tracked by the current commit.
+    runGit(['read-tree', '--empty'], repoRoot, gitEnv)
 
-    const sourcePaths = (options.sourcePaths ?? DEFAULT_SOURCE_PATHS)
+    const sourcePaths = [...new Set([
+      ...(options.sourcePaths ?? DEFAULT_SOURCE_PATHS),
+      ...workspaceManifestPaths(repoRoot),
+    ])]
       .map(path => path.replaceAll('\\', '/'))
       .filter(path => existsSync(join(repoRoot, ...path.split('/'))) || gitTracksPath(repoRoot, path))
     if (sourcePaths.length === 0) throw new Error('No build source paths exist in the repository snapshot.')
@@ -139,10 +148,15 @@ export function captureBuildSource(options: CaptureBuildSourceOptions): Captured
           for (const extra of extraPaths) {
             const target = join(sourceRoot, ...extra.relativePath.split('/'))
             mkdirSync(resolve(target, '..'), { recursive: true })
-            cpSync(extra.storedPath, target, { recursive: true, force: true, dereference: false })
+            cpSync(extra.storedPath, target, { recursive: true, force: true, dereference: true })
           }
-          if (materializeOptions.linkDependencies !== false) {
-            linkWorkspaceDependencyViews(repoRoot, sourceRoot)
+          writeFileSync(join(sourceRoot, MATERIALIZED_BUILD_SOURCE_PROVENANCE), `${JSON.stringify({
+            schemaVersion: SOURCE_SNAPSHOT_SCHEMA_VERSION,
+            sourceId,
+            treeId,
+          } satisfies MaterializedBuildSourceProvenance, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 })
+          if (materializeOptions.prepareDependencies !== false) {
+            prepareFrozenDependencies(sourceRoot, scratchRoot)
           }
           return { sourceRoot, dispose: () => removeDirectory(sourceRoot) }
         } catch (error) {
@@ -168,6 +182,23 @@ export function captureBuildSource(options: CaptureBuildSourceOptions): Captured
   }
 }
 
+export function assertMaterializedBuildSourceIdentity(sourceRoot: string, expectedSourceId: string): void {
+  const provenancePath = join(resolve(sourceRoot), MATERIALIZED_BUILD_SOURCE_PROVENANCE)
+  let provenance: Partial<MaterializedBuildSourceProvenance>
+  try {
+    provenance = JSON.parse(readFileSync(provenancePath, 'utf8')) as Partial<MaterializedBuildSourceProvenance>
+  } catch {
+    throw new Error(`Materialized build source provenance is missing or invalid: ${provenancePath}`)
+  }
+  if (
+    provenance.schemaVersion !== SOURCE_SNAPSHOT_SCHEMA_VERSION
+    || provenance.sourceId !== expectedSourceId
+    || !/^[0-9a-f]{40,64}$/i.test(provenance.treeId ?? '')
+  ) {
+    throw new Error(`Materialized build source does not match source identity ${expectedSourceId}.`)
+  }
+}
+
 function captureExtraPaths(repoRoot: string, extraDirectory: string, paths: readonly string[]): Array<{ relativePath: string; storedPath: string }> {
   const captured: Array<{ relativePath: string; storedPath: string }> = []
   for (const value of paths) {
@@ -180,7 +211,7 @@ function captureExtraPaths(repoRoot: string, extraDirectory: string, paths: read
     if (!existsSync(source)) throw new Error(`Required extra build input is missing: ${relativePath}`)
     const storedPath = join(extraDirectory, ...relativePath.split('/'))
     mkdirSync(resolve(storedPath, '..'), { recursive: true })
-    cpSync(source, storedPath, { recursive: true, force: true, dereference: false })
+    cpSync(source, storedPath, { recursive: true, force: true, dereference: true })
     captured.push({ relativePath, storedPath })
   }
   return captured.sort((a, b) => a.relativePath.localeCompare(b.relativePath))
@@ -189,8 +220,7 @@ function captureExtraPaths(repoRoot: string, extraDirectory: string, paths: read
 function hashPath(hash: ReturnType<typeof createHash>, path: string, name: string): void {
   const stat = lstatSync(path)
   if (stat.isSymbolicLink()) {
-    hash.update(`link\0${name}\0${realpathSync(path)}\0`)
-    return
+    throw new Error(`Captured build input must not contain a symbolic link: ${path}`)
   }
   if (stat.isFile()) {
     hash.update(`file\0${name}\0`)
@@ -243,76 +273,106 @@ function isPidAlive(pid: number): boolean {
   }
 }
 
-function linkWorkspaceDependencyViews(repoRoot: string, sourceRoot: string): void {
-  const roots = [repoRoot, join(repoRoot, 'pi')]
+function prepareFrozenDependencies(sourceRoot: string, scratchRoot: string): void {
+  if (!existsSync(join(sourceRoot, 'bun.lock'))) {
+    throw new Error('Immutable build dependencies require a captured bun.lock.')
+  }
+  const bunCacheDir = join(scratchRoot, 'dependency-cache', 'bun')
+  mkdirSync(bunCacheDir, { recursive: true })
+  runDependencyInstall(process.execPath, [
+    'install',
+    '--frozen-lockfile',
+    '--no-save',
+    '--linker=hoisted',
+    '--backend=hardlink',
+    `--cache-dir=${bunCacheDir}`,
+    '--no-progress',
+    '--no-summary',
+  ], sourceRoot, 'root Bun dependency domain')
+
+  const piRoot = join(sourceRoot, PI_DEPENDENCY_ROOT)
+  if (!existsSync(join(piRoot, 'package-lock.json'))) {
+    throw new Error('Immutable Pi build dependencies require a captured pi/package-lock.json.')
+  }
+  const npmCacheDir = join(scratchRoot, 'dependency-cache', 'npm')
+  mkdirSync(npmCacheDir, { recursive: true })
+  runDependencyInstall(process.platform === 'win32' ? 'npm.cmd' : 'npm', [
+    'ci',
+    '--ignore-scripts',
+    '--no-audit',
+    '--no-fund',
+    `--cache=${npmCacheDir}`,
+  ], piRoot, 'embedded Pi npm dependency domain')
+
+  assertDependencyViewsContained(sourceRoot)
+}
+
+function runDependencyInstall(command: string, args: string[], cwd: string, label: string): void {
+  const startedAt = Date.now()
+  process.stdout.write(`[build-source] Preparing ${label}...\n`)
+  const result = spawnSync(command, args, {
+    cwd,
+    env: { ...process.env, HUSKY: '0' },
+    stdio: 'inherit',
+    windowsHide: true,
+  })
+  if (result.error) throw result.error
+  if (result.status !== 0) {
+    throw new Error(`Frozen installation for ${label} failed with exit code ${result.status ?? 'unknown'}.`)
+  }
+  process.stdout.write(`[build-source] Prepared ${label} in ${Date.now() - startedAt}ms.\n`)
+}
+
+function assertDependencyViewsContained(sourceRootValue: string): void {
+  const sourceRoot = realpathSync(sourceRootValue)
+  for (const workspaceRoot of workspaceRoots(sourceRoot)) {
+    const dependencies = join(workspaceRoot, 'node_modules')
+    if (!existsSync(dependencies)) continue
+    for (const packageRoot of dependencyPackageRoots(dependencies)) {
+      const target = realpathSync(packageRoot)
+      if (!isWithin(sourceRoot, target)) {
+        throw new Error(`Immutable dependency view escapes the source snapshot: ${packageRoot} -> ${target}`)
+      }
+    }
+  }
+}
+
+function dependencyPackageRoots(dependencies: string): string[] {
+  const roots: string[] = []
+  for (const entry of readdirSync(dependencies, { withFileTypes: true })) {
+    if (entry.name.startsWith('.')) continue
+    const path = join(dependencies, entry.name)
+    if (entry.name.startsWith('@') && entry.isDirectory()) {
+      for (const scoped of readdirSync(path, { withFileTypes: true })) {
+        if (scoped.isDirectory() || scoped.isSymbolicLink()) roots.push(join(path, scoped.name))
+      }
+    } else if (entry.isDirectory() || entry.isSymbolicLink()) {
+      roots.push(path)
+    }
+  }
+  return roots
+}
+
+function workspaceManifestPaths(repoRoot: string): string[] {
+  return workspaceRoots(repoRoot)
+    .map(root => relative(repoRoot, join(root, 'package.json')).replaceAll('\\', '/'))
+    .filter(path => path !== 'package.json' && existsSync(join(repoRoot, ...path.split('/'))))
+}
+
+function workspaceRoots(repoRoot: string): string[] {
+  const roots = [repoRoot, join(repoRoot, PI_DEPENDENCY_ROOT)].filter(path => existsSync(join(path, 'package.json')))
   for (const group of [join(repoRoot, 'apps'), join(repoRoot, 'packages'), join(repoRoot, 'pi', 'packages')]) {
     if (!existsSync(group)) continue
     for (const entry of readdirSync(group, { withFileTypes: true })) {
-      if (entry.isDirectory()) roots.push(join(group, entry.name))
+      if (entry.isDirectory() && existsSync(join(group, entry.name, 'package.json'))) roots.push(join(group, entry.name))
     }
   }
-
-  let linked = 0
-  for (const workspaceRoot of roots) {
-    const dependencies = join(workspaceRoot, 'node_modules')
-    if (!existsSync(dependencies)) continue
-    const workspaceRelative = relative(repoRoot, workspaceRoot)
-    const target = workspaceRelative ? join(sourceRoot, workspaceRelative, 'node_modules') : join(sourceRoot, 'node_modules')
-    linkDependencyDirectory(dependencies, target, repoRoot, sourceRoot)
-    linked += 1
-  }
-  if (linked === 0) {
-    throw new Error(`Cannot prepare isolated build dependencies because node_modules is missing under ${repoRoot}.`)
-  }
+  return roots
 }
 
-function linkDependencyDirectory(source: string, target: string, repoRoot: string, sourceRoot: string): void {
-  mkdirSync(target, { recursive: true })
-  for (const entry of readdirSync(source, { withFileTypes: true })) {
-    const sourcePath = join(source, entry.name)
-    const targetPath = join(target, entry.name)
-    if (LOCAL_DEPENDENCY_DIRECTORIES.has(entry.name)) {
-      mkdirSync(targetPath, { recursive: true })
-      continue
-    }
-    if (entry.isSymbolicLink()) {
-      if (entry.name.endsWith('.pre-monorepo-link')) continue
-      const resolvedTarget = realpathSync(sourcePath)
-      const mappedTarget = mapDependencyTarget(resolvedTarget, repoRoot, sourceRoot)
-      createDirectoryLink(mappedTarget, targetPath)
-      continue
-    }
-    if (entry.isDirectory() && entry.name === '.bin') {
-      cpSync(sourcePath, targetPath, { recursive: true, force: true, dereference: false })
-      continue
-    }
-    if (entry.isDirectory() && entry.name.startsWith('@')) {
-      linkDependencyDirectory(sourcePath, targetPath, repoRoot, sourceRoot)
-      continue
-    }
-    if (entry.isDirectory()) {
-      createDirectoryLink(sourcePath, targetPath)
-      continue
-    }
-    if (entry.isFile()) copyFileSync(sourcePath, targetPath)
-  }
-}
-
-function mapDependencyTarget(target: string, repoRoot: string, sourceRoot: string): string {
-  const path = relative(repoRoot, target)
-  if (path === '' || (!path.startsWith(`..${sep}`) && path !== '..' && !isAbsolute(path))) {
-    const mapped = resolve(sourceRoot, path)
-    if (!existsSync(mapped)) {
-      throw new Error(`Workspace dependency target is absent from the immutable source snapshot: ${path || '.'}`)
-    }
-    return mapped
-  }
-  return target
-}
-
-function createDirectoryLink(target: string, path: string): void {
-  mkdirSync(resolve(path, '..'), { recursive: true })
-  symlinkSync(target, path, process.platform === 'win32' ? 'junction' : 'dir')
+function isWithin(root: string, candidate: string): boolean {
+  const path = relative(root, candidate)
+  return path === '' || (!path.startsWith(`..${sep}`) && path !== '..' && !isAbsolute(path))
 }
 
 function assertGitWorktree(repoRoot: string): void {

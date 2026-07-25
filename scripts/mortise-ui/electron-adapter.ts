@@ -1,7 +1,11 @@
 import { spawn } from 'node:child_process'
-import { createRequire } from 'node:module'
-import { join, resolve } from 'node:path'
-import { acquireElectronBuild, releaseElectronBuild } from './build-cache.ts'
+import { resolve } from 'node:path'
+import {
+  acquireElectronBuild,
+  createElectronBuildRuntimeEnvironment,
+  releaseElectronBuild,
+  resolveElectronBuildExecutable,
+} from '../build/electron-build-cache.ts'
 import { updateRunManifest } from './controller.ts'
 
 const root = resolve(import.meta.dir, '..', '..')
@@ -12,6 +16,7 @@ try {
   lease = acquireElectronBuild({
     runId,
     runDir,
+    mode: 'ui-validation',
     repoRoot: root,
     skipBuild: process.env.MORTISE_UI_SKIP_BUILD === '1',
   })
@@ -19,26 +24,25 @@ try {
   updateRunManifest(runDir, { buildError: error instanceof Error ? error.message : String(error) })
   throw error
 }
-updateRunManifest(runDir, { buildId: lease.buildId, buildDir: lease.buildDir })
+updateRunManifest(runDir, {
+  buildId: lease.buildId,
+  buildDir: lease.buildDir,
+  sourceId: lease.manifest.sourceId,
+})
 
 let activeChild: ReturnType<typeof spawn> | undefined
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.on(signal, () => activeChild?.kill(signal))
 }
 
-const electronExecutable = String(createRequire(import.meta.url)('electron'))
+const electronExecutable = resolveElectronBuildExecutable(lease)
 const electron = spawn(electronExecutable, [lease.appDir], {
   cwd: root,
   env: {
     ...process.env,
     MORTISE_UI_VALIDATION_BUILD: '1',
     MORTISE_UI_TEST_HOST: '1',
-    MORTISE_UI_BUILD_ID: lease.buildId,
-    MORTISE_UI_BUILD_DIR: lease.buildDir,
-    MORTISE_UI_RUNTIME_APP_ROOT: lease.appDir,
-    MORTISE_UI_RUNTIME_RESOURCES_DIR: join(lease.appDir, 'dist', 'resources'),
-    MORTISE_UI_RUNTIME_RESOURCES_BASE: join(lease.appDir, 'dist'),
-    MORTISE_WORKSPACE_SERVER_ENTRY: join(lease.appDir, 'dist', 'workspace-server.mjs'),
+    ...createElectronBuildRuntimeEnvironment(lease, { uiValidation: true }),
   },
   stdio: 'inherit',
   windowsHide: true,

@@ -47,6 +47,7 @@ Run module-agent unit tests, then strict repository validation and impact checks
 Broad globs can conceal new capabilities; stale digests can make accurate prose look current when it is not.
 
 ## Semantic history
+- 2026-07-25: Removed the empty shared-runtime ownership pattern after sealed runtime authority moved to the session-tooling module, preserving strict one-owner coverage without a compatibility scope.
 - 2026-07-24: Removed empty ownership patterns for deleted legacy migration scripts so strict ownership validation describes only extant managed files.
 - 2026-07-20: Made structured, level-based validation plans and module-owned test execution part of the portable protocol.
 - 2026-07-20: Established the `module-agent/v1` document protocol and strict ownership model.

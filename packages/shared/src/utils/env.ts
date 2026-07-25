@@ -1,3 +1,5 @@
+import { stripRuntimeLayoutProcessEnvironment } from '@mortise/session-tools-core/runtime';
+
 /**
  * Shared subprocess environment sanitization.
  *
@@ -30,12 +32,7 @@ export type BlockedEnvVar = typeof BLOCKED_ENV_VARS[number];
  * Return a shallow-copied environment with known credential variables removed.
  */
 export function createSanitizedEnv(baseEnv: NodeJS.ProcessEnv = process.env): Record<string, string> {
-  const env: Record<string, string> = {};
-  for (const [key, value] of Object.entries(baseEnv)) {
-    if (value !== undefined) {
-      env[key] = value;
-    }
-  }
+  const env = stripRuntimeLayoutProcessEnvironment(baseEnv);
   for (const key of BLOCKED_ENV_VARS) {
     delete env[key];
   }

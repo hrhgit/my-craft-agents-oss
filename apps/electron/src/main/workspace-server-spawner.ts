@@ -12,6 +12,11 @@ import {
 import { dirname, join } from 'node:path'
 import type { Readable } from 'node:stream'
 
+import {
+  createImmutableRuntimeEnvironment,
+  stripRuntimeLayoutProcessEnvironment,
+  type ImmutableRuntimeLayout,
+} from '@mortise/session-tools-core/runtime'
 import { writeRuntimeLog } from '@mortise/shared/utils'
 import { mainLog } from './logger'
 
@@ -35,6 +40,7 @@ export interface SpawnWorkspaceServerOptions {
   nodeBinary?: string
   useNodeRuntime?: boolean
   messagingWorkerPath?: string
+  immutableRuntime?: ImmutableRuntimeLayout
   startupTimeoutMs?: number
 }
 
@@ -107,16 +113,24 @@ function resolveBunBinary(options: SpawnWorkspaceServerOptions): string {
   return 'bun'
 }
 
-function resolveServerEntry(options: SpawnWorkspaceServerOptions): string {
+export function resolveWorkspaceServerEntry(options: SpawnWorkspaceServerOptions): string {
+  if (options.immutableRuntime) {
+    const immutableEntry = join(options.immutableRuntime.appRootPath, 'dist', 'workspace-server.mjs')
+    if (!existsSync(immutableEntry) || !statSync(immutableEntry).isFile()) {
+      throw new Error(`Immutable workspace server entry not found: ${immutableEntry}`)
+    }
+    return immutableEntry
+  }
+
   const explicitEntry = process.env.MORTISE_WORKSPACE_SERVER_ENTRY
-  if (explicitEntry) {
-    if (!existsSync(explicitEntry)) throw new Error(`Workspace server entry not found: ${explicitEntry}`)
+  if (explicitEntry && !options.isPackaged) {
+    if (!existsSync(explicitEntry) || !statSync(explicitEntry).isFile()) throw new Error(`Workspace server entry not found: ${explicitEntry}`)
     return explicitEntry
   }
 
   const packagedEntry = join(options.appPath, 'dist', 'workspace-server.mjs')
   if (options.isPackaged) {
-    if (!existsSync(packagedEntry)) throw new Error(`Packaged workspace server entry not found: ${packagedEntry}`)
+    if (!existsSync(packagedEntry) || !statSync(packagedEntry).isFile()) throw new Error(`Packaged workspace server entry not found: ${packagedEntry}`)
     return packagedEntry
   }
 
@@ -172,25 +186,33 @@ async function stopChild(child: ChildProcess): Promise<void> {
   await waitForExit(child).catch(() => undefined)
 }
 
-function buildChildEnv(
+export function buildWorkspaceServerChildEnv(
   options: SpawnWorkspaceServerOptions,
   token: string,
   port: string,
 ): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {
-    ...process.env,
+    ...stripRuntimeLayoutProcessEnvironment(process.env),
     MORTISE_SERVER_TOKEN: token,
     MORTISE_RPC_HOST: '127.0.0.1',
     MORTISE_RPC_PORT: port,
     MORTISE_SERVER_LOCK_NAME: '.workspace-server.lock',
     MORTISE_BUNDLED_ASSETS_ROOT: options.bundledAssetsRoot,
-    MORTISE_APP_ROOT: options.isPackaged ? options.appPath : process.cwd(),
-    MORTISE_RESOURCES_PATH: options.resourcesPath,
+    MORTISE_APP_ROOT: options.immutableRuntime
+      ? options.immutableRuntime.appRootPath
+      : options.isPackaged ? options.appPath : process.cwd(),
+    MORTISE_RESOURCES_PATH: options.immutableRuntime ? options.immutableRuntime.resourcesPath : options.resourcesPath,
+    MORTISE_RESOURCES_BASE: options.immutableRuntime
+      ? options.immutableRuntime.resourcesBasePath
+      : options.appPath,
     MORTISE_IS_PACKAGED: options.isPackaged ? 'true' : 'false',
     MORTISE_VERSION: options.version,
     MORTISE_PROCESS_ROLE: 'workspace-server',
     MORTISE_BACKEND_KIND: 'workspace-server',
     MORTISE_PRODUCT_VERSION: options.version,
+  }
+  if (options.immutableRuntime) {
+    Object.assign(env, createImmutableRuntimeEnvironment(options.immutableRuntime))
   }
   if (options.messagingWorkerPath) env.MORTISE_MESSAGING_WA_WORKER = options.messagingWorkerPath
   if (options.nodeBinary) env.MORTISE_MESSAGING_NODE_BIN = options.nodeBinary
@@ -208,10 +230,10 @@ async function launchWorkspaceServer(
   port: string,
 ): Promise<LaunchedWorkspaceServer> {
   const useNodeRuntime = options.isPackaged || options.useNodeRuntime === true
-  const runtimeBinary = useNodeRuntime ? options.nodeBinary : bunBinary
+  const runtimeBinary = useNodeRuntime ? options.immutableRuntime?.nodeRuntimePath ?? options.nodeBinary : bunBinary
   if (!runtimeBinary) throw new Error('Bundled workspace server requires the Electron Node runtime')
   const runtimeArgs = useNodeRuntime ? [entry] : ['run', entry]
-  const env = buildChildEnv(options, token, port)
+  const env = buildWorkspaceServerChildEnv(options, token, port)
   if (useNodeRuntime) env.ELECTRON_RUN_AS_NODE = '1'
 
   const child = spawn(runtimeBinary, runtimeArgs, {
@@ -290,7 +312,7 @@ async function launchWorkspaceServer(
 }
 
 export async function spawnWorkspaceServer(options: SpawnWorkspaceServerOptions): Promise<SpawnedWorkspaceServer> {
-  const sourceEntry = resolveServerEntry(options)
+  const sourceEntry = resolveWorkspaceServerEntry(options)
   const entry = prepareWorkspaceServerEntry(sourceEntry, options)
   const bunBinary = resolveBunBinary(options)
   const token = randomUUID()
