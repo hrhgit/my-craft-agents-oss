@@ -37,27 +37,62 @@ Hard reject any submission that starts from an unverified/shared/dirty worktree,
 - `not-run`: static, architecture, owner-review, and applicable automated gates have found no known defect, but one explicitly named required runtime, installer, or physical gate has not run. No correctness or acceptance conclusion exists until it passes.
 - `blocked`: an explicit prerequisite prevents useful progress; record it rather than weakening the invariant.
 
+## R11 handoff checkpoint
+
+This checkpoint separates implementation completeness from final acceptance completeness. The five remaining OPT IDs
+stay as architecture invariants; their overlapping release evidence is executed through the ordered `R11-C0..C4`
+closeout packets in [`optimization-task-packets.md`](./optimization-task-packets.md), rather than rebuilding or
+revalidating the same installer separately for each ID.
+
+- **Formal worktree / branch:** `E:\_workSpace\_Agents\craft-agent-r11` / `codex/r11-acceptance`.
+- **Integrated prerequisite checkpoint:** `5a6cefc02` (`OPT-015` shared cursor integration included).
+- **Last committed candidate:** `7100b7a5d`; this is not the final frozen candidate because the locale-ordering repair
+  remains uncommitted in the handoff worktree.
+- **Current implementation state:** no known architecture implementation defect remains in `OPT-011`, `OPT-014`,
+  `OPT-015`, `OPT-017`, or `OPT-018`. Their status is `not-run` because revision-bound performance, installer, and
+  archive evidence is incomplete.
+- **Current global gate:** `validate:monorepo` reached i18n parity after production builds and 279 UI-validation tests,
+  then failed only because all seven locale files were reported unsorted. The pending `R11-C0` change makes locale
+  sorting line-ending aware and adds focused regression coverage; a new session must review, validate, and commit it
+  before freezing the candidate.
+- **Freeze rule:** after `R11-C0`, record `CODE_CANDIDATE` and make no implementation change while running `R11-C1..C3`.
+  A failed gate reopens only its owning packet. Post-acceptance ledger/module-digest changes form a documentation-only
+  `LEDGER_COMMIT`; they require diff/module validation but do not redefine the accepted code revision.
+
 ## Active ledger
 
 | ID | Priority | Status | Canonical authority and required outcome | Remaining proof / exit condition |
 |---|---|---|---|---|
-| OPT-011 | P1 | blocked | The runtime resolver is the sole binary-selection authority; the build pipeline is the sole producer/stager. Packaged/runtime resolution accepts exactly one compiled, version-compatible Mortise Pi binary and rejects legacy JS candidates and runtime-selection escape hatches. | Resolver/afterPack implementation and 12/12 focused tests exist, but installer proof is blocked by OPT-017's stale/ignored binary input risk. After OPT-017, run `EXT-BR-03` with isolated installer smoke, `runtime.log` path/version evidence, retired-variable rejection, and missing/tampered-binary failure. JS staging and TUI ownership belong to OPT-018. |
-| OPT-014 | P1 | needs-fix | Workspace manifests are the sole dependency declarations and the canonical graph validator enforces manifest, build, and source-import DAGs. `session-tools-core` is intentionally host-neutral and may be consumed by `shared`; the forbidden edge is `session-tools-core -> shared`. Do not extract another package. | Manifest, lockfile, and bounded graph changes are present but prior delivery evidence was mixed or baseline-inadmissible; complete `EXT-BR-04` from the frozen clean base and retain the reverse-edge guard, production bundle/metafile, monorepo, and source-development initialization evidence. Installer evidence remains separately blocked by OPT-017. |
-| OPT-015 | P1 | needs-fix | `automations`: V3 host/store/protocol is the sole scheduler, occurrence, history, idempotency, import, and dispatch authority. | Primary completes `AUT-P1..P4`; delegates complete `AUT-E1-MSG`, then the atomically integrated `AUT-E1-HSC` + `AUT-E1-SL`, plus `AUT-E2` and final `AUT-E3`. Pass protocol, fault, restart/replay, production-only legacy scan, runtime delivery, and indexed-query performance evidence. |
-| OPT-017 | P0 | needs-fix | `build-release-observability`: one canonical producer owns the compiled Pi binary and immutable source/build identity; every production gate builds what packaging consumes. | Repair `bootstrap:ci`/build composition so `copyPiRuntime` cannot consume ignored `pi/packages/coding-agent/dist/pi(.exe)`. Prove disposable-checkout production bundles, full artifact hash provenance, stale-input rejection, concurrent source/build isolation, equivalent-build deduplication, per-run build pinning, bounded retention/GC, packaged smoke, and platform installer generation. |
-| OPT-018 | P1 | needs-fix | `pi-coding-runtime` owns a UI-neutral Agent/RPC core; packaging stages only that headless runtime. No TUI, interactive mode, standalone CLI, terminal extension surface, updater, JS fallback, or separate Pi product artifact remains. | Primary completes `HEAD-P1..P3`; delegates run `HEAD-E1..E3`. Preserve Agent Loop, Session, tools, compaction, extension lifecycle, and RPC contract tests; pass import/metafile/staged-artifact guards and before/after performance budgets. |
+| OPT-011 | P1 | not-run | The runtime resolver is the sole binary-selection authority; the build pipeline is the sole producer/stager. Packaged/runtime resolution accepts exactly one compiled, version-compatible Mortise Pi binary and rejects legacy JS candidates and runtime-selection escape hatches. | Run the shared `R11-C3` isolated installer workflow: prove the selected path/version/hash in `runtime.log`, reject retired variables, and fail closed for missing or tampered binaries. |
+| OPT-014 | P1 | not-run | Workspace manifests are the sole dependency declarations and the canonical graph validator enforces manifest, build, and source-import DAGs. `session-tools-core` is intentionally host-neutral and may be consumed by `shared`; the forbidden edge is `session-tools-core -> shared`. Do not extract another package. | Pass `R11-C1` from the frozen clean candidate and retain the reverse-edge guard, real production bundle/metafile, dependency graph, and source-development initialization evidence; reuse the clean installer build from `R11-C3` for packaging corroboration. |
+| OPT-015 | P1 | not-run | `automations`: V3 host/store/protocol is the sole scheduler, occurrence, history, idempotency, import, and dispatch authority. | The V3 authority and final shared cursor integration are present. Run `R11-C2A` against the frozen workload and policy, retain raw base/final indexed-query samples, then bind the existing protocol, fault, restart/replay, runtime-delivery, and production-only legacy-scan evidence into the final manifest. |
+| OPT-017 | P0 | not-run | `build-release-observability`: one canonical producer owns the compiled Pi binary and immutable source/build identity; every production gate builds what packaging consumes. | The clean bootstrap, canonical Bun/Pi producer, stale-input rejection, immutable staging, and production builds are present. Pass `R11-C1`, then use one `R11-C3` build to prove final artifact provenance, platform installer generation, optional Developer Kit selection, installed-app smoke, and cleanup. |
+| OPT-018 | P1 | not-run | `pi-coding-runtime` owns a UI-neutral Agent/RPC core; packaging stages only that headless runtime. No TUI, interactive mode, standalone CLI, terminal extension surface, updater, JS fallback, or separate Pi product artifact remains. | The headless boundary and production staging guards are present. Run isolated `R11-C2B` base/final performance acceptance, then inspect the shared `R11-C3` installed artifact for zero legacy/TUI/JS runtime files and one manifest-bound headless executable. |
 
-## Primary-only architecture decisions
+## Remaining execution order
 
-- `OPT-017`: choose the canonical Pi binary producer, immutable source snapshot, build identity, concurrent isolation, equivalent-build cache/deduplication, per-run pinning, and bounded retention/GC model.
-- `OPT-014`: review the existing contract direction and graph guard. Do not solve it by re-extracting host-neutral contracts from `session-tools-core`.
-- `AUT-P1`: make V3 host injection mandatory; no dispatcher-created or fallback host.
-- `AUT-P2`: make resource import a host-owned atomic store operation.
-- `AUT-P3`: define one canonical V3 renderer DTO and bounded batch protocol.
-- `AUT-P4`: define the scheduler/store indexed-query boundary and its complexity budget.
-- `HEAD-P1`: define the headless entrypoint and split core from TUI/interactive presentation.
-- `HEAD-P2`: separate extension core contracts from terminal APIs and route GUI contributions through versioned host/RPC contracts.
-- `HEAD-P3`: integrate the new headless artifact into production staging and removal sequencing.
+| Order | Packet | Work | Exit condition |
+|---|---|---|---|
+| 1 | `R11-C0` | Review and commit the pending line-ending-aware locale sorter, focused tests, and `shared-ui-i18n` digest/history update. | Clean worktree and a recorded immutable `CODE_CANDIDATE`. |
+| 2 | `R11-C1` | Run focused i18n parity/sorted checks and strict module validation, then the complete `bun run validate:monorepo` on `CODE_CANDIDATE`. | One fully green canonical gate with retained log and SHA-256. |
+| 3 | `R11-C2A` | Run frozen `OPT-015` automation indexed-query base/final benchmark. | Policy-compliant raw samples and budget result. |
+| 4 | `R11-C2B` | Run frozen `OPT-018` headless-runtime base/final benchmark on an otherwise idle machine. | Policy-compliant raw samples and budget result. |
+| 5 | `R11-C3` | Build the Windows installer once and execute one isolated installed-app workflow covering `OPT-011`, `OPT-014`, `OPT-017`, and `OPT-018`. | Installer, runtime, artifact-inventory, failure-path, optional-kit, process, log, and cleanup evidence all pass. |
+| 6 | `R11-C4` | Generate evidence manifests/hashes, archive all five accepted IDs, remove them from this active ledger, refresh affected module digests, and integrate the reviewed commit range without overwriting the primary worktree's user changes. | Documentation-only `LEDGER_COMMIT`, clean r11 worktree, strict module validation, and reviewed integration receipt. |
+
+`R11-C2A` and `R11-C2B` are intentionally serial: build, packaging, and other benchmarks must not run concurrently with
+performance sampling. Evidence hashing, manifest drafting, and installer-workflow preparation may run in parallel after
+`CODE_CANDIDATE` is frozen, but no external implementer may self-accept an OPT item.
+
+## Frozen architecture decisions
+
+The following choices are integrated and are not open for redesign during r11 closeout. Reopen the smallest owning packet
+only when a retained gate demonstrates a concrete defect.
+
+- `OPT-017`: one source-pinned compiled Pi producer, immutable source/build identity, per-run pinning, and bounded retention/GC.
+- `OPT-014`: `session-tools-core` remains host-neutral; `shared -> session-tools-core` is allowed and the reverse edge is forbidden.
+- `OPT-015`: one mandatory V3 host/store, atomic import authority, canonical renderer DTO/batch protocol, and indexed query boundary.
+- `OPT-018`: one UI-neutral Agent/RPC entrypoint and one headless production artifact; terminal/TUI and standalone Pi product surfaces remain absent.
 
 ## Architecture comparison record
 
