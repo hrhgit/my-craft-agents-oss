@@ -19,7 +19,7 @@ import {
   resolvePackageTarget,
 } from '../package-electron'
 import { getProcessStartTime } from '../process-identity'
-import { createElectronBuildCommandEnvironment } from '../electron-build-cache'
+import { createElectronBuildCommandEnvironment, executeElectronBuildStages } from '../electron-build-cache'
 
 const repositoryRoot = resolve(import.meta.dir, '../../..')
 const temporaryRoots: string[] = []
@@ -119,6 +119,37 @@ describe('production bundle validation composition', () => {
     )
     expect(environment.PATH).toBe(`${dirname(bunExecutable)}${delimiter}${resolve(repositoryRoot, 'machine-node')}`)
     expect(environment.Path).toBeUndefined()
+  })
+
+  test('builds the Pi dependency domain before materializing root dependencies', () => {
+    const completed: string[] = []
+    executeElectronBuildStages(true, {
+      preparePiDependencies: () => completed.push('prepare-pi'),
+      buildPiWorkspace: () => completed.push('build-pi-workspace'),
+      buildPiBinary: () => completed.push('build-pi-binary'),
+      prepareRootDependencies: () => completed.push('prepare-root'),
+      assertDependencyViews: () => completed.push('assert-dependency-views'),
+      buildElectronSource: () => completed.push('build-electron'),
+    })
+    expect(completed).toEqual([
+      'prepare-pi',
+      'build-pi-workspace',
+      'build-pi-binary',
+      'prepare-root',
+      'assert-dependency-views',
+      'build-electron',
+    ])
+
+    const failed: string[] = []
+    expect(() => executeElectronBuildStages(true, {
+      preparePiDependencies: () => failed.push('prepare-pi'),
+      buildPiWorkspace: () => failed.push('build-pi-workspace'),
+      buildPiBinary: () => { throw new Error('Pi binary failed') },
+      prepareRootDependencies: () => failed.push('prepare-root'),
+      assertDependencyViews: () => failed.push('assert-dependency-views'),
+      buildElectronSource: () => failed.push('build-electron'),
+    })).toThrow('Pi binary failed')
+    expect(failed).toEqual(['prepare-pi', 'build-pi-workspace'])
   })
 
   test('keeps installer creation behind explicit target-platform package commands', () => {

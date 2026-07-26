@@ -274,12 +274,20 @@ function isPidAlive(pid: number): boolean {
   }
 }
 
-function prepareFrozenDependencies(sourceRoot: string, scratchRoot: string): void {
+export function prepareFrozenDependencies(sourceRoot: string, scratchRoot: string): void {
+  prepareFrozenRootDependencies(sourceRoot)
+  prepareFrozenPiDependencies(sourceRoot, scratchRoot)
+  assertFrozenDependencyViewsContained(sourceRoot)
+}
+
+export function prepareFrozenRootDependencies(sourceRoot: string): void {
   if (!existsSync(join(sourceRoot, 'bun.lock'))) {
     throw new Error('Immutable build dependencies require a captured bun.lock.')
   }
   runFrozenDependencyInstall(process.execPath, frozenBunInstallArgs(), sourceRoot, 'root Bun dependency domain')
+}
 
+export function prepareFrozenPiDependencies(sourceRoot: string, scratchRoot: string): void {
   const piRoot = join(sourceRoot, PI_DEPENDENCY_ROOT)
   if (!existsSync(join(piRoot, 'package-lock.json'))) {
     throw new Error('Immutable Pi build dependencies require a captured pi/package-lock.json.')
@@ -293,8 +301,6 @@ function prepareFrozenDependencies(sourceRoot: string, scratchRoot: string): voi
     '--no-fund',
     `--cache=${npmCacheDir}`,
   ], piRoot, 'embedded Pi npm dependency domain')
-
-  assertDependencyViewsContained(sourceRoot)
 }
 
 export function frozenBunInstallArgs(): string[] {
@@ -338,7 +344,7 @@ export function runFrozenDependencyInstall(
   process.stdout.write(`[build-source] Prepared ${label} in ${Date.now() - startedAt}ms.\n`)
 }
 
-function assertDependencyViewsContained(sourceRootValue: string): void {
+export function assertFrozenDependencyViewsContained(sourceRootValue: string): void {
   const sourceRoot = realpathSync(sourceRootValue)
   for (const workspaceRoot of workspaceRoots(sourceRoot)) {
     const dependencies = join(workspaceRoot, 'node_modules')

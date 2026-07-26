@@ -18,7 +18,13 @@ import {
   immutableElectronExecutableRelativePath,
   immutableRuntimeRequiredAppPaths,
 } from '@mortise/session-tools-core/runtime'
-import { captureBuildSource, type CapturedBuildSource } from '../build-source-snapshot.ts'
+import {
+  assertFrozenDependencyViewsContained,
+  captureBuildSource,
+  prepareFrozenPiDependencies,
+  prepareFrozenRootDependencies,
+  type CapturedBuildSource,
+} from '../build-source-snapshot.ts'
 import { getPlatformKey, publishVerifiedUvToolchain, UV_VERSION, type Arch, type Platform } from './common.ts'
 import { withFileLock } from './file-lock.ts'
 import { writeJsonAtomic } from './files.ts'
@@ -107,6 +113,15 @@ export interface AcquireElectronBuildOptions {
   pid?: number
   now?: () => Date
   capturedSource?: CapturedBuildSource
+}
+
+export interface ElectronBuildStageActions {
+  preparePiDependencies: () => void
+  buildPiWorkspace: () => void
+  buildPiBinary: () => void
+  prepareRootDependencies: () => void
+  assertDependencyViews: () => void
+  buildElectronSource: () => void
 }
 
 export interface CleanupElectronBuildOptions {
@@ -203,8 +218,16 @@ export function acquireElectronBuild(options: AcquireElectronBuildOptions): Mort
   const pid = options.pid ?? process.pid
   const retainCount = nonNegativeInteger(options.retainCount, envNumber('MORTISE_BUILD_RETAIN_COUNT', DEFAULT_RETAIN_COUNT))
   const maxBytes = positiveInteger(options.maxBytes, envNumber('MORTISE_BUILD_MAX_BYTES', DEFAULT_MAX_BYTES))
+  const usesDefaultBuild = options.build === undefined
+  const shouldPrepareDependencies = options.prepareDependencies ?? usesDefaultBuild
   let capturedSourceId = ''
-  const build = options.build ?? ((sourceRoot: string) => runElectronBuild(sourceRoot, mode, capturedSourceId, buildRoot))
+  const build = options.build ?? ((sourceRoot: string) => runElectronBuild(
+    sourceRoot,
+    mode,
+    capturedSourceId,
+    buildRoot,
+    shouldPrepareDependencies,
+  ))
 
   mkdirSync(join(buildRoot, 'builds'), { recursive: true })
   mkdirSync(join(buildRoot, 'leases'), { recursive: true })
@@ -236,7 +259,7 @@ export function acquireElectronBuild(options: AcquireElectronBuildOptions): Mort
 
         const source = capturedSource.materialize({
           parentDir: join(buildRoot, 'sources'),
-          prepareDependencies: options.prepareDependencies ?? options.build === undefined,
+          prepareDependencies: usesDefaultBuild ? false : shouldPrepareDependencies,
         })
         try {
           build(source.sourceRoot)
@@ -651,10 +674,35 @@ function leaseFile(lease: MortiseUiBuildLease): MortiseUiBuildLeaseFile {
   return file
 }
 
-function runElectronBuild(repoRoot: string, mode: ElectronBuildMode, sourceId: string, buildRoot: string): void {
-  runBuildCommand(repoRoot, ['run', 'pi:build'], 'Pi workspace build', mode, sourceId, buildRoot)
-  runBuildCommand(repoRoot, ['run', 'pi:build:binary'], 'Pi binary build', mode, sourceId, buildRoot)
-  runBuildCommand(repoRoot, ['run', 'electron:build:source'], 'Electron source build', mode, sourceId, buildRoot)
+function runElectronBuild(
+  repoRoot: string,
+  mode: ElectronBuildMode,
+  sourceId: string,
+  buildRoot: string,
+  prepareDependencies: boolean,
+): void {
+  executeElectronBuildStages(prepareDependencies, {
+    preparePiDependencies: () => prepareFrozenPiDependencies(repoRoot, join(buildRoot, 'sources')),
+    buildPiWorkspace: () => runBuildCommand(repoRoot, ['run', 'pi:build'], 'Pi workspace build', mode, sourceId, buildRoot),
+    buildPiBinary: () => runBuildCommand(repoRoot, ['run', 'pi:build:binary'], 'Pi binary build', mode, sourceId, buildRoot),
+    prepareRootDependencies: () => prepareFrozenRootDependencies(repoRoot),
+    assertDependencyViews: () => assertFrozenDependencyViewsContained(repoRoot),
+    buildElectronSource: () => runBuildCommand(repoRoot, ['run', 'electron:build:source'], 'Electron source build', mode, sourceId, buildRoot),
+  })
+}
+
+export function executeElectronBuildStages(
+  prepareDependencies: boolean,
+  actions: ElectronBuildStageActions,
+): void {
+  if (prepareDependencies) actions.preparePiDependencies()
+  actions.buildPiWorkspace()
+  actions.buildPiBinary()
+  if (prepareDependencies) {
+    actions.prepareRootDependencies()
+    actions.assertDependencyViews()
+  }
+  actions.buildElectronSource()
 }
 
 export function createElectronBuildCommandEnvironment(
