@@ -96,11 +96,14 @@ export interface AutomationDefinitionCursorV1 {
 export interface AutomationRunCursorV1 {
   createdAtMs: number
   runId: string
+  limit: number
   query: string
 }
 
 export interface AutomationHistoryCursorV1 {
   sequence: number
+  afterSequence: number
+  limit: number
   query: string
 }
 
@@ -244,6 +247,19 @@ const OpaqueIdSchema = z.string().regex(OPAQUE_ID, 'Must be an opaque collision-
 const OperationIdSchema = z.string().min(1).max(256).refine(value => value.trim().length > 0, 'operationId must not be blank')
 const ExpectedRevisionSchema = z.union([z.number().int().positive(), z.null()])
 const BaseInputSchema = z.object({ schemaVersion: z.literal(1) }).strict()
+const QueryFingerprintSchema = z.string().regex(/^[a-f0-9]{64}$/, 'Must be a SHA-256 query fingerprint')
+const AutomationRunCursorV1Schema = z.object({
+  createdAtMs: z.number().int().nonnegative(),
+  runId: OpaqueIdSchema,
+  limit: z.number().int().min(1).max(500),
+  query: QueryFingerprintSchema,
+}).strict()
+const AutomationHistoryCursorV1Schema = z.object({
+  sequence: z.number().int().nonnegative(),
+  afterSequence: z.number().int().nonnegative(),
+  limit: z.number().int().min(1).max(500),
+  query: QueryFingerprintSchema,
+}).strict()
 
 const AutomationWorkspaceCommandV1Schema = z.discriminatedUnion('operation', [
   BaseInputSchema.extend({ operation: z.literal('describe') }),
@@ -304,17 +320,14 @@ const AutomationWorkspaceCommandV1Schema = z.discriminatedUnion('operation', [
     createdAfter: z.number().int().nonnegative().optional(),
     createdBefore: z.number().int().nonnegative().optional(),
     limit: z.number().int().min(1).max(500).optional(),
-    cursor: z.object({
-      createdAtMs: z.number().int().nonnegative(),
-      runId: OpaqueIdSchema,
-    }).strict().optional(),
+    cursor: AutomationRunCursorV1Schema.optional(),
   }),
   BaseInputSchema.extend({
     operation: z.literal('list-changes'),
     automationId: OpaqueIdSchema.optional(),
     runId: OpaqueIdSchema.optional(),
     limit: z.number().int().min(1).max(500).optional(),
-    cursor: z.object({ sequence: z.number().int().nonnegative() }).strict().optional(),
+    cursor: AutomationHistoryCursorV1Schema.optional(),
   }),
   BaseInputSchema.extend({
     operation: z.literal('emit-event'),
@@ -435,13 +448,6 @@ const AutomationDefinitionCursorV1Schema = z.object({
   id: BoundedIdSchema,
 }).strict()
 
-const AutomationRunCursorV1Schema = z.object({
-  createdAtMs: z.number().int().nonnegative(),
-  runId: OpaqueIdSchema,
-}).strict()
-
-const AutomationHistoryCursorV1Schema = z.object({ sequence: z.number().int().nonnegative() }).strict()
-
 const AutomationWorkspaceDataSchemasV1: Record<AutomationWorkspaceOperationV1, z.ZodType> = {
   describe: AutomationWorkspaceDescriptionV1Schema,
   list: z.object({
@@ -504,12 +510,28 @@ const CapabilityResultV1Schema = z.discriminatedUnion('status', [
 ])
 
 export function parseAutomationWorkspaceCommandV1(value: unknown): AutomationWorkspaceCommandV1 {
-  return AutomationWorkspaceCommandV1Schema.parse(value) as AutomationWorkspaceCommandV1
+  const command = AutomationWorkspaceCommandV1Schema.parse(value) as AutomationWorkspaceCommandV1
+  if ((command.operation === 'list-runs' || command.operation === 'list-changes')
+    && command.cursor && command.limit !== undefined && command.limit !== command.cursor.limit) {
+    throw new z.ZodError([{
+      code: 'custom',
+      path: ['limit'],
+      message: 'limit must match the cursor query',
+      input: command.limit,
+    }])
+  }
+  return command
 }
 
 export function validateAutomationWorkspaceCommandV1(value: unknown): string | null {
-  const result = AutomationWorkspaceCommandV1Schema.safeParse(value)
-  return result.success ? null : result.error.issues.map(issue => `${issue.path.join('.')}: ${issue.message}`).join('; ')
+  try {
+    parseAutomationWorkspaceCommandV1(value)
+    return null
+  } catch (error) {
+    return error instanceof z.ZodError
+      ? error.issues.map(issue => `${issue.path.join('.')}: ${issue.message}`).join('; ')
+      : error instanceof Error ? error.message : String(error)
+  }
 }
 
 export function parseAutomationWorkspaceCapabilityRequestV1(value: unknown): AutomationWorkspaceCapabilityRequestV1 {

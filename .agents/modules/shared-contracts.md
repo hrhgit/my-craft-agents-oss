@@ -36,7 +36,7 @@ collaborates_with: []
 validation:
   - { id: shared-regression, kind: unit, command: "bun test packages/shared/src/protocol packages/shared/src/utils", description: "Run shared protocol and utility regressions.", triggers: [owned-change], required: true, evidence: "Bun test exit status and output." }
   - { id: shared-contract, kind: contract, command: "bun run typecheck:shared", description: "Verify shared contracts compile for consumers.", triggers: [contract-change], required: true, evidence: "TypeScript compiler exit status and diagnostics." }
-scope_digest: e0ea2844256f0e9d3d2b1e169b00ebcd9d9531c5
+scope_digest: eb6b0ea1119ce51a024ba6e9beb3d5bf264a5df1
 ---
 
 ## Purpose
@@ -67,6 +67,7 @@ Run protocol and utility tests, shared type checking, and channel-map parity che
 A convenient shared helper can accumulate feature policy; protocol changes can compile locally while breaking older concurrent backends.
 
 ## Semantic history
+- 2026-07-26: Preserved Automation run/history cursor query fingerprints and frozen pagination bounds across strict command and result DTO parsing, rejecting incomplete or mismatched cursor envelopes before they reach the indexed store.
 - 2026-07-25: Kept shared environment sanitization as a consumer of the host-neutral sealed-runtime contract and removed the empty shared runtime ownership after canonical runtime authority moved to `session-tools-core`.
 - 2026-07-22: Moved runtime-log locking, rotation, and append work to ordered asynchronous filesystem I/O, with bounded queue high-water and persistence-failure metrics plus orderly flush coverage.
 - 2026-07-22: Added a typed accepted-pending-settlement Session failure event, runtime Session snapshot field, and payload-free Session command that can retry only the pending settlement boundary.

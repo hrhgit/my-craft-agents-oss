@@ -55,7 +55,19 @@ describe('automation.workspace/v1 requests', () => {
       { schemaVersion: 1, operation: 'set-enabled', operationId: 'op-enabled', expectedRevision: 2, automationId: definition.id, enabled: false },
       { schemaVersion: 1, operation: 'run', operationId: 'op-run', automationId: definition.id, triggerId: definition.triggers[0]!.id },
       { schemaVersion: 1, operation: 'get-run', runId: 'run_01K0EXAMPLE' },
-      { schemaVersion: 1, operation: 'list-runs', automationId: definition.id, limit: 50 },
+      {
+        schemaVersion: 1,
+        operation: 'list-runs',
+        automationId: definition.id,
+        limit: 50,
+        cursor: { createdAtMs: 1, runId: 'run_01K0EXAMPLE', limit: 50, query: 'a'.repeat(64) },
+      },
+      {
+        schemaVersion: 1,
+        operation: 'list-changes',
+        limit: 25,
+        cursor: { sequence: 10, afterSequence: 0, limit: 25, query: 'b'.repeat(64) },
+      },
       { schemaVersion: 1, operation: 'emit-event', operationId: 'op-emit', event },
     ]
     for (const command of commands) {
@@ -77,6 +89,21 @@ describe('automation.workspace/v1 requests', () => {
       event,
       sourceKind: 'mortise',
     })).toContain('Unrecognized key')
+  })
+
+  it('preserves bound cursors and rejects incomplete or mismatched query envelopes', () => {
+    expect(validateAutomationWorkspaceCommandV1({
+      schemaVersion: 1,
+      operation: 'list-runs',
+      limit: 50,
+      cursor: { createdAtMs: 1, runId: 'run_01K0EXAMPLE', limit: 50 },
+    })).toContain('query')
+    expect(validateAutomationWorkspaceCommandV1({
+      schemaVersion: 1,
+      operation: 'list-changes',
+      limit: 10,
+      cursor: { sequence: 10, afterSequence: 0, limit: 25, query: 'b'.repeat(64) },
+    })).toContain('limit must match')
   })
 
   it('refines the generic capability envelope without changing it', () => {
@@ -125,6 +152,26 @@ describe('automation.workspace/v1 results', () => {
         data: { runId: 'run_01K0EXAMPLE' },
       },
     })).toMatchObject({ status: 'success' })
+
+    expect(parseAutomationWorkspaceOperationResultV1('list-runs', {
+      schemaVersion: 1,
+      status: 'ok',
+      data: {
+        schemaVersion: 1,
+        items: [],
+        nextCursor: { createdAtMs: 1, runId: 'run_01K0EXAMPLE', limit: 50, query: 'a'.repeat(64) },
+      },
+    })).toMatchObject({ data: { nextCursor: { limit: 50, query: 'a'.repeat(64) } } })
+
+    expect(parseAutomationWorkspaceOperationResultV1('list-changes', {
+      schemaVersion: 1,
+      status: 'ok',
+      data: {
+        schemaVersion: 1,
+        items: [],
+        nextCursor: { sequence: 10, afterSequence: 0, limit: 25, query: 'b'.repeat(64) },
+      },
+    })).toMatchObject({ data: { nextCursor: { afterSequence: 0, limit: 25, query: 'b'.repeat(64) } } })
   })
 
   it('rejects mismatched data and missing operation correlation', () => {
