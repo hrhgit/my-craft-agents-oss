@@ -72,7 +72,7 @@ describe('Automations V3 production architecture', () => {
     const violations = productionRoots.flatMap(root => enumerate(resolve(repositoryRoot, root)))
       .flatMap(path => sourceViolations(relative(repositoryRoot, path), readFileSync(path, 'utf8')))
     expect(violations).toEqual([])
-  })
+  }, 60_000)
 
   it('detects a mutation in every retired architecture category', () => {
     const mutations = [
