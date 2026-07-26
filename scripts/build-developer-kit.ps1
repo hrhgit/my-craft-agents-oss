@@ -2,16 +2,27 @@
 param(
   [switch]$NoArchive,
   [switch]$Worker,
-  [string]$OutputRoot
+  [string]$OutputRoot,
+  [string]$BunExecutable
 )
 
 $ErrorActionPreference = "Stop"
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+if ([string]::IsNullOrWhiteSpace($BunExecutable)) {
+  $BunExecutable = $env:MORTISE_BUILD_BUN_EXECUTABLE
+}
+if ([string]::IsNullOrWhiteSpace($BunExecutable) -and -not $Worker) {
+  $BunExecutable = (Get-Command bun -ErrorAction Stop).Source
+}
+if ([string]::IsNullOrWhiteSpace($BunExecutable) -or -not (Test-Path -LiteralPath $BunExecutable -PathType Leaf)) {
+  throw "A canonical Bun executable is required"
+}
+$BunExecutable = [IO.Path]::GetFullPath($BunExecutable)
 if (-not $Worker) {
   $orchestratorArgs = @("run", (Join-Path $repoRoot "scripts\build-developer-kit.ts"))
   if ($NoArchive) { $orchestratorArgs += "--no-archive" }
-  & bun @orchestratorArgs
+  & $BunExecutable @orchestratorArgs
   if ($LASTEXITCODE -ne 0) { throw "Developer Kit orchestrator failed with exit code $LASTEXITCODE" }
   return
 }
@@ -77,14 +88,14 @@ $previousDevHostBuild = $env:MORTISE_DEV_HOST_BUILD
 try {
   $env:MORTISE_UI_VALIDATION_BUILD = "1"
   $env:MORTISE_DEV_HOST_BUILD = "1"
-  Invoke-Checked { bun run pi:build } "Pi workspace build"
-  Invoke-Checked { bun run pi:build:binary } "Pi binary build"
-  Invoke-Checked { bun run electron:build:source } "Developer Host build"
-  Invoke-Checked { bun run scripts/build/write-electron-build-provenance.ts } "Developer Host provenance"
+  Invoke-Checked { & $BunExecutable run pi:build } "Pi workspace build"
+  Invoke-Checked { & $BunExecutable run pi:build:binary } "Pi binary build"
+  Invoke-Checked { & $BunExecutable run electron:build:source } "Developer Host build"
+  Invoke-Checked { & $BunExecutable run scripts/build/write-electron-build-provenance.ts } "Developer Host provenance"
 
   Push-Location $electronDir
   try {
-    Invoke-Checked { bunx electron-builder --config dist/packaging-inputs/electron-builder.devhost.yml --win --x64 --dir } "Developer Host packaging"
+    Invoke-Checked { & $BunExecutable x electron-builder --config dist/packaging-inputs/electron-builder.devhost.yml --win --x64 --dir } "Developer Host packaging"
   } finally {
     Pop-Location
   }
@@ -112,9 +123,9 @@ if (-not (Test-Path -LiteralPath $uiAutomationDriver)) {
 }
 
 $cliOutput = Join-Path $kitDir "bin\mortise-ui.exe"
-Invoke-Checked { bun build (Join-Path $repoRoot "scripts\mortise-ui\developer-kit-entry.ts") --compile --outfile $cliOutput } "mortise-ui compilation"
+Invoke-Checked { & $BunExecutable build (Join-Path $repoRoot "scripts\mortise-ui\developer-kit-entry.ts") --compile --outfile $cliOutput } "mortise-ui compilation"
 $logsCliOutput = Join-Path $kitDir "bin\mortise-logs.exe"
-Invoke-Checked { bun build (Join-Path $repoRoot "scripts\mortise-logs\cli.ts") --compile --outfile $logsCliOutput } "mortise-logs compilation"
+Invoke-Checked { & $BunExecutable build (Join-Path $repoRoot "scripts\mortise-logs\cli.ts") --compile --outfile $logsCliOutput } "mortise-logs compilation"
 
 Copy-Item -LiteralPath (Join-Path $repoRoot "developer-kit\README.md") -Destination (Join-Path $kitDir "README.md")
 Copy-Item -LiteralPath (Join-Path $repoRoot "developer-kit\docs\ui-validation.md") -Destination (Join-Path $kitDir "docs\ui-validation.md")

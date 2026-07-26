@@ -5,7 +5,9 @@ import { basename, join, resolve } from 'node:path'
 import { assertMaterializedBuildSourceIdentity, captureBuildSource } from './build-source-snapshot.ts'
 import {
   artifactInventorySize,
+  buildToolchainExecutableSha256,
   collectArtifactInventory,
+  publishBuildBunToolchain,
 } from './build/electron-build-cache.ts'
 import {
   computeDeveloperKitBuildId,
@@ -39,6 +41,8 @@ const repoRoot = resolve(sourceRootOption ?? resolve(import.meta.dir, '..'))
 const outputRoot = join(repoRoot, 'output')
 const buildRoot = resolve(process.env.MORTISE_DEVELOPER_KIT_BUILD_ROOT ?? join(outputRoot, 'developer-kit-builds'))
 for (const name of ['builds', 'locks', 'sources']) mkdirSync(join(buildRoot, name), { recursive: true })
+const bunExecutable = publishBuildBunToolchain(buildRoot)
+const bunExecutableSha256 = buildToolchainExecutableSha256(bunExecutable)
 
 withFileLock(join(buildRoot, 'coordinator'), () => cleanupDeveloperKitBuildCacheLocked(
   buildRoot,
@@ -54,7 +58,7 @@ const captured = sourceIdOption ? undefined : captureBuildSource({
 })
 const sourceId = sourceIdOption ?? captured!.sourceId
 try {
-  const buildId = computeDeveloperKitBuildId(sourceId, noArchive)
+  const buildId = computeDeveloperKitBuildId(sourceId, noArchive, bunExecutableSha256)
   const finalBuildDir = join(buildRoot, 'builds', buildId)
   const manifest = withFileLock(join(buildRoot, 'locks', buildId), () => {
     const cached = readValidDeveloperKitBuildManifest(finalBuildDir, buildId)
@@ -62,7 +66,11 @@ try {
     if (existsSync(finalBuildDir)) removeDirectory(finalBuildDir)
 
     const source = captured
-      ? captured.materialize({ parentDir: join(buildRoot, 'sources'), prepareDependencies: true })
+      ? captured.materialize({
+          parentDir: join(buildRoot, 'sources'),
+          prepareDependencies: true,
+          bunExecutable,
+        })
       : { sourceRoot: repoRoot, dispose() {} }
     const stagingDir = join(buildRoot, 'builds', `.staging-${buildId.slice(0, 12)}-${process.pid}-${randomUUID().slice(0, 8)}`)
     const workerOutput = join(stagingDir, 'artifacts')
@@ -72,12 +80,16 @@ try {
       const workerArgs = [
         '-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass',
         '-File', join(source.sourceRoot, 'scripts', 'build-developer-kit.ps1'),
-        '-Worker', '-OutputRoot', workerOutput,
+        '-Worker', '-OutputRoot', workerOutput, '-BunExecutable', bunExecutable,
         ...(noArchive ? ['-NoArchive'] : []),
       ]
       const result = spawnSync('powershell', workerArgs, {
         cwd: source.sourceRoot,
-        env: { ...process.env, MORTISE_BUILD_SOURCE_ID: sourceId },
+        env: {
+          ...process.env,
+          MORTISE_BUILD_SOURCE_ID: sourceId,
+          MORTISE_BUILD_BUN_EXECUTABLE: bunExecutable,
+        },
         stdio: 'inherit',
         windowsHide: true,
       })
@@ -96,6 +108,7 @@ try {
         schemaVersion: BUILD_SCHEMA_VERSION,
         buildId,
         sourceId,
+        bunExecutableSha256,
         archiveDisabled: noArchive,
         createdAt: new Date().toISOString(),
         artifactDirectory: finalArtifactDirectory,

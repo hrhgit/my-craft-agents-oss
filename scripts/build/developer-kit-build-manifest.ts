@@ -11,12 +11,13 @@ import { withFileLock } from './file-lock.ts'
 import { writeJsonAtomic } from './files.ts'
 import { getProcessStartTime, matchesProcessIdentity } from './process-identity.ts'
 
-export const DEVELOPER_KIT_BUILD_SCHEMA_VERSION = 3
+export const DEVELOPER_KIT_BUILD_SCHEMA_VERSION = 4
 
 export interface DeveloperKitBuildManifest {
   schemaVersion: typeof DEVELOPER_KIT_BUILD_SCHEMA_VERSION
   buildId: string
   sourceId: string
+  bunExecutableSha256: string
   archiveDisabled: boolean
   createdAt: string
   artifactDirectory: string
@@ -124,11 +125,15 @@ function isActiveDeveloperKitStaging(stagingDir: string): boolean {
 export function computeDeveloperKitBuildId(
   sourceId: string,
   archiveDisabled: boolean,
+  bunExecutableSha256: string,
   platform: NodeJS.Platform = process.platform,
   arch: string = process.arch,
 ): string {
+  if (!/^[0-9a-f]{64}$/.test(bunExecutableSha256)) {
+    throw new Error('Developer Kit build identity requires a canonical Bun executable SHA-256.')
+  }
   const hash = createHash('sha256')
-  hash.update(`mortise-developer-kit:${DEVELOPER_KIT_BUILD_SCHEMA_VERSION}\0${sourceId}\0${platform}\0${arch}\0${process.versions.bun ?? process.version}\0${archiveDisabled}\0`)
+  hash.update(`mortise-developer-kit:${DEVELOPER_KIT_BUILD_SCHEMA_VERSION}\0${sourceId}\0${platform}\0${arch}\0${process.versions.bun ?? process.version}\0${bunExecutableSha256}\0${archiveDisabled}\0`)
   return hash.digest('hex')
 }
 
@@ -143,8 +148,9 @@ export function readValidDeveloperKitBuildManifest(
       value.schemaVersion !== DEVELOPER_KIT_BUILD_SCHEMA_VERSION
       || value.buildId !== buildId
       || !/^[0-9a-f]{64}$/.test(value.sourceId)
+      || !/^[0-9a-f]{64}$/.test(value.bunExecutableSha256)
       || typeof value.archiveDisabled !== 'boolean'
-      || computeDeveloperKitBuildId(value.sourceId, value.archiveDisabled) !== buildId
+      || computeDeveloperKitBuildId(value.sourceId, value.archiveDisabled, value.bunExecutableSha256) !== buildId
       || value.platform !== process.platform
       || value.arch !== process.arch
       || value.immutable !== true

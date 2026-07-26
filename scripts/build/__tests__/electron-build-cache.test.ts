@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'bun:test'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { immutableRuntimeRequiredAppPaths } from '@mortise/session-tools-core/runtime'
@@ -9,6 +10,7 @@ import {
   computeElectronBuildId,
   createElectronBuildRuntimeEnvironment,
   electronBuildExecutablePath,
+  publishBuildBunToolchain,
   releaseElectronBuild,
   resolveElectronBuildExecutable,
   withStagedElectronBuild,
@@ -29,6 +31,74 @@ describe('mortise-ui immutable Electron build cache', () => {
       computeElectronBuildId(sourceId, 'ui-validation'),
     ]).size).toBe(3)
   }, 20_000)
+
+  it('atomically deduplicates verified Bun toolchains and repairs corruption', async () => {
+    const root = tempRoot('mortise-bun-toolchain-concurrent-')
+    const buildRoot = join(root, 'cache')
+    const sourceExecutable = join(root, process.platform === 'win32' ? 'producer-runtime.exe' : 'producer-runtime')
+    copyFileSync(process.execPath, sourceExecutable)
+    const abandonedStaging = join(buildRoot, 'toolchains', 'bun', 'old', 'platform', 'hash.staging-crashed')
+    mkdirSync(abandonedStaging, { recursive: true })
+    writeFileSync(join(abandonedStaging, 'staging-owner.json'), JSON.stringify({ schemaVersion: 1, pid: 999_999_999 }))
+    const workers = Array.from({ length: 4 }, (_, index) => Bun.spawn([
+      process.execPath,
+      join(import.meta.dir, 'bun-toolchain-cache-worker.fixture.ts'),
+      buildRoot,
+      sourceExecutable,
+      join(root, `result-${index}.json`),
+    ], { cwd: process.cwd(), stdout: 'pipe', stderr: 'pipe' }))
+
+    const exits = await Promise.all(workers.map(worker => worker.exited))
+    const errors = await Promise.all(workers.map(worker => new Response(worker.stderr).text()))
+    expect(exits.map((exit, index) => ({ exit, error: errors[index] })).filter(item => item.exit !== 0)).toEqual([])
+    const published = Array.from({ length: 4 }, (_, index) => (
+      JSON.parse(readFileSync(join(root, `result-${index}.json`), 'utf8')) as { binary: string }
+    ).binary)
+    expect(new Set(published).size).toBe(1)
+    expect(existsSync(abandonedStaging)).toBe(false)
+    const binary = published[0]!
+    const expectedSha256 = createHash('sha256').update(readFileSync(sourceExecutable)).digest('hex')
+    expect(createHash('sha256').update(readFileSync(binary)).digest('hex')).toBe(expectedSha256)
+    expect(readdirSync(resolve(binary, '..')).sort()).toEqual([
+      process.platform === 'win32' ? 'bun.exe' : 'bun',
+      'bun.json',
+    ].sort())
+
+    writeFileSync(binary, 'tampered', 'utf8')
+    expect(publishBuildBunToolchain(buildRoot, sourceExecutable)).toBe(binary)
+    expect(createHash('sha256').update(readFileSync(binary)).digest('hex')).toBe(expectedSha256)
+  }, 30_000)
+
+  it('keeps cross-identity publication staging visible to garbage collection', async () => {
+    const root = tempRoot('mortise-bun-toolchain-cross-identity-')
+    const buildRoot = join(root, 'cache')
+    const workers = Array.from({ length: 6 }, (_, index) => {
+      const sourceExecutable = join(root, `producer-${index}.bin`)
+      writeFileSync(sourceExecutable, `canonical Bun identity ${index}\n`, 'utf8')
+      return Bun.spawn([
+        process.execPath,
+        join(import.meta.dir, 'bun-toolchain-cache-worker.fixture.ts'),
+        buildRoot,
+        sourceExecutable,
+        join(root, `result-${index}.json`),
+      ], { cwd: process.cwd(), stdout: 'pipe', stderr: 'pipe' })
+    })
+
+    const exits = await Promise.all(workers.map(worker => worker.exited))
+    const errors = await Promise.all(workers.map(worker => new Response(worker.stderr).text()))
+    expect(exits.map((exit, index) => ({ exit, error: errors[index] })).filter(item => item.exit !== 0)).toEqual([])
+    const published = Array.from({ length: workers.length }, (_, index) => (
+      JSON.parse(readFileSync(join(root, `result-${index}.json`), 'utf8')) as { binary: string }
+    ).binary)
+    expect(new Set(published).size).toBe(workers.length)
+    for (const [index, binary] of published.entries()) {
+      expect(readFileSync(binary, 'utf8')).toBe(`canonical Bun identity ${index}\n`)
+      expect(readdirSync(resolve(binary, '..')).sort()).toEqual([
+        process.platform === 'win32' ? 'bun.exe' : 'bun',
+        'bun.json',
+      ].sort())
+    }
+  }, 30_000)
 
   it('binds every source runtime process to one immutable build capsule', () => {
     const appDir = resolve('cache', 'build-id', 'app')

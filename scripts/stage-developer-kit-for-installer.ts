@@ -4,6 +4,7 @@ import { dirname, join, resolve } from 'node:path'
 import {
   artifactInventoriesEqual,
   artifactInventorySize,
+  buildToolchainExecutableSha256,
   collectArtifactInventory,
 } from './build/electron-build-cache.ts'
 import {
@@ -57,32 +58,33 @@ const stagedKitDirectory = join(electronAppDir, 'dist', 'installer-developer-kit
 const developerKitBuildRoot = resolve(
   process.env.MORTISE_DEVELOPER_KIT_BUILD_ROOT ?? join(repoRoot, 'output', 'developer-kit-builds'),
 )
-const buildId = computeDeveloperKitBuildId(expectedSourceId, true)
+const bunExecutableSha256 = buildToolchainExecutableSha256()
+const buildId = computeDeveloperKitBuildId(expectedSourceId, true, bunExecutableSha256)
 const lease = acquireDeveloperKitBuildLease(
   developerKitBuildRoot,
   buildId,
   `installer-${process.pid}`,
 )
 try {
-const buildResult = spawnSync('bun', [
-  'run',
-  join(sourceRoot, 'scripts', 'build-developer-kit.ts'),
-  '--no-archive',
-  '--source-root',
-  sourceRoot,
-  '--source-id',
-  expectedSourceId,
-], {
-  cwd: sourceRoot,
-  env: process.env,
-  stdio: 'inherit',
-  windowsHide: true,
-})
+  const buildResult = spawnSync(process.execPath, [
+    'run',
+    join(sourceRoot, 'scripts', 'build-developer-kit.ts'),
+    '--no-archive',
+    '--source-root',
+    sourceRoot,
+    '--source-id',
+    expectedSourceId,
+  ], {
+    cwd: sourceRoot,
+    env: { ...process.env, MORTISE_BUILD_BUN_EXECUTABLE: process.execPath },
+    stdio: 'inherit',
+    windowsHide: true,
+  })
 
-if (buildResult.error) throw buildResult.error
-if (buildResult.status !== 0) {
-  throw new Error(`Developer Kit build for installer failed with exit code ${buildResult.status ?? 'unknown'}.`)
-}
+  if (buildResult.error) throw buildResult.error
+  if (buildResult.status !== 0) {
+    throw new Error(`Developer Kit build for installer failed with exit code ${buildResult.status ?? 'unknown'}.`)
+  }
 
 const buildDir = join(developerKitBuildRoot, 'builds', buildId)
 const manifest = readValidDeveloperKitBuildManifest(buildDir, buildId)

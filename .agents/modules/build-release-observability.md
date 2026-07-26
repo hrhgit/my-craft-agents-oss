@@ -127,7 +127,7 @@ validation:
   - { id: pi-workspace-regression, kind: integration, command: "bun run pi:test", description: "Run the embedded Pi workspace regression suites without composing a second CI run.", triggers: [release, runtime-change], required: true, evidence: "Pi package regression exit status and output." }
   - { id: production-bundles, kind: integration, command: "bun run validate:production-bundles", description: "Run the complete production Electron build consumed by packaging.", triggers: [ci-change, release], required: true, evidence: "Production main, workspace server, preload, renderer, and resource build exit status." }
   - { id: ci-integration, kind: integration, command: "bun run validate:ci", description: "Run the repository CI validation composition.", triggers: [release, ci-change], required: true, evidence: "CI validation exit status and output." }
-scope_digest: 99c3205543ba0f4922e0d0fb2aaf7cd9930b41a3
+scope_digest: 4f709f0de929c1d8e779d03be4db08bb72221ddc
 ---
 
 ## Purpose
@@ -158,6 +158,7 @@ Run the in-memory production Node bundle gate frequently, retain the complete pr
 Bundled binaries and lockfiles are large shared surfaces; concurrent regeneration can overwrite another build's artifacts.
 
 ## Semantic history
+- 2026-07-26: Made the build-root Bun toolchain the single verified command authority for Electron, installer, and Developer Kit source-capsule stages: publish the producer executable atomically under its version/platform/architecture/SHA-256 identity, bind both build systems to that content identity, revalidate every reuse, repair corruption, and drive outer stages, nested npm lifecycles, dependency installation, and packaging workers from the canonical command.
 - 2026-07-26: Made the production dependency DAG executable and fail-closed: install and build the Pi workspace and binary before root dependencies exist, then materialize the lockfile-integrity-checked root view and build Electron, preventing ancestor hoists or Windows root-directory locks from influencing the embedded runtime build.
 - 2026-07-26: Bounded immutable source-capsule dependency preparation to 600 seconds with attributed timeout failure, retained the capsule-local dependency view and Pi npm cache, and moved root Bun downloads to Bun's concurrency-safe global content-addressed cache after isolated private-cache candidates stalled while the canonical cache completed in 94 seconds.
 - 2026-07-26: Converged production validation and packaging on the canonical compiled Pi runtime producer and four-file stage, rejected stale/ignored inputs, fallback artifacts, and undeclared dependency hoists in clean checkouts, and made the optional Developer Kit NSIS page abort in silent mode so unattended installed-app validation cannot hang.
@@ -177,4 +178,3 @@ Bundled binaries and lockfiles are large shared surfaces; concurrent regeneratio
 - 2026-07-23: Completed the Mortise-only data-root cutover in product documentation and regenerated the packaged Session MCP resource so shipped helpers resolve only `.mortise` roots; independent Pi retains `.pi` defaults.
 - 2026-07-23: Added a confirmation-gated exact-path manifest for removing Mortise Session sidecars from the independent Pi Session root without deleting Pi JSONL history.
 - 2026-07-23: Verified OPT-008 end to end with deterministic indexed search, bounded renderer metrics, current-build physical deep links, production bundles, and retained evidence.
-- 2026-07-23: Made incremental Session search delete through turn-owned segment keys, normalize NFKC by Unicode grapheme cluster for exact equivalent source ranges, and expose structural deletion diagnostics instead of timing-only complexity coverage.

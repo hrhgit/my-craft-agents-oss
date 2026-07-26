@@ -1,6 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
 import {
+  chmodSync,
+  copyFileSync,
   cpSync,
   existsSync,
   lstatSync,
@@ -28,7 +30,7 @@ import {
 import { getPlatformKey, publishVerifiedUvToolchain, UV_VERSION, type Arch, type Platform } from './common.ts'
 import { withFileLock } from './file-lock.ts'
 import { writeJsonAtomic } from './files.ts'
-import { matchesProcessIdentity } from './process-identity.ts'
+import { getProcessStartTime, matchesProcessIdentity } from './process-identity.ts'
 
 export const ELECTRON_BUILD_SCHEMA_VERSION = 5
 export const ELECTRON_BUILD_PRODUCER_VERSION = 'electron-production-v4'
@@ -40,6 +42,8 @@ const BUILD_LOCK_STALE_MS = 60_000
 const STAGING_STALE_MS = 60 * 60 * 1_000
 const ACTIVE_RUN_STATUSES = new Set(['starting', 'ready', 'stopping'])
 const BUILD_MODES = ['production', 'development', 'ui-validation'] as const
+const BUN_TOOLCHAIN_CACHE_SCHEMA_VERSION = 1
+const BUN_TOOLCHAIN_STAGING_OWNER = 'staging-owner.json'
 
 export type ElectronBuildMode = typeof BUILD_MODES[number]
 
@@ -142,7 +146,7 @@ export interface MortiseUiBuildCleanupResult {
 
 export function computeElectronBuildId(sourceId: string, mode: ElectronBuildMode): string {
   const hash = createHash('sha256')
-  hash.update(`mortise-electron-build:${ELECTRON_BUILD_SCHEMA_VERSION}\0${ELECTRON_BUILD_PRODUCER_VERSION}\0${mode}\0${process.platform}\0${process.arch}\0${process.versions.bun ?? process.version}\0${toolchainExecutableSha256()}\0${sourceId}\0`)
+  hash.update(`mortise-electron-build:${ELECTRON_BUILD_SCHEMA_VERSION}\0${ELECTRON_BUILD_PRODUCER_VERSION}\0${mode}\0${process.platform}\0${process.arch}\0${process.versions.bun ?? process.version}\0${buildToolchainExecutableSha256()}\0${sourceId}\0`)
   return hash.digest('hex')
 }
 
@@ -221,14 +225,6 @@ export function acquireElectronBuild(options: AcquireElectronBuildOptions): Mort
   const usesDefaultBuild = options.build === undefined
   const shouldPrepareDependencies = options.prepareDependencies ?? usesDefaultBuild
   let capturedSourceId = ''
-  const build = options.build ?? ((sourceRoot: string) => runElectronBuild(
-    sourceRoot,
-    mode,
-    capturedSourceId,
-    buildRoot,
-    shouldPrepareDependencies,
-  ))
-
   mkdirSync(join(buildRoot, 'builds'), { recursive: true })
   mkdirSync(join(buildRoot, 'leases'), { recursive: true })
   mkdirSync(join(buildRoot, 'locks'), { recursive: true })
@@ -257,12 +253,22 @@ export function acquireElectronBuild(options: AcquireElectronBuildOptions): Mort
         }
         if (existsSync(buildDir)) removeDirectory(buildDir)
 
+        const bunExecutable = publishBuildBunToolchain(buildRoot)
         const source = capturedSource.materialize({
           parentDir: join(buildRoot, 'sources'),
           prepareDependencies: usesDefaultBuild ? false : shouldPrepareDependencies,
+          bunExecutable,
         })
         try {
-          build(source.sourceRoot)
+          if (options.build) options.build(source.sourceRoot)
+          else runElectronBuild(
+            source.sourceRoot,
+            mode,
+            capturedSourceId,
+            buildRoot,
+            shouldPrepareDependencies,
+            bunExecutable,
+          )
           manifest = publishBuildCapsule({
             repoRoot: source.sourceRoot,
             buildRoot,
@@ -680,14 +686,15 @@ function runElectronBuild(
   sourceId: string,
   buildRoot: string,
   prepareDependencies: boolean,
+  bunExecutable: string,
 ): void {
   executeElectronBuildStages(prepareDependencies, {
     preparePiDependencies: () => prepareFrozenPiDependencies(repoRoot, join(buildRoot, 'sources')),
-    buildPiWorkspace: () => runBuildCommand(repoRoot, ['run', 'pi:build'], 'Pi workspace build', mode, sourceId, buildRoot),
-    buildPiBinary: () => runBuildCommand(repoRoot, ['run', 'pi:build:binary'], 'Pi binary build', mode, sourceId, buildRoot),
-    prepareRootDependencies: () => prepareFrozenRootDependencies(repoRoot),
+    buildPiWorkspace: () => runBuildCommand(repoRoot, ['run', 'pi:build'], 'Pi workspace build', mode, sourceId, buildRoot, bunExecutable),
+    buildPiBinary: () => runBuildCommand(repoRoot, ['run', 'pi:build:binary'], 'Pi binary build', mode, sourceId, buildRoot, bunExecutable),
+    prepareRootDependencies: () => prepareFrozenRootDependencies(repoRoot, bunExecutable),
     assertDependencyViews: () => assertFrozenDependencyViewsContained(repoRoot),
-    buildElectronSource: () => runBuildCommand(repoRoot, ['run', 'electron:build:source'], 'Electron source build', mode, sourceId, buildRoot),
+    buildElectronSource: () => runBuildCommand(repoRoot, ['run', 'electron:build:source'], 'Electron source build', mode, sourceId, buildRoot, bunExecutable),
   })
 }
 
@@ -729,12 +736,152 @@ export function createElectronBuildCommandEnvironment(
   }
 }
 
-function runBuildCommand(repoRoot: string, args: string[], label: string, mode: ElectronBuildMode, sourceId: string, buildRoot: string): void {
+export function publishBuildBunToolchain(
+  buildRootValue: string,
+  sourceExecutable = process.execPath,
+): string {
+  const buildRoot = resolve(buildRootValue)
+  const version = process.versions.bun
+  if (!version) throw new Error('Electron builds require a Bun producer runtime.')
+  const sha256 = sourceExecutable === process.execPath
+    ? buildToolchainExecutableSha256()
+    : createHash('sha256').update(readFileSync(sourceExecutable)).digest('hex')
+  const binaryName = process.platform === 'win32' ? 'bun.exe' : 'bun'
+  const directory = join(buildRoot, 'toolchains', 'bun', version, `${process.platform}-${process.arch}`, sha256)
+  const binary = join(directory, binaryName)
+  const manifest = join(directory, 'bun.json')
+  const lock = join(buildRoot, 'toolchains', 'locks', `bun-${version}-${process.platform}-${process.arch}-${sha256}`)
+  const expected = { version, sha256, binaryName }
+
+  return withFileLock(lock, () => {
+    if (validCachedBunToolchain(binary, manifest, expected)) return binary
+    if (repairCachedBunToolchainManifest(binary, manifest, expected)) return binary
+    removeDirectory(directory)
+    mkdirSync(dirname(directory), { recursive: true })
+    const stagingDirectory = `${directory}.staging-${process.pid}-${randomUUID()}`
+    try {
+      createBunToolchainStagingDirectory(buildRoot, stagingDirectory)
+      const stagingBinary = join(stagingDirectory, binaryName)
+      copyFileSync(sourceExecutable, stagingBinary)
+      if (process.platform !== 'win32') chmodSync(stagingBinary, 0o755)
+      const stagingSizeBytes = statSync(stagingBinary).size
+      const stagingSha256 = createHash('sha256').update(readFileSync(stagingBinary)).digest('hex')
+      if (stagingSizeBytes !== statSync(sourceExecutable).size || stagingSha256 !== sha256) {
+        throw new Error(`Staged Bun toolchain does not match its producer: ${sourceExecutable}`)
+      }
+      writeJsonAtomic(join(stagingDirectory, 'bun.json'), bunToolchainManifest(expected, stagingSizeBytes))
+      renameDirectoryWithRetry(stagingDirectory, directory)
+      // Keep the owner marker until the atomic publication completes so another
+      // identity's GC cannot mistake this live staging directory for a crash.
+      rmSync(join(directory, BUN_TOOLCHAIN_STAGING_OWNER), { force: true })
+    } finally {
+      removeDirectory(stagingDirectory)
+    }
+    if (!validCachedBunToolchain(binary, manifest, expected)) {
+      throw new Error(`Published Bun toolchain failed verification: ${binary}`)
+    }
+    return binary
+  }, { timeoutMs: 600_000, staleMs: 600_000 })
+}
+
+function bunToolchainManifest(
+  expected: { version: string; sha256: string; binaryName: string },
+  sizeBytes: number,
+): Record<string, unknown> {
+  return {
+    schemaVersion: BUN_TOOLCHAIN_CACHE_SCHEMA_VERSION,
+    version: expected.version,
+    platform: process.platform,
+    arch: process.arch,
+    binary: expected.binaryName,
+    sizeBytes,
+    sha256: expected.sha256,
+  }
+}
+
+function repairCachedBunToolchainManifest(
+  binary: string,
+  manifestPath: string,
+  expected: { version: string; sha256: string; binaryName: string },
+): boolean {
+  try {
+    if (!existsSync(binary) || !statSync(binary).isFile()) return false
+    const sizeBytes = statSync(binary).size
+    if (createHash('sha256').update(readFileSync(binary)).digest('hex') !== expected.sha256) return false
+    writeJsonAtomic(manifestPath, bunToolchainManifest(expected, sizeBytes))
+    return validCachedBunToolchain(binary, manifestPath, expected)
+  } catch {
+    return false
+  }
+}
+
+function createBunToolchainStagingDirectory(buildRoot: string, stagingDirectory: string): void {
+  withFileLock(join(buildRoot, 'toolchains', 'locks', 'bun-staging-gc'), () => {
+    reapAbandonedBunToolchainStaging(join(buildRoot, 'toolchains', 'bun'))
+    mkdirSync(stagingDirectory)
+    writeJsonAtomic(join(stagingDirectory, BUN_TOOLCHAIN_STAGING_OWNER), {
+      schemaVersion: 1,
+      pid: process.pid,
+      processStartedAt: getProcessStartTime(process.pid),
+      recordedAt: Date.now(),
+    }, 0o600)
+  }, { timeoutMs: 600_000, staleMs: 600_000 })
+}
+
+function reapAbandonedBunToolchainStaging(directory: string): void {
+  if (!existsSync(directory)) return
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue
+    const path = join(directory, entry.name)
+    if (entry.name.includes('.staging-')) {
+      let active = false
+      try {
+        const owner = JSON.parse(readFileSync(join(path, BUN_TOOLCHAIN_STAGING_OWNER), 'utf8')) as {
+          schemaVersion?: unknown
+          pid?: number
+          processStartedAt?: number
+          recordedAt?: number
+        }
+        active = owner.schemaVersion === 1 && matchesProcessIdentity({
+          pid: owner.pid,
+          startedAt: owner.processStartedAt,
+          recordedAt: owner.recordedAt,
+        })
+      } catch { /* Incomplete staging without a live owner is abandoned. */ }
+      if (!active) removeDirectory(path)
+      continue
+    }
+    reapAbandonedBunToolchainStaging(path)
+  }
+}
+
+function validCachedBunToolchain(
+  binary: string,
+  manifestPath: string,
+  expected: { version: string; sha256: string; binaryName: string },
+): boolean {
+  if (!existsSync(binary) || !existsSync(manifestPath) || !statSync(binary).isFile()) return false
+  try {
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as Record<string, unknown>
+    return manifest.schemaVersion === BUN_TOOLCHAIN_CACHE_SCHEMA_VERSION
+      && manifest.version === expected.version
+      && manifest.platform === process.platform
+      && manifest.arch === process.arch
+      && manifest.binary === expected.binaryName
+      && manifest.sizeBytes === statSync(binary).size
+      && manifest.sha256 === expected.sha256
+      && createHash('sha256').update(readFileSync(binary)).digest('hex') === expected.sha256
+  } catch {
+    return false
+  }
+}
+
+function runBuildCommand(repoRoot: string, args: string[], label: string, mode: ElectronBuildMode, sourceId: string, buildRoot: string, bunExecutable: string): void {
   const startedAt = Date.now()
   process.stdout.write(`[electron-build] Starting ${label}...\n`)
-  const result = spawnSync(process.execPath, args, {
+  const result = spawnSync(bunExecutable, args, {
     cwd: repoRoot,
-    env: createElectronBuildCommandEnvironment(process.env, mode, sourceId, buildRoot),
+    env: createElectronBuildCommandEnvironment(process.env, mode, sourceId, buildRoot, bunExecutable),
     stdio: 'inherit',
     windowsHide: true,
   })
@@ -921,8 +1068,11 @@ function shortBuildId(buildId: string): string {
 }
 
 let cachedToolchainExecutableSha256: string | undefined
-function toolchainExecutableSha256(): string {
-  cachedToolchainExecutableSha256 ??= createHash('sha256').update(readFileSync(process.execPath)).digest('hex')
+export function buildToolchainExecutableSha256(executable = process.execPath): string {
+  if (executable !== process.execPath) {
+    return createHash('sha256').update(readFileSync(executable)).digest('hex')
+  }
+  cachedToolchainExecutableSha256 ??= createHash('sha256').update(readFileSync(executable)).digest('hex')
   return cachedToolchainExecutableSha256
 }
 

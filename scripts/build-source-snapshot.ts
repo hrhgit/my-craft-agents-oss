@@ -12,7 +12,7 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs'
-import { isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { delimiter, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 const SOURCE_SNAPSHOT_SCHEMA_VERSION = 1
 export const MATERIALIZED_BUILD_SOURCE_PROVENANCE = '.mortise-build-source.json'
@@ -46,6 +46,7 @@ export interface CaptureBuildSourceOptions {
 export interface MaterializeBuildSourceOptions {
   parentDir: string
   prepareDependencies?: boolean
+  bunExecutable?: string
 }
 
 export interface MaterializedBuildSource {
@@ -157,7 +158,10 @@ export function captureBuildSource(options: CaptureBuildSourceOptions): Captured
             treeId,
           } satisfies MaterializedBuildSourceProvenance, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 })
           if (materializeOptions.prepareDependencies !== false) {
-            prepareFrozenDependencies(sourceRoot, scratchRoot)
+            if (!materializeOptions.bunExecutable) {
+              throw new Error('Immutable dependency preparation requires an explicit canonical Bun executable.')
+            }
+            prepareFrozenDependencies(sourceRoot, scratchRoot, materializeOptions.bunExecutable)
           }
           return { sourceRoot, dispose: () => removeDirectory(sourceRoot) }
         } catch (error) {
@@ -274,17 +278,23 @@ function isPidAlive(pid: number): boolean {
   }
 }
 
-export function prepareFrozenDependencies(sourceRoot: string, scratchRoot: string): void {
-  prepareFrozenRootDependencies(sourceRoot)
+export function prepareFrozenDependencies(sourceRoot: string, scratchRoot: string, bunExecutable: string): void {
+  prepareFrozenRootDependencies(sourceRoot, bunExecutable)
   prepareFrozenPiDependencies(sourceRoot, scratchRoot)
   assertFrozenDependencyViewsContained(sourceRoot)
 }
 
-export function prepareFrozenRootDependencies(sourceRoot: string): void {
+export function prepareFrozenRootDependencies(sourceRoot: string, bunExecutable: string): void {
   if (!existsSync(join(sourceRoot, 'bun.lock'))) {
     throw new Error('Immutable build dependencies require a captured bun.lock.')
   }
-  runFrozenDependencyInstall(process.execPath, frozenBunInstallArgs(), sourceRoot, 'root Bun dependency domain')
+  runFrozenDependencyInstall(
+    bunExecutable,
+    frozenBunInstallArgs(),
+    sourceRoot,
+    'root Bun dependency domain',
+    { bunExecutable },
+  )
 }
 
 export function prepareFrozenPiDependencies(sourceRoot: string, scratchRoot: string): void {
@@ -320,13 +330,14 @@ export function runFrozenDependencyInstall(
   args: string[],
   cwd: string,
   label: string,
-  timeoutMs = BUILD_DEPENDENCY_INSTALL_TIMEOUT_MS,
+  options: { timeoutMs?: number; bunExecutable?: string } = {},
 ): void {
+  const timeoutMs = options.timeoutMs ?? BUILD_DEPENDENCY_INSTALL_TIMEOUT_MS
   const startedAt = Date.now()
   process.stdout.write(`[build-source] Preparing ${label}...\n`)
   const result = spawnSync(command, args, {
     cwd,
-    env: { ...process.env, HUSKY: '0' },
+    env: frozenDependencyInstallEnvironment(process.env, options.bunExecutable),
     stdio: 'inherit',
     timeout: timeoutMs,
     windowsHide: true,
@@ -342,6 +353,24 @@ export function runFrozenDependencyInstall(
     throw new Error(`Frozen installation for ${label} failed with exit code ${result.status ?? 'unknown'}.`)
   }
   process.stdout.write(`[build-source] Prepared ${label} in ${Date.now() - startedAt}ms.\n`)
+}
+
+function frozenDependencyInstallEnvironment(
+  baseEnv: NodeJS.ProcessEnv,
+  bunExecutable: string | undefined,
+): NodeJS.ProcessEnv {
+  const inheritedPath = Object.entries(baseEnv)
+    .find(([name]) => name.toLowerCase() === 'path')?.[1]
+  const envWithoutPath = Object.fromEntries(
+    Object.entries(baseEnv).filter(([name]) => name.toLowerCase() !== 'path'),
+  )
+  return {
+    ...envWithoutPath,
+    ...(bunExecutable
+      ? { PATH: [dirname(bunExecutable), inheritedPath].filter(Boolean).join(delimiter) }
+      : inheritedPath ? { PATH: inheritedPath } : {}),
+    HUSKY: '0',
+  }
 }
 
 export function assertFrozenDependencyViewsContained(sourceRootValue: string): void {

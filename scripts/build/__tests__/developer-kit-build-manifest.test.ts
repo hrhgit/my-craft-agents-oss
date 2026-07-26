@@ -21,6 +21,8 @@ afterEach(() => {
 })
 
 describe('Developer Kit immutable build manifest', () => {
+  const bunExecutableSha256 = 'e'.repeat(64)
+
   it('protects a build with a process-identity lease until installer staging releases it', () => {
     const root = mkdtempSync(join(tmpdir(), 'mortise-developer-kit-lease-'))
     roots.push(root)
@@ -35,7 +37,7 @@ describe('Developer Kit immutable build manifest', () => {
     const root = mkdtempSync(join(tmpdir(), 'mortise-developer-kit-manifest-'))
     roots.push(root)
     const sourceId = 'b'.repeat(64)
-    const buildId = computeDeveloperKitBuildId(sourceId, true)
+    const buildId = computeDeveloperKitBuildId(sourceId, true, bunExecutableSha256)
     const buildDir = join(root, buildId)
     const artifactDirectory = join(buildDir, 'artifacts', 'mortise-developer-kit-0.1.0-win-x64')
     const artifactPath = join(artifactDirectory, 'bin', 'mortise-ui.exe')
@@ -47,6 +49,7 @@ describe('Developer Kit immutable build manifest', () => {
       schemaVersion: DEVELOPER_KIT_BUILD_SCHEMA_VERSION,
       buildId,
       sourceId,
+      bunExecutableSha256,
       archiveDisabled: true,
       createdAt: new Date(0).toISOString(),
       artifactDirectory,
@@ -72,7 +75,7 @@ describe('Developer Kit immutable build manifest', () => {
     const root = mkdtempSync(join(tmpdir(), 'mortise-developer-kit-identity-'))
     roots.push(root)
     const sourceId = 'c'.repeat(64)
-    const buildId = computeDeveloperKitBuildId(sourceId, true)
+    const buildId = computeDeveloperKitBuildId(sourceId, true, bunExecutableSha256)
     const buildDir = join(root, buildId)
     const artifactDirectory = join(buildDir, 'artifacts', 'mortise-developer-kit-0.1.0-win-x64')
     const artifactPath = join(artifactDirectory, 'bin', 'mortise-ui.exe')
@@ -84,6 +87,7 @@ describe('Developer Kit immutable build manifest', () => {
       schemaVersion: DEVELOPER_KIT_BUILD_SCHEMA_VERSION,
       buildId,
       sourceId,
+      bunExecutableSha256,
       archiveDisabled: true,
       createdAt: new Date(0).toISOString(),
       artifactDirectory,
@@ -108,6 +112,11 @@ describe('Developer Kit immutable build manifest', () => {
     manifest.archiveDisabled = true
 
     manifest.platform = process.platform === 'win32' ? 'linux' : 'win32'
+    writeManifest()
+    expect(readValidDeveloperKitBuildManifest(buildDir, buildId)).toBeUndefined()
+    manifest.platform = process.platform
+
+    manifest.bunExecutableSha256 = 'f'.repeat(64)
     writeManifest()
     expect(readValidDeveloperKitBuildManifest(buildDir, buildId)).toBeUndefined()
   })

@@ -35,7 +35,7 @@ describe('immutable build source snapshot', () => {
       ['-e', 'setTimeout(() => {}, 60_000)'],
       process.cwd(),
       'timeout fixture',
-      100,
+      { timeoutMs: 100 },
     )).toThrow('Frozen installation for timeout fixture timed out after 100ms.')
   }, 5_000)
 
@@ -169,7 +169,11 @@ describe('immutable build source snapshot', () => {
     runGit(root, ['add', '.'])
     const capture = captureBuildSource({ repoRoot: root, scratchRoot: join(root, '.scratch') })
     write(root, 'packages/example/index.ts', 'export const example = false\n')
-    const materialized = capture.materialize({ parentDir: join(root, '.scratch'), prepareDependencies: true })
+    const materialized = capture.materialize({
+      parentDir: join(root, '.scratch'),
+      prepareDependencies: true,
+      bunExecutable: process.execPath,
+    })
     try {
       expect(existsSync(join(materialized.sourceRoot, 'node_modules', '@fixture', 'example', 'index.ts'))).toBe(true)
       expect(readFileSync(join(materialized.sourceRoot, 'node_modules', '@fixture', 'example', 'index.ts'), 'utf8'))

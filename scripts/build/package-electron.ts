@@ -5,6 +5,8 @@ import { dirname, join, resolve } from 'node:path'
 import {
   acquireElectronBuild,
   captureElectronBuildSource,
+  createElectronBuildCommandEnvironment,
+  publishBuildBunToolchain,
   releaseElectronBuild,
   withStagedElectronBuild,
   type ElectronBuildMode,
@@ -47,6 +49,7 @@ export function packageElectron(args = process.argv.slice(2)): void {
   const developerKitBuildRoot = resolve(
     process.env.MORTISE_DEVELOPER_KIT_BUILD_ROOT ?? join(repoRoot, 'output', 'developer-kit-builds'),
   )
+  const bunExecutable = publishBuildBunToolchain(buildRoot)
   const runId = `package-${resolvedTarget.target}-${process.pid}-${randomUUID().slice(0, 8)}`
   const runsRoot = join(repoRoot, 'output', 'electron-build-runs')
   reapAbandonedPackageRuns(runsRoot)
@@ -68,17 +71,28 @@ export function packageElectron(args = process.argv.slice(2)): void {
 
   let lease: ReturnType<typeof acquireElectronBuild> | undefined
   const capturedSource = captureElectronBuildSource({ repoRoot, buildRoot })
+  const buildEnvironment = createElectronBuildCommandEnvironment(
+    process.env,
+    mode,
+    capturedSource.sourceId,
+    buildRoot,
+    bunExecutable,
+  )
   let packageSource: ReturnType<typeof capturedSource.materialize> | undefined
   try {
     lease = acquireElectronBuild({ runId, runDir, repoRoot, buildRoot, mode, capturedSource })
     if (resolvedTarget.target === 'win') {
-      packageSource = capturedSource.materialize({ parentDir: join(buildRoot, 'sources'), prepareDependencies: true })
+      packageSource = capturedSource.materialize({
+        parentDir: join(buildRoot, 'sources'),
+        prepareDependencies: true,
+        bunExecutable,
+      })
     }
     withStagedElectronBuild(lease, staged => {
       if (resolvedTarget.target === 'win') {
         if (!packageSource) throw new Error('Windows packaging requires its captured source snapshot.')
         run(
-          process.execPath,
+          bunExecutable,
           [
             'run',
             join(packageSource.sourceRoot, 'scripts', 'stage-developer-kit-for-installer.ts'),
@@ -91,15 +105,15 @@ export function packageElectron(args = process.argv.slice(2)): void {
           ],
           packageSource.sourceRoot,
           'Developer Kit staging',
-          mode,
           {
+            ...buildEnvironment,
             MORTISE_DEVELOPER_KIT_BUILD_ROOT: developerKitBuildRoot,
             MORTISE_BUILD_TOOLCHAIN_CACHE_DIR: join(buildRoot, 'toolchains'),
           },
         )
       }
       run(
-        process.execPath,
+        bunExecutable,
         [
           'x',
           'electron-builder',
@@ -113,7 +127,7 @@ export function packageElectron(args = process.argv.slice(2)): void {
         ],
         staged.appDir,
         `Electron ${resolvedTarget.target} package`,
-        mode,
+        buildEnvironment,
       )
       publishElectronPackageArtifacts(
         packageOutputDir,
@@ -247,18 +261,11 @@ function run(
   commandArgs: string[],
   cwd: string,
   label: string,
-  mode: ElectronBuildMode,
-  extraEnv: Record<string, string> = {},
+  environment: NodeJS.ProcessEnv,
 ): void {
   const result = spawnSync(command, commandArgs, {
     cwd,
-    env: {
-      ...process.env,
-      MORTISE_UI_VALIDATION_BUILD: '0',
-      MORTISE_DEV_HOST_BUILD: '0',
-      MORTISE_DEV_RUNTIME: mode === 'development' ? '1' : '0',
-      ...extraEnv,
-    },
+    env: environment,
     stdio: 'inherit',
     windowsHide: true,
   })

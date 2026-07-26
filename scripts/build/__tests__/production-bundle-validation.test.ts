@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { delimiter, dirname, join, resolve } from 'node:path'
 import {
@@ -19,7 +19,12 @@ import {
   resolvePackageTarget,
 } from '../package-electron'
 import { getProcessStartTime } from '../process-identity'
-import { createElectronBuildCommandEnvironment, executeElectronBuildStages } from '../electron-build-cache'
+import {
+  createElectronBuildCommandEnvironment,
+  executeElectronBuildStages,
+  publishBuildBunToolchain,
+} from '../electron-build-cache'
+import { runFrozenDependencyInstall } from '../../build-source-snapshot'
 
 const repositoryRoot = resolve(import.meta.dir, '../../..')
 const temporaryRoots: string[] = []
@@ -122,6 +127,39 @@ describe('production bundle validation composition', () => {
     expect(environment.PATH).toBe(`${dirname(bunExecutable)}${delimiter}${resolve(repositoryRoot, 'machine-node')}`)
     expect(environment.Path).toBeUndefined()
   })
+
+  test('publishes a verified standard Bun command for nested npm lifecycle scripts', () => {
+    const root = mkdtempSync(join(tmpdir(), 'mortise-bun-toolchain-'))
+    temporaryRoots.push(root)
+    const renamedSource = join(root, process.platform === 'win32' ? 'producer-runtime.exe' : 'producer-runtime')
+    copyFileSync(process.execPath, renamedSource)
+
+    const buildRoot = join(root, 'build-root')
+    const bunExecutable = publishBuildBunToolchain(buildRoot, renamedSource)
+    expect(bunExecutable.endsWith(process.platform === 'win32' ? 'bun.exe' : 'bun')).toBe(true)
+    expect(createHash('sha256').update(readFileSync(bunExecutable)).digest('hex')).toBe(
+      createHash('sha256').update(readFileSync(process.execPath)).digest('hex'),
+    )
+
+    const fixture = join(root, 'fixture')
+    mkdirSync(fixture)
+    writeFileSync(join(fixture, 'package.json'), JSON.stringify({
+      private: true,
+      scripts: { probe: 'bun --version' },
+    }), 'utf8')
+    runFrozenDependencyInstall(
+      process.platform === 'win32' ? 'npm.cmd' : 'npm',
+      ['run', 'probe'],
+      fixture,
+      'nested npm lifecycle fixture',
+      { bunExecutable },
+    )
+    writeFileSync(join(dirname(bunExecutable), 'bun.json'), '{}', 'utf8')
+    expect(publishBuildBunToolchain(buildRoot, renamedSource)).toBe(bunExecutable)
+    expect(createHash('sha256').update(readFileSync(bunExecutable)).digest('hex')).toBe(
+      createHash('sha256').update(readFileSync(process.execPath)).digest('hex'),
+    )
+  }, 30_000)
 
   test('builds the Pi dependency domain before materializing root dependencies', () => {
     const completed: string[] = []
