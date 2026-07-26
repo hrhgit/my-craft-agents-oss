@@ -1,14 +1,20 @@
-import { createHash, randomUUID } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import {
-  CapabilityReadOnlyError,
   MultiWriterStore,
   OperationIdentityConflictError,
   type JsonValue,
   type MultiWriterTransaction,
 } from '../storage/index.ts'
-import { AutomationRunV1Schema, AutomationsDocumentV3Schema, CloudEventV1Schema } from './v3-schemas.ts'
+import {
+  AutomationRunV1Schema,
+  AutomationsDocumentV3Schema,
+  CloudEventV1Schema,
+  parseAutomationHistoryPayloadV1,
+} from './v3-schemas.ts'
+import { automationIdentity, canonicalAutomationValue } from './v3-identity.ts'
+export { automationIdentity } from './v3-identity.ts'
 import type {
   AutomationCapabilityResultV1,
   AutomationRunV1,
@@ -18,12 +24,14 @@ import type {
 } from './v3-types.ts'
 import {
   advanceScheduleProjection,
+  assertAutomationProjectionWorkspace,
+  assertAutomationRunIdentity,
   createAutomationIndexMigration,
   getNextDueAt,
   getLatestHistorySequence,
   listDefinitionsPage,
   listDueOccurrences,
-  listExpiredRunIds,
+  listExpiredRuns,
   listRunsPage,
   projectHistory,
   projectRun,
@@ -33,6 +41,7 @@ import {
   type AutomationHistoryCursorV1,
   type AutomationRunCursorV1,
   type DueAutomationOccurrenceV1,
+  type ExpiredAutomationRunV1,
 } from './v3-index.ts'
 
 const DATABASE_NAME = 'automations-v3.sqlite'
@@ -43,16 +52,6 @@ const AUTOMATION_CAPABILITIES = {
   'automations.runs': { minWriteVersion: 2, maxWriteVersion: 2 },
   'automations.history': { minWriteVersion: 2, maxWriteVersion: 2 },
 } as const
-
-function canonical(value: unknown): string {
-  if (value === null || typeof value !== 'object') return JSON.stringify(value)
-  if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`
-  return `{${Object.entries(value as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b)).map(([key, item]) => `${JSON.stringify(key)}:${canonical(item)}`).join(',')}}`
-}
-
-export function automationIdentity(prefix: string, ...parts: unknown[]): string {
-  return `${prefix}_${createHash('sha256').update(canonical(parts)).digest('hex')}`
-}
 
 function json<T>(value: T): JsonValue {
   return JSON.parse(JSON.stringify(value)) as JsonValue
@@ -66,14 +65,14 @@ function historyPayload(eventType: string, payload: unknown): JsonValue {
   if (!payload || typeof payload !== 'object') return json({})
   const value = payload as Record<string, unknown>
   if (eventType === 'definitions.changed') {
-    return json({
+    return json(parseAutomationHistoryPayloadV1(eventType, {
       revision: value.revision,
       definitionIds: value.definitionIds,
-    })
+    }))
   }
   if (eventType === 'event.accepted') {
     const event = payload as TrustedAutomationEventV1
-    return json({
+    return json(parseAutomationHistoryPayloadV1(eventType, {
       eventId: event.eventId,
       sourceKind: event.sourceKind,
       workspaceId: event.workspaceId,
@@ -86,10 +85,10 @@ function historyPayload(eventType: string, payload: unknown): JsonValue {
         time: event.cloudEvent.time,
       },
       acceptedAt: event.acceptedAt,
-    })
+    }))
   }
   const run = payload as AutomationRunV1
-  return json({
+  return json(parseAutomationHistoryPayloadV1(eventType, {
     runId: run.runId,
     occurrenceId: run.occurrenceId,
     automationId: run.automationId,
@@ -108,13 +107,13 @@ function historyPayload(eventType: string, payload: unknown): JsonValue {
       state: action.state,
       attempts: action.attempts,
     })),
-  })
+  }))
 }
 
 function sameAcceptedEvent(left: TrustedAutomationEventV1, right: TrustedAutomationEventV1): boolean {
   const { acceptedAt: _leftAcceptedAt, ...leftSemantic } = left
   const { acceptedAt: _rightAcceptedAt, ...rightSemantic } = right
-  return canonical(leftSemantic) === canonical(rightSemantic)
+  return canonicalAutomationValue(leftSemantic) === canonicalAutomationValue(rightSemantic)
 }
 
 const RUN_TRANSITIONS: Record<AutomationRunV1['state'], ReadonlySet<AutomationRunV1['state']>> = {
@@ -144,7 +143,7 @@ function assertMonotonicRunTransition(current: AutomationRunV1, next: Automation
     || current.definitionRevision !== next.definitionRevision
     || current.eventId !== next.eventId || current.scheduledAt !== next.scheduledAt
     || current.createdAt !== next.createdAt
-    || canonical(current.definitionSnapshot) !== canonical(next.definitionSnapshot)) {
+    || canonicalAutomationValue(current.definitionSnapshot) !== canonicalAutomationValue(next.definitionSnapshot)) {
     throw new Error('Automation run immutable identities cannot change')
   }
   if (!RUN_TRANSITIONS[current.state].has(next.state)) throw new Error(`Invalid automation run transition: ${current.state} -> ${next.state}`)
@@ -190,18 +189,20 @@ export class AutomationV3Store {
       capabilities: AUTOMATION_CAPABILITIES,
       moduleMigrations: [createAutomationIndexMigration(this.workspaceId)],
     })
+    try {
+      this.store.readTransaction(transaction => assertAutomationProjectionWorkspace(transaction, this.workspaceId))
+    } catch (error) {
+      this.store.close()
+      throw error
+    }
   }
 
   isWritable(): boolean {
     return Object.keys(AUTOMATION_CAPABILITIES).every(capability => this.store.isCapabilityWritable(capability))
   }
 
-  private assertWritable(): void {
-    for (const [capability, range] of Object.entries(AUTOMATION_CAPABILITIES)) {
-      if (!this.store.isCapabilityWritable(capability)) {
-        throw new CapabilityReadOnlyError(capability, this.store.getCapabilityVersion(capability), range)
-      }
-    }
+  areCapabilitiesWritable(capabilities: readonly (keyof typeof AUTOMATION_CAPABILITIES)[]): boolean {
+    return capabilities.every(capability => this.store.isCapabilityWritable(capability))
   }
 
   close(): void {
@@ -236,7 +237,6 @@ export class AutomationV3Store {
     expectedRevision: number | null
     document: AutomationsDocumentV3
   }): AutomationCapabilityResultV1<AutomationsDocumentV3> {
-    this.assertWritable()
     const current = this.getDocument()
     const expected = input.expectedRevision
     const nextRevision = (expected ?? 0) + 1
@@ -290,7 +290,6 @@ export class AutomationV3Store {
   }
 
   acceptCloudEvent(input: unknown, options: AcceptCloudEventOptions): AutomationCapabilityResultV1<TrustedAutomationEventV1> {
-    this.assertWritable()
     const parsed = CloudEventV1Schema.safeParse(input)
     if (!parsed.success) return {
       schemaVersion: 1,
@@ -367,11 +366,12 @@ export class AutomationV3Store {
   }
 
   claimRun(run: AutomationRunV1, operationId: string): { run: AutomationRunV1; duplicate: boolean } {
-    this.assertWritable()
+    const parsedRun = AutomationRunV1Schema.parse(run) as AutomationRunV1
+    assertAutomationRunIdentity(this.workspaceId, parsedRun)
     let result
     try {
       result = this.mutateRun({
-        run,
+        run: parsedRun,
         expectedVersion: null,
         operationId,
         historyType: 'run.created',
@@ -379,13 +379,13 @@ export class AutomationV3Store {
       })
     } catch (error) {
       if (error instanceof OperationIdentityConflictError) {
-        const existing = this.getRun(run.runId)
+        const existing = this.getRun(parsedRun.runId)
         if (existing) return { run: existing, duplicate: true }
       }
       throw error
     }
     if (result.status === 'conflict') {
-      const existing = this.getRun(run.runId)
+      const existing = this.getRun(parsedRun.runId)
       if (!existing) throw new Error('Run claim conflicted without a current run')
       return { run: existing, duplicate: true }
     }
@@ -401,7 +401,6 @@ export class AutomationV3Store {
     runId: string,
     options: { ownerId: string; leaseMs: number; now?: Date },
   ): { run: AutomationRunV1; claimed: boolean } {
-    this.assertWritable()
     const current = this.store.getRecord(this.runNamespace(), runId)
     if (!current) throw new Error(`Automation run not found: ${runId}`)
     const run = parseRun(current.value)
@@ -435,7 +434,6 @@ export class AutomationV3Store {
   }
 
   renewRunExecution(runId: string, ownerId: string, leaseMs: number, now = new Date()): AutomationRunV1 | null {
-    this.assertWritable()
     const current = this.store.getRecord(this.runNamespace(), runId)
     if (!current) return null
     const run = parseRun(current.value)
@@ -458,60 +456,88 @@ export class AutomationV3Store {
   }
 
   recoverExpiredExecutions(now = new Date()): AutomationRunV1[] {
-    this.assertWritable()
     const recovered: AutomationRunV1[] = []
     for (;;) {
-      const expired = this.listExpiredExecutionLeases(now, 100)
+      const expired = this.listExpiredExecutionLeaseObservations(now, 100)
       if (expired.length === 0) break
-      for (const runId of expired) {
-        const current = this.store.getRecord(this.runNamespace(), runId)
-        if (!current) continue
-        const run = parseRun(current.value)
-        if (run.state !== 'running' || !run.executor) continue
-        if (Date.parse(run.executor.leaseExpiresAt) > now.getTime()) continue
-        const completedAt = now.toISOString()
-        const next: AutomationRunV1 = {
-          ...run,
-          state: 'failed',
-          reason: 'execution-lease-expired',
-          completedAt,
-          actions: run.actions.map(action => {
-            if (action.state === 'running') return {
-              ...action,
-              state: 'failed' as const,
-              completedAt,
-              error: {
-                code: 'unknown_outcome_after_crash',
-                message: 'The host stopped while this action was running; it was not replayed automatically.',
-                retryable: false,
-              },
-            }
-            if (action.state === 'queued') return { ...action, state: 'skipped' as const, completedAt }
-            return action
-          }),
+      for (const observed of expired) {
+        let candidate = observed
+        let resolved = false
+        for (let attempt = 0; attempt < 3; attempt++) {
+          const { run, recordVersion } = candidate
+          if (run.state !== 'running' || !run.executor
+            || Date.parse(run.executor.leaseExpiresAt) > now.getTime()) {
+            resolved = true
+            break
+          }
+          const completedAt = now.toISOString()
+          const next: AutomationRunV1 = {
+            ...run,
+            state: 'failed',
+            reason: 'execution-lease-expired',
+            completedAt,
+            actions: run.actions.map(action => {
+              if (action.state === 'running') return {
+                ...action,
+                state: 'failed' as const,
+                completedAt,
+                error: {
+                  code: 'unknown_outcome_after_crash',
+                  message: 'The host stopped while this action was running; it was not replayed automatically.',
+                  retryable: false,
+                },
+              }
+              if (action.state === 'queued') return { ...action, state: 'skipped' as const, completedAt }
+              return action
+            }),
+          }
+          const result = this.mutateRun({
+            run: next,
+            expectedVersion: recordVersion,
+            operationId: automationIdentity(
+              'op_execution_expired',
+              run.runId,
+              run.executor.leaseExpiresAt,
+              recordVersion,
+            ),
+            historyType: 'run.transition',
+          })
+          if (result.status === 'applied') {
+            if (!result.replayed) recovered.push(parseRun(result.value))
+            resolved = true
+            break
+          }
+          const latest = this.store.getRecord(this.runNamespace(), run.runId)
+          if (!latest) {
+            throw new Error(`Automation run disappeared during expired-lease recovery: ${run.runId}`)
+          }
+          const latestRun = parseRun(latest.value)
+          if (latestRun.state !== 'running' || !latestRun.executor
+            || Date.parse(latestRun.executor.leaseExpiresAt) > now.getTime()) {
+            resolved = true
+            break
+          }
+          candidate = { run: latestRun, recordVersion: latest.version }
         }
-        const result = this.mutateRun({
-          run: next,
-          expectedVersion: current.version,
-          operationId: automationIdentity('op_execution_expired', run.runId, run.executor.leaseExpiresAt),
-          historyType: 'run.transition',
-        })
-        if (result.status === 'applied' && !result.replayed) recovered.push(parseRun(result.value))
+        if (!resolved) {
+          throw new Error(`Automation expired-lease recovery could not make CAS progress: ${candidate.run.runId}`)
+        }
       }
     }
     return recovered
   }
 
   updateRun(run: AutomationRunV1, operationId: string): AutomationRunV1 {
-    this.assertWritable()
+    const requestedRun = AutomationRunV1Schema.parse(run) as AutomationRunV1
+    assertAutomationRunIdentity(this.workspaceId, requestedRun)
     for (let retry = 0; retry < 3; retry++) {
-      const current = this.store.getRecord(this.runNamespace(), run.runId)
-      if (!current) throw new Error(`Automation run not found: ${run.runId}`)
+      const current = this.store.getRecord(this.runNamespace(), requestedRun.runId)
+      if (!current) throw new Error(`Automation run not found: ${requestedRun.runId}`)
       const currentRun = parseRun(current.value)
-      const candidate = run.state === 'running' && currentRun.executor?.ownerId === run.executor?.ownerId
-        ? { ...run, executor: currentRun.executor }
-        : run
-      if (canonical(currentRun) === canonical(candidate)) return currentRun
+      const candidate = requestedRun.state === 'running' && currentRun.executor?.ownerId === requestedRun.executor?.ownerId
+        ? { ...requestedRun, executor: currentRun.executor }
+        : requestedRun
+      if (canonicalAutomationValue(currentRun) === canonicalAutomationValue(candidate)) return currentRun
       assertMonotonicRunTransition(currentRun, candidate)
       const versionedOperationId = automationIdentity('run_update', operationId, current.version)
       const result = this.mutateRun({
@@ -523,7 +549,7 @@ export class AutomationV3Store {
       if (result.status === 'conflict') continue
       return parseRun(result.value)
     }
-    throw new Error(`Concurrent automation run update: ${run.runId}`)
+    throw new Error(`Concurrent automation run update: ${requestedRun.runId}`)
   }
 
   listRuns(options: { automationId?: string; states?: AutomationRunV1['state'][]; eventId?: string; limit?: number } = {}): AutomationRunV1[] {
@@ -552,7 +578,15 @@ export class AutomationV3Store {
   }
 
   listExpiredExecutionLeases(expiresAtOrBefore: Date, limit = 100): string[] {
-    return this.store.readTransaction(transaction => listExpiredRunIds(
+    return this.listExpiredExecutionLeaseObservations(expiresAtOrBefore, limit)
+      .map(observation => observation.run.runId)
+  }
+
+  private listExpiredExecutionLeaseObservations(
+    expiresAtOrBefore: Date,
+    limit: number,
+  ): ExpiredAutomationRunV1[] {
+    return this.store.readTransaction(transaction => listExpiredRuns(
       transaction,
       this.workspaceId,
       expiresAtOrBefore.getTime(),
@@ -591,18 +625,11 @@ export class AutomationV3Store {
     limit?: number
     cursor?: AutomationHistoryCursorV1
   } = {}) {
-    const query = createHash('sha256').update(JSON.stringify({
-      workspaceId: this.workspaceId,
-      automationId: options.automationId ?? null,
-      runId: options.runId ?? null,
-    })).digest('hex')
-    if (options.cursor && options.cursor.query !== query) throw new Error('Automation history cursor query does not match')
-    const afterSequence = options.cursor?.sequence ?? options.afterSequence
     return this.store.readTransaction(transaction => readHistoryChanges(
       transaction,
       this.workspaceId,
       this.historyStream(),
-      { ...options, ...(afterSequence === undefined ? {} : { afterSequence }) },
+      options,
     ))
   }
 
@@ -613,28 +640,30 @@ export class AutomationV3Store {
     historyType: 'run.created' | 'run.transition'
     advanceSchedule?: boolean
   }) {
+    const run = AutomationRunV1Schema.parse(input.run) as AutomationRunV1
+    assertAutomationRunIdentity(this.workspaceId, run)
     return this.store.writeTransaction({
       requiredCapabilities: ['automations.runs', 'automations.history'],
     }, transaction => {
       const result = transaction.mutateRecord({
         capability: 'automations.runs',
         namespace: this.runNamespace(),
-        key: input.run.runId,
-        value: json(input.run),
+        key: run.runId,
+        value: json(run),
         expectedVersion: input.expectedVersion,
         operationId: input.operationId,
       })
       if (result.status !== 'applied' || result.replayed) return result
-      projectRun(transaction, this.workspaceId, input.run, result.version)
-      if (input.advanceSchedule) advanceScheduleProjection(transaction, this.workspaceId, input.run)
+      projectRun(transaction, this.workspaceId, run, result.version)
+      if (input.advanceSchedule) advanceScheduleProjection(transaction, this.workspaceId, run)
       this.appendHistoryInTransaction(
         transaction,
         input.historyType,
         input.historyType === 'run.created'
-          ? input.run.runId
-          : automationIdentity('transition', input.run.runId, input.operationId),
+          ? run.runId
+          : automationIdentity('transition', run.runId, input.operationId),
         input.operationId,
-        input.run,
+        run,
       )
       return result
     })

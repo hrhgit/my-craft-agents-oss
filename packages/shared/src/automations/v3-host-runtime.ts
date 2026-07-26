@@ -30,7 +30,7 @@ export class AutomationWorkspaceHostV3 {
   private processing: Promise<void> | null = null
   private started = false
   private stopped = false
-  private readOnly = false
+  private schedulerStarted = false
 
   constructor(options: AutomationWorkspaceHostV3Options) {
     this.store = new AutomationV3Store(options)
@@ -56,19 +56,21 @@ export class AutomationWorkspaceHostV3 {
   start(): void {
     if (this.started || this.stopped) return
     this.started = true
-    if (!this.store.isWritable()) {
-      this.readOnly = true
-      return
+    let document = this.store.getDocument()
+    if (!document && this.store.areCapabilitiesWritable(['automations.definitions', 'automations.history'])) {
+      document = this.store.initialize()
     }
-    this.store.initialize()
-    this.store.recoverExpiredExecutions()
-    this.recoverQueuedRuns()
-    this.scheduler.start()
+    if (document && this.store.areCapabilitiesWritable(['automations.runs', 'automations.history'])) {
+      this.store.recoverExpiredExecutions()
+      this.recoverQueuedRuns()
+      this.scheduler.start()
+      this.schedulerStarted = true
+    }
   }
 
   refresh(): void {
-    if (!this.started || this.stopped || this.readOnly) return
-    this.scheduler.refresh()
+    if (!this.started || this.stopped) return
+    if (this.schedulerStarted) this.scheduler.refresh()
     this.publishChanged()
   }
 
@@ -109,12 +111,17 @@ export class AutomationWorkspaceHostV3 {
   }
 
   isReadOnly(): boolean {
-    return this.readOnly
+    return !this.store.areCapabilitiesWritable(['automations.runs', 'automations.history'])
   }
 
   exportDefinitions(): AutomationDefinitionV3[] {
     this.assertRunning()
-    return structuredClone(this.store.initialize().definitions)
+    const document = this.store.getDocument()
+      ?? (this.store.areCapabilitiesWritable(['automations.definitions', 'automations.history'])
+        ? this.store.initialize()
+        : null)
+    if (!document) throw new Error('Automation definitions are read-only and have not been initialized')
+    return structuredClone(document.definitions)
   }
 
   importDefinitions(
@@ -154,7 +161,6 @@ export class AutomationWorkspaceHostV3 {
 
   private assertRunning(): void {
     if (!this.started || this.stopped) throw new Error('Automation workspace host is not running')
-    if (this.readOnly) throw new Error('Automation workspace host is read-only because its storage capabilities are incompatible')
   }
 
   private enqueueAcceptedRun(run: AutomationRunV1): void {

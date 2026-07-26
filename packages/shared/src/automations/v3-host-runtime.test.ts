@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'bun:test'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { MultiWriterStore } from '../storage/index.ts'
+import { CapabilityReadOnlyError, MultiWriterStore } from '../storage/index.ts'
 import { AutomationWorkspaceHostV3 } from './v3-host-runtime.ts'
 
 const roots: string[] = []
@@ -120,7 +120,7 @@ describe('AutomationWorkspaceHostV3', () => {
     await recoveredHost.stop()
   })
 
-  it('enters read-only mode without trying to initialize an incompatible store', async () => {
+  it('keeps core automation writes available when only ingress is incompatible', async () => {
     const root = mkdtempSync(join(tmpdir(), 'mortise-automations-host-readonly-'))
     roots.push(root)
     const databasePath = join(root, '.mortise', 'automations-v3.sqlite')
@@ -147,8 +147,16 @@ describe('AutomationWorkspaceHostV3', () => {
       },
     })
     expect(() => host.start()).not.toThrow()
-    expect(host.isReadOnly()).toBe(true)
-    expect(host.store.getDocument()).toBeNull()
+    expect(host.isReadOnly()).toBe(false)
+    expect(host.store.getDocument()).toEqual({ schemaVersion: 3, revision: 1, definitions: [] })
+    expect(() => host.store.acceptCloudEvent({
+      specversion: '1.0',
+      id: 'future-ingress-event',
+      source: 'urn:test:future',
+      type: 'test.future',
+      time: '2026-07-26T00:00:00.000Z',
+      data: {},
+    }, { sourceKind: 'external' })).toThrow(CapabilityReadOnlyError)
     await host.stop()
   })
 })

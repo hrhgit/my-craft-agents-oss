@@ -283,6 +283,60 @@ export const AutomationRunV1Schema = z.object({
   }
 })
 
+export const AutomationDefinitionsChangedHistoryV1Schema = z.object({
+  revision: z.number().int().positive(),
+  definitionIds: z.array(OpaqueIdSchema),
+}).strict().superRefine((value, ctx) => {
+  if (new Set(value.definitionIds).size !== value.definitionIds.length) {
+    ctx.addIssue({ code: 'custom', path: ['definitionIds'], message: 'Definition IDs must be unique' })
+  }
+})
+
+export const AutomationEventAcceptedHistoryV1Schema = z.object({
+  eventId: OpaqueIdSchema,
+  sourceKind: z.enum(['mortise', 'agent', 'extension', 'external']),
+  workspaceId: z.string().min(1).max(255),
+  sessionId: z.string().min(1).optional(),
+  cloudEvent: z.object({
+    specversion: z.literal('1.0'),
+    id: z.string().min(1).max(255),
+    source: z.string().min(1).max(1024),
+    type: z.string().min(1).max(255),
+    time: IsoDateSchema,
+  }).strict(),
+  acceptedAt: IsoDateSchema,
+}).strict()
+
+const AutomationRunHistoryActionV1Schema = z.object({
+  actionRunId: OpaqueIdSchema,
+  actionId: OpaqueIdSchema,
+  state: z.enum(['queued', 'running', 'succeeded', 'failed', 'blocked', 'cancelled', 'skipped']),
+  attempts: z.number().int().nonnegative(),
+}).strict()
+
+export const AutomationRunHistoryV1Schema = z.object({
+  runId: OpaqueIdSchema,
+  occurrenceId: OpaqueIdSchema,
+  automationId: OpaqueIdSchema,
+  definitionRevision: z.number().int().positive(),
+  triggerId: OpaqueIdSchema,
+  state: z.enum(['queued', 'running', 'succeeded', 'partial', 'failed', 'cancelled', 'skipped']),
+  reason: z.string().optional(),
+  eventId: OpaqueIdSchema.optional(),
+  scheduledAt: IsoDateSchema.optional(),
+  createdAt: IsoDateSchema,
+  startedAt: IsoDateSchema.optional(),
+  completedAt: IsoDateSchema.optional(),
+  actions: z.array(AutomationRunHistoryActionV1Schema),
+}).strict()
+
+export function parseAutomationHistoryPayloadV1(eventType: string, input: unknown) {
+  if (eventType === 'definitions.changed') return AutomationDefinitionsChangedHistoryV1Schema.parse(input)
+  if (eventType === 'event.accepted') return AutomationEventAcceptedHistoryV1Schema.parse(input)
+  if (eventType === 'run.created' || eventType === 'run.transition') return AutomationRunHistoryV1Schema.parse(input)
+  throw new Error(`Unknown automation history event type: ${eventType}`)
+}
+
 const JsonValueSchema: z.ZodType<unknown> = z.lazy(() => z.union([
   z.null(), z.boolean(), z.number().finite(), z.string(), z.array(JsonValueSchema), z.record(z.string(), JsonValueSchema),
 ]))
@@ -323,6 +377,65 @@ export const CloudEventV1Schema = z.object({
     ctx.addIssue({ code: 'custom', message: 'CloudEvent exceeds the 1 MiB structured-content limit' })
   }
 })
+
+export const TrustedAutomationEventV1Schema = z.object({
+  eventId: OpaqueIdSchema,
+  sourceKind: z.enum(['mortise', 'agent', 'extension', 'external']),
+  workspaceId: z.string().min(1).max(255),
+  sessionId: z.string().min(1).optional(),
+  matchValue: z.string().min(1).optional(),
+  cloudEvent: CloudEventV1Schema,
+  acceptedAt: IsoDateSchema,
+}).strict()
+
+export function parseAutomationHistoryBackfillPayloadV1(eventType: string, input: unknown) {
+  if (eventType === 'definitions.changed') return AutomationDefinitionsChangedHistoryV1Schema.parse(input)
+  if (eventType === 'event.accepted') {
+    const summary = AutomationEventAcceptedHistoryV1Schema.safeParse(input)
+    if (summary.success) return summary.data
+    const event = TrustedAutomationEventV1Schema.parse(input)
+    return AutomationEventAcceptedHistoryV1Schema.parse({
+      eventId: event.eventId,
+      sourceKind: event.sourceKind,
+      workspaceId: event.workspaceId,
+      ...(event.sessionId ? { sessionId: event.sessionId } : {}),
+      cloudEvent: {
+        specversion: event.cloudEvent.specversion,
+        id: event.cloudEvent.id,
+        source: event.cloudEvent.source,
+        type: event.cloudEvent.type,
+        time: event.cloudEvent.time,
+      },
+      acceptedAt: event.acceptedAt,
+    })
+  }
+  if (eventType === 'run.created' || eventType === 'run.transition') {
+    const summary = AutomationRunHistoryV1Schema.safeParse(input)
+    if (summary.success) return summary.data
+    const run = AutomationRunV1Schema.parse(input)
+    return AutomationRunHistoryV1Schema.parse({
+      runId: run.runId,
+      occurrenceId: run.occurrenceId,
+      automationId: run.automationId,
+      definitionRevision: run.definitionRevision,
+      triggerId: run.triggerId,
+      state: run.state,
+      ...(run.reason ? { reason: run.reason } : {}),
+      ...(run.eventId ? { eventId: run.eventId } : {}),
+      ...(run.scheduledAt ? { scheduledAt: run.scheduledAt } : {}),
+      createdAt: run.createdAt,
+      ...(run.startedAt ? { startedAt: run.startedAt } : {}),
+      ...(run.completedAt ? { completedAt: run.completedAt } : {}),
+      actions: run.actions.map(action => ({
+        actionRunId: action.actionRunId,
+        actionId: action.actionId,
+        state: action.state,
+        attempts: action.attempts,
+      })),
+    })
+  }
+  throw new Error(`Unknown automation history event type: ${eventType}`)
+}
 
 export function parseAutomationsDocumentV3(input: unknown) {
   return AutomationsDocumentV3Schema.parse(input)

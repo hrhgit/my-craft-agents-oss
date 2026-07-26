@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { CapabilityReadOnlyError, MultiWriterStore } from '../storage/index.ts'
-import { AutomationV3Store } from './v3-store.ts'
+import { automationIdentity, AutomationV3Store } from './v3-store.ts'
 import type { AutomationDefinitionV3, AutomationRunV1, AutomationsDocumentV3 } from './v3-types.ts'
 
 const roots: string[] = []
@@ -33,6 +33,7 @@ function spawnStoreWorker(input: {
   ownerId: string
   gatePath: string
   action: 'claim' | 'renew' | 'recover' | 'due'
+  now?: string
 }) {
   const helperPath = join(input.root, `worker-${input.ownerId}.ts`)
   const storeModule = pathToFileURL(join(import.meta.dir, 'v3-store.ts')).href
@@ -40,7 +41,7 @@ function spawnStoreWorker(input: {
 import { existsSync, writeFileSync } from 'node:fs'
 import { AutomationV3Store } from ${JSON.stringify(storeModule)}
 import { AutomationV3Runtime } from ${JSON.stringify(pathToFileURL(join(import.meta.dir, 'v3-runtime.ts')).href)}
-const [databasePath, root, runId, ownerId, gatePath, action] = process.argv.slice(2)
+const [databasePath, root, runId, ownerId, gatePath, action, nowValue] = process.argv.slice(2)
 const store = new AutomationV3Store({
   workspaceId: 'workspace-one',
   workspaceRootPath: root,
@@ -54,9 +55,9 @@ if (action === 'due' && !preparedDue) throw new Error('Expected one due occurren
 writeFileSync(gatePath + '.' + ownerId + '.ready', '')
 while (!existsSync(gatePath)) await Bun.sleep(2)
 let result
-if (action === 'claim') result = store.claimRunExecution(runId, { ownerId, leaseMs: 60_000 })
-else if (action === 'renew') result = store.renewRunExecution(runId, ownerId, 60_000)
-else if (action === 'recover') result = store.recoverExpiredExecutions(new Date())
+if (action === 'claim') result = store.claimRunExecution(runId, { ownerId, leaseMs: 60_000, now: new Date(nowValue) })
+else if (action === 'renew') result = store.renewRunExecution(runId, ownerId, 60_000, new Date(nowValue))
+else if (action === 'recover') result = store.recoverExpiredExecutions(new Date(nowValue))
 else {
   const due = preparedDue
   if (!due) throw new Error('Expected one prepared due occurrence')
@@ -79,6 +80,7 @@ process.stdout.write(JSON.stringify(result))
     input.ownerId,
     input.gatePath,
     input.action,
+    input.now ?? '2026-07-26T00:00:00.000Z',
   ], { stdout: 'pipe', stderr: 'pipe' })
 }
 
@@ -116,18 +118,33 @@ function definition(id: string, updatedAt = '2026-07-20T00:00:00.000Z'): Automat
 
 function run(definitionValue: AutomationDefinitionV3, suffix: string): AutomationRunV1 {
   const createdAt = `2026-07-20T00:00:0${suffix}.000Z`
+  const occurrenceKey = `event-${suffix}`
+  const occurrenceId = automationIdentity(
+    'occ',
+    'workspace-one',
+    definitionValue.id,
+    2,
+    definitionValue.triggers[0]!.id,
+    occurrenceKey,
+  )
+  const runId = automationIdentity('run', occurrenceId, 0)
   return {
     schemaVersion: 1,
-    runId: `run-index-test-${suffix}`,
-    occurrenceId: `occurrence-index-test-${suffix}`,
-    occurrenceKey: `event-${suffix}`,
+    runId,
+    occurrenceId,
+    occurrenceKey,
     automationId: definitionValue.id,
     definitionRevision: 2,
     definitionSnapshot: definitionValue,
     triggerId: definitionValue.triggers[0]!.id,
     state: 'queued',
     createdAt,
-    actions: [{ actionRunId: `action-run-index-${suffix}`, actionId: definitionValue.actions[0]!.id, state: 'queued', attempts: 0 }],
+    actions: [{
+      actionRunId: automationIdentity('action', runId, definitionValue.actions[0]!.id),
+      actionId: definitionValue.actions[0]!.id,
+      state: 'queued',
+      attempts: 0,
+    }],
   }
 }
 
@@ -218,6 +235,8 @@ describe('AutomationV3Store', () => {
     expect(store.listRunsPage({ automationId: first.id, limit: 1, cursor: runPage.nextCursor }).items).toHaveLength(1)
     expect(() => store.listRunsPage({ automationId: second.id, limit: 1, cursor: runPage.nextCursor }))
       .toThrow('cursor query does not match')
+    expect(() => store.listRunsPage({ automationId: first.id, limit: 2, cursor: runPage.nextCursor }))
+      .toThrow('cursor query does not match')
 
     const changed = store.mutateDocument({
       operationId: 'operation-page-definitions-update',
@@ -249,7 +268,163 @@ describe('AutomationV3Store', () => {
     expect(serialized).not.toContain('definitionSnapshot')
     expect(serialized).not.toContain(`secret-${value.id}`)
     expect(store.getChangeToken()).toEqual({ revision: 2, historyCursor: 3 })
+
+    const secondRun = run(value, '4')
+    store.claimRun(secondRun, 'operation-history-run-2')
+    const firstHistoryPage = store.readHistoryChanges({ automationId: value.id, afterSequence: 1, limit: 1 })
+    expect(firstHistoryPage.nextCursor).toBeDefined()
+    expect(store.readHistoryChanges({
+      automationId: value.id,
+      afterSequence: 1,
+      limit: 1,
+      cursor: firstHistoryPage.nextCursor,
+    }).items[0]?.payload).toMatchObject({ runId: secondRun.runId })
+    expect(() => store.readHistoryChanges({
+      automationId: value.id,
+      afterSequence: 2,
+      limit: 1,
+      cursor: firstHistoryPage.nextCursor,
+    })).toThrow('cursor query does not match')
+    expect(() => store.readHistoryChanges({
+      automationId: value.id,
+      afterSequence: 1,
+      limit: 2,
+      cursor: firstHistoryPage.nextCursor,
+    })).toThrow('cursor query does not match')
     store.close()
+  })
+
+  it('schema-validates and projects canonical legacy V3 records before upgrading capabilities', () => {
+    const root = mkdtempSync(join(tmpdir(), 'mortise-automations-v3-valid-migration-'))
+    roots.push(root)
+    const databasePath = join(root, 'automations-v3.sqlite')
+    const seed = MultiWriterStore.openSync({
+      databasePath,
+      writerId: 'legacy-writer',
+      writerVersion: 1,
+      capabilities: legacyCapabilities(),
+    })
+    const value = definition('automation-valid-migration')
+    const document = { schemaVersion: 3 as const, revision: 1, definitions: [value] }
+    seed.mutateRecord({
+      capability: 'automations.definitions',
+      namespace: 'automations-document:workspace-one',
+      key: 'definitions',
+      value: JSON.parse(JSON.stringify(document)),
+      expectedVersion: null,
+      operationId: 'legacy-document-create',
+    })
+    const eventId = automationIdentity('evt', 'urn:test:migration', 'migration-event')
+    const event = {
+      eventId,
+      sourceKind: 'external' as const,
+      workspaceId: 'workspace-one',
+      cloudEvent: {
+        specversion: '1.0' as const,
+        id: 'migration-event',
+        source: 'urn:test:migration',
+        type: 'tests.migrated',
+        time: '2026-07-20T00:00:00.000Z',
+        data: { status: 'legacy-v3' },
+      },
+      acceptedAt: '2026-07-20T00:00:01.000Z',
+    }
+    seed.mutateRecord({
+      capability: 'automations.ingress',
+      namespace: 'automations-events:workspace-one',
+      key: eventId,
+      value: JSON.parse(JSON.stringify(event)),
+      expectedVersion: null,
+      operationId: 'legacy-event-create',
+    })
+    seed.appendEvent({
+      capability: 'automations.history',
+      streamId: 'automations-history:workspace-one',
+      eventId: automationIdentity('ledger', 'workspace-one', 'event.accepted', eventId),
+      eventType: 'event.accepted',
+      schemaVersion: 1,
+      payload: JSON.parse(JSON.stringify(event)),
+      operationId: 'legacy-event-create:ledger:event.accepted',
+    })
+    const legacyRun = { ...run(value, '1'), eventId }
+    seed.mutateRecord({
+      capability: 'automations.runs',
+      namespace: 'automations-runs:workspace-one',
+      key: legacyRun.runId,
+      value: JSON.parse(JSON.stringify(legacyRun)),
+      expectedVersion: null,
+      operationId: 'legacy-run-create',
+    })
+    seed.appendEvent({
+      capability: 'automations.history',
+      streamId: 'automations-history:workspace-one',
+      eventId: automationIdentity('ledger', 'workspace-one', 'run.created', legacyRun.runId),
+      eventType: 'run.created',
+      schemaVersion: 1,
+      payload: JSON.parse(JSON.stringify(legacyRun)),
+      operationId: 'legacy-run-create:ledger:run.created',
+    })
+    seed.close()
+
+    const migrated = new AutomationV3Store({ workspaceId: 'workspace-one', workspaceRootPath: root, databasePath })
+    expect(migrated.listDefinitionsPage().items.map(item => item.id)).toEqual([value.id])
+    expect(migrated.listRunsPage({ eventId }).items.map(item => item.runId)).toEqual([legacyRun.runId])
+    expect(migrated.readHistoryChanges({ runId: legacyRun.runId }).items).toHaveLength(1)
+    expect(migrated.isWritable()).toBe(true)
+    migrated.close()
+  })
+
+  it('rolls back migration when history workspace and ledger identities are inconsistent', () => {
+    const root = mkdtempSync(join(tmpdir(), 'mortise-automations-v3-history-migration-'))
+    roots.push(root)
+    const databasePath = join(root, 'automations-v3.sqlite')
+    const seed = MultiWriterStore.openSync({
+      databasePath,
+      writerId: 'legacy-writer',
+      writerVersion: 1,
+      capabilities: legacyCapabilities(),
+    })
+    const eventId = automationIdentity('evt', 'urn:test:migration', 'foreign-event')
+    const event = {
+      eventId,
+      sourceKind: 'external' as const,
+      workspaceId: 'workspace-one',
+      cloudEvent: {
+        specversion: '1.0' as const,
+        id: 'foreign-event',
+        source: 'urn:test:migration',
+        type: 'tests.migrated',
+        time: '2026-07-20T00:00:00.000Z',
+        data: {},
+      },
+      acceptedAt: '2026-07-20T00:00:01.000Z',
+    }
+    seed.mutateRecord({
+      capability: 'automations.ingress',
+      namespace: 'automations-events:workspace-one',
+      key: eventId,
+      value: JSON.parse(JSON.stringify(event)),
+      expectedVersion: null,
+      operationId: 'legacy-event-create',
+    })
+    seed.appendEvent({
+      capability: 'automations.history',
+      streamId: 'automations-history:workspace-one',
+      eventId: automationIdentity('ledger', 'workspace-one', 'event.accepted', eventId),
+      eventType: 'event.accepted',
+      schemaVersion: 1,
+      payload: JSON.parse(JSON.stringify({ ...event, workspaceId: 'workspace-foreign' })),
+      operationId: 'legacy-event-create:ledger:event.accepted',
+    })
+    seed.close()
+
+    expect(() => new AutomationV3Store({ workspaceId: 'workspace-one', workspaceRootPath: root, databasePath }))
+      .toThrow('workspace does not match')
+    const database = new Database(databasePath, { readonly: true })
+    expect(database.query("SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'automation_%'").all()).toEqual([])
+    expect(database.query<{ version: number }, [string]>('SELECT version FROM mortise_capabilities WHERE name = ?')
+      .get('automations.history')?.version).toBe(1)
+    database.close()
   })
 
   it('rolls back a corrupt automation index backfill and capability upgrade', () => {
@@ -284,17 +459,127 @@ describe('AutomationV3Store', () => {
     database.close()
   })
 
+  it('binds one canonical workspace identity to each automation database', () => {
+    const root = mkdtempSync(join(tmpdir(), 'mortise-automations-v3-workspace-identity-'))
+    roots.push(root)
+    const databasePath = join(root, 'automations-v3.sqlite')
+    const first = new AutomationV3Store({ workspaceId: 'workspace-one', workspaceRootPath: root, databasePath })
+    first.initialize()
+    first.close()
+    expect(() => new AutomationV3Store({
+      workspaceId: 'workspace-two',
+      workspaceRootPath: root,
+      databasePath,
+    })).toThrow('database workspace identity does not match')
+  })
+
+  it('rejects foreign automation namespaces before projection or capability upgrade', () => {
+    const root = mkdtempSync(join(tmpdir(), 'mortise-automations-v3-foreign-workspace-'))
+    roots.push(root)
+    const databasePath = join(root, 'automations-v3.sqlite')
+    const seed = MultiWriterStore.openSync({
+      databasePath,
+      writerId: 'foreign-workspace-writer',
+      writerVersion: 1,
+      capabilities: legacyCapabilities(),
+    })
+    seed.mutateRecord({
+      capability: 'automations.definitions',
+      namespace: 'automations-document:workspace-foreign',
+      key: 'definitions',
+      value: { schemaVersion: 3, revision: 1, definitions: [] },
+      expectedVersion: null,
+      operationId: 'foreign-workspace-document',
+    })
+    seed.close()
+
+    expect(() => new AutomationV3Store({ workspaceId: 'workspace-one', workspaceRootPath: root, databasePath }))
+      .toThrow('foreign workspace authority')
+    const database = new Database(databasePath, { readonly: true })
+    expect(database.query("SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'automation_%'").all()).toEqual([])
+    expect(database.query<{ version: number }, [string]>('SELECT version FROM mortise_capabilities WHERE name = ?')
+      .get('automations.definitions')?.version).toBe(1)
+    expect(database.query<{ count: number }, []>(`
+      SELECT count(*) AS count FROM mortise_schema_migrations
+      WHERE id = '1001_automation_v3_index_projection'
+    `).get()?.count).toBe(0)
+    database.close()
+  })
+
+  it('rejects invalid runs before any canonical or operation record is committed', () => {
+    const store = open()
+    const value = definition('automation-preflight-run')
+    store.initialize()
+    const valid = run(value, '6')
+    const invalid = { ...valid, unexpected: true } as unknown as AutomationRunV1
+    expect(() => store.claimRun(invalid, 'operation-invalid-run')).toThrow()
+    expect(store.getRun(valid.runId)).toBeNull()
+    const database = new Database(store.databasePath, { readonly: true })
+    expect(database.query<{ count: number }, [string]>(`
+      SELECT count(*) AS count FROM mortise_operations WHERE operation_id = ?
+    `).get('operation-invalid-run')?.count).toBe(0)
+    database.close()
+
+    store.claimRun(valid, 'operation-valid-run')
+    expect(() => store.updateRun(invalid, 'operation-invalid-update')).toThrow()
+    expect(store.getRun(valid.runId)).toEqual(valid)
+    store.close()
+  })
+
+  it('fences only the incompatible capability instead of globally blocking writes', () => {
+    const root = mkdtempSync(join(tmpdir(), 'mortise-automations-v3-capability-scope-'))
+    roots.push(root)
+    const databasePath = join(root, 'automations-v3.sqlite')
+    const current = new AutomationV3Store({ workspaceId: 'workspace-one', workspaceRootPath: root, databasePath })
+    current.initialize()
+    current.close()
+    const future = MultiWriterStore.openSync({
+      databasePath,
+      writerId: 'future-ingress-writer',
+      writerVersion: 2,
+      capabilities: {
+        'automations.definitions': { minWriteVersion: 4, maxWriteVersion: 4 },
+        'automations.ingress': { minWriteVersion: 3, maxWriteVersion: 3 },
+        'automations.runs': { minWriteVersion: 2, maxWriteVersion: 2 },
+        'automations.history': { minWriteVersion: 2, maxWriteVersion: 2 },
+      },
+    })
+    future.close()
+    const database = new Database(databasePath)
+    database.run("UPDATE mortise_capabilities SET version = 3 WHERE name = 'automations.ingress'")
+    database.close()
+    const scoped = new AutomationV3Store({ workspaceId: 'workspace-one', workspaceRootPath: root, databasePath })
+    const document = scoped.getDocument()!
+    expect(scoped.mutateDocument({
+      operationId: 'operation-definition-with-future-ingress',
+      expectedRevision: document.revision,
+      document,
+    }).status).toBe('ok')
+    expect(() => scoped.acceptCloudEvent({
+      specversion: '1.0', id: 'future-ingress-event', source: 'urn:test:future', type: 'test.future',
+      time: '2026-07-26T00:00:00.000Z', data: {},
+    }, { sourceKind: 'external' })).toThrow(CapabilityReadOnlyError)
+    scoped.close()
+  })
+
   it('rejects changes to run fields that define durable index identity', () => {
     const store = open()
     const value = definition('automation-immutable-run')
     store.initialize()
-    const claimed = { ...run(value, '9'), eventId: 'event-immutable-run' }
+    const claimed = {
+      ...run(value, '9'),
+      eventId: 'event-immutable-run',
+    }
     store.claimRun(claimed, 'operation-immutable-run')
-    expect(() => store.updateRun({
-      ...claimed,
-      eventId: 'event-immutable-changed',
-      createdAt: '2026-07-21T00:00:00.000Z',
-    }, 'operation-change-index-identity')).toThrow('immutable identities cannot change')
+    for (const [mutation, message] of [
+      [{ ...claimed, occurrenceKey: 'event-immutable-changed' }, 'workspace occurrence'],
+      [{ ...claimed, eventId: 'event-immutable-changed' }, 'immutable identities cannot change'],
+      [{ ...claimed, scheduledAt: '2026-07-21T00:00:00.000Z' }, 'immutable identities cannot change'],
+      [{ ...claimed, createdAt: '2026-07-21T00:00:00.000Z' }, 'immutable identities cannot change'],
+    ]) {
+      expect(() => store.updateRun(mutation as AutomationRunV1, 'operation-change-index-identity'))
+        .toThrow(message as string)
+    }
     expect(store.listRunsPage({ eventId: 'event-immutable-run' }).items).toHaveLength(1)
     expect(store.listRunsPage({ eventId: 'event-immutable-changed' }).items).toHaveLength(0)
     store.close()
@@ -304,15 +589,17 @@ describe('AutomationV3Store', () => {
     const store = open()
     const value = definition('automation-stale-lease')
     store.initialize()
-    store.claimRun(run(value, '8'), 'operation-stale-lease-run')
-    store.claimRunExecution('run-index-test-8', {
+    const stale = run(value, '8')
+    store.claimRun(stale, 'operation-stale-lease-run')
+    store.claimRunExecution(stale.runId, {
       ownerId: 'stale-owner',
       leaseMs: 1,
-      now: new Date(Date.now() - 60_000),
+      now: new Date('2026-07-25T00:00:00.000Z'),
     })
     const database = new Database(store.databasePath)
-    database.run("UPDATE automation_run_index SET record_version = 999 WHERE run_id = 'run-index-test-8'")
-    expect(() => store.recoverExpiredExecutions(new Date())).toThrow('projection version is inconsistent')
+    database.run('UPDATE automation_run_index SET record_version = 999 WHERE run_id = ?', [stale.runId])
+    expect(() => store.recoverExpiredExecutions(new Date('2026-07-26T00:00:00.000Z')))
+      .toThrow('projection version is inconsistent')
     database.close()
     store.close()
   })
@@ -329,15 +616,17 @@ describe('AutomationV3Store', () => {
     const database = new Database(store.databasePath)
 
     database.exec("CREATE TRIGGER fail_run_index BEFORE INSERT ON automation_run_index BEGIN SELECT RAISE(ABORT, 'run index fault'); END")
-    expect(() => store.claimRun(run(value, '4'), 'operation-run-index-fault')).toThrow('run index fault')
-    expect(store.getRun('run-index-test-4')).toBeNull()
+    const failedRunProjection = run(value, '4')
+    expect(() => store.claimRun(failedRunProjection, 'operation-run-index-fault')).toThrow('run index fault')
+    expect(store.getRun(failedRunProjection.runId)).toBeNull()
     expect(database.query<{ count: number }, []>("SELECT count(*) AS count FROM mortise_operations WHERE operation_id = 'operation-run-index-fault'").get()?.count).toBe(0)
     database.exec('DROP TRIGGER fail_run_index')
 
     database.exec("CREATE TRIGGER fail_history_index BEFORE INSERT ON automation_history_index BEGIN SELECT RAISE(ABORT, 'history index fault'); END")
-    expect(() => store.claimRun(run(value, '5'), 'operation-history-index-fault')).toThrow('history index fault')
-    expect(store.getRun('run-index-test-5')).toBeNull()
-    expect(database.query<{ count: number }, []>("SELECT count(*) AS count FROM automation_run_index WHERE run_id = 'run-index-test-5'").get()?.count).toBe(0)
+    const failedHistoryProjection = run(value, '5')
+    expect(() => store.claimRun(failedHistoryProjection, 'operation-history-index-fault')).toThrow('history index fault')
+    expect(store.getRun(failedHistoryProjection.runId)).toBeNull()
+    expect(database.query<{ count: number }, [string]>("SELECT count(*) AS count FROM automation_run_index WHERE run_id = ?").get(failedHistoryProjection.runId)?.count).toBe(0)
     expect(database.query<{ count: number }, []>("SELECT count(*) AS count FROM mortise_events WHERE operation_id = 'operation-history-index-fault:ledger:run.created'").get()?.count).toBe(0)
     expect(database.query<{ count: number }, []>("SELECT count(*) AS count FROM mortise_operations WHERE operation_id = 'operation-history-index-fault'").get()?.count).toBe(0)
     database.exec('DROP TRIGGER fail_history_index')
@@ -355,18 +644,19 @@ describe('AutomationV3Store', () => {
       writerVersion: 1,
       capabilities: legacyCapabilities(),
     })
+    const oldReadableRun = run(definition('automation-old-writer'), '8')
     oldWriter.mutateRecord({
       capability: 'automations.runs',
       namespace: 'automations-runs:workspace-one',
-      key: 'old-readable-run',
-      value: JSON.parse(JSON.stringify({ ...run(definition('automation-old-writer'), '8'), runId: 'old-readable-run' })),
+      key: oldReadableRun.runId,
+      value: JSON.parse(JSON.stringify(oldReadableRun)),
       expectedVersion: null,
       operationId: 'old-readable-run-create',
     })
     let currentWriter: AutomationV3Store | undefined
     try {
       currentWriter = new AutomationV3Store({ workspaceId: 'workspace-one', workspaceRootPath: root, databasePath })
-      expect(oldWriter.getRecord('automations-runs:workspace-one', 'old-readable-run')).not.toBeNull()
+      expect(oldWriter.getRecord('automations-runs:workspace-one', oldReadableRun.runId)).not.toBeNull()
       expect(() => oldWriter.mutateRecord({
         capability: 'automations.runs',
         namespace: 'automations-runs:workspace-one',
@@ -385,18 +675,19 @@ describe('AutomationV3Store', () => {
     const store = open()
     const value = definition('automation-concurrent-claim')
     store.initialize()
-    store.claimRun(run(value, '6'), 'operation-concurrent-run')
+    const queued = run(value, '6')
+    store.claimRun(queued, 'operation-concurrent-run')
     const root = store.workspaceRootPath
     const databasePath = store.databasePath
     store.close()
     const gatePath = join(root, 'claim.gate')
-    const first = spawnStoreWorker({ root, databasePath, runId: 'run-index-test-6', ownerId: 'claim-a', gatePath, action: 'claim' })
-    const second = spawnStoreWorker({ root, databasePath, runId: 'run-index-test-6', ownerId: 'claim-b', gatePath, action: 'claim' })
+    const first = spawnStoreWorker({ root, databasePath, runId: queued.runId, ownerId: 'claim-a', gatePath, action: 'claim' })
+    const second = spawnStoreWorker({ root, databasePath, runId: queued.runId, ownerId: 'claim-b', gatePath, action: 'claim' })
     await releaseWorkers(gatePath, ['claim-a', 'claim-b'])
     const results = await Promise.all([workerResult(first), workerResult(second)]) as Array<{ claimed: boolean }>
     expect(results.filter(result => result.claimed)).toHaveLength(1)
     const verifier = new AutomationV3Store({ workspaceId: 'workspace-one', workspaceRootPath: root, databasePath })
-    expect(verifier.getRun('run-index-test-6')?.state).toBe('running')
+    expect(verifier.getRun(queued.runId)?.state).toBe('running')
     verifier.close()
   })
 
@@ -425,32 +716,57 @@ describe('AutomationV3Store', () => {
     verifier.close()
   })
 
-  it('resolves renewal and expiry recovery through the same record-version CAS', async () => {
-    const store = open()
-    const value = definition('automation-renew-expire')
-    store.initialize()
-    store.claimRun(run(value, '7'), 'operation-renew-expire-run')
-    store.claimRunExecution('run-index-test-7', {
+  it('does not expire a lease after another host renews it first', () => {
+    const renewHost = open()
+    const value = definition('automation-renew-first')
+    renewHost.initialize()
+    const leased = run(value, '7')
+    renewHost.claimRun(leased, 'operation-renew-first-run')
+    renewHost.claimRunExecution(leased.runId, {
       ownerId: 'lease-owner',
       leaseMs: 1,
-      now: new Date(Date.now() - 60_000),
+      now: new Date('2026-07-25T00:00:00.000Z'),
     })
-    const root = store.workspaceRootPath
-    const databasePath = store.databasePath
-    store.close()
-    const gatePath = join(root, 'renew-expire.gate')
-    const renew = spawnStoreWorker({ root, databasePath, runId: 'run-index-test-7', ownerId: 'lease-owner', gatePath, action: 'renew' })
-    const recover = spawnStoreWorker({ root, databasePath, runId: 'run-index-test-7', ownerId: 'recovery-owner', gatePath, action: 'recover' })
-    await releaseWorkers(gatePath, ['lease-owner', 'recovery-owner'])
-    const [renewed] = await Promise.all([workerResult(renew), workerResult(recover)])
-    const verifier = new AutomationV3Store({ workspaceId: 'workspace-one', workspaceRootPath: root, databasePath })
-    const final = verifier.getRun('run-index-test-7')!
-    if (renewed === null) {
-      expect(final).toMatchObject({ state: 'failed', reason: 'execution-lease-expired' })
-    } else {
-      expect(final.state).toBe('running')
-      expect(Date.parse(final.executor!.leaseExpiresAt)).toBeGreaterThan(Date.now())
-    }
-    verifier.close()
+    const recoveryHost = new AutomationV3Store({
+      workspaceId: 'workspace-one',
+      workspaceRootPath: renewHost.workspaceRootPath,
+      databasePath: renewHost.databasePath,
+      writerId: 'recovery-host',
+    })
+    const boundary = new Date('2026-07-26T00:00:00.000Z')
+    const renewed = renewHost.renewRunExecution(leased.runId, 'lease-owner', 60_000, boundary)
+    expect(renewed?.executor?.leaseExpiresAt).toBe('2026-07-26T00:01:00.000Z')
+    expect(recoveryHost.recoverExpiredExecutions(boundary)).toEqual([])
+    expect(recoveryHost.getRun(leased.runId)).toMatchObject({ state: 'running' })
+    recoveryHost.close()
+    renewHost.close()
+  })
+
+  it('rejects renewal after another host commits expiry recovery first', () => {
+    const recoveryHost = open()
+    const value = definition('automation-recovery-first')
+    recoveryHost.initialize()
+    const leased = run(value, '8')
+    recoveryHost.claimRun(leased, 'operation-recovery-first-run')
+    recoveryHost.claimRunExecution(leased.runId, {
+      ownerId: 'lease-owner',
+      leaseMs: 1,
+      now: new Date('2026-07-25T00:00:00.000Z'),
+    })
+    const renewHost = new AutomationV3Store({
+      workspaceId: 'workspace-one',
+      workspaceRootPath: recoveryHost.workspaceRootPath,
+      databasePath: recoveryHost.databasePath,
+      writerId: 'renew-host',
+    })
+    const boundary = new Date('2026-07-26T00:00:00.000Z')
+    expect(recoveryHost.recoverExpiredExecutions(boundary)).toHaveLength(1)
+    expect(renewHost.renewRunExecution(leased.runId, 'lease-owner', 60_000, boundary)).toBeNull()
+    expect(renewHost.getRun(leased.runId)).toMatchObject({
+      state: 'failed',
+      reason: 'execution-lease-expired',
+    })
+    renewHost.close()
+    recoveryHost.close()
   })
 })
