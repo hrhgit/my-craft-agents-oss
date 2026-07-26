@@ -127,7 +127,7 @@ validation:
   - { id: pi-workspace-regression, kind: integration, command: "bun run pi:test", description: "Run the embedded Pi workspace regression suites without composing a second CI run.", triggers: [release, runtime-change], required: true, evidence: "Pi package regression exit status and output." }
   - { id: production-bundles, kind: integration, command: "bun run validate:production-bundles", description: "Run the complete production Electron build consumed by packaging.", triggers: [ci-change, release], required: true, evidence: "Production main, workspace server, preload, renderer, and resource build exit status." }
   - { id: ci-integration, kind: integration, command: "bun run validate:ci", description: "Run the repository CI validation composition.", triggers: [release, ci-change], required: true, evidence: "CI validation exit status and output." }
-scope_digest: d2deba7ad88bff86c9e09605dd382cc289b1cf92
+scope_digest: dfe3894085a4787c77bc28386f48dd76c0b6a6cf
 ---
 
 ## Purpose
@@ -158,6 +158,7 @@ Run the in-memory production Node bundle gate frequently, retain the complete pr
 Bundled binaries and lockfiles are large shared surfaces; concurrent regeneration can overwrite another build's artifacts.
 
 ## Semantic history
+- 2026-07-27: Bound immutable Electron manifests to their recorded Bun version and executable hash, made cross-toolchain cache validation use the producing identity, and added fail-closed expected-build packaging that never rebuilds a missing or changed acceptance artifact.
 - 2026-07-27: Reorganized the r11 architecture closeout around one frozen code candidate, serial noise-isolated performance gates, and one shared Windows installer workflow, with a revisioned handoff that separates implemented invariants from unrun acceptance evidence.
 - 2026-07-26: Made Windows production-build validation teardown retry transient locked-directory removal after nested npm lifecycle processes exit, so successful canonical Bun probes cannot fail the monorepo gate on recoverable `EBUSY` cleanup races.
 - 2026-07-26: Made the build-root Bun toolchain the single verified command authority for Electron, installer, and Developer Kit source-capsule stages: publish the producer executable atomically under its version/platform/architecture/SHA-256 identity, bind both build systems to that content identity, revalidate every reuse, repair corruption, and drive outer stages, nested npm lifecycles, dependency installation, and packaging workers from the canonical command.
@@ -177,4 +178,3 @@ Bundled binaries and lockfiles are large shared surfaces; concurrent regeneratio
 - 2026-07-23: Made external write delegation fail closed on invalid assignment worktrees: primary-supplied clean bases, dedicated worktrees, scoped final commits, clean handoffs, and pre-candidate raw performance baselines are now mandatory acceptance inputs.
 - 2026-07-23: Split the optimization program into an active-only ledger, concise grandfathered archive, and owner-bounded delegation packets with reproducible external evidence handoffs and primary architecture-comparison gates.
 - 2026-07-23: Recorded OPT-018 as the confirmed Mortise-only headless-runtime architecture: repository-local Pi will shed its independent TUI/CLI product surface while UI-neutral Agent and RPC semantics remain canonical.
-- 2026-07-23: Completed the Mortise-only data-root cutover in product documentation and regenerated the packaged Session MCP resource so shipped helpers resolve only `.mortise` roots; independent Pi retains `.pi` defaults.
