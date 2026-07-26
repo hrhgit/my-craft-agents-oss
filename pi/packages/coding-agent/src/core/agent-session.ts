@@ -206,6 +206,8 @@ export interface AgentSessionConfig {
 	sessionStartEvent?: SessionStartEvent;
 	/** Unified network manager for dispatcher lifecycle and retry preparation. */
 	networkManager?: NetworkManager;
+	/** Full resources and network initialization already completed for the first request. */
+	requestResourcesReady?: boolean;
 	/** Receives diagnostics discovered after deferred resources load. */
 	onRuntimeDiagnostics?: (diagnostics: AgentSessionRuntimeDiagnostic[]) => void;
 }
@@ -440,7 +442,7 @@ export class AgentSession {
 	private _baseSystemPrompt = "";
 	private _baseSystemPromptOptions!: BuildSystemPromptOptions;
 	private _onRuntimeDiagnostics?: (diagnostics: AgentSessionRuntimeDiagnostic[]) => void;
-	private _requestResourcesReady = false;
+	private _requestResourcesReady: boolean;
 	private _requestResourcesPromise?: Promise<void>;
 
 	constructor(config: AgentSessionConfig) {
@@ -449,6 +451,7 @@ export class AgentSession {
 		this.settingsManager = config.settingsManager;
 		this._scopedModels = config.scopedModels ?? [];
 		this._resourceLoader = config.resourceLoader;
+		this._requestResourcesReady = config.requestResourcesReady ?? false;
 		this._customTools = config.customTools ?? [];
 		this._cwd = config.cwd;
 		this._modelRegistry = config.modelRegistry;
