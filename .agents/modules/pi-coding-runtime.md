@@ -13,7 +13,7 @@ collaborates_with: []
 validation:
   - { id: pi-coding-regression, kind: unit, command: "npm --prefix pi test --workspace @mortise/pi-coding-agent", description: "Run Pi coding runtime regressions.", triggers: [owned-change], required: true, evidence: "Workspace test exit status and output." }
   - { id: pi-workspace-contract, kind: contract, command: "npm --prefix pi run build:workspace", description: "Build Pi workspaces to verify package contracts.", triggers: [contract-change], required: true, evidence: "Workspace build exit status and diagnostics." }
-scope_digest: cd46f75283a4ed2af7b9be096a9a8d694080e238
+scope_digest: e1249bbd5d2849b31cbbe5e8096c59e38831a940
 ---
 
 ## Purpose
