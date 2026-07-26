@@ -16,6 +16,7 @@ import {
   publishElectronPackageArtifacts,
   reapAbandonedPackageRuns,
   recoverElectronPackagePublication,
+  resolveExpectedPackageBuildId,
   resolvePackageTarget,
 } from '../package-electron'
 import { getProcessStartTime } from '../process-identity'
@@ -260,6 +261,14 @@ describe('production bundle validation composition', () => {
     })
     expect(() => resolvePackageTarget('win', 'win32', 'arm64')).toThrow('x64 only')
     expect(() => resolvePackageTarget('win', 'darwin', 'arm64')).toThrow('requires a matching')
+  })
+
+  test('accepts only an exact immutable build identity for pinned packaging', () => {
+    const expectedBuildId = 'a'.repeat(64)
+    expect(resolveExpectedPackageBuildId(['--expected-build-id', expectedBuildId])).toBe(expectedBuildId)
+    expect(resolveExpectedPackageBuildId([])).toBeUndefined()
+    expect(() => resolveExpectedPackageBuildId(['--expected-build-id', 'not-a-build'])).toThrow('lowercase SHA-256')
+    expect(() => resolveExpectedPackageBuildId(['--expected-build-id'])).toThrow('lowercase SHA-256')
   })
 
   test('publishes isolated package output under a repository-global lock', () => {

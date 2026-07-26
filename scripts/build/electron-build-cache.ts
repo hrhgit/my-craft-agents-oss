@@ -34,6 +34,9 @@ import { getProcessStartTime, matchesProcessIdentity } from './process-identity.
 
 export const ELECTRON_BUILD_SCHEMA_VERSION = 5
 export const ELECTRON_BUILD_PRODUCER_VERSION = 'electron-production-v4'
+// Toolchain fields are an additive hardening of schema 5. Incrementing either
+// identity version would invalidate already accepted immutable build IDs; old
+// schema-5 manifests are upgraded only when their producer can be proven.
 const DEFAULT_REPO_ROOT = resolve(import.meta.dir, '..', '..')
 const DEFAULT_BUILD_ROOT = resolve(DEFAULT_REPO_ROOT, 'output', 'electron-builds')
 const DEFAULT_RETAIN_COUNT = 2
@@ -57,6 +60,8 @@ export interface ElectronBuildArtifact {
 export interface MortiseUiBuildManifest {
   schemaVersion: typeof ELECTRON_BUILD_SCHEMA_VERSION
   producerVersion: typeof ELECTRON_BUILD_PRODUCER_VERSION
+  producerBunVersion: string
+  producerBunExecutableSha256: string
   buildId: string
   fingerprint: string
   sourceId: string
@@ -109,6 +114,7 @@ export interface AcquireElectronBuildOptions {
   buildRoot?: string
   mode?: ElectronBuildMode
   skipBuild?: boolean
+  expectedBuildId?: string
   retainCount?: number
   maxBytes?: number
   lockTimeoutMs?: number
@@ -144,9 +150,18 @@ export interface MortiseUiBuildCleanupResult {
   totalBytes: number
 }
 
-export function computeElectronBuildId(sourceId: string, mode: ElectronBuildMode): string {
+export interface ElectronBuildToolchainIdentity {
+  bunVersion: string
+  bunExecutableSha256: string
+}
+
+export function computeElectronBuildId(
+  sourceId: string,
+  mode: ElectronBuildMode,
+  toolchain: ElectronBuildToolchainIdentity = currentBuildToolchainIdentity(),
+): string {
   const hash = createHash('sha256')
-  hash.update(`mortise-electron-build:${ELECTRON_BUILD_SCHEMA_VERSION}\0${ELECTRON_BUILD_PRODUCER_VERSION}\0${mode}\0${process.platform}\0${process.arch}\0${process.versions.bun ?? process.version}\0${buildToolchainExecutableSha256()}\0${sourceId}\0`)
+  hash.update(`mortise-electron-build:${ELECTRON_BUILD_SCHEMA_VERSION}\0${ELECTRON_BUILD_PRODUCER_VERSION}\0${mode}\0${process.platform}\0${process.arch}\0${toolchain.bunVersion}\0${toolchain.bunExecutableSha256}\0${sourceId}\0`)
   return hash.digest('hex')
 }
 
@@ -231,6 +246,41 @@ export function acquireElectronBuild(options: AcquireElectronBuildOptions): Mort
   mkdirSync(join(buildRoot, 'sources'), { recursive: true })
   seedUvToolchainCacheFromCompletedBuild(buildRoot)
 
+  const expectedBuildId = options.expectedBuildId
+  if (expectedBuildId !== undefined) {
+    if (!/^[0-9a-f]{64}$/.test(expectedBuildId)) {
+      throw new Error('Expected immutable Electron build ID must be a lowercase SHA-256 identity.')
+    }
+    if (options.skipBuild !== true) {
+      throw new Error('Expected immutable Electron build acquisition requires skipBuild and may never rebuild.')
+    }
+    if (options.capturedSource || options.build || options.prepareDependencies !== undefined) {
+      throw new Error('Expected immutable Electron build acquisition may not accept source or build inputs.')
+    }
+    const buildDir = join(buildRoot, 'builds', expectedBuildId)
+    return withFileLock(join(buildRoot, 'locks', expectedBuildId), () => {
+      const manifest = readValidBuildManifest(buildDir, expectedBuildId, buildRoot, true)
+      if (!manifest) {
+        throw new Error(`Expected immutable Electron build ${shortBuildId(expectedBuildId)} is missing or invalid; pinned acquisition will not rebuild.`)
+      }
+      if (manifest.mode !== mode) {
+        throw new Error(`Expected immutable Electron build ${shortBuildId(expectedBuildId)} has mode ${manifest.mode}, not ${mode}.`)
+      }
+      return leaseElectronBuild({
+        options,
+        buildRoot,
+        coordinatorPath,
+        buildId: expectedBuildId,
+        buildDir,
+        manifest,
+        retainCount,
+        maxBytes,
+        now,
+        pid,
+      })
+    }, { timeoutMs: options.lockTimeoutMs ?? UI_VALIDATION_MAX_WAIT_MS, staleMs: BUILD_LOCK_STALE_MS })
+  }
+
   if (options.capturedSource && resolve(options.capturedSource.repoRoot) !== repoRoot) {
     throw new Error('Electron build source capture does not belong to the requested repository root.')
   }
@@ -245,7 +295,7 @@ export function acquireElectronBuild(options: AcquireElectronBuildOptions): Mort
   const buildDir = join(buildRoot, 'builds', buildId)
   try {
     return withFileLock(join(buildRoot, 'locks', buildId), () => {
-      let manifest = readValidBuildManifest(buildDir, fingerprint)
+      let manifest = readValidBuildManifest(buildDir, fingerprint, buildRoot, true)
 
       if (!manifest) {
         if (options.skipBuild) {
@@ -276,6 +326,7 @@ export function acquireElectronBuild(options: AcquireElectronBuildOptions): Mort
             fingerprint,
             sourceId: capturedSource.sourceId,
             mode,
+            toolchain: currentBuildToolchainIdentity(bunExecutable),
             now: now(),
           })
         } finally {
@@ -283,30 +334,68 @@ export function acquireElectronBuild(options: AcquireElectronBuildOptions): Mort
         }
       }
 
-      return withFileLock(coordinatorPath, () => {
-        cleanupElectronBuildCacheLocked({ buildRoot, retainCount, maxBytes, protectBuildIds: [buildId], now })
-        if (!manifest || manifest.mode !== mode) throw new Error(`Immutable Electron build ${shortBuildId(buildId)} has the wrong build mode.`)
-        const lease: MortiseUiBuildLease = {
-          schemaVersion: ELECTRON_BUILD_SCHEMA_VERSION,
-          token: randomUUID(),
-          runId: options.runId,
-          runDir: resolve(options.runDir),
-          buildId,
-          buildDir,
-          appDir: manifest.appDir,
-          pid,
-          createdAt: now().toISOString(),
-          buildRoot,
-          manifest,
-        }
-        writeJsonAtomic(leasePath(buildRoot, options.runId), leaseFile(lease), 0o600)
-        cleanupElectronBuildCacheLocked({ buildRoot, retainCount, maxBytes, protectBuildIds: [buildId], now })
-        return lease
-      }, { timeoutMs: options.lockTimeoutMs ?? UI_VALIDATION_MAX_WAIT_MS, staleMs: BUILD_LOCK_STALE_MS })
+      if (!manifest) throw new Error(`Immutable Electron build ${shortBuildId(buildId)} was not published.`)
+      return leaseElectronBuild({
+        options,
+        buildRoot,
+        coordinatorPath,
+        buildId,
+        buildDir,
+        manifest,
+        retainCount,
+        maxBytes,
+        now,
+        pid,
+      })
     }, { timeoutMs: options.lockTimeoutMs ?? UI_VALIDATION_MAX_WAIT_MS, staleMs: BUILD_LOCK_STALE_MS })
   } finally {
     if (ownsCapturedSource) capturedSource.dispose()
   }
+}
+
+function leaseElectronBuild(args: {
+  options: AcquireElectronBuildOptions
+  buildRoot: string
+  coordinatorPath: string
+  buildId: string
+  buildDir: string
+  manifest: MortiseUiBuildManifest
+  retainCount: number
+  maxBytes: number
+  now: () => Date
+  pid: number
+}): MortiseUiBuildLease {
+  return withFileLock(args.coordinatorPath, () => {
+    cleanupElectronBuildCacheLocked({
+      buildRoot: args.buildRoot,
+      retainCount: args.retainCount,
+      maxBytes: args.maxBytes,
+      protectBuildIds: [args.buildId],
+      now: args.now,
+    })
+    const lease: MortiseUiBuildLease = {
+      schemaVersion: ELECTRON_BUILD_SCHEMA_VERSION,
+      token: randomUUID(),
+      runId: args.options.runId,
+      runDir: resolve(args.options.runDir),
+      buildId: args.buildId,
+      buildDir: args.buildDir,
+      appDir: args.manifest.appDir,
+      pid: args.pid,
+      createdAt: args.now().toISOString(),
+      buildRoot: args.buildRoot,
+      manifest: args.manifest,
+    }
+    writeJsonAtomic(leasePath(args.buildRoot, args.options.runId), leaseFile(lease), 0o600)
+    cleanupElectronBuildCacheLocked({
+      buildRoot: args.buildRoot,
+      retainCount: args.retainCount,
+      maxBytes: args.maxBytes,
+      protectBuildIds: [args.buildId],
+      now: args.now,
+    })
+    return lease
+  }, { timeoutMs: args.options.lockTimeoutMs ?? UI_VALIDATION_MAX_WAIT_MS, staleMs: BUILD_LOCK_STALE_MS })
 }
 
 export function releaseElectronBuild(lease: MortiseUiBuildLease, options: Omit<CleanupElectronBuildOptions, 'buildRoot'> = {}): MortiseUiBuildCleanupResult {
@@ -384,10 +473,13 @@ export function writeElectronBuildProvenance(options: WriteElectronBuildProvenan
   rmSync(provenancePath, { force: true })
   assertSourceBuildOutputs(appDir)
   const artifacts = collectAppCapsuleInventory(appDir)
-  const buildId = computeElectronBuildId(options.sourceId, options.mode)
+  const toolchain = currentBuildToolchainIdentity()
+  const buildId = computeElectronBuildId(options.sourceId, options.mode, toolchain)
   const manifest: MortiseUiBuildManifest = {
     schemaVersion: ELECTRON_BUILD_SCHEMA_VERSION,
     producerVersion: ELECTRON_BUILD_PRODUCER_VERSION,
+    producerBunVersion: toolchain.bunVersion,
+    producerBunExecutableSha256: toolchain.bunExecutableSha256,
     buildId,
     fingerprint: buildId,
     sourceId: options.sourceId,
@@ -411,6 +503,7 @@ function publishBuildCapsule(args: {
   fingerprint: string
   sourceId: string
   mode: ElectronBuildMode
+  toolchain: ElectronBuildToolchainIdentity
   now: Date
 }): MortiseUiBuildManifest {
   const sourceAppDir = join(args.repoRoot, 'apps', 'electron')
@@ -429,6 +522,8 @@ function publishBuildCapsule(args: {
     const manifest: MortiseUiBuildManifest = {
       schemaVersion: ELECTRON_BUILD_SCHEMA_VERSION,
       producerVersion: ELECTRON_BUILD_PRODUCER_VERSION,
+      producerBunVersion: args.toolchain.bunVersion,
+      producerBunExecutableSha256: args.toolchain.bunExecutableSha256,
       buildId: args.buildId,
       fingerprint: args.fingerprint,
       sourceId: args.sourceId,
@@ -504,7 +599,7 @@ function removeInvalidBuildDirectories(buildRoot: string, protectedIds: Set<stri
   for (const entry of readdirSync(buildsDir, { withFileTypes: true })) {
     if (!entry.isDirectory() || entry.name.startsWith('.staging-') || protectedIds.has(entry.name)) continue
     const path = join(buildsDir, entry.name)
-    if (readValidBuildManifest(path, entry.name)) continue
+    if (readValidBuildManifest(path, entry.name, buildRoot)) continue
     try {
       removeDirectory(path)
       removed.push(entry.name)
@@ -527,9 +622,22 @@ function assertSourceBuildOutputs(sourceAppDir: string): void {
   if (missing.length > 0) throw new Error(`Electron validation build is incomplete: ${missing.join(', ')}`)
 }
 
-function readValidBuildManifest(buildDir: string, fingerprint: string): MortiseUiBuildManifest | undefined {
+function readValidBuildManifest(
+  buildDir: string,
+  fingerprint: string,
+  buildRoot: string,
+  persistRecoveredToolchain = false,
+): MortiseUiBuildManifest | undefined {
   try {
-    const manifest = JSON.parse(readFileSync(join(buildDir, 'build.json'), 'utf8')) as MortiseUiBuildManifest
+    const manifestPath = join(buildDir, 'build.json')
+    const parsed = JSON.parse(readFileSync(manifestPath, 'utf8')) as MortiseUiBuildManifest
+    const toolchain = resolveManifestToolchainIdentity(parsed, buildRoot)
+    if (!toolchain) return undefined
+    const manifest = {
+      ...parsed,
+      producerBunVersion: toolchain.bunVersion,
+      producerBunExecutableSha256: toolchain.bunExecutableSha256,
+    }
     if (
       manifest.schemaVersion !== ELECTRON_BUILD_SCHEMA_VERSION
       || manifest.producerVersion !== ELECTRON_BUILD_PRODUCER_VERSION
@@ -537,7 +645,7 @@ function readValidBuildManifest(buildDir: string, fingerprint: string): MortiseU
       || !/^[0-9a-f]{64}$/.test(manifest.sourceId)
       || manifest.buildId !== fingerprint
       || manifest.fingerprint !== fingerprint
-      || computeElectronBuildId(manifest.sourceId, manifest.mode) !== fingerprint
+      || computeElectronBuildId(manifest.sourceId, manifest.mode, toolchain) !== fingerprint
       || manifest.platform !== process.platform
       || manifest.arch !== process.arch
       || manifest.immutable !== true
@@ -547,6 +655,12 @@ function readValidBuildManifest(buildDir: string, fingerprint: string): MortiseU
     ) return undefined
     assertSourceBuildOutputs(manifest.appDir)
     if (!artifactInventoriesEqual(manifest.artifacts, collectArtifactInventory(manifest.appDir))) return undefined
+    if (persistRecoveredToolchain && (
+      parsed.producerBunVersion !== toolchain.bunVersion
+      || parsed.producerBunExecutableSha256 !== toolchain.bunExecutableSha256
+    )) {
+      writeJsonAtomic(manifestPath, manifest)
+    }
     return manifest
   } catch { return undefined }
 }
@@ -558,14 +672,16 @@ function listBuilds(buildRoot: string): MortiseUiBuildManifest[] {
   for (const entry of readdirSync(buildsDir, { withFileTypes: true })) {
     if (!entry.isDirectory() || entry.name.startsWith('.staging-')) continue
     try {
-      const manifest = JSON.parse(readFileSync(join(buildsDir, entry.name, 'build.json'), 'utf8')) as MortiseUiBuildManifest
+      const buildDir = join(buildsDir, entry.name)
+      const manifest = readValidBuildManifest(buildDir, entry.name, buildRoot)
       if (
-        manifest.schemaVersion === ELECTRON_BUILD_SCHEMA_VERSION
+        manifest
+        && manifest.schemaVersion === ELECTRON_BUILD_SCHEMA_VERSION
         && manifest.producerVersion === ELECTRON_BUILD_PRODUCER_VERSION
         && manifest.buildId === entry.name
         && /^[0-9a-f]{64}$/.test(manifest.sourceId)
         && BUILD_MODES.includes(manifest.mode)
-        && computeElectronBuildId(manifest.sourceId, manifest.mode) === entry.name
+        && computeElectronBuildId(manifest.sourceId, manifest.mode, manifestToolchainIdentity(manifest)) === entry.name
         && manifest.platform === process.platform
         && manifest.arch === process.arch
         && Number.isSafeInteger(manifest.sizeBytes)
@@ -574,6 +690,61 @@ function listBuilds(buildRoot: string): MortiseUiBuildManifest[] {
     } catch { /* Incomplete unreferenced builds are removed by later acquisition or manual cache deletion. */ }
   }
   return builds
+}
+
+function resolveManifestToolchainIdentity(
+  manifest: MortiseUiBuildManifest,
+  buildRoot: string,
+): ElectronBuildToolchainIdentity | undefined {
+  if (
+    typeof manifest.producerBunVersion === 'string'
+    && /^[0-9A-Za-z.+-]+$/.test(manifest.producerBunVersion)
+    && /^[0-9a-f]{64}$/.test(manifest.producerBunExecutableSha256)
+  ) return manifestToolchainIdentity(manifest)
+
+  // Schema 5 builds predate explicit toolchain fields. Preserve only those
+  // whose original identity can be uniquely proven by a verified cached Bun.
+  if (
+    manifest.schemaVersion !== ELECTRON_BUILD_SCHEMA_VERSION
+    || manifest.producerBunVersion !== undefined
+    || manifest.producerBunExecutableSha256 !== undefined
+    || !BUILD_MODES.includes(manifest.mode)
+    || !/^[0-9a-f]{64}$/.test(manifest.sourceId)
+    || !/^[0-9a-f]{64}$/.test(manifest.buildId)
+  ) return undefined
+  const matches = listVerifiedCachedBunToolchains(buildRoot).filter(toolchain => (
+    computeElectronBuildId(manifest.sourceId, manifest.mode, toolchain) === manifest.buildId
+  ))
+  return matches.length === 1 ? matches[0] : undefined
+}
+
+function manifestToolchainIdentity(manifest: MortiseUiBuildManifest): ElectronBuildToolchainIdentity {
+  return {
+    bunVersion: manifest.producerBunVersion,
+    bunExecutableSha256: manifest.producerBunExecutableSha256,
+  }
+}
+
+function listVerifiedCachedBunToolchains(buildRoot: string): ElectronBuildToolchainIdentity[] {
+  const bunRoot = join(buildRoot, 'toolchains', 'bun')
+  if (!existsSync(bunRoot)) return []
+  const identities: ElectronBuildToolchainIdentity[] = []
+  for (const versionEntry of readdirSync(bunRoot, { withFileTypes: true })) {
+    if (!versionEntry.isDirectory()) continue
+    const platformDir = join(bunRoot, versionEntry.name, `${process.platform}-${process.arch}`)
+    if (!existsSync(platformDir)) continue
+    for (const hashEntry of readdirSync(platformDir, { withFileTypes: true })) {
+      if (!hashEntry.isDirectory() || !/^[0-9a-f]{64}$/.test(hashEntry.name)) continue
+      const binaryName = process.platform === 'win32' ? 'bun.exe' : 'bun'
+      const binary = join(platformDir, hashEntry.name, binaryName)
+      const manifestPath = join(platformDir, hashEntry.name, 'bun.json')
+      const expected = { version: versionEntry.name, sha256: hashEntry.name, binaryName }
+      if (validCachedBunToolchain(binary, manifestPath, expected)) {
+        identities.push({ bunVersion: versionEntry.name, bunExecutableSha256: hashEntry.name })
+      }
+    }
+  }
+  return identities
 }
 
 function reapStaleLeases(buildRoot: string): Set<string> {
@@ -1020,6 +1191,8 @@ function writeBuildProvenance(path: string, manifest: MortiseUiBuildManifest): v
   writeJsonAtomic(path, {
     schemaVersion: manifest.schemaVersion,
     producerVersion: manifest.producerVersion,
+    producerBunVersion: manifest.producerBunVersion,
+    producerBunExecutableSha256: manifest.producerBunExecutableSha256,
     buildId: manifest.buildId,
     sourceId: manifest.sourceId,
     mode: manifest.mode,
@@ -1074,6 +1247,15 @@ export function buildToolchainExecutableSha256(executable = process.execPath): s
   }
   cachedToolchainExecutableSha256 ??= createHash('sha256').update(readFileSync(executable)).digest('hex')
   return cachedToolchainExecutableSha256
+}
+
+function currentBuildToolchainIdentity(executable = process.execPath): ElectronBuildToolchainIdentity {
+  const bunVersion = process.versions.bun
+  if (!bunVersion) throw new Error('Electron builds require a Bun producer runtime.')
+  return {
+    bunVersion,
+    bunExecutableSha256: buildToolchainExecutableSha256(executable),
+  }
 }
 
 function sleepSync(ms: number): void {
