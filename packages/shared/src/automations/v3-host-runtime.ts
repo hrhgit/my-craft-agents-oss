@@ -1,7 +1,8 @@
 import { AutomationSchedulerV3 } from '../scheduler/automation-scheduler.ts'
-import { AutomationV3Store, type AutomationV3StoreOptions } from './v3-store.ts'
+import { automationIdentity, AutomationV3Store, type AutomationV3StoreOptions } from './v3-store.ts'
 import { AutomationV3Runtime, type AutomationEventDispatchResultV1 } from './v3-runtime.ts'
 import type {
+  AutomationDefinitionV3,
   AutomationExecutionCallbacksV1,
   AutomationRunV1,
   CloudEventV1,
@@ -11,7 +12,7 @@ import type {
 export interface AutomationWorkspaceHostV3Options extends AutomationV3StoreOptions {
   callbacks: AutomationExecutionCallbacksV1
   validateSession?: (sessionId: string, workspaceId: string) => boolean
-  onChanged?: () => void
+  onChanged?: (change: { revision: number; historyCursor: number }) => void
   onError?: (error: Error) => void
 }
 
@@ -21,7 +22,7 @@ export class AutomationWorkspaceHostV3 {
   readonly runtime: AutomationV3Runtime
   private readonly scheduler: AutomationSchedulerV3
   private readonly validateSession?: AutomationWorkspaceHostV3Options['validateSession']
-  private readonly onChanged?: () => void
+  private readonly onChanged?: AutomationWorkspaceHostV3Options['onChanged']
   private readonly onError?: (error: Error) => void
   private readonly abortController = new AbortController()
   private readonly pending: string[] = []
@@ -38,10 +39,15 @@ export class AutomationWorkspaceHostV3 {
     this.onChanged = options.onChanged
     this.onError = options.onError
     this.scheduler = new AutomationSchedulerV3({
-      getDefinitions: () => this.store.initialize().definitions,
-      listRuns: automationId => this.store.listRuns({ automationId, limit: 10_000 }),
-      onOccurrence: async (definition, trigger, occurrence) => {
-        this.enqueueAcceptedRun(this.runtime.acceptTimeTrigger(definition, trigger, occurrence))
+      listDueOccurrences: now => this.store.listDueOccurrences(now),
+      getNextDueAt: () => this.store.getNextDueAt(),
+      onOccurrence: async due => {
+        this.enqueueAcceptedRun(this.runtime.acceptTimeTrigger(
+          due.definition,
+          due.trigger,
+          due.occurrence,
+          due.definitionRevision,
+        ))
       },
       onError: error => this.report(error),
     })
@@ -63,13 +69,16 @@ export class AutomationWorkspaceHostV3 {
   refresh(): void {
     if (!this.started || this.stopped || this.readOnly) return
     this.scheduler.refresh()
-    this.onChanged?.()
+    this.publishChanged()
   }
 
   acceptManual(automationId: string, operationId: string, triggerId?: string): { run: AutomationRunV1; duplicate: boolean } {
     this.assertRunning()
     const result = this.runtime.acceptManual(automationId, operationId, triggerId)
-    if (!result.duplicate) this.enqueueAcceptedRun(result.run)
+    if (!result.duplicate) {
+      this.enqueueAcceptedRun(result.run)
+      this.publishChanged()
+    }
     return result
   }
 
@@ -83,9 +92,10 @@ export class AutomationWorkspaceHostV3 {
       ...(this.validateSession ? { validateSession: this.validateSession } : {}),
     })
     if (result.status === 'duplicate' && result.event) {
-      return { ...result, runs: this.store.listRuns({ limit: 10_000 }).filter(run => run.eventId === result.event!.eventId) }
+      return { ...result, runs: this.store.listRuns({ eventId: result.event.eventId, limit: 500 }) }
     }
     for (const run of result.runs) this.enqueueAcceptedRun(run)
+    if (!result.duplicate) this.publishChanged()
     return result
   }
 
@@ -102,6 +112,46 @@ export class AutomationWorkspaceHostV3 {
     return this.readOnly
   }
 
+  exportDefinitions(): AutomationDefinitionV3[] {
+    this.assertRunning()
+    return structuredClone(this.store.initialize().definitions)
+  }
+
+  importDefinitions(
+    entries: AutomationDefinitionV3[],
+    mode: 'skip' | 'overwrite',
+    operationId = automationIdentity('op_resource_import', this.store.workspaceId, mode, entries),
+  ): { imported: string[]; skipped: string[] } {
+    this.assertRunning()
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const current = this.store.initialize()
+      const byId = new Map(current.definitions.map(definition => [definition.id, definition]))
+      const imported: string[] = []
+      const skipped: string[] = []
+      for (const entry of entries) {
+        if (byId.has(entry.id) && mode === 'skip') {
+          skipped.push(entry.name)
+          continue
+        }
+        byId.set(entry.id, structuredClone(entry))
+        imported.push(entry.name)
+      }
+      if (imported.length === 0) return { imported, skipped }
+      const mutation = this.store.mutateDocument({
+        operationId,
+        expectedRevision: current.revision,
+        document: { ...current, definitions: [...byId.values()] },
+      })
+      if (mutation.status === 'conflict') continue
+      if (mutation.status !== 'ok' && mutation.status !== 'duplicate') {
+        throw new Error(mutation.error?.message ?? `Automation import failed with status ${mutation.status}`)
+      }
+      this.refresh()
+      return { imported, skipped }
+    }
+    throw new Error('Automation import conflicted after 3 attempts')
+  }
+
   private assertRunning(): void {
     if (!this.started || this.stopped) throw new Error('Automation workspace host is not running')
     if (this.readOnly) throw new Error('Automation workspace host is read-only because its storage capabilities are incompatible')
@@ -115,7 +165,13 @@ export class AutomationWorkspaceHostV3 {
   }
 
   private recoverQueuedRuns(): void {
-    const queued = this.store.listRuns({ limit: 10_000 }).filter(run => run.state === 'queued')
+    const queued: AutomationRunV1[] = []
+    let cursor
+    do {
+      const page = this.store.listRunsPage({ states: ['queued'], limit: 500, ...(cursor ? { cursor } : {}) })
+      queued.push(...page.items)
+      cursor = page.nextCursor
+    } while (cursor)
     const overlapByAutomation = new Map<string, AutomationRunV1[]>()
     for (const run of queued) {
       if (run.reason !== 'overlap-queued') {
@@ -149,6 +205,7 @@ export class AutomationWorkspaceHostV3 {
       this.pendingIds.delete(runId)
       try {
         await this.runtime.executeClaimedRun(runId, this.abortController.signal)
+        this.publishChanged()
       } catch (error) {
         this.report(error instanceof Error ? error : new Error(String(error)))
       }
@@ -157,5 +214,9 @@ export class AutomationWorkspaceHostV3 {
 
   private report(error: Error): void {
     this.onError?.(error)
+  }
+
+  private publishChanged(): void {
+    this.onChanged?.(this.store.getChangeToken())
   }
 }

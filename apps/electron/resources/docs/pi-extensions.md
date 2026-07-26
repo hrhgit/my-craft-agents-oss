@@ -984,12 +984,11 @@ TUI component factories never cross the Pi RPC boundary.
 | Quick Start above | Mortise-target package manifest and update lifecycle | `targets`, `session_start`, `session_shutdown` |
 | Sandbox example above | Self-contained interactive iframe | `sandbox-app`, `mortise.storage`, `mortise.resize` |
 | Manifest settings above | Generic settings UI | `ui.settings`, `SettingsManager` |
-| [Pi `mortise-gui.ts` example](https://github.com/hrhgit/mortise/blob/main/packages/coding-agent/examples/extensions/mortise-gui.ts) | Complete contribution, validation contract, scenario teardown, and sandbox bridge | `ctx.ui.validation`, `upsertContribution` |
+| [`mortise-gui.ts` example](https://github.com/hrhgit/mortise/blob/main/pi/packages/coding-agent/examples/extensions/mortise-gui.ts) | Complete contribution, validation contract, scenario teardown, and sandbox bridge | `ctx.ui.validation`, `upsertContribution` |
 
 ## See Also
 
-- [Pi extensions](https://github.com/hrhgit/mortise/blob/main/packages/coding-agent/docs/extensions.md) for the complete Pi extension lifecycle and API.
-- [Pi host-mediated UI validation](https://github.com/hrhgit/mortise/blob/main/packages/coding-agent/docs/extensions.md#host-mediated-ui-validation) for the SDK-level validation contract.
+- [`mortise-gui.ts`](https://github.com/hrhgit/mortise/blob/main/pi/packages/coding-agent/examples/extensions/mortise-gui.ts) for a complete runnable host-rendered contribution and validation scenario.
 - [Pi Extension GUI Architecture](../../../../docs/architecture/pi-extension-gui.md) for protocol, layout, isolation, and migration rationale.
 - [Themes](./themes.md) for TUI and GUI theme boundaries.
 - [Skills](./skills.md) for Mortise workspace skills, which are separate from Pi extensions.

@@ -40,9 +40,9 @@ import type {
 	ExtensionSettingScalar,
 } from "./extensions/types.ts";
 import { ModelRegistry } from "./model-registry.ts";
-import { DefaultPackageManager } from "./package-manager.ts";
 import { BUILT_IN_PROVIDER_DISPLAY_NAMES } from "./provider-display-names.ts";
 import { DefaultResourceLoader } from "./resource-loader.ts";
+import { ResourceResolver } from "./resource-resolver.ts";
 import {
 	type SessionContext,
 	type SessionEntry,
@@ -266,8 +266,6 @@ export interface HostExtensionSummary {
 	sourceInfo: SourceInfo;
 	commands: string[];
 	tools: string[];
-	flags: string[];
-	shortcuts: string[];
 	config?: ExtensionNamespaceSettings;
 	enabled: boolean;
 }
@@ -1210,8 +1208,6 @@ function summarizeExtension(extension: Extension): HostExtensionSummary {
 		sourceInfo: extension.sourceInfo,
 		commands: Array.from(extension.commands.keys()).sort(),
 		tools: Array.from(extension.tools.keys()).sort(),
-		flags: Array.from(extension.flags.keys()).sort(),
-		shortcuts: Array.from(extension.shortcuts.keys()).map(String).sort(),
 		config,
 		enabled,
 	};
@@ -1248,14 +1244,14 @@ export async function getExtensionCatalog(
 	const agentDir = args.agentDir ?? getAgentDir();
 	const target = args.extensionTarget ?? "mortise";
 	try {
-		const packageManager = new DefaultPackageManager({
+		const resourceResolver = new ResourceResolver({
 			cwd,
 			agentDir,
 			projectConfigDir: args.projectConfigDir,
 			settingsManager: SettingsManager.create(cwd, agentDir, args.projectConfigDir),
 			extensionTarget: target,
 		});
-		const resolved = await packageManager.resolve();
+		const resolved = await resourceResolver.resolve();
 		return {
 			extensions: resolved.extensions
 				.filter((resource) => resource.metadata.extensionId)
@@ -1284,8 +1280,6 @@ export async function getExtensionCatalog(
 						sourceInfo: createSourceInfo(resource.path, resource.metadata),
 						commands: [],
 						tools: [],
-						flags: [],
-						shortcuts: [],
 						config,
 						enabled: config?.enabled === undefined ? true : config.enabled !== false,
 					};

@@ -56,7 +56,7 @@ import {
   downloadUv,
   buildMcpServers,
   getPlatformKey,
-  stagePiRuntime,
+  stageCompiledPiRuntime,
 } from './build/common';
 
 // ---------------------------------------------------------------------------
@@ -181,7 +181,7 @@ function assembleResources(config: ServerBuildConfig): void {
     copyFileSync(sessionServerDist, join(destSessionServer, 'index.js'));
   }
 
-  stagePiRuntime({
+  stageCompiledPiRuntime({
     platform,
     arch,
     upload: false,

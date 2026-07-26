@@ -11,8 +11,7 @@
 
 import { existsSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
-import { basename, dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { basename, join } from 'node:path';
 import type { AgentEvent } from '@mortise/core/types';
 import type { FileAttachment } from '../utils/files.ts';
 import { createSanitizedEnv } from '../utils/env.ts';
@@ -514,30 +513,15 @@ export class PiAgent extends BaseAgent {
     return this.rpcClient;
   }
 
-  private resolvePiCliPath(): string {
-    const checkedPaths: string[] = [];
-    const runtimeCliPath = getBackendRuntime(this.config).paths?.piCli;
-    if (runtimeCliPath) {
-      checkedPaths.push(runtimeCliPath);
-      if (existsSync(runtimeCliPath)) {
-        return runtimeCliPath;
-      }
-    }
-
-    try {
-      const resolved = import.meta.resolve('@mortise/pi-coding-agent');
-      const packageDist = dirname(fileURLToPath(resolved));
-      const cliPath = join(packageDist, 'cli.js');
-      checkedPaths.push(cliPath);
-      if (existsSync(cliPath)) {
-        return cliPath;
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      checkedPaths.push(`@mortise/pi-coding-agent resolution failed: ${message}`);
-    }
-
-    throw new Error(`Pi CLI entrypoint not found. Checked: ${checkedPaths.join('; ')}`);
+  private resolvePiRuntimePath(): string {
+	const runtimePath = getBackendRuntime(this.config).paths?.piRuntime;
+	if (!runtimePath) {
+	  throw new Error('Mortise Agent runtime path was not provided by the runtime resolver');
+	}
+	if (!existsSync(runtimePath)) {
+	  throw new Error(`Mortise Agent runtime is missing: ${runtimePath}`);
+	}
+	return runtimePath;
   }
 
   private getMortiseExtensionPaths(): string[] {
@@ -559,21 +543,23 @@ export class PiAgent extends BaseAgent {
     return ready;
   }
 
-  private piHostKey(nodePath: string, cliPath: string, env: Record<string, string | undefined>): string {
+  private piHostKey(runtimePath: string, env: Record<string, string | undefined>): string {
     const environmentFingerprint = createHash('sha256')
       .update(JSON.stringify(Object.entries(env).sort(([left], [right]) => left.localeCompare(right))))
       .digest('hex');
-    return `${nodePath}\u0000${cliPath}\u0000${MORTISE_AGENT_DIR}\u0000${environmentFingerprint}`;
+	return `${runtimePath}\u0000${MORTISE_AGENT_DIR}\u0000${environmentFingerprint}`;
   }
 
   private async startRpcClientUnlocked(): Promise<void> {
     const runtime = getBackendRuntime(this.config);
     const cwd = this.resolvedWorkspaceRoot();
-    const cliPath = this.resolvePiCliPath();
-    const usesCompiledBinary = basename(cliPath).toLowerCase() === (process.platform === 'win32' ? 'pi.exe' : 'pi');
-    const nodePath = usesCompiledBinary ? cliPath : (runtime.paths?.node || process.execPath);
+	const runtimePath = this.resolvePiRuntimePath();
+	const expectedBinary = process.platform === 'win32' ? 'pi.exe' : 'pi';
+	if (basename(runtimePath).toLowerCase() !== expectedBinary) {
+	  throw new Error(`Mortise Agent runtime must be the compiled ${expectedBinary} binary: ${runtimePath}`);
+	}
 
-    this.debug(`Starting Pi RpcClient: ${nodePath} ${cliPath}`);
+	this.debug(`Starting Mortise Agent runtime: ${runtimePath}`);
     this.resetRpcErrorDedup();
     this.rpcProcessFailureHandled = false;
 
@@ -593,8 +579,8 @@ export class PiAgent extends BaseAgent {
     const pipeStderr = process.env.MORTISE_DEBUG === '1';
 
     this.writePiRuntimeLog('info', 'startup.begin', {
-      command: nodePath,
-      cliPath,
+	  command: runtimePath,
+	  runtimePath,
       cwd,
       runtimeProvider: runtime.piAuthProvider,
       authType: this.config.authType,
@@ -602,10 +588,10 @@ export class PiAgent extends BaseAgent {
     });
 
     const clientOptions: PiRpcClientOptions = {
-      command: nodePath,
-      commandArgs,
-      cliPath,
-      directExecutable: usesCompiledBinary,
+	  command: runtimePath,
+	  commandArgs,
+	  runtimePath,
+	  directExecutable: true,
       cwd,
       provider: runtime.piAuthProvider,
       model: this._model,
@@ -626,7 +612,7 @@ export class PiAgent extends BaseAgent {
       : undefined;
     const runtimeId = this.config.session?.mortiseId ?? `runtime-${Date.now()}`;
     const lease = await piHostManager.acquire({
-      key: this.piHostKey(nodePath, cliPath, clientOptions.env ?? {}),
+	  key: this.piHostKey(runtimePath, clientOptions.env ?? {}),
       client: clientOptions,
       runtime: {
         runtimeId,
@@ -2709,11 +2695,9 @@ export class PiAgent extends BaseAgent {
       inMemory: true,
       persistInitialState: false,
       uiCapabilities: {
-        kind: 'none',
-        dialogs: false,
-        widgets: false,
-        editorControl: false,
-        contributions: false,
+		kind: 'none',
+		dialogs: false,
+		contributions: false,
         interactionSchemas: [],
       },
     });

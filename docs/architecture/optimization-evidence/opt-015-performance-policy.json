@@ -1,0 +1,45 @@
+{
+  "schema": "mortise/automation-query-performance-policy/v1",
+  "frozenAt": "2026-07-26",
+  "baselineRevision": "f398a42eeaff1fc21a23f1f9a6622ec4f141fb23",
+  "environment": {
+    "platform": "win32",
+    "arch": "x64",
+    "runtime": "repository-pinned Bun",
+    "storage": "local temporary SQLite database"
+  },
+  "fixture": {
+    "workspaces": 1,
+    "definitions": 500,
+    "runs": 10000,
+    "states": ["queued", "running", "succeeded", "failed", "cancelled", "skipped"],
+    "events": 2500,
+    "expiredLeases": 250,
+    "timeTriggers": 500,
+    "seed": "opt-015-index-v1"
+  },
+  "operations": [
+    { "name": "definitions-page", "limit": 100 },
+    { "name": "automation-runs-page", "limit": 50 },
+    { "name": "queued-runs-page", "limit": 100 },
+    { "name": "event-runs-page", "limit": 50 },
+    { "name": "runs-time-range-page", "limit": 100 },
+    { "name": "history-change-cursor-page", "limit": 100 },
+    { "name": "expired-leases-page", "limit": 100 },
+    { "name": "due-occurrences-page", "limit": 100 }
+  ],
+  "sampling": {
+    "warmup": 1,
+    "warmSamples": 10,
+    "coldProcessSamples": 10,
+    "statistics": ["median", "p95"],
+    "timeoutMsPerOperation": 1000,
+    "noisePolicy": "Do not discard individual samples. Any timeout, invalid result, or foreign-process interference invalidates the complete base/final set and requires a fresh rerun."
+  },
+  "budgets": {
+    "absoluteWarmP95Ms": 25,
+    "absoluteColdP95Ms": 75,
+    "relativeRegressionCeilingPercent": 5,
+    "queryPlan": "Every operation must use a declared SQLite index and must not scan the automation history stream or all run records."
+  }
+}

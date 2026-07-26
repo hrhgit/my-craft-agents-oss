@@ -68,7 +68,6 @@ export function immutableRuntimeRequiredAppPaths(
     `dist/resources/pi-runtime/pi${executable}`,
     'dist/resources/pi-runtime/package.json',
     `dist/resources/pi-runtime/sidecar/bin/${sidecarRuntimeDir}/pi-network-sidecar${executable}`,
-    'dist/resources/pi-runtime/theme/dark.json',
     'dist/resources/powershell-parser.ps1',
     'dist/resources/scripts/pdf_tool.py',
     'dist/resources/session-mcp-server/index.js',

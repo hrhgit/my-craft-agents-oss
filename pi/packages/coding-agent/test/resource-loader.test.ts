@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -40,7 +40,6 @@ describe("DefaultResourceLoader", () => {
 			expect(loader.getExtensions().extensions).toEqual([]);
 			expect(loader.getSkills().skills).toEqual([]);
 			expect(loader.getPrompts().prompts).toEqual([]);
-			expect(loader.getThemes().themes).toEqual([]);
 		});
 
 		it("should discover skills from agentDir", async () => {
@@ -103,7 +102,7 @@ Prompt content.`,
 
 		it("should prefer project resources over user on name collisions", async () => {
 			const userPromptsDir = join(agentDir, "prompts");
-			const projectPromptsDir = join(cwd, ".pi", "prompts");
+			const projectPromptsDir = join(cwd, ".mortise", "prompts");
 			mkdirSync(userPromptsDir, { recursive: true });
 			mkdirSync(projectPromptsDir, { recursive: true });
 			const userPromptPath = join(userPromptsDir, "commit.md");
@@ -112,7 +111,7 @@ Prompt content.`,
 			writeFileSync(projectPromptPath, "Project prompt");
 
 			const userSkillDir = join(agentDir, "skills", "collision-skill");
-			const projectSkillDir = join(cwd, ".pi", "skills", "collision-skill");
+			const projectSkillDir = join(cwd, ".mortise", "skills", "collision-skill");
 			mkdirSync(userSkillDir, { recursive: true });
 			mkdirSync(projectSkillDir, { recursive: true });
 			const userSkillPath = join(userSkillDir, "SKILL.md");
@@ -134,20 +133,6 @@ description: project
 Project skill`,
 			);
 
-			const baseTheme = JSON.parse(
-				readFileSync(join(process.cwd(), "src", "modes", "interactive", "theme", "dark.json"), "utf-8"),
-			) as { name: string; vars?: Record<string, string> };
-			baseTheme.name = "collision-theme";
-			const userThemePath = join(agentDir, "themes", "collision.json");
-			const projectThemePath = join(cwd, ".pi", "themes", "collision.json");
-			mkdirSync(join(agentDir, "themes"), { recursive: true });
-			mkdirSync(join(cwd, ".pi", "themes"), { recursive: true });
-			writeFileSync(userThemePath, JSON.stringify(baseTheme, null, 2));
-			if (baseTheme.vars) {
-				baseTheme.vars.accent = "#ff00ff";
-			}
-			writeFileSync(projectThemePath, JSON.stringify(baseTheme, null, 2));
-
 			const loader = new DefaultResourceLoader({ cwd, agentDir });
 			await loader.reload();
 
@@ -156,9 +141,6 @@ Project skill`,
 
 			const skill = loader.getSkills().skills.find((s) => s.name === "collision-skill");
 			expect(skill?.filePath).toBe(projectSkillPath);
-
-			const theme = loader.getThemes().themes.find((t) => t.name === "collision-theme");
-			expect(theme?.sourcePath).toBe(projectThemePath);
 		});
 
 		it("should load symlinked user and project extensions once", async () => {
@@ -175,9 +157,9 @@ Project skill`,
 			);
 
 			mkdirSync(agentDir, { recursive: true });
-			mkdirSync(join(cwd, ".pi"), { recursive: true });
+			mkdirSync(join(cwd, ".mortise"), { recursive: true });
 			symlinkSync(sharedExtDir, join(agentDir, "extensions"), "dir");
-			symlinkSync(sharedExtDir, join(cwd, ".pi", "extensions"), "dir");
+			symlinkSync(sharedExtDir, join(cwd, ".mortise", "extensions"), "dir");
 
 			const settingsManager = SettingsManager.inMemory({
 				extensions: [extensionEntry("shared-extension", join(sharedExtDir, "shared.ts"))],
@@ -251,7 +233,7 @@ Skill body.`,
 
 		it("should keep both extensions loaded when command names collide", async () => {
 			const userExtDir = join(agentDir, "extensions");
-			const projectExtDir = join(cwd, ".pi", "extensions");
+			const projectExtDir = join(cwd, ".mortise", "extensions");
 			mkdirSync(userExtDir, { recursive: true });
 			mkdirSync(projectExtDir, { recursive: true });
 
@@ -321,49 +303,6 @@ Skill body.`,
 			]);
 		});
 
-		it("should honor overrides for auto-discovered resources", async () => {
-			const settingsManager = SettingsManager.inMemory();
-			settingsManager.setSkillPaths(["-skills/skip-skill"]);
-			settingsManager.setPromptTemplatePaths(["-prompts/skip.md"]);
-			settingsManager.setThemePaths(["-themes/skip.json"]);
-
-			const extensionsDir = join(agentDir, "extensions");
-			mkdirSync(extensionsDir, { recursive: true });
-			writeFileSync(join(extensionsDir, "disabled.ts"), "export default function() {}");
-
-			const skillDir = join(agentDir, "skills", "skip-skill");
-			mkdirSync(skillDir, { recursive: true });
-			writeFileSync(
-				join(skillDir, "SKILL.md"),
-				`---
-name: skip-skill
-description: Skip me
----
-Content`,
-			);
-
-			const promptsDir = join(agentDir, "prompts");
-			mkdirSync(promptsDir, { recursive: true });
-			writeFileSync(join(promptsDir, "skip.md"), "Skip prompt");
-
-			const themesDir = join(agentDir, "themes");
-			mkdirSync(themesDir, { recursive: true });
-			writeFileSync(join(themesDir, "skip.json"), "{}");
-
-			const loader = new DefaultResourceLoader({ cwd, agentDir, settingsManager });
-			await loader.reload();
-
-			const { extensions } = loader.getExtensions();
-			const { skills } = loader.getSkills();
-			const { prompts } = loader.getPrompts();
-			const { themes } = loader.getThemes();
-
-			expect(extensions.some((e) => e.path.endsWith("disabled.ts"))).toBe(false);
-			expect(skills.some((s) => s.name === "skip-skill")).toBe(false);
-			expect(prompts.some((p) => p.name === "skip")).toBe(false);
-			expect(themes.some((t) => t.sourcePath?.endsWith("skip.json"))).toBe(false);
-		});
-
 		it("should discover AGENTS.md context files", async () => {
 			writeFileSync(join(cwd, "AGENTS.md"), "# Project Guidelines\n\nBe helpful.");
 
@@ -385,10 +324,10 @@ Content`,
 			expect(agentsFiles).toEqual([]);
 		});
 
-		it("should discover SYSTEM.md from cwd/.pi", async () => {
-			const piDir = join(cwd, ".pi");
-			mkdirSync(piDir, { recursive: true });
-			writeFileSync(join(piDir, "SYSTEM.md"), "You are a helpful assistant.");
+		it("should discover SYSTEM.md from cwd/.mortise", async () => {
+			const mortiseDir = join(cwd, ".mortise");
+			mkdirSync(mortiseDir, { recursive: true });
+			writeFileSync(join(mortiseDir, "SYSTEM.md"), "You are a helpful assistant.");
 
 			const loader = new DefaultResourceLoader({ cwd, agentDir });
 			await loader.reload();
@@ -397,9 +336,9 @@ Content`,
 		});
 
 		it("should discover APPEND_SYSTEM.md", async () => {
-			const piDir = join(cwd, ".pi");
-			mkdirSync(piDir, { recursive: true });
-			writeFileSync(join(piDir, "APPEND_SYSTEM.md"), "Additional instructions.");
+			const mortiseDir = join(cwd, ".mortise");
+			mkdirSync(mortiseDir, { recursive: true });
+			writeFileSync(join(mortiseDir, "APPEND_SYSTEM.md"), "Additional instructions.");
 
 			const loader = new DefaultResourceLoader({ cwd, agentDir });
 			await loader.reload();

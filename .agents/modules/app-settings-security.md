@@ -28,7 +28,7 @@ validation:
   - { id: settings-security-regression, kind: unit, command: "bun test --isolate packages/shared/src/config packages/shared/src/auth packages/shared/src/credentials", description: "Run settings, authentication, and credential regressions with per-file module isolation.", triggers: [owned-change], required: true, evidence: "Bun test exit status and output." }
   - { id: electron-settings-contract, kind: contract, command: "bun run typecheck:electron", description: "Verify Electron settings contracts compile.", triggers: [contract-change], required: true, evidence: "TypeScript compiler exit status and diagnostics." }
   - { id: settings-physical, kind: physical, command: "bun run test:ui-validation:electron", description: "Exercise settings behavior through the shared Developer Kit host.", triggers: [ui-change, release], required: false, evidence: "Developer Kit run output and retained UI evidence." }
-scope_digest: 66354acb56fced6bbc5676dfb73c18ba19186a89
+scope_digest: dd2f86c46f2b3e83f1ee6d442ad1e7ead10d2675
 ---
 
 ## Purpose

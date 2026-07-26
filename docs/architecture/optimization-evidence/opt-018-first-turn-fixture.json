@@ -1,0 +1,12 @@
+{
+  "schema": "mortise/headless-first-turn-fixture/v1",
+  "prompt": "Return the exact text: headless fixture complete",
+  "assistantText": "headless fixture complete",
+  "responseDelayMs": 100,
+  "provider": {
+    "id": "mortise-headless-fixture",
+    "modelId": "fixture-model",
+    "api": "openai-completions",
+    "apiKey": "fixture-local-only"
+  }
+}

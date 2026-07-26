@@ -6,7 +6,7 @@ const entry: PiExtensionCatalogEntry = {
   id: 'example', target: 'mortise', loaded: true, title: 'Example', description: '', category: 'other',
   configurable: true, enabled: true, path: 'example.ts', resolvedPath: 'example.ts',
   manifestStatus: 'legacy', manifestDiagnostics: [], hostVersion: '0.1.0', loadable: true,
-  commands: [], tools: [], flags: [], shortcuts: [],
+  commands: [], tools: [],
   ui: { schemaVersion: 1, settings: { schemaVersion: 1, fields: [
     { key: 'enabledFeature', type: 'boolean', label: 'Enabled', default: true },
     { key: 'limit', type: 'number', label: 'Limit', min: 1, max: 10, requiresReload: true },

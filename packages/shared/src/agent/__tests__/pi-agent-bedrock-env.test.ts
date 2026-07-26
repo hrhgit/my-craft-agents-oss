@@ -25,15 +25,15 @@ describe('PiAgent Bedrock env handling', () => {
   it('isolates global hosts by process environment without exposing credentials in the key', () => {
     const agent = new PiAgent(createConfig())
 
-    const first = (agent as any).piHostKey('node', 'pi.js', {
+    const first = (agent as any).piHostKey('C:/mortise/pi.exe', {
       AWS_REGION: 'eu-central-1',
       AWS_SECRET_ACCESS_KEY: 'first-secret',
     }) as string
-    const reordered = (agent as any).piHostKey('node', 'pi.js', {
+    const reordered = (agent as any).piHostKey('C:/mortise/pi.exe', {
       AWS_SECRET_ACCESS_KEY: 'first-secret',
       AWS_REGION: 'eu-central-1',
     }) as string
-    const second = (agent as any).piHostKey('node', 'pi.js', {
+    const second = (agent as any).piHostKey('C:/mortise/pi.exe', {
       AWS_REGION: 'eu-central-1',
       AWS_SECRET_ACCESS_KEY: 'second-secret',
     }) as string

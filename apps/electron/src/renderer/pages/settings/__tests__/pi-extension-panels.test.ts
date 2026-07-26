@@ -9,7 +9,7 @@ function catalogEntry(configurable: boolean, withSchema: boolean): PiExtensionCa
     id: 'extension', target: 'mortise', loaded: true, title: 'Extension', description: '', category: 'other',
     configurable, enabled: true, path: 'extension.ts', resolvedPath: 'C:\\extensions\\extension.ts',
     manifestStatus: 'legacy', manifestDiagnostics: [], hostVersion: '0.1.0', loadable: true,
-    commands: [], tools: [], flags: [], shortcuts: [],
+    commands: [], tools: [],
     ui: withSchema ? {
       schemaVersion: 1,
       settings: { schemaVersion: 1, fields: [{ key: 'enabledFeature', type: 'boolean', label: 'Enabled', default: true }] },

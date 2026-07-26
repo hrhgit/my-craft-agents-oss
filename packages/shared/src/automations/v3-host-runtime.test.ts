@@ -130,7 +130,7 @@ describe('AutomationWorkspaceHostV3', () => {
       writerVersion: 2,
       capabilities: {
         'automations.definitions': { minWriteVersion: 4, maxWriteVersion: 4 },
-        'automations.ingress': { minWriteVersion: 1, maxWriteVersion: 1 },
+        'automations.ingress': { minWriteVersion: 3, maxWriteVersion: 3 },
         'automations.runs': { minWriteVersion: 1, maxWriteVersion: 1 },
         'automations.history': { minWriteVersion: 1, maxWriteVersion: 1 },
       },

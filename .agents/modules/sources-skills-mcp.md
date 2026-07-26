@@ -18,7 +18,7 @@ depends_on: [shared-contracts]
 collaborates_with: []
 validation:
   - { id: skills-mcp-regression, kind: unit, command: "bun test packages/shared/src/skills packages/server-core/src/handlers/rpc/skills.test.ts", description: "Run skill storage, discovery, and import regressions.", triggers: [owned-change], required: true, evidence: "Bun test exit status and output." }
-scope_digest: 128dfa0cb2fa40c15e6c648ad72ef012a4aa352c
+scope_digest: 0a7ff86eeaaa2b8feaf15f043f2e783df3758937
 ---
 
 ## Purpose

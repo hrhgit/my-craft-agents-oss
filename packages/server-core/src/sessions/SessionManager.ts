@@ -1717,7 +1717,7 @@ export class SessionManager implements ISessionManager {
           webhook: executeWebhook,
         },
         validateSession: (sessionId, expectedWorkspaceId) => this.sessions.get(sessionId)?.workspace.id === expectedWorkspaceId,
-        onChanged: () => this.broadcastAutomationsChanged(workspaceId),
+        onChanged: change => this.broadcastAutomationsChanged(workspaceId, change),
         onError: error => sessionLog.error(`[Automations] ${workspaceId}:`, error),
       })
       host.start()
@@ -1735,10 +1735,17 @@ export class SessionManager implements ISessionManager {
     watcher?.notifyFileChange(relativePath)
   }
 
-  private broadcastAutomationsChanged(workspaceId: string): void {
+  private broadcastAutomationsChanged(
+    workspaceId: string,
+    change: { revision: number; historyCursor: number },
+  ): void {
     if (!this.eventSink) return
     sessionLog.info(`Broadcasting automations changed for ${workspaceId}`)
-    this.eventSink(RPC_CHANNELS.automations.CHANGED, { to: 'workspace', workspaceId }, workspaceId)
+    this.eventSink(RPC_CHANNELS.automations.CHANGED, { to: 'workspace', workspaceId }, {
+      schemaVersion: 1,
+      workspaceId,
+      ...change,
+    })
   }
 
   private broadcastAppThemeChanged(theme: import('@mortise/shared/config').ThemeOverrides | null): void {

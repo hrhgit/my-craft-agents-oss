@@ -4,7 +4,6 @@ import type { Model } from "@mortise/pi-ai/types";
 import { getAgentDir, getProjectConfigDir } from "../config.ts";
 import { resolvePath } from "../utils/paths.ts";
 import { AuthStorage } from "./auth-storage.ts";
-import { applyExtensionFlagValues } from "./extension-flags.ts";
 import type { SessionStartEvent, ToolDefinition } from "./extensions/index.ts";
 import { ModelRegistry } from "./model-registry.ts";
 import { NetworkManager } from "./network-manager.ts";
@@ -39,7 +38,6 @@ export interface CreateAgentSessionServicesOptions {
 	authStorage?: AuthStorage;
 	settingsManager?: SettingsManager;
 	modelRegistry?: ModelRegistry;
-	extensionFlagValues?: Map<string, boolean | string>;
 	resourceLoaderOptions?: Omit<DefaultResourceLoaderOptions, "cwd" | "agentDir" | "settingsManager">;
 	deferResourceLoad?: boolean;
 }
@@ -82,7 +80,6 @@ export interface AgentSessionServices {
 	modelRegistry: ModelRegistry;
 	networkManager: NetworkManager;
 	resourceLoader: ResourceLoader;
-	extensionFlagValues?: Map<string, boolean | string>;
 	diagnostics: AgentSessionRuntimeDiagnostic[];
 }
 
@@ -136,9 +133,6 @@ export async function createAgentSessionServices(
 		await resourceLoader.loadPhase?.("startup");
 		const resourcesReadyAt = performance.now();
 		registerPendingExtensionProviders(resourceLoader, modelRegistry, diagnostics);
-		diagnostics.push(
-			...applyExtensionFlagValues(resourceLoader, options.extensionFlagValues, { ignoreUnknown: true }),
-		);
 		if (process.env.PI_RUNTIME_PROFILE === "1") {
 			console.error(
 				JSON.stringify({
@@ -155,7 +149,6 @@ export async function createAgentSessionServices(
 		await resourceLoader.reload();
 		const resourcesReadyAt = performance.now();
 		registerPendingExtensionProviders(resourceLoader, modelRegistry, diagnostics);
-		diagnostics.push(...applyExtensionFlagValues(resourceLoader, options.extensionFlagValues));
 		await networkManager.initialize();
 		if (process.env.PI_RUNTIME_PROFILE === "1") {
 			console.error(
@@ -180,7 +173,6 @@ export async function createAgentSessionServices(
 		modelRegistry,
 		networkManager,
 		resourceLoader,
-		extensionFlagValues: options.extensionFlagValues,
 		diagnostics,
 	};
 }
@@ -215,7 +207,6 @@ export async function createAgentSessionFromServices(
 		toolMetadataResolver: options.toolMetadataResolver,
 		sessionStartEvent: options.sessionStartEvent,
 		persistInitialState: options.persistInitialState,
-		extensionFlagValues: options.services.extensionFlagValues,
 		onRuntimeDiagnostics: options.onRuntimeDiagnostics,
 	});
 }

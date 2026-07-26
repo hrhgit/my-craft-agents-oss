@@ -64,7 +64,6 @@ export const PI_RPC_COMMANDS = [
 	"bash",
 	"abort_bash",
 	"get_session_stats",
-	"export_html",
 	"switch_session",
 	"fork",
 	"clone",
@@ -109,8 +108,6 @@ export interface RpcEnvelope {
 export interface RpcHostUICapabilities {
 	kind: "mortise" | "none";
 	dialogs: boolean;
-	widgets: boolean;
-	editorControl: boolean;
 	contributions: boolean;
 	/** Development-only extension UI validation declarations. Omitted and false both disable the channel. */
 	validation?: boolean;
@@ -234,7 +231,6 @@ export type RpcCommand = RpcEnvelope &
 
 		// Session
 		| { id?: string; type: "get_session_stats" }
-		| { id?: string; type: "export_html"; outputPath?: string }
 		| { id?: string; type: "switch_session"; sessionPath: string }
 		| { id?: string; type: "fork"; entryId: string }
 		| { id?: string; type: "clone" }
@@ -536,7 +532,6 @@ export type RpcResponse = RpcEnvelope &
 
 		// Session
 		| { id?: string; type: "response"; command: "get_session_stats"; success: true; data: SessionStats }
-		| { id?: string; type: "response"; command: "export_html"; success: true; data: { path: string } }
 		| { id?: string; type: "response"; command: "switch_session"; success: true; data: { cancelled: boolean } }
 		| { id?: string; type: "response"; command: "fork"; success: true; data: { text: string; cancelled: boolean } }
 		| { id?: string; type: "response"; command: "clone"; success: true; data: { cancelled: boolean } }

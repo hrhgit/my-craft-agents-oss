@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { exportResources, importResources, validateResourceBundle } from '../resource-bundle'
-import { AutomationV3Store } from '../../automations/v3-store'
+import { AutomationWorkspaceHostV3 } from '../../automations/v3-host-runtime'
 import type { AutomationDefinitionV3 } from '../../automations/v3-types'
 import type { ResourceBundle } from '../types'
 
@@ -27,16 +27,17 @@ Instructions.
   writeFileSync(join(directory, 'scripts', 'run.ts'), 'export {}')
 }
 
-function createAutomations(workspace: string): void {
-  const store = new AutomationV3Store({ workspaceId: 'workspace-test', workspaceRootPath: workspace })
-  const current = store.initialize()
-  const result = store.mutateDocument({
-    operationId: 'operation-create-greeting',
-    expectedRevision: current.revision,
-    document: { ...current, definitions: [automation()] },
+function openAutomationHost(workspace: string, workspaceId = workspace): AutomationWorkspaceHostV3 {
+  const host = new AutomationWorkspaceHostV3({
+    workspaceId,
+    workspaceRootPath: workspace,
+    callbacks: {
+      prompt: async () => ({ status: 'succeeded' }),
+      webhook: async () => ({ status: 'succeeded' }),
+    },
   })
-  expect(result.status).toBe('ok')
-  store.close()
+  host.start()
+  return host
 }
 
 function file(relativePath: string, content: string) {
@@ -78,15 +79,16 @@ describe('resource bundle', () => {
     rmSync(root, { recursive: true, force: true })
   })
 
-  it('exports skills and automations', () => {
+  it('exports skills and automations through the workspace host', async () => {
     const workspace = createWorkspace(root)
     createSkill(workspace, 'review')
-    createAutomations(workspace)
+    const host = openAutomationHost(workspace, 'workspace-test')
+    expect(host.importDefinitions([automation()], 'overwrite').imported).toEqual(['Greeting'])
 
     const { bundle, warnings } = exportResources(workspace, {
       skills: 'all',
       automations: 'all',
-    }, 'workspace-test')
+    }, 'workspace-test', host)
 
     expect(warnings).toEqual([])
     expect(bundle.sourceWorkspace).toBe('Test Workspace')
@@ -94,6 +96,7 @@ describe('resource bundle', () => {
     expect(bundle.resources.skills?.[0]?.files.map(entry => entry.relativePath))
       .toEqual(expect.arrayContaining(['SKILL.md', 'scripts/run.ts']))
     expect(bundle.resources.automations?.[0]).toMatchObject({ id: 'automation-greeting-0001', name: 'Greeting' })
+    await host.stop()
   })
 
   it('validates the current bundle format', () => {
@@ -115,6 +118,7 @@ describe('resource bundle', () => {
 
   it('imports skills and automations', async () => {
     const workspace = createWorkspace(root)
+    const host = openAutomationHost(workspace)
     const bundle: ResourceBundle = {
       version: 2,
       exportedAt: Date.now(),
@@ -130,14 +134,13 @@ describe('resource bundle', () => {
       },
     }
 
-    const result = await importResources(workspace, bundle, 'skip')
+    const result = await importResources(workspace, bundle, 'skip', workspace, host)
 
     expect(result.skills.imported).toEqual(['review'])
     expect(result.automations.imported).toEqual(['Greeting'])
     expect(existsSync(join(workspace, '.mortise', 'skills', 'review', 'scripts', 'run.ts'))).toBe(true)
-    const store = new AutomationV3Store({ workspaceId: workspace, workspaceRootPath: workspace })
-    expect(store.getDocument()?.definitions[0]?.id).toBe('automation-greeting-0001')
-    store.close()
+    expect(host.exportDefinitions()[0]?.id).toBe('automation-greeting-0001')
+    await host.stop()
   })
 
   it('honors skip and overwrite modes', async () => {

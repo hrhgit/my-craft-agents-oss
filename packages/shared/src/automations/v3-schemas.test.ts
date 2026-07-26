@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { AutomationsDocumentV3Schema, CloudEventV1Schema } from './v3-schemas.ts'
+import { AutomationRunV1Schema, AutomationsDocumentV3Schema, CloudEventV1Schema } from './v3-schemas.ts'
 
 const now = '2026-07-20T00:00:00.000Z'
 
@@ -51,5 +51,31 @@ describe('Automations V3 schemas', () => {
     const invalidTime = document()
     invalidTime.definitions[0]!.conditions = [{ condition: 'time', after: '25:99' }] as never
     expect(AutomationsDocumentV3Schema.safeParse(invalidTime).success).toBe(false)
+  })
+
+  it('rejects semantically invalid durable run identities, states, and timestamps', () => {
+    const value = document().definitions[0]!
+    const run = {
+      schemaVersion: 1,
+      runId: 'run-schema-0001',
+      occurrenceId: 'occurrence-schema-0001',
+      occurrenceKey: 'schema-key',
+      automationId: value.id,
+      definitionRevision: 1,
+      definitionSnapshot: value,
+      triggerId: value.triggers[0]!.id,
+      state: 'queued',
+      createdAt: '2026-07-26T00:00:00.000Z',
+      actions: value.actions.map(action => ({
+        actionRunId: `run-action-${action.id}`,
+        actionId: action.id,
+        state: 'queued',
+        attempts: 0,
+      })),
+    }
+    expect(AutomationRunV1Schema.safeParse(run).success).toBe(true)
+    expect(AutomationRunV1Schema.safeParse({ ...run, state: 'unknown' }).success).toBe(false)
+    expect(AutomationRunV1Schema.safeParse({ ...run, createdAt: 'not-a-date' }).success).toBe(false)
+    expect(AutomationRunV1Schema.safeParse({ ...run, automationId: 'automation-other-0001' }).success).toBe(false)
   })
 })

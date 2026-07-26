@@ -72,15 +72,15 @@ type RpcRuntimeCommandBody = DistributiveOmit<RpcCommand, "id" | "runtimeId" | "
 type RpcWritable = NodeJS.WritableStream & { destroyed: boolean; writable: boolean };
 
 export interface RpcClientOptions {
-	/** Discover and connect to an existing user-level Pi GlobalHost before spawning. */
+	/** Discover and connect to an existing Mortise Agent runtime host before spawning. */
 	globalHost?: { enabled: boolean; agentDir?: string; instanceId?: string };
-	/** Command used to launch the CLI entry point (default: node) */
+	/** Command used to launch the headless runtime entry point (default: node). */
 	command?: string;
-	/** Arguments placed before the CLI entry point, useful for tsx/register-based dev runs */
+	/** Arguments placed before the runtime entry point, useful for source-development runs. */
 	commandArgs?: string[];
-	/** Path to the CLI entry point (default: searches for dist/cli.js) */
-	cliPath?: string;
-	/** Launch command itself as the Pi executable, without inserting a CLI entry-point argument. */
+	/** Path to the headless runtime entry point. */
+	runtimePath?: string;
+	/** Launch command itself as the compiled runtime, without inserting an entry-point argument. */
 	directExecutable?: boolean;
 	/** Working directory for the agent */
 	cwd?: string;
@@ -104,7 +104,7 @@ export interface RpcClientOptions {
 	provider?: string;
 	/** Model ID to use */
 	model?: string;
-	/** Additional CLI arguments */
+	/** Additional headless runtime arguments. */
 	args?: string[];
 	/** Mirror child stderr to the parent stderr (default: true) */
 	pipeStderr?: boolean;
@@ -224,8 +224,8 @@ export class RpcClient {
 
 		const command = this.options.command ?? "node";
 		const commandArgs = this.options.commandArgs ?? [];
-		const cliPath = this.options.cliPath ?? "dist/cli.js";
-		const args = ["--mode", "rpc"];
+		const runtimePath = this.options.runtimePath ?? "dist/bun/headless.js";
+		const args: string[] = [];
 
 		if (this.options.provider) {
 			args.push("--provider", this.options.provider);
@@ -253,7 +253,9 @@ export class RpcClient {
 				: {}),
 		};
 
-		const launchArgs = this.options.directExecutable ? [...commandArgs, ...args] : [...commandArgs, cliPath, ...args];
+		const launchArgs = this.options.directExecutable
+			? [...commandArgs, ...args]
+			: [...commandArgs, runtimePath, ...args];
 		const childProcess = spawn(command, launchArgs, {
 			cwd: this.options.cwd,
 			env,
@@ -719,14 +721,6 @@ export class RpcClient {
 	 */
 	async getSessionStats(): Promise<SessionStats> {
 		const response = await this.send({ type: "get_session_stats" });
-		return this.getData(response);
-	}
-
-	/**
-	 * Export session to HTML.
-	 */
-	async exportHtml(outputPath?: string): Promise<{ path: string }> {
-		const response = await this.send({ type: "export_html", outputPath });
 		return this.getData(response);
 	}
 

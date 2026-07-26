@@ -28,6 +28,7 @@ export const AUTOMATION_WORKSPACE_OPERATIONS_V1 = [
   'run',
   'get-run',
   'list-runs',
+  'list-changes',
   'emit-event',
 ] as const
 
@@ -86,13 +87,63 @@ export interface AutomationEventAcceptedV1 {
   persisted: true
 }
 
+export interface AutomationDefinitionCursorV1 {
+  revision: number
+  ordinal: number
+  id: string
+}
+
+export interface AutomationRunCursorV1 {
+  createdAtMs: number
+  runId: string
+  query: string
+}
+
+export interface AutomationHistoryCursorV1 {
+  sequence: number
+  query: string
+}
+
+export interface AutomationDefinitionPageV1 {
+  schemaVersion: 1
+  revision: number
+  items: AutomationDefinitionV3[]
+  nextCursor?: AutomationDefinitionCursorV1
+}
+
+export interface AutomationRunPageV1 {
+  schemaVersion: 1
+  items: AutomationRunV1[]
+  nextCursor?: AutomationRunCursorV1
+}
+
+export interface AutomationHistoryChangeV1 {
+  sequence: number
+  kind: string
+  payload: unknown
+  occurredAt: number
+}
+
+export interface AutomationHistoryPageV1 {
+  schemaVersion: 1
+  items: AutomationHistoryChangeV1[]
+  nextCursor?: AutomationHistoryCursorV1
+}
+
+export interface AutomationChangedNotificationV1 {
+  schemaVersion: 1
+  workspaceId: string
+  revision: number
+  historyCursor: number
+}
+
 interface AutomationWorkspaceInputBaseV1 {
   schemaVersion: 1
 }
 
 export interface AutomationWorkspaceInputMapV1 {
   describe: AutomationWorkspaceInputBaseV1
-  list: AutomationWorkspaceInputBaseV1
+  list: AutomationWorkspaceInputBaseV1 & { limit?: number; cursor?: AutomationDefinitionCursorV1 }
   get: AutomationWorkspaceInputBaseV1 & { automationId: string }
   validate: AutomationWorkspaceInputBaseV1 & { definition: AutomationDefinitionV3 }
   simulate: AutomationWorkspaceInputBaseV1 & {
@@ -127,7 +178,21 @@ export interface AutomationWorkspaceInputMapV1 {
     triggerId?: string
   }
   'get-run': AutomationWorkspaceInputBaseV1 & { runId: string }
-  'list-runs': AutomationWorkspaceInputBaseV1 & { automationId?: string; limit?: number }
+  'list-runs': AutomationWorkspaceInputBaseV1 & {
+    automationId?: string
+    states?: AutomationRunV1['state'][]
+    eventId?: string
+    createdAfter?: number
+    createdBefore?: number
+    limit?: number
+    cursor?: AutomationRunCursorV1
+  }
+  'list-changes': AutomationWorkspaceInputBaseV1 & {
+    automationId?: string
+    runId?: string
+    limit?: number
+    cursor?: AutomationHistoryCursorV1
+  }
   'emit-event': AutomationWorkspaceInputBaseV1 & {
     operationId: string
     event: CloudEventV1
@@ -137,7 +202,7 @@ export interface AutomationWorkspaceInputMapV1 {
 
 export interface AutomationWorkspaceDataMapV1 {
   describe: AutomationWorkspaceDescriptionV1
-  list: AutomationDefinitionV3[]
+  list: AutomationDefinitionPageV1
   get: AutomationDefinitionV3
   validate: AutomationDefinitionV3
   simulate: AutomationSimulationPlanV1[]
@@ -147,7 +212,8 @@ export interface AutomationWorkspaceDataMapV1 {
   'set-enabled': AutomationsDocumentV3
   run: AutomationRunAcceptedV1
   'get-run': AutomationRunV1
-  'list-runs': AutomationRunV1[]
+  'list-runs': AutomationRunPageV1
+  'list-changes': AutomationHistoryPageV1
   'emit-event': AutomationEventAcceptedV1
 }
 
@@ -181,7 +247,15 @@ const BaseInputSchema = z.object({ schemaVersion: z.literal(1) }).strict()
 
 const AutomationWorkspaceCommandV1Schema = z.discriminatedUnion('operation', [
   BaseInputSchema.extend({ operation: z.literal('describe') }),
-  BaseInputSchema.extend({ operation: z.literal('list') }),
+  BaseInputSchema.extend({
+    operation: z.literal('list'),
+    limit: z.number().int().min(1).max(500).optional(),
+    cursor: z.object({
+      revision: z.number().int().nonnegative(),
+      ordinal: z.number().int().nonnegative(),
+      id: BoundedIdSchema,
+    }).strict().optional(),
+  }),
   BaseInputSchema.extend({ operation: z.literal('get'), automationId: OpaqueIdSchema }),
   BaseInputSchema.extend({ operation: z.literal('validate'), definition: AutomationDefinitionV3Schema }),
   BaseInputSchema.extend({
@@ -225,7 +299,22 @@ const AutomationWorkspaceCommandV1Schema = z.discriminatedUnion('operation', [
   BaseInputSchema.extend({
     operation: z.literal('list-runs'),
     automationId: OpaqueIdSchema.optional(),
+    states: z.array(z.enum(['queued', 'running', 'succeeded', 'partial', 'failed', 'cancelled', 'skipped'])).min(1).max(7).optional(),
+    eventId: OpaqueIdSchema.optional(),
+    createdAfter: z.number().int().nonnegative().optional(),
+    createdBefore: z.number().int().nonnegative().optional(),
     limit: z.number().int().min(1).max(500).optional(),
+    cursor: z.object({
+      createdAtMs: z.number().int().nonnegative(),
+      runId: OpaqueIdSchema,
+    }).strict().optional(),
+  }),
+  BaseInputSchema.extend({
+    operation: z.literal('list-changes'),
+    automationId: OpaqueIdSchema.optional(),
+    runId: OpaqueIdSchema.optional(),
+    limit: z.number().int().min(1).max(500).optional(),
+    cursor: z.object({ sequence: z.number().int().nonnegative() }).strict().optional(),
   }),
   BaseInputSchema.extend({
     operation: z.literal('emit-event'),
@@ -340,9 +429,27 @@ const AutomationSimulationPlanV1Schema = z.object({
   }).strict()),
 }).strict()
 
+const AutomationDefinitionCursorV1Schema = z.object({
+  revision: z.number().int().nonnegative(),
+  ordinal: z.number().int().nonnegative(),
+  id: BoundedIdSchema,
+}).strict()
+
+const AutomationRunCursorV1Schema = z.object({
+  createdAtMs: z.number().int().nonnegative(),
+  runId: OpaqueIdSchema,
+}).strict()
+
+const AutomationHistoryCursorV1Schema = z.object({ sequence: z.number().int().nonnegative() }).strict()
+
 const AutomationWorkspaceDataSchemasV1: Record<AutomationWorkspaceOperationV1, z.ZodType> = {
   describe: AutomationWorkspaceDescriptionV1Schema,
-  list: z.array(AutomationDefinitionV3Schema),
+  list: z.object({
+    schemaVersion: z.literal(1),
+    revision: z.number().int().nonnegative(),
+    items: z.array(AutomationDefinitionV3Schema).max(500),
+    nextCursor: AutomationDefinitionCursorV1Schema.optional(),
+  }).strict(),
   get: AutomationDefinitionV3Schema,
   validate: AutomationDefinitionV3Schema,
   simulate: z.array(AutomationSimulationPlanV1Schema),
@@ -352,7 +459,21 @@ const AutomationWorkspaceDataSchemasV1: Record<AutomationWorkspaceOperationV1, z
   'set-enabled': z.object({ schemaVersion: z.literal(3), revision: z.number().int().positive(), definitions: z.array(AutomationDefinitionV3Schema) }).strict(),
   run: z.object({ runId: OpaqueIdSchema }).strict(),
   'get-run': AutomationRunV1Schema,
-  'list-runs': z.array(AutomationRunV1Schema),
+  'list-runs': z.object({
+    schemaVersion: z.literal(1),
+    items: z.array(AutomationRunV1Schema).max(500),
+    nextCursor: AutomationRunCursorV1Schema.optional(),
+  }).strict(),
+  'list-changes': z.object({
+    schemaVersion: z.literal(1),
+    items: z.array(z.object({
+      sequence: z.number().int().positive(),
+      kind: z.string().min(1).max(256),
+      payload: z.unknown(),
+      occurredAt: z.number().int().nonnegative(),
+    }).strict()).max(500),
+    nextCursor: AutomationHistoryCursorV1Schema.optional(),
+  }).strict(),
   'emit-event': z.object({ eventId: OpaqueIdSchema, runIds: z.array(OpaqueIdSchema), persisted: z.literal(true) }).strict(),
 }
 
@@ -438,6 +559,7 @@ export function parseAutomationWorkspaceOperationResultV1<Operation extends Auto
     run: ['accepted', 'duplicate'],
     'get-run': ['ok'],
     'list-runs': ['ok'],
+    'list-changes': ['ok'],
     'emit-event': ['accepted', 'duplicate'],
   }
   if (dataRequiredStatuses[operation]?.includes(result.status) && result.data === undefined) {

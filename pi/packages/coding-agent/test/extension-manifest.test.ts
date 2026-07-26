@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { ExtensionManifestV1 } from "../src/core/extension-manifest.ts";
-import { DefaultPackageManager, type ResourcePathEntry } from "../src/core/package-manager.ts";
+import { type ResourcePathEntry, ResourceResolver } from "../src/core/resource-resolver.ts";
 import { type Settings, SettingsManager } from "../src/core/settings-manager.ts";
 
 function manifest(name: string, overrides: Partial<ExtensionManifestV1> = {}): ExtensionManifestV1 {
@@ -47,7 +47,7 @@ describe("extension manifest v1", () => {
 
 	async function resolve(entries: ResourcePathEntry[]) {
 		const settingsManager = SettingsManager.inMemory({ extensions: entries } as Partial<Settings>);
-		return new DefaultPackageManager({
+		return new ResourceResolver({
 			cwd,
 			agentDir,
 			settingsManager,

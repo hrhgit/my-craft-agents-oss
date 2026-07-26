@@ -10,8 +10,6 @@ import { fileURLToPath } from "node:url";
 import * as _bundledPiAgentCore from "@mortise/pi-agent-core";
 import * as _bundledPiAi from "@mortise/pi-ai";
 import * as _bundledPiAiOauth from "@mortise/pi-ai/oauth";
-import type { KeyId } from "@mortise/pi-tui";
-import * as _bundledPiTui from "@mortise/pi-tui";
 import { createJiti } from "jiti/static";
 // Static imports of packages that extensions may use.
 // These MUST be static so Bun bundles them into the compiled binary.
@@ -42,7 +40,6 @@ import type {
 	ExtensionRuntime,
 	ExtensionTarget,
 	LoadExtensionsResult,
-	MessageRenderer,
 	ProviderConfig,
 	RegisteredCommand,
 	ToolDefinition,
@@ -75,15 +72,9 @@ function getVirtualModules(): Record<string, unknown> {
 		"@sinclair/typebox/compile": _bundledTypeboxCompile,
 		"@sinclair/typebox/value": _bundledTypeboxValue,
 		"@mortise/pi-agent-core": _bundledPiAgentCore,
-		"@mortise/pi-tui": _bundledPiTui,
 		"@mortise/pi-ai": _bundledPiAi,
 		"@mortise/pi-ai/oauth": _bundledPiAiOauth,
 		"@mortise/pi-coding-agent": _bundledPiCodingAgentExtensionApi,
-		"@mariozechner/pi-agent-core": _bundledPiAgentCore,
-		"@mariozechner/pi-tui": _bundledPiTui,
-		"@mariozechner/pi-ai": _bundledPiAi,
-		"@mariozechner/pi-ai/oauth": _bundledPiAiOauth,
-		"@mariozechner/pi-coding-agent": _bundledPiCodingAgentExtensionApi,
 	};
 	return _virtualModules;
 }
@@ -115,21 +106,14 @@ function getAliases(): Record<string, string> {
 
 	const piCodingAgentEntry = packageIndex;
 	const piAgentCoreEntry = resolveWorkspaceOrImport("agent/dist/index.js", "@mortise/pi-agent-core");
-	const piTuiEntry = resolveWorkspaceOrImport("tui/dist/index.js", "@mortise/pi-tui");
 	const piAiEntry = resolveWorkspaceOrImport("ai/dist/index.js", "@mortise/pi-ai");
 	const piAiOauthEntry = resolveWorkspaceOrImport("ai/dist/oauth.js", "@mortise/pi-ai/oauth");
 
 	_aliases = {
 		"@mortise/pi-coding-agent": piCodingAgentEntry,
 		"@mortise/pi-agent-core": piAgentCoreEntry,
-		"@mortise/pi-tui": piTuiEntry,
 		"@mortise/pi-ai": piAiEntry,
 		"@mortise/pi-ai/oauth": piAiOauthEntry,
-		"@mariozechner/pi-coding-agent": piCodingAgentEntry,
-		"@mariozechner/pi-agent-core": piAgentCoreEntry,
-		"@mariozechner/pi-tui": piTuiEntry,
-		"@mariozechner/pi-ai": piAiEntry,
-		"@mariozechner/pi-ai/oauth": piAiOauthEntry,
 		typebox: typeboxEntry,
 		"typebox/compile": typeboxCompileEntry,
 		"typebox/value": typeboxValueEntry,
@@ -174,7 +158,6 @@ export function createExtensionRuntime(): ExtensionRuntime {
 		setModel: () => Promise.reject(new Error("Extension runtime not initialized")),
 		getThinkingLevel: notInitialized,
 		setThinkingLevel: notInitialized,
-		flagValues: new Map(),
 		pendingProviderRegistrations: [],
 		assertActive,
 		invalidate: (message) => {
@@ -271,40 +254,6 @@ function createExtensionAPI(
 				sourceInfo: extension.sourceInfo,
 				...options,
 			});
-		},
-
-		registerShortcut(
-			shortcut: KeyId,
-			options: {
-				description?: string;
-				handler: (ctx: import("./types.ts").ExtensionContext) => Promise<void> | void;
-			},
-		): void {
-			runtime.assertActive();
-			extension.shortcuts.set(shortcut, { shortcut, extensionPath: extension.path, ...options });
-		},
-
-		registerFlag(
-			name: string,
-			options: { description?: string; type: "boolean" | "string"; default?: boolean | string },
-		): void {
-			runtime.assertActive();
-			extension.flags.set(name, { name, extensionPath: extension.path, ...options });
-			if (options.default !== undefined && !runtime.flagValues.has(name)) {
-				runtime.flagValues.set(name, options.default);
-			}
-		},
-
-		registerMessageRenderer<T>(customType: string, renderer: MessageRenderer<T>): void {
-			runtime.assertActive();
-			extension.messageRenderers.set(customType, renderer as MessageRenderer);
-		},
-
-		// Flag access - checks extension registered it, reads from runtime
-		getFlag(name: string): boolean | string | undefined {
-			runtime.assertActive();
-			if (!extension.flags.has(name)) return undefined;
-			return runtime.flagValues.get(name);
 		},
 
 		// Action methods - delegate to shared runtime
@@ -450,10 +399,7 @@ function createExtension(
 		hostCapabilities: [],
 		handlers: new Map(),
 		tools: new Map(),
-		messageRenderers: new Map(),
 		commands: new Map(),
-		flags: new Map(),
-		shortcuts: new Map(),
 	};
 }
 

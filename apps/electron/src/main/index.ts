@@ -1011,11 +1011,16 @@ app.whenReady().then(async () => {
               eventSourceKind: 'agent' | 'extension'
             }) {
               const { workspace } = await resolveCapabilitySession(context.sessionId)
+              const host = sm.getAutomationHost(workspace.id)
+              if (!host) return {
+                schemaVersion: 1,
+                status: 'unsupported',
+                error: { code: 'automation_host_unavailable', message: 'The workspace automation host is unavailable', retryable: true },
+              }
               return executeAutomationWorkspaceOperationV1({
                 workspaceId: workspace.id,
-                workspaceRootPath: workspace.rootPath,
                 eventSourceKind: context.eventSourceKind,
-                host: sm.getAutomationHost(workspace.id) ?? undefined,
+                host,
               }, command)
             },
           }
@@ -1024,11 +1029,16 @@ app.whenReady().then(async () => {
             async execute(workspaceId, command, context) {
               const workspace = getWorkspaceByNameOrId(workspaceId)
               if (!workspace) return { schemaVersion: 1, status: 'invalid', error: { code: 'workspace_not_found', message: 'Workspace not found', retryable: false } }
+              const host = sm.getAutomationHost(workspace.id)
+              if (!host) return {
+                schemaVersion: 1,
+                status: 'unsupported',
+                error: { code: 'automation_host_unavailable', message: 'The workspace automation host is unavailable', retryable: true },
+              }
               return executeAutomationWorkspaceOperationV1({
                 workspaceId: workspace.id,
-                workspaceRootPath: workspace.rootPath,
                 eventSourceKind: context.eventSourceKind,
-                host: sm.getAutomationHost(workspace.id) ?? undefined,
+                host,
               }, command)
             },
           }

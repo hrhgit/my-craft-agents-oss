@@ -28,7 +28,14 @@ function initialRun(
   occurrenceKey: string,
   options: { event?: TrustedAutomationEventV1; scheduledAt?: string; state?: AutomationRunStateV1; reason?: string },
 ): AutomationRunV1 {
-  const occurrenceId = automationIdentity('occ', workspaceId, definition.id, trigger.id, occurrenceKey)
+  const occurrenceId = automationIdentity(
+    'occ',
+    workspaceId,
+    definition.id,
+    definitionRevision,
+    trigger.id,
+    occurrenceKey,
+  )
   const runId = automationIdentity('run', occurrenceId, 0)
   const now = new Date().toISOString()
   return {
@@ -193,14 +200,14 @@ export class AutomationV3Runtime {
     definition: AutomationDefinitionV3,
     trigger: TimeTriggerV3,
     occurrence: ScheduledOccurrenceV1,
+    definitionRevision = this.store.initialize().revision,
   ): AutomationRunV1 {
-    const revision = this.store.initialize().revision
     if (occurrence.skipReason) {
       const reason = occurrence.skipReason === 'expired' ? 'expired' : 'misfire-skip'
-      const run = initialRun(this.workspaceId, definition, revision, trigger, occurrence.occurrenceKey, { state: 'skipped', reason, scheduledAt: occurrence.scheduledAt })
+      const run = initialRun(this.workspaceId, definition, definitionRevision, trigger, occurrence.occurrenceKey, { state: 'skipped', reason, scheduledAt: occurrence.scheduledAt })
       return this.store.claimRun(run, automationIdentity('op_claim', run.occurrenceId)).run
     }
-    return this.claimRun(definition, revision, trigger, occurrence.occurrenceKey, { scheduledAt: occurrence.scheduledAt })
+    return this.claimRun(definition, definitionRevision, trigger, occurrence.occurrenceKey, { scheduledAt: occurrence.scheduledAt })
   }
 
   async runManual(automationId: string, operationId: string, triggerId?: string, signal?: AbortSignal): Promise<{ run: AutomationRunV1; duplicate: boolean }> {
@@ -218,7 +225,14 @@ export class AutomationV3Runtime {
       : definition.triggers[0]
     if (!trigger) throw new Error(triggerId ? `Automation trigger not found: ${triggerId}` : 'Automation has no trigger')
     const occurrenceKey = `manual:${operationId}:${trigger.id}`
-    const occurrenceId = automationIdentity('occ', this.workspaceId, definition.id, trigger.id, occurrenceKey)
+    const occurrenceId = automationIdentity(
+      'occ',
+      this.workspaceId,
+      definition.id,
+      document.revision,
+      trigger.id,
+      occurrenceKey,
+    )
     const runId = automationIdentity('run', occurrenceId, 0)
     const duplicate = this.store.getRun(runId) !== null
     const run = this.claimRun(definition, document.revision, trigger, occurrenceKey, {})
@@ -232,7 +246,7 @@ export class AutomationV3Runtime {
     occurrenceKey: string,
     options: { event?: TrustedAutomationEventV1; scheduledAt?: string },
   ): AutomationRunV1 {
-    const active = this.store.listRuns({ automationId: definition.id }).filter(run => NON_TERMINAL.has(run.state))
+    const active = this.store.listRuns({ automationId: definition.id, states: [...NON_TERMINAL], limit: 1 })
     const overlap = definition.runPolicy?.overlap ?? 'skip'
     const overlapping = active.length > 0
     const run = initialRun(this.workspaceId, definition, definitionRevision, trigger, occurrenceKey, {
@@ -246,7 +260,18 @@ export class AutomationV3Runtime {
 
   private async drainQueue(definition: AutomationDefinitionV3, signal?: AbortSignal): Promise<void> {
     if ((definition.runPolicy?.overlap ?? 'skip') !== 'queue-one') return
-    const queued = this.store.listRuns({ automationId: definition.id }).filter(run => run.state === 'queued' && run.reason === 'overlap-queued')
+    const queued: AutomationRunV1[] = []
+    let cursor
+    do {
+      const page = this.store.listRunsPage({
+        automationId: definition.id,
+        states: ['queued'],
+        limit: 500,
+        ...(cursor ? { cursor } : {}),
+      })
+      queued.push(...page.items.filter(run => run.reason === 'overlap-queued'))
+      cursor = page.nextCursor
+    } while (cursor)
     if (queued.length === 0) return
     const [newest, ...older] = queued.sort((a, b) => b.createdAt.localeCompare(a.createdAt))
     for (const stale of older) {

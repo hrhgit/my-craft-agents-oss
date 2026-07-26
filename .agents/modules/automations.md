@@ -13,12 +13,13 @@ owns:
   - apps/electron/resources/docs/automations.md
   - docs/architecture/automations-protocol.md
   - docs/architecture/automations-protocol-candidates.json
+  - scripts/benchmarks/automations-index.ts
 related: [packages/shared/src/sessions/**, packages/server-core/src/runtime/**]
 depends_on: [workspace-state, session-lifecycle]
 collaborates_with: []
 validation:
   - { id: regression, kind: unit, command: "bun test packages/shared/src/automations packages/shared/src/scheduler apps/electron/src/renderer/components/automations", description: "Run automation and scheduler regressions.", triggers: [owned-change], required: true, evidence: "Bun test exit status and output." }
-scope_digest: 6c7aef6ed1a20ef016f4872fba8e985fd0969f3c
+scope_digest: fca6e4f3d15622dc36d8d3225b825b822bf082d5
 ---
 
 ## Purpose
@@ -28,13 +29,13 @@ Run durable scheduled or event-triggered agent work with visible execution histo
 Own automation schemas, schedule calculation, persistence, runner lifecycle, RPC, and management UI.
 
 ## Responsibilities
-Maintain idempotent operations, next-run calculation, enablement, interruption, recovery, and automation session linkage.
+Maintain idempotent operations, next-run calculation, enablement, interruption, recovery, automation session linkage, indexed query projections, and the representative query-performance workload.
 
 ## Non-goals
 Do not own general session execution, messaging transports, or operating-system schedulers.
 
 ## Contracts and invariants
-Automation writes are atomic and operation-identified; repeated delivery cannot create duplicate durable transitions.
+Automation writes are atomic and operation-identified; repeated delivery cannot create duplicate durable transitions. Canonical V3 records and their SQLite query projections commit in one transaction, migrations schema-validate every durable record before enabling writes, immutable index identities cannot drift, lease recovery uses the observed record version as its CAS boundary, and bounded cursors are bound to a normalized query fingerprint.
 
 ## Architecture and entry points
 `docs/architecture/automations-protocol.md` defines the normative versioned contract; shared automation storage and scheduler feed server handlers and the renderer automation page.
@@ -46,9 +47,10 @@ Automation-created sessions use `session-lifecycle`; outbound notifications coor
 Run scheduler edge cases, persistence concurrency, RPC, and management UI tests.
 
 ## Known risks
-Clock changes and process downtime affect schedules; concurrent backends must agree on operation identity and version.
+Clock changes and process downtime affect schedules; concurrent backends must agree on operation identity and version. Projection corruption, stale leases, cursor reuse under different filters, and mixed-version writers must fail explicitly instead of looping, skipping records, or overwriting a newer transition.
 
 ## Semantic history
+- 2026-07-26: Made the SQLite projection the transactional indexed query authority for runs, history, leases, and due occurrences; schema-validated migration and immutable identities fail closed, lease recovery commits against the observed CAS version, cursors bind their query fingerprint, and cross-process/dual-host/fault tests cover the concurrency boundary.
 - 2026-07-23: Closed the runtime migration window: Mortise Automations never reads `.pi`; historical scheduled-prompt or external-trigger conversion is an explicit offline operation, while V3 remains the sole runtime authority.
 - 2026-07-21: Made the V3 SQLite protocol the only Automations runtime authority; removed the former scheduler, event bus, handlers, JSONL history/retry queue, compatibility RPC adapter, and all V2/prompt-automation migration readers; restart recovery now coalesces `queue-one` backlog before execution and incompatible writers enter read-only mode without initializing storage.
 - 2026-07-20: Removed the obsolete active Data Sources field from the automation runtime options; prompt mentions now describe skills rather than built-in Sources.

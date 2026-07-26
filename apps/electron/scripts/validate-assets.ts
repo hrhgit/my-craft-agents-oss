@@ -31,7 +31,6 @@ const requiredPaths = [
   join(resourcesDir, 'powershell-parser.ps1'),
   piCompiledBinary,
   join(piRuntimeRoot, 'package.json'),
-  join(piRuntimeRoot, 'theme', 'dark.json'),
   join(piRuntimeRoot, 'sidecar', 'bin', sidecarTarget, sidecarBinary),
 ];
 
@@ -83,20 +82,19 @@ function validateSpawn(
   name: string,
   args: string[],
   options?: { command?: string; cwd?: string; input?: string; env?: NodeJS.ProcessEnv },
-): void {
+): string {
   const result = spawnSync(options?.command ?? process.execPath, args, {
     cwd: options?.cwd ?? ELECTRON_DIR,
     encoding: 'utf-8',
     input: options?.input,
     env: {
       ...process.env,
-      PI_CHECK_PACKAGE_UPDATES: '0',
       PI_OFFLINE: '1',
       ...options?.env,
     },
   });
 
-  if (result.status === 0) return;
+  if (result.status === 0) return result.stdout;
 
   console.error(`${name} failed with exit code ${result.status ?? 'unknown'}`);
   if (result.stdout.trim()) {
@@ -108,28 +106,35 @@ function validateSpawn(
   throw new Error(`${name} failed`);
 }
 
-validateSpawn('Pi compiled binary version smoke test', ['--version'], {
-  command: piCompiledBinary,
-  cwd: piRuntimeRoot,
-});
 const mortiseSmokeAgentDir = join(ELECTRON_DIR, 'dist', '.mortise-agent-smoke');
 rmSync(mortiseSmokeAgentDir, { recursive: true, force: true });
 mkdirSync(mortiseSmokeAgentDir, { recursive: true });
 try {
-  validateSpawn('Pi compiled binary RPC smoke test', [
-    '--mode', 'rpc',
-    '--no-session',
-    '--offline',
-    '--no-extensions',
-    '--no-skills',
-    '--no-prompt-templates',
-    '--no-context-files',
-  ], {
+  const output = validateSpawn('Pi compiled binary RPC smoke test', [], {
     command: piCompiledBinary,
     cwd: piRuntimeRoot,
     input: '{"id":"capabilities","type":"get_capabilities"}\n',
-    env: { PI_CODING_AGENT_DIR: mortiseSmokeAgentDir },
+    env: {
+      MORTISE_AGENT_DIR: mortiseSmokeAgentDir,
+      MORTISE_PROJECT_CONFIG_DIR: join(mortiseSmokeAgentDir, 'project'),
+    },
   });
+  const response = output
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as Record<string, unknown>)
+    .find((line) => line.id === 'capabilities');
+  const data = response?.data as Record<string, unknown> | undefined;
+  const stagedPackage = JSON.parse(readFileSync(join(piRuntimeRoot, 'package.json'), 'utf8')) as { version?: unknown };
+  if (
+    response?.type !== 'response'
+    || response.command !== 'get_capabilities'
+    || response.success !== true
+    || typeof data?.protocolVersion !== 'number'
+    || data.packageVersion !== stagedPackage.version
+  ) {
+    throw new Error(`Pi compiled binary returned invalid capabilities: ${JSON.stringify(response)}`);
+  }
 } finally {
   rmSync(mortiseSmokeAgentDir, { recursive: true, force: true });
 }

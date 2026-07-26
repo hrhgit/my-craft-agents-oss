@@ -31,7 +31,7 @@ afterEach(() => {
 });
 
 describe("RpcClient child process failures", () => {
-	test("directExecutable does not insert a CLI path argument", async () => {
+	test("directExecutable does not insert a runtime path argument", async () => {
 		const dir = mkdtempSync(join(tmpdir(), "pi-rpc-client-direct-"));
 		tempDirs.push(dir);
 		const capturePath = join(dir, "argv.txt");
@@ -44,7 +44,7 @@ setInterval(() => {}, 1000);
 		const client = new RpcClient({
 			command: process.execPath,
 			commandArgs: [executableScript],
-			cliPath: "must-not-be-inserted.js",
+			runtimePath: "must-not-be-inserted.js",
 			directExecutable: true,
 			env: { CAPTURE_PATH: capturePath },
 			pipeStderr: false,
@@ -52,7 +52,7 @@ setInterval(() => {}, 1000);
 
 		await client.start();
 		await waitForFile(capturePath);
-		expect(JSON.parse(readFileSync(capturePath, "utf-8"))).toEqual(["--mode", "rpc"]);
+		expect(JSON.parse(readFileSync(capturePath, "utf-8"))).toEqual([]);
 		await client.stop();
 	});
 
@@ -62,7 +62,7 @@ setInterval(() => {}, 1000);
 		const capturePath = join(dir, "env.txt");
 		const interceptorPath = join(dir, "interceptor.js");
 		const client = new RpcClient({
-			cliPath: writeChildScript(`
+			runtimePath: writeChildScript(`
 import { writeFileSync } from "node:fs";
 writeFileSync(
 	process.env.CAPTURE_PATH,
@@ -93,7 +93,7 @@ setInterval(() => {}, 1000);
 		const previous = process.env.PI_RPC_ENV_LEAK_TEST;
 		process.env.PI_RPC_ENV_LEAK_TEST = "should-not-leak";
 		const client = new RpcClient({
-			cliPath: writeChildScript(`
+			runtimePath: writeChildScript(`
 import { writeFileSync } from "node:fs";
 writeFileSync(
 	process.env.CAPTURE_PATH,
@@ -129,7 +129,7 @@ setInterval(() => {}, 1000);
 
 	test("rejects an in-flight request when the child process exits", async () => {
 		const client = new RpcClient({
-			cliPath: writeChildScript(`
+			runtimePath: writeChildScript(`
 process.stdin.once("data", () => {
 	process.exit(43);
 });
@@ -144,7 +144,7 @@ process.stdin.resume();
 
 	test("emits a client lifecycle event when the child process exits", async () => {
 		const client = new RpcClient({
-			cliPath: writeChildScript(`
+			runtimePath: writeChildScript(`
 process.stdin.once("data", () => {
 	process.exit(44);
 });
@@ -169,7 +169,7 @@ process.stdin.resume();
 
 	test("delivers a lifecycle event to remaining listeners when an earlier listener unsubscribes", async () => {
 		const client = new RpcClient({
-			cliPath: writeChildScript(`
+			runtimePath: writeChildScript(`
 process.stdin.once("data", () => {
 	process.exit(45);
 });

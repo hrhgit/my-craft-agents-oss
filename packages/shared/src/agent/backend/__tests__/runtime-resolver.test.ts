@@ -29,7 +29,7 @@ describe('resolveBackendRuntimePaths', () => {
     expect(Object.keys(paths).sort()).toEqual([
       'bundledRuntimePath',
       'nodeRuntimePath',
-      'piCliPath',
+      'piRuntimePath',
       'sessionServerPath',
     ]);
 
@@ -46,9 +46,9 @@ describe('resolveBackendRuntimePaths', () => {
         ? join(runtimePath, 'electron', 'Electron.app', 'Contents', 'MacOS', 'Electron')
         : join(runtimePath, 'electron', 'electron');
     const sessionServerPath = join(resourcesPath, 'session-mcp-server', 'index.js');
-    const piCliPath = join(resourcesPath, 'pi-runtime', process.platform === 'win32' ? 'pi.exe' : 'pi');
+    const piRuntimePath = join(resourcesPath, 'pi-runtime', process.platform === 'win32' ? 'pi.exe' : 'pi');
     const ripgrepPath = join(runtimePath, 'ripgrep', 'bin', process.platform === 'win32' ? 'rg.exe' : 'rg');
-    for (const path of [sessionServerPath, piCliPath, ripgrepPath, electronRuntimePath]) {
+    for (const path of [sessionServerPath, piRuntimePath, ripgrepPath, electronRuntimePath]) {
       mkdirSync(dirname(path), { recursive: true });
       writeFileSync(path, 'capsule artifact');
     }
@@ -75,7 +75,7 @@ describe('resolveBackendRuntimePaths', () => {
 
     expect(resolveBackendRuntimePaths(hostRuntime)).toMatchObject({
       sessionServerPath,
-      piCliPath,
+      piRuntimePath,
       nodeRuntimePath: electronRuntimePath,
     });
     expect(resolveBackendHostTooling({ hostRuntime }).ripgrepPath).toBe(ripgrepPath);
@@ -148,8 +148,8 @@ describe('resolveRipgrepPath', () => {
   });
 });
 
-describe('resolvePiCliPath', () => {
-  const tmpBase = join(tmpdir(), `pi-cli-resolver-test-${Date.now()}`);
+describe('resolvePiRuntimePath', () => {
+  const tmpBase = join(tmpdir(), `pi-runtime-resolver-test-${Date.now()}`);
   const originalOverride = process.env.MORTISE_PI_CLI_PATH;
 
   afterEach(() => {
@@ -181,7 +181,7 @@ describe('resolvePiCliPath', () => {
     process.env.MORTISE_PI_CLI_PATH = overridePath;
 
     const paths = resolveBackendRuntimePaths({ appRootPath: appRoot, resourcesPath, isPackaged: true });
-    expect(paths.piCliPath).toBe(binaryPath);
+    expect(paths.piRuntimePath).toBe(binaryPath);
   });
 
   it('fails explicitly when the packaged compiled Pi binary is missing', () => {
@@ -206,26 +206,26 @@ describe('resolvePiCliPath', () => {
       .toThrow('Packaged Pi runtime resolution requires resourcesPath');
   });
 
-  it('finds the workspace Pi CLI runtime in development', () => {
+  it('does not select a mutable JavaScript runtime in development', () => {
     const appRoot = join(tmpBase, 'monorepo', 'apps', 'electron');
-    const cliPath = join(
+    const legacyRuntimePath = join(
       tmpBase,
       'monorepo',
       'node_modules',
       '@mortise',
       'pi-coding-agent',
       'dist',
-      'cli.js',
-    );
-    mkdirSync(dirname(cliPath), { recursive: true });
-    writeFileSync(cliPath, '// pi cli\n');
+      'headless.js',
+	);
+	mkdirSync(dirname(legacyRuntimePath), { recursive: true });
+	writeFileSync(legacyRuntimePath, '// mutable runtime\n');
 
     const hostRuntime: BackendHostRuntimeContext = {
       appRootPath: appRoot,
       resourcesPath: appRoot,
       isPackaged: false,
-    };
-    const paths = resolveBackendRuntimePaths(hostRuntime);
-    expect(paths.piCliPath).toBe(cliPath);
+	};
+	const paths = resolveBackendRuntimePaths(hostRuntime);
+	expect(paths.piRuntimePath).toBeUndefined();
   });
 });

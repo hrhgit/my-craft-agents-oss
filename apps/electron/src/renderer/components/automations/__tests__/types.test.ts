@@ -17,7 +17,7 @@ describe('parseAutomationDefinitionsV3', () => {
       createdAt: now, updatedAt: now,
     }])
     expect(item).toMatchObject({
-      id: 'automation-v3-test', event: 'SchedulerTick', summary: 'Every 60 seconds',
+      id: 'automation-v3-test', event: 'scheduled', summary: 'Every 60 seconds',
       actions: [{ type: 'prompt', prompt: 'review', model: 'test-model' }],
       definition: { id: 'automation-v3-test' },
     })

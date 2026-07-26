@@ -2,7 +2,11 @@
 // Protocol re-exports (channels, DTOs, events, wire types)
 // =============================================================================
 export * from '@mortise/shared/protocol'
-import type { BrowserHostDockNavigationCommand, WorkspaceCoordinationStatusV1 } from '@mortise/shared/protocol'
+import type {
+  AutomationChangedNotificationV1,
+  BrowserHostDockNavigationCommand,
+  WorkspaceCoordinationStatusV1,
+} from '@mortise/shared/protocol'
 
 // =============================================================================
 // Package re-exports (convenience for renderer imports)
@@ -649,7 +653,7 @@ export interface ElectronAPI {
   automationCommand(input: unknown): Promise<unknown>
 
   // Automations change listener
-  onAutomationsChanged(callback: (workspaceId: string) => void): () => void
+  onAutomationsChanged(callback: (change: AutomationChangedNotificationV1) => void): () => void
 
   // Language
   changeLanguage(lang: string): Promise<void>

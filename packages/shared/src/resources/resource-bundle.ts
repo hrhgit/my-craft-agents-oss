@@ -22,7 +22,7 @@ import {
 } from '../utils/bundle-files.ts'
 import { getWorkspaceSkillsPath } from '../workspaces/storage.ts'
 import { AutomationDefinitionV3Schema } from '../automations/v3-schemas.ts'
-import { AutomationV3Store, automationIdentity } from '../automations/v3-store.ts'
+import type { AutomationWorkspaceHostV3 } from '../automations/v3-host-runtime.ts'
 import { debug } from '../utils/debug.ts'
 import type { AutomationDefinitionV3 } from '../automations/v3-types.ts'
 import type {
@@ -50,6 +50,7 @@ export function exportResources(
   workspaceRootPath: string,
   options: ExportResourcesOptions,
   workspaceId = workspaceRootPath,
+  automationHost?: AutomationWorkspaceHostV3,
 ): ExportResult {
   const warnings: string[] = []
   const bundle: ResourceBundle = {
@@ -80,7 +81,8 @@ export function exportResources(
   // Normalize: true → 'all', false/undefined → skip
   const automationSelection = options.automations === true ? 'all' : options.automations
   if (automationSelection) {
-    bundle.resources.automations = exportAutomations(workspaceId, workspaceRootPath, automationSelection, warnings)
+    if (!automationHost) throw new Error(`Automations V3 host is unavailable for workspace ${workspaceId}`)
+    bundle.resources.automations = exportAutomations(automationHost, automationSelection, warnings)
   }
 
   // Validate total size
@@ -159,14 +161,11 @@ function sanitizeAutomationDefinition(
 }
 
 function exportAutomations(
-  workspaceId: string,
-  workspaceRootPath: string,
+  host: AutomationWorkspaceHostV3,
   selection: string[] | 'all',
   warnings: string[],
 ): AutomationDefinitionV3[] {
-  const store = new AutomationV3Store({ workspaceId, workspaceRootPath })
-  try {
-    const allDefinitions = store.getDocument()?.definitions ?? []
+    const allDefinitions = host.exportDefinitions()
     const selected: AutomationDefinitionV3[] = []
     if (selection === 'all') {
       selected.push(...allDefinitions)
@@ -186,9 +185,6 @@ function exportAutomations(
       }
     }
     return selected.map(definition => sanitizeAutomationDefinition(definition, warnings))
-  } finally {
-    store.close()
-  }
 }
 
 // ============================================================
@@ -349,6 +345,7 @@ export async function importResources(
   bundle: ResourceBundle,
   mode: ResourceImportMode,
   workspaceId = workspaceRootPath,
+  automationHost?: AutomationWorkspaceHostV3,
 ): Promise<ResourceImportResult> {
   // Validate bundle first
   const validation = validateResourceBundle(bundle)
@@ -366,7 +363,7 @@ export async function importResources(
     : emptyBucketResult()
 
   const automationsResult = bundle.resources.automations?.length
-    ? importAutomations(workspaceId, workspaceRootPath, bundle.resources.automations, mode)
+    ? importAutomations(workspaceId, bundle.resources.automations, mode, automationHost)
     : emptyBucketResult()
 
   return {
@@ -450,64 +447,20 @@ function importSkills(
 
 function importAutomations(
   workspaceId: string,
-  workspaceRootPath: string,
   entries: AutomationDefinitionV3[],
   mode: ResourceImportMode,
+  host?: AutomationWorkspaceHostV3,
 ): ImportBucketResult {
   const result = emptyBucketResult()
-  const store = new AutomationV3Store({ workspaceId, workspaceRootPath })
   try {
-    for (let attempt = 0; attempt < 3; attempt++) {
-      const current = store.initialize()
-      const byId = new Map(current.definitions.map(definition => [definition.id, definition]))
-      const imported: string[] = []
-      const skipped: string[] = []
-
-      for (const entry of entries) {
-        const existing = byId.get(entry.id)
-        if (existing && mode === 'skip') {
-          skipped.push(entry.name)
-          continue
-        }
-        byId.set(entry.id, structuredClone(entry))
-        imported.push(entry.name)
-      }
-
-      if (imported.length === 0) {
-        result.skipped = skipped
-        return result
-      }
-
-      const document = { ...current, definitions: [...byId.values()] }
-      const operationId = automationIdentity(
-        'op_resource_import',
-        workspaceId,
-        current.revision,
-        mode,
-        entries.map(entry => entry.id),
-      )
-      const mutation = store.mutateDocument({
-        operationId,
-        expectedRevision: current.revision,
-        document,
-      })
-      if (mutation.status === 'conflict') continue
-      if (mutation.status !== 'ok' && mutation.status !== 'duplicate') {
-        const message = mutation.error?.message ?? `Automation import failed with status ${mutation.status}`
-        result.failed.push(...entries.map(entry => ({ id: entry.name, error: message })))
-        return result
-      }
-      result.imported = imported
-      result.skipped = skipped
-      return result
-    }
-    result.failed.push(...entries.map(entry => ({ id: entry.name, error: 'Automation import conflicted after 3 attempts' })))
+    if (!host) throw new Error(`Automations V3 host is unavailable for workspace ${workspaceId}`)
+    const imported = host.importDefinitions(entries, mode)
+    result.imported = imported.imported
+    result.skipped = imported.skipped
     return result
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err)
     result.failed.push(...entries.map(entry => ({ id: entry.name, error })))
     return result
-  } finally {
-    store.close()
   }
 }

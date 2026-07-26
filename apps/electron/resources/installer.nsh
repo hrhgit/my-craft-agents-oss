@@ -24,6 +24,10 @@ done:
 
 !ifndef BUILD_UNINSTALLER
 Function DeveloperKitPageCreate
+  # Custom nsDialogs pages are still invoked by NSIS in silent mode. Skip the
+  # page so unattended installs retain the customInit default and cannot hang.
+  IfSilent 0 +2
+    Abort
   nsDialogs::Create 1018
   Pop $0
   ${If} $0 == error

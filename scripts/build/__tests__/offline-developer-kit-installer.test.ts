@@ -53,6 +53,7 @@ describe('offline Developer Kit installer contract', () => {
     expect(config).toContain('to: developer-kit')
     expect(config).toContain('include: dist/resources/installer.nsh')
     expect(installer).toContain('Install Mortise Developer Kit (recommended for developers)')
+    expect(installer).toContain('IfSilent 0 +2')
     expect(installer).toContain('!ifndef BUILD_UNINSTALLER')
     expect(installer).toContain('RMDir /r "$INSTDIR\\resources\\developer-kit"')
     expect(discovery).toContain("join(env.MORTISE_RESOURCES_PATH, 'developer-kit')")

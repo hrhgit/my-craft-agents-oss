@@ -17,7 +17,7 @@ depends_on: [workspace-state, pi-agent-engine]
 collaborates_with: [conversation-ui]
 validation:
   - { id: session-lifecycle-regression, kind: unit, command: "bun test packages/shared/src/sessions packages/shared/tests/persistence-queue.test.ts packages/server-core/src/sessions packages/server-core/src/handlers/rpc/sessions apps/electron/src/renderer/lib/__tests__/drafts.test.ts", description: "Run session lifecycle, durability queue, projection, Session RPC, and draft regressions.", triggers: [owned-change], required: true, evidence: "Bun test exit status and output." }
-scope_digest: 12174f5806b5d7bc67803506672d0c409957cf93
+scope_digest: d12babaac6b1ba80225d01a5ff942d5bcd66e253
 ---
 
 ## Purpose

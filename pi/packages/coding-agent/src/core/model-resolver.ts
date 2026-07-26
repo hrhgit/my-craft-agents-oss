@@ -7,9 +7,14 @@ import { modelsAreEqual } from "@mortise/pi-ai/model-utils";
 import type { Api, KnownProvider, Model } from "@mortise/pi-ai/types";
 import chalk from "chalk";
 import { minimatch } from "minimatch";
-import { isValidThinkingLevel } from "../cli/args.ts";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
 import type { ModelRegistry } from "./model-registry.ts";
+
+const THINKING_LEVELS = new Set<ThinkingLevel>(["off", "minimal", "low", "medium", "high", "xhigh"]);
+
+function isValidThinkingLevel(value: string): value is ThinkingLevel {
+	return THINKING_LEVELS.has(value as ThinkingLevel);
+}
 
 /** Default model IDs for each known provider */
 export const defaultModelPerProvider: Record<KnownProvider, string> = {

@@ -60,7 +60,6 @@ describe("issue #2753 reload stale resource settings", () => {
 						},
 					],
 					noSkills: true,
-					noThemes: true,
 				},
 			});
 			return {

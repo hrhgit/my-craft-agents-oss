@@ -11,7 +11,7 @@ function writeSkill(root: string, name: string): void {
 	writeFileSync(join(dir, "SKILL.md"), `---\nname: ${name}\ndescription: ${name} description\n---\n${name} body\n`);
 }
 
-describe("project config directory isolation", () => {
+describe("Mortise project config isolation", () => {
 	let root: string;
 	let cwd: string;
 	let agentDir: string;
@@ -28,89 +28,55 @@ describe("project config directory isolation", () => {
 		rmSync(root, { recursive: true, force: true });
 	});
 
-	it("keeps standalone Pi on .pi by default", async () => {
+	it("uses .mortise by default and never reads or writes .pi", async () => {
 		mkdirSync(join(cwd, ".pi"), { recursive: true });
-		writeFileSync(join(cwd, ".pi", "settings.json"), JSON.stringify({ theme: "standalone" }));
-		const manager = SettingsManager.create(cwd, agentDir);
+		mkdirSync(join(cwd, ".mortise"), { recursive: true });
+		writeFileSync(join(cwd, ".pi", "settings.json"), JSON.stringify({ skills: ["pi-only"] }));
+		writeFileSync(join(cwd, ".mortise", "settings.json"), JSON.stringify({ skills: ["mortise-only"] }));
 
-		expect(manager.getProjectSettings()).toMatchObject({ theme: "standalone" });
-		manager.setProjectSkillPaths(["standalone-skill"]);
+		const manager = SettingsManager.create(cwd, agentDir);
+		expect(manager.getProjectSettings()).toMatchObject({ skills: ["mortise-only"] });
+		manager.setProjectSkillPaths(["updated-mortise"]);
 		await manager.flush();
-		expect(JSON.parse(readFileSync(join(cwd, ".pi", "settings.json"), "utf8"))).toMatchObject({
-			theme: "standalone",
-			skills: ["standalone-skill"],
+
+		expect(JSON.parse(readFileSync(join(cwd, ".pi", "settings.json"), "utf8"))).toEqual({ skills: ["pi-only"] });
+		expect(JSON.parse(readFileSync(join(cwd, ".mortise", "settings.json"), "utf8"))).toMatchObject({
+			skills: ["updated-mortise"],
 		});
 	});
 
-	it("uses the process project directory before an RPC runtime is opened", () => {
-		mkdirSync(join(cwd, ".pi"), { recursive: true });
-		mkdirSync(join(cwd, ".mortise"), { recursive: true });
-		writeFileSync(join(cwd, ".pi", "settings.json"), JSON.stringify({ theme: "pi-only" }));
-		writeFileSync(join(cwd, ".mortise", "settings.json"), JSON.stringify({ theme: "mortise-only" }));
-		const previous = process.env.PI_CODING_AGENT_PROJECT_DIR;
-		process.env.PI_CODING_AGENT_PROJECT_DIR = ".mortise";
-		try {
-			const manager = SettingsManager.create(cwd, agentDir);
-			expect(manager.getProjectSettings()).toMatchObject({ theme: "mortise-only" });
-		} finally {
-			if (previous === undefined) delete process.env.PI_CODING_AGENT_PROJECT_DIR;
-			else process.env.PI_CODING_AGENT_PROJECT_DIR = previous;
-		}
-	});
-
-	it("loads and writes only the explicit Mortise project directory", async () => {
-		mkdirSync(join(cwd, ".pi"), { recursive: true });
-		mkdirSync(join(cwd, ".mortise"), { recursive: true });
+	it("loads resources only from the Mortise project root", async () => {
+		const piRoot = join(cwd, ".pi");
+		const mortiseRoot = join(cwd, ".mortise");
+		writeSkill(piRoot, "pi-only");
+		writeSkill(mortiseRoot, "mortise-only");
+		mkdirSync(join(piRoot, "extensions"), { recursive: true });
+		mkdirSync(join(mortiseRoot, "extensions"), { recursive: true });
+		writeFileSync(join(piRoot, "extensions", "pi-only.ts"), "export default function () {}\n");
+		writeFileSync(join(mortiseRoot, "extensions", "mortise-only.ts"), "export default function () {}\n");
 		writeFileSync(
-			join(cwd, ".pi", "settings.json"),
+			join(mortiseRoot, "settings.json"),
 			JSON.stringify({
-				theme: "pi-only",
-				extensions: [{ id: "pi-only", path: "extensions/pi-only.ts", targets: ["mortise"] }],
-			}),
-		);
-		writeFileSync(
-			join(cwd, ".mortise", "settings.json"),
-			JSON.stringify({
-				theme: "mortise-only",
 				extensions: [{ id: "mortise-only", path: "extensions/mortise-only.ts", targets: ["mortise"] }],
 			}),
 		);
-		writeSkill(join(cwd, ".pi"), "pi-only");
-		writeSkill(join(cwd, ".mortise"), "mortise-only");
-		mkdirSync(join(cwd, ".pi", "extensions"), { recursive: true });
-		mkdirSync(join(cwd, ".mortise", "extensions"), { recursive: true });
-		writeFileSync(join(cwd, ".pi", "extensions", "pi-only.ts"), "export default function () {}\n");
-		writeFileSync(join(cwd, ".mortise", "extensions", "mortise-only.ts"), "export default function () {}\n");
 
-		const manager = SettingsManager.create(cwd, agentDir, ".mortise");
-		expect(manager.getProjectSettings()).toMatchObject({ theme: "mortise-only" });
-		manager.setProjectSkillPaths(["mortise-skill"]);
-		await manager.flush();
-
+		const manager = SettingsManager.create(cwd, agentDir);
 		const loader = new DefaultResourceLoader({
 			cwd,
 			agentDir,
-			projectConfigDir: ".mortise",
 			settingsManager: manager,
 			extensionTarget: "mortise",
 			noPromptTemplates: true,
-			noThemes: true,
 			noContextFiles: true,
 		});
 		await loader.reload();
-		const names = loader.getSkills().skills.map((skill) => skill.name);
-		const extensionIds = loader.getExtensions().extensions.map((extension) => extension.id);
 
-		expect(names).toContain("mortise-only");
-		expect(names).not.toContain("pi-only");
+		const skillNames = loader.getSkills().skills.map((skill) => skill.name);
+		const extensionIds = loader.getExtensions().extensions.map((extension) => extension.id);
+		expect(skillNames).toContain("mortise-only");
+		expect(skillNames).not.toContain("pi-only");
 		expect(extensionIds).toContain("mortise-only");
 		expect(extensionIds).not.toContain("pi-only");
-		expect(JSON.parse(readFileSync(join(cwd, ".pi", "settings.json"), "utf8"))).toMatchObject({
-			theme: "pi-only",
-		});
-		expect(JSON.parse(readFileSync(join(cwd, ".mortise", "settings.json"), "utf8"))).toMatchObject({
-			theme: "mortise-only",
-			skills: ["mortise-skill"],
-		});
 	});
 });

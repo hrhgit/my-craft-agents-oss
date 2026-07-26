@@ -27,7 +27,6 @@ import { DefaultResourceLoader } from "./resource-loader.ts";
 import { getDefaultSessionDir, SessionManager } from "./session-manager.ts";
 import { SettingsManager } from "./settings-manager.ts";
 import { getShellToolName } from "./shell-tool-name.ts";
-import { isInstallTelemetryEnabled } from "./telemetry.ts";
 import { time } from "./timings.ts";
 import {
 	createBashTool,
@@ -117,8 +116,6 @@ export interface CreateAgentSessionOptions {
 	sessionStartEvent?: SessionStartEvent;
 	/** Persist initial model/thinking entries for a new session. Default: true. */
 	persistInitialState?: boolean;
-	/** CLI/runtime extension flag values, applied after deferred extensions load. */
-	extensionFlagValues?: Map<string, boolean | string>;
 	/** Receives diagnostics discovered after deferred resources load. */
 	onRuntimeDiagnostics?: (diagnostics: Array<{ type: "info" | "warning" | "error"; message: string }>) => void;
 }
@@ -171,27 +168,19 @@ function getDefaultAgentDir(): string {
 	return getAgentDir();
 }
 
-function getAttributionHeaders(
-	model: Model<any>,
-	settingsManager: SettingsManager,
-	sessionId?: string,
-): Record<string, string> | undefined {
+function getAttributionHeaders(model: Model<any>, sessionId?: string): Record<string, string> | undefined {
 	if (
 		sessionId &&
 		(model.provider === "opencode" || model.provider === "opencode-go" || model.baseUrl.includes("opencode.ai"))
 	) {
-		return { "x-opencode-session": sessionId, "x-opencode-client": "pi" };
-	}
-
-	if (!isInstallTelemetryEnabled(settingsManager)) {
-		return undefined;
+		return { "x-opencode-session": sessionId, "x-opencode-client": "mortise" };
 	}
 
 	if (model.provider === "openrouter" || model.baseUrl.includes("openrouter.ai")) {
 		return {
-			"HTTP-Referer": "https://pi.dev",
-			"X-OpenRouter-Title": "pi",
-			"X-OpenRouter-Categories": "cli-agent",
+			"HTTP-Referer": "https://github.com/hrhgit/mortise",
+			"X-OpenRouter-Title": "Mortise",
+			"X-OpenRouter-Categories": "desktop-agent",
 		};
 	}
 
@@ -404,7 +393,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 				streamOptions?.timeoutMs ??
 				providerRetrySettings.timeoutMs ??
 				(model.api === "openai-codex-responses" ? settingsManager.getHttpIdleTimeoutMs() : undefined);
-			const attributionHeaders = getAttributionHeaders(model, settingsManager, streamOptions?.sessionId);
+			const attributionHeaders = getAttributionHeaders(model, streamOptions?.sessionId);
 			const effectiveWebSearch = webSearchOverride ?? settingsManager.getWebSearch();
 			const requestUrl = model.baseUrl;
 			const requestClass = "model_pre_first_byte";
@@ -541,7 +530,6 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		extensionRunnerRef,
 		sessionStartEvent: options.sessionStartEvent,
 		networkManager,
-		extensionFlagValues: options.extensionFlagValues,
 		onRuntimeDiagnostics: options.onRuntimeDiagnostics,
 	});
 	const extensionsResult = resourceLoader.getExtensions();

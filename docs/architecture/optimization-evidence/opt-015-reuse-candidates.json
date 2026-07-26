@@ -1,0 +1,52 @@
+{
+  "schema": "mortise/architecture-reuse-candidates/v1",
+  "recordedAt": "2026-07-26",
+  "scope": "Embedded local automation scheduling primitive; the Mortise host, protocol, store, history, idempotency, and delivery authority remain product-owned hard constraints.",
+  "lane": "open-source-first",
+  "hardConstraints": [
+    "No external service or daemon",
+    "No second scheduler, store, history, or dispatcher",
+    "Works inside the existing host-owned SQLite transaction boundary",
+    "Does not reinterpret Session or Agent Loop semantics"
+  ],
+  "candidates": [
+    {
+      "name": "Croner",
+      "stars": 2577,
+      "last_commit_days": 12,
+      "license": "MIT",
+      "release_recency": 175,
+      "docs_score": 9,
+      "quality_signals": 9,
+      "fit_score": 10,
+      "archived": false,
+      "source_url": "https://github.com/Hexagon/croner"
+    },
+    {
+      "name": "node-schedule",
+      "stars": 9205,
+      "last_commit_days": 402,
+      "license": "MIT",
+      "release_recency": 1701,
+      "docs_score": 8,
+      "quality_signals": 7,
+      "fit_score": 6,
+      "archived": false,
+      "source_url": "https://github.com/node-schedule/node-schedule"
+    },
+    {
+      "name": "Bree",
+      "stars": 3291,
+      "last_commit_days": 159,
+      "license": "MIT",
+      "release_recency": 159,
+      "docs_score": 9,
+      "quality_signals": 8,
+      "fit_score": 3,
+      "archived": false,
+      "source_url": "https://github.com/breejs/bree"
+    }
+  ],
+  "selectionRule": "Reuse the highest-ranked candidate only for cron occurrence calculation. Reject any candidate topology that becomes a scheduler, store, worker lifecycle, or delivery authority.",
+  "discoveryStop": "Stopped after three maintained TypeScript/JavaScript in-process scheduling candidates with clear licenses and public release history; service-backed workflow engines were excluded by the no-external-service hard constraint."
+}

@@ -200,7 +200,7 @@ export class PiHostManager {
       runtimes: new Map(),
       pendingStartupEvents: new Map(),
     };
-    this.log('info', 'host.start', record, { cwd: options.cwd, cliPath: options.cliPath });
+    this.log('info', 'host.start', record, { cwd: options.cwd, runtimePath: options.runtimePath });
     record.unsubscribeLifecycle = client.onClientEvent((event) => this.handleLifecycle(record, event));
     const startup = client.start()
       .then(() => client.getCapabilities())

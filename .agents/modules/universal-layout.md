@@ -22,7 +22,7 @@ collaborates_with: [browser-runtime, file-workbench, native-desktop]
 validation:
   - { id: universal-layout-regression, kind: unit, command: "bun test apps/electron/src/renderer/components/app-shell apps/electron/src/renderer/lib/__tests__/draft-write-queue.test.ts apps/electron/src/renderer/lib/__tests__/window-close-flush.test.ts apps/electron/src/shared/__tests__/app-layout.test.ts", description: "Run universal layout, app-shell, and renderer persistence regressions.", triggers: [owned-change], required: true, evidence: "Bun test exit status and output." }
   - { id: universal-layout-physical, kind: physical, command: "bun run test:ui-validation:electron", description: "Exercise docking and layout behavior through the shared Developer Kit host.", triggers: [ui-change, layout-change, release], required: false, evidence: "Developer Kit run output and retained UI evidence." }
-scope_digest: 016cd82297acb8ba6dbcd45bfa783d8a7d323f3f
+scope_digest: b5769dfdb2a8e17f3f54a26710a13e49aa429857
 ---
 
 ## Purpose

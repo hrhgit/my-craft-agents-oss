@@ -322,6 +322,47 @@ describe('MultiWriterStore', () => {
     })).rejects.toBeInstanceOf(MigrationChecksumError)
   })
 
+  it('rolls back records, events, projections, and operation identities as one transaction', async () => {
+    const databasePath = createDatabasePath()
+    const store = await MultiWriterStore.open({ databasePath, writerId: 'transaction-writer', writerVersion: 1 })
+    try {
+      expect(() => store.writeTransaction({}, transaction => {
+        transaction.exec('CREATE TABLE transaction_projection (id TEXT PRIMARY KEY) STRICT')
+        transaction.mutateRecord({
+          namespace: 'transaction-probe',
+          key: 'record',
+          value: { committed: false },
+          expectedVersion: null,
+          operationId: 'transaction-record-operation',
+        })
+        transaction.appendEvent({
+          streamId: 'transaction-stream',
+          eventId: 'transaction-event',
+          eventType: 'probe',
+          schemaVersion: 1,
+          payload: { committed: false },
+          operationId: 'transaction-event-operation',
+        })
+        transaction.run('INSERT INTO transaction_projection (id) VALUES (?)', 'projection')
+        throw new Error('projection failure')
+      })).toThrow('projection failure')
+
+      expect(store.getRecord('transaction-probe', 'record')).toBeNull()
+      expect(store.listEvents('transaction-stream')).toEqual([])
+      expect(() => store.readTransaction(transaction =>
+        transaction.get('SELECT id FROM transaction_projection'))).toThrow()
+      expect(store.mutateRecord({
+        namespace: 'transaction-probe',
+        key: 'record',
+        value: { committed: true },
+        expectedVersion: null,
+        operationId: 'transaction-record-operation',
+      }).status).toBe('applied')
+    } finally {
+      store.close()
+    }
+  })
+
   it('supports concurrent Bun and Electron writers without lost events', async () => {
     const databasePath = createDatabasePath()
     const initial = await MultiWriterStore.open({ databasePath, writerId: 'initializer', writerVersion: 1 })

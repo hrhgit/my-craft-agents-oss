@@ -16,7 +16,7 @@ depends_on: [pi-coding-runtime, shared-contracts, app-settings-security]
 collaborates_with: [extension-ui, session-tooling]
 validation:
   - { id: extension-runtime-regression, kind: unit, command: "bun test packages/shared/src/agent packages/server-core/src/handlers/pi-extension-bridge.test.ts", description: "Run extension runtime and bridge regressions.", triggers: [owned-change], required: true, evidence: "Bun test exit status and output." }
-scope_digest: 77ec1269d8668429ecf8dc6f1c86785ab44dd7f3
+scope_digest: 445ffade23ba53295ebf046421130c810251c831
 ---
 
 ## Purpose

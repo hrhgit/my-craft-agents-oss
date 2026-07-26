@@ -53,7 +53,7 @@ validation:
   - { id: native-desktop-regression, kind: unit, command: "bun test --isolate apps/electron/src/main apps/electron/src/transport", description: "Run Electron main-process and transport regressions with per-file module isolation.", triggers: [owned-change], required: true, evidence: "Bun test exit status and output." }
   - { id: electron-native-contract, kind: contract, command: "bun run typecheck:electron", description: "Verify Electron native contracts compile.", triggers: [contract-change], required: true, evidence: "TypeScript compiler exit status and diagnostics." }
   - { id: native-desktop-physical, kind: physical, command: "bun run test:ui-validation:electron", description: "Exercise native desktop behavior through the shared Developer Kit host.", triggers: [native-change, release], required: false, evidence: "Developer Kit run output and retained native UI evidence." }
-scope_digest: 203aca44da9a81303400eeb45e12d2d048a92993
+scope_digest: 7d6235ace133d40f97f431466a25a707b199f636
 ---
 
 ## Purpose

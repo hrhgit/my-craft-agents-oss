@@ -127,8 +127,6 @@ export interface PiExtensionCatalogEntry {
   resolvedPath: string;
   commands: string[];
   tools: string[];
-  flags: string[];
-  shortcuts: string[];
   config?: Record<string, unknown>;
 }
 

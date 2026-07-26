@@ -11,7 +11,7 @@ import {
   createProductionNodeBundleTargets,
   resolvePiWorkspaceSourceImport,
 } from '../validate-production-node-bundles'
-import { copyPiRuntime, downloadUv, publishVerifiedUvToolchain } from '../common'
+import { downloadUv, publishVerifiedUvToolchain, stageCompiledPiRuntime } from '../common'
 import {
   publishElectronPackageArtifacts,
   reapAbandonedPackageRuns,
@@ -32,6 +32,10 @@ function packageScripts(): Record<string, string> {
     scripts?: Record<string, string>
   }
   return manifest.scripts ?? {}
+}
+
+function readSource(path: string): string {
+  return readFileSync(path, 'utf8').replace(/\r\n/g, '\n')
 }
 
 function filesUnder(directory: string): string[] {
@@ -65,9 +69,7 @@ describe('production bundle validation composition', () => {
     expect(resolvePiWorkspaceSourceImport('@mortise/pi-ai/oauth', repositoryRoot)).toBe(
       resolve(repositoryRoot, 'pi/packages/ai/src/oauth.ts'),
     )
-    expect(resolvePiWorkspaceSourceImport('@mortise/pi-tui', repositoryRoot)).toBe(
-      resolve(repositoryRoot, 'pi/packages/tui/src/index.ts'),
-    )
+    expect(resolvePiWorkspaceSourceImport('@mortise/pi-tui', repositoryRoot)).toBeUndefined()
     expect(resolvePiWorkspaceSourceImport('@mortise/shared', repositoryRoot)).toBeUndefined()
   })
 
@@ -133,8 +135,8 @@ describe('production bundle validation composition', () => {
   })
 
   test('packages only from an isolated immutable app staging directory', () => {
-    const packageElectron = readFileSync(resolve(repositoryRoot, 'scripts/build/package-electron.ts'), 'utf8')
-    const buildCache = readFileSync(resolve(repositoryRoot, 'scripts/build/electron-build-cache.ts'), 'utf8')
+    const packageElectron = readSource(resolve(repositoryRoot, 'scripts/build/package-electron.ts'))
+    const buildCache = readSource(resolve(repositoryRoot, 'scripts/build/electron-build-cache.ts'))
     expect(packageElectron).toContain("'--projectDir'")
     expect(packageElectron).toContain('staged.appDir')
     expect(packageElectron).toContain("'--config.directories.output'")
@@ -247,7 +249,7 @@ describe('production bundle validation composition', () => {
     const previous = process.env.MORTISE_BUILD_SOURCE_ID
     delete process.env.MORTISE_BUILD_SOURCE_ID
     try {
-      expect(() => copyPiRuntime({
+      expect(() => stageCompiledPiRuntime({
         platform: 'win32',
         arch: 'x64',
         upload: false,
@@ -255,7 +257,7 @@ describe('production bundle validation composition', () => {
         uploadScript: false,
         rootDir: repositoryRoot,
         electronDir: resolve(repositoryRoot, 'apps/electron'),
-      })).toThrow('canonical immutable build source identity')
+      }, resolve(repositoryRoot, 'apps/electron/dist/resources/pi-runtime'))).toThrow('canonical immutable build source identity')
     } finally {
       if (previous === undefined) delete process.env.MORTISE_BUILD_SOURCE_ID
       else process.env.MORTISE_BUILD_SOURCE_ID = previous

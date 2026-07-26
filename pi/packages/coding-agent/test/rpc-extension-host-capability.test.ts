@@ -42,7 +42,7 @@ describe("Pi RPC extension host capabilities", () => {
 			join(root, "settings.json"),
 			JSON.stringify({
 				extensions: [
-					{ id: "notification-integration", path: extensionPath, activation: "startup", targets: ["pi"] },
+					{ id: "notification-integration", path: extensionPath, activation: "startup", targets: ["mortise"] },
 				],
 			}),
 			"utf8",
@@ -115,18 +115,15 @@ describe("Pi RPC extension host capabilities", () => {
 
 		const client = new RpcClient({
 			command: process.execPath,
-			cliPath: join(process.cwd(), "dist", "cli.js"),
+			runtimePath: join(process.cwd(), "dist", "bun", "headless.js"),
 			cwd: root,
 			provider: "test",
 			model: "model-a",
-			args: ["--no-session", "--no-skills", "--no-prompt-templates", "--no-context-files"],
 			env: {
-				PI_CODING_AGENT_DIR: root,
+				MORTISE_AGENT_DIR: root,
 				PI_RPC_UI_CAPABILITIES: JSON.stringify({
 					kind: "mortise",
 					dialogs: true,
-					widgets: false,
-					editorControl: false,
 					contributions: false,
 					interactionSchemas: [1],
 				}),

@@ -2,14 +2,10 @@ import { lookup as dnsLookup } from "node:dns/promises";
 import { createRequire } from "node:module";
 import { isIP } from "node:net";
 import type { AgentTool } from "@mortise/pi-agent-core";
-import { Text } from "@mortise/pi-tui";
 import type { Readability as ReadabilityInstance } from "@mozilla/readability";
 import type { ConstructorOptions, JSDOM as JSDOMInstance } from "jsdom";
 import { type Static, Type } from "typebox";
-import { keyHint } from "../../modes/interactive/components/keybinding-hints.ts";
-import type { Theme } from "../../modes/interactive/theme/theme.ts";
-import type { ToolDefinition, ToolRenderResultOptions } from "../extensions/types.ts";
-import { getTextOutput, invalidArgText, shortenPath, str } from "./render-utils.ts";
+import type { ToolDefinition } from "../extensions/types.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
 
 const DEFAULT_MAX_CHARS = 16000;
@@ -352,44 +348,6 @@ async function readBody(
 	return { bytes: merged, truncated };
 }
 
-function formatWebFetchCall(args: { url?: string; mode?: string } | undefined, theme: Theme): string {
-	const url = str(args?.url);
-	const invalidArg = invalidArgText(theme);
-	const displayUrl =
-		url === null ? invalidArg : url ? theme.fg("accent", shortenPath(url)) : theme.fg("toolOutput", "...");
-	const mode = normalizeMode(args?.mode);
-	return `${theme.fg("toolTitle", theme.bold("web_fetch"))} ${displayUrl}${theme.fg("toolOutput", ` [${mode}]`)}`;
-}
-
-function formatWebFetchResult(
-	result: {
-		content: Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
-		details?: WebFetchToolDetails;
-	},
-	options: ToolRenderResultOptions,
-	theme: Theme,
-	showImages: boolean,
-): string {
-	const output = getTextOutput(result, showImages).trim();
-	if (!output) return "";
-
-	const lines = output.split("\n");
-	const maxLines = options.expanded ? lines.length : 20;
-	const displayLines = lines.slice(0, maxLines);
-	const remaining = lines.length - maxLines;
-	let text = `\n${displayLines.map((line) => theme.fg("toolOutput", line)).join("\n")}`;
-
-	if (remaining > 0) {
-		text += `${theme.fg("muted", `\n... (${remaining} more lines,`)} ${keyHint("app.tools.expand", "to expand")})`;
-	}
-
-	if (result.details?.truncated) {
-		text += `\n${theme.fg("warning", `[Truncated response body]`)}`;
-	}
-
-	return text;
-}
-
 export function createWebFetchToolDefinition(
 	_cwd: string,
 	options?: WebFetchToolOptions,
@@ -523,26 +481,6 @@ export function createWebFetchToolDefinition(
 				clearTimeout(timeout);
 				signal?.removeEventListener("abort", onAbort);
 			}
-		},
-		renderCall(args, theme, context) {
-			const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
-			text.setText(formatWebFetchCall(args, theme));
-			return text;
-		},
-		renderResult(result, options, theme, context) {
-			const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
-			text.setText(
-				formatWebFetchResult(
-					result as {
-						content: Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
-						details?: WebFetchToolDetails;
-					},
-					options,
-					theme,
-					context.showImages,
-				),
-			);
-			return text;
 		},
 	};
 }

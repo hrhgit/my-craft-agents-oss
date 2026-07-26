@@ -29,7 +29,6 @@ import type {
 } from "@mortise/pi-ai/types";
 import { isContextOverflow } from "@mortise/pi-ai/utils/overflow";
 import { supportsBuiltinWebSearch } from "@mortise/pi-ai/web-search";
-import { theme } from "../modes/interactive/theme/theme.ts";
 import { stripFrontmatter } from "../utils/frontmatter.ts";
 import { resolvePath } from "../utils/paths.ts";
 import { sleep } from "../utils/sleep.ts";
@@ -48,9 +47,6 @@ import {
 	shouldCompact,
 } from "./compaction/index.ts";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
-import { exportSessionToHtml, type ToolHtmlRenderer } from "./export-html/index.ts";
-import { createToolHtmlRenderer } from "./export-html/tool-renderer.ts";
-import { applyExtensionFlagValues } from "./extension-flags.ts";
 import {
 	type ContextUsage,
 	type ExtensionCapabilitiesContext,
@@ -185,7 +181,7 @@ export interface AgentSessionConfig {
 	scopedModels?: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel }>;
 	/** Session-level override for builtin web_search capability. */
 	webSearchOverride?: boolean;
-	/** Resource loader for skills, prompts, themes, context files, system prompt */
+	/** Resource loader for skills, prompts, context files, and system prompt. */
 	resourceLoader: ResourceLoader;
 	/** SDK custom tools registered outside extensions */
 	customTools?: ToolDefinition[];
@@ -210,8 +206,6 @@ export interface AgentSessionConfig {
 	sessionStartEvent?: SessionStartEvent;
 	/** Unified network manager for dispatcher lifecycle and retry preparation. */
 	networkManager?: NetworkManager;
-	/** CLI/runtime extension flag values, applied again after deferred extensions load. */
-	extensionFlagValues?: Map<string, boolean | string>;
 	/** Receives diagnostics discovered after deferred resources load. */
 	onRuntimeDiagnostics?: (diagnostics: AgentSessionRuntimeDiagnostic[]) => void;
 }
@@ -445,7 +439,6 @@ export class AgentSession {
 	// Base system prompt (without extension appends) - used to apply fresh appends each turn
 	private _baseSystemPrompt = "";
 	private _baseSystemPromptOptions!: BuildSystemPromptOptions;
-	private _extensionFlagValues?: Map<string, boolean | string>;
 	private _onRuntimeDiagnostics?: (diagnostics: AgentSessionRuntimeDiagnostic[]) => void;
 	private _requestResourcesReady = false;
 	private _requestResourcesPromise?: Promise<void>;
@@ -467,7 +460,6 @@ export class AgentSession {
 		this._baseToolsOverride = config.baseToolsOverride;
 		this._sessionStartEvent = config.sessionStartEvent ?? { type: "session_start", reason: "startup" };
 		this._networkManager = config.networkManager;
-		this._extensionFlagValues = config.extensionFlagValues;
 		this._onRuntimeDiagnostics = config.onRuntimeDiagnostics;
 		this._sessionActivityRegistry = SessionActivityRegistry.create(config.agentDir);
 
@@ -2585,15 +2577,8 @@ export class AgentSession {
 			return;
 		}
 
-		const extensionsResult = this._resourceLoader.getExtensions();
-		const previousFlagValues = this._extensionRunner.getFlagValues();
-		for (const [name, value] of previousFlagValues) {
-			extensionsResult.runtime.flagValues.set(name, value);
-		}
-		this._recordRuntimeDiagnostics(applyExtensionFlagValues(this._resourceLoader, this._extensionFlagValues));
 		this._buildRuntime({
 			activeToolNames: this.getActiveToolNames(),
-			flagValues: extensionsResult.runtime.flagValues,
 			includeAllExtensionTools: true,
 		});
 
@@ -2686,19 +2671,15 @@ export class AgentSession {
 			return;
 		}
 
-		const { skillPaths, promptPaths, themePaths } = await this._extensionRunner.emitResourcesDiscover(
-			this._cwd,
-			reason,
-		);
+		const { skillPaths, promptPaths } = await this._extensionRunner.emitResourcesDiscover(this._cwd, reason);
 
-		if (skillPaths.length === 0 && promptPaths.length === 0 && themePaths.length === 0) {
+		if (skillPaths.length === 0 && promptPaths.length === 0) {
 			return;
 		}
 
 		const extensionPaths: ResourceExtensionPaths = {
 			skillPaths: this.buildExtensionResourcePaths(skillPaths),
 			promptPaths: this.buildExtensionResourcePaths(promptPaths),
-			themePaths: this.buildExtensionResourcePaths(themePaths),
 		};
 
 		this._resourceLoader.extendResources(extensionPaths);
@@ -2966,11 +2947,7 @@ export class AgentSession {
 		this.setActiveToolsByName([...new Set(nextActiveToolNames)]);
 	}
 
-	private _buildRuntime(options: {
-		activeToolNames?: string[];
-		flagValues?: Map<string, boolean | string>;
-		includeAllExtensionTools?: boolean;
-	}): void {
+	private _buildRuntime(options: { activeToolNames?: string[]; includeAllExtensionTools?: boolean }): void {
 		const autoResizeImages = this.settingsManager.getImageAutoResize();
 		const shellCommandPrefix = this.settingsManager.getShellCommandPrefix();
 		const shellPath = this.settingsManager.getShellPath();
@@ -2997,12 +2974,6 @@ export class AgentSession {
 		);
 
 		const extensionsResult = this._resourceLoader.getExtensions();
-		if (options.flagValues) {
-			for (const [name, value] of options.flagValues) {
-				extensionsResult.runtime.flagValues.set(name, value);
-			}
-		}
-
 		this._extensionRunner = new ExtensionRunner(
 			extensionsResult.extensions,
 			extensionsResult.runtime,
@@ -3028,7 +2999,6 @@ export class AgentSession {
 	}
 
 	async reload(): Promise<void> {
-		const previousFlagValues = this._extensionRunner.getFlagValues();
 		await emitSessionShutdownEvent(this._extensionRunner, { type: "session_shutdown", reason: "reload" });
 		await this.settingsManager.reload();
 		await this._networkManager?.applySettings();
@@ -3036,7 +3006,6 @@ export class AgentSession {
 		await this._resourceLoader.reload();
 		this._buildRuntime({
 			activeToolNames: this.getActiveToolNames(),
-			flagValues: previousFlagValues,
 			includeAllExtensionTools: true,
 		});
 
@@ -3729,28 +3698,6 @@ export class AgentSession {
 			contextWindow,
 			percent,
 		};
-	}
-
-	/**
-	 * Export session to HTML.
-	 * @param outputPath Optional output path (defaults to session directory)
-	 * @returns Path to exported file
-	 */
-	async exportToHtml(outputPath?: string): Promise<string> {
-		const themeName = this.settingsManager.getTheme();
-
-		// Create tool renderer if we have an extension runner (for custom tool HTML rendering)
-		const toolRenderer: ToolHtmlRenderer = createToolHtmlRenderer({
-			getToolDefinition: (name) => this.getToolDefinition(name),
-			theme,
-			cwd: this.sessionManager.getCwd(),
-		});
-
-		return await exportSessionToHtml(this.sessionManager, this.state, {
-			outputPath,
-			themeName,
-			toolRenderer,
-		});
 	}
 
 	/**

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import type { MortiseSqliteDatabase } from './sqlite-driver.ts'
+import type { MortiseSqliteDatabase, SqliteRunResult, SqliteValue } from './sqlite-driver.ts'
 import { openMortiseSqliteDatabase, openMortiseSqliteDatabaseSync } from './sqlite-driver.ts'
 
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue }
@@ -14,7 +14,29 @@ export interface MultiWriterStoreOptions {
   writerId: string
   writerVersion: number
   capabilities?: Record<string, CapabilityRange>
+  moduleMigrations?: readonly MultiWriterModuleMigration[]
   busyTimeoutMs?: number
+}
+
+export interface MultiWriterReadTransaction {
+  getRecord<T extends JsonValue = JsonValue>(namespace: string, key: string): StoredRecord<T> | null
+  get<T extends object>(sql: string, ...params: SqliteValue[]): T | undefined
+  all<T extends object>(sql: string, ...params: SqliteValue[]): T[]
+  getCapabilityVersion(capability: string): number | null
+}
+
+export interface MultiWriterTransaction extends MultiWriterReadTransaction {
+  mutateRecord<T extends JsonValue>(mutation: RecordMutation<T>): RecordMutationResult<T>
+  appendEvent<T extends JsonValue>(input: AppendEventInput<T>): AppendEventResult
+  exec(sql: string): void
+  run(sql: string, ...params: SqliteValue[]): SqliteRunResult
+  setCapabilityVersion(capability: string, version: number): void
+}
+
+export interface MultiWriterModuleMigration {
+  id: string
+  checksum: string
+  migrate(transaction: MultiWriterTransaction): void
 }
 
 export interface StoredRecord<T extends JsonValue = JsonValue> {
@@ -372,17 +394,20 @@ export class MultiWriterStore {
   private readonly writerId: string
   private readonly writerVersion: number
   private readonly capabilities: Record<string, CapabilityRange>
+  private readonly moduleMigrations: readonly MultiWriterModuleMigration[]
 
   private constructor(
     database: MortiseSqliteDatabase,
     writerId: string,
     writerVersion: number,
     capabilities: Record<string, CapabilityRange>,
+    moduleMigrations: readonly MultiWriterModuleMigration[],
   ) {
     this.database = database
     this.writerId = writerId
     this.writerVersion = writerVersion
     this.capabilities = capabilities
+    this.moduleMigrations = moduleMigrations
   }
 
   static async open(options: MultiWriterStoreOptions): Promise<MultiWriterStore> {
@@ -399,6 +424,7 @@ export class MultiWriterStore {
       options.writerId,
       options.writerVersion,
       { ...DEFAULT_CAPABILITIES, ...options.capabilities },
+      options.moduleMigrations ?? [],
     )
     try {
       store.applyMigrations()
@@ -424,6 +450,7 @@ export class MultiWriterStore {
       options.writerId,
       options.writerVersion,
       { ...DEFAULT_CAPABILITIES, ...options.capabilities },
+      options.moduleMigrations ?? [],
     )
     try {
       store.applyMigrations()
@@ -461,6 +488,10 @@ export class MultiWriterStore {
   }
 
   mutateRecord<T extends JsonValue>(mutation: RecordMutation<T>): RecordMutationResult<T> {
+    return this.transaction(() => this.mutateRecordInTransaction(mutation))
+  }
+
+  private mutateRecordInTransaction<T extends JsonValue>(mutation: RecordMutation<T>): RecordMutationResult<T> {
     const capability = mutation.capability ?? 'records'
     assertIdentifier(capability, 'capability')
     assertIdentifier(mutation.namespace, 'namespace')
@@ -478,16 +509,15 @@ export class MultiWriterStore {
       expectedVersion: mutation.expectedVersion,
     }))
 
-    return this.transaction(() => {
-      const replay = this.readOperation<RecordMutationResult<T>>(
-        mutation.operationId,
-        capability,
-        payloadHash,
-      )
-      if (replay) return { ...replay, replayed: true }
-      this.assertWritable(capability)
+    const replay = this.readOperation<RecordMutationResult<T>>(
+      mutation.operationId,
+      capability,
+      payloadHash,
+    )
+    if (replay) return { ...replay, replayed: true }
+    this.assertWritable(capability)
 
-      const current = this.getRecord<T>(mutation.namespace, mutation.key)
+    const current = this.getRecord<T>(mutation.namespace, mutation.key)
       const versionMatches = current === null
         ? mutation.expectedVersion === null
         : current.version === mutation.expectedVersion
@@ -499,8 +529,8 @@ export class MultiWriterStore {
           replayed: false,
         }
         this.saveOperation(mutation.operationId, capability, payloadHash, conflict)
-        return conflict
-      }
+      return conflict
+    }
 
       const nextVersion = (current?.version ?? 0) + 1
       const valueJson = canonicalJson(mutation.value)
@@ -535,15 +565,14 @@ export class MultiWriterStore {
         )
       }
 
-      const result: RecordMutationResult<T> = {
+    const result: RecordMutationResult<T> = {
         status: 'applied',
         version: nextVersion,
         value: mutation.value,
         replayed: false,
       }
-      this.saveOperation(mutation.operationId, capability, payloadHash, result)
-      return result
-    })
+    this.saveOperation(mutation.operationId, capability, payloadHash, result)
+    return result
   }
 
   mutateRecordPatch(mutation: RecordPatchMutation): RecordMutationResult {
@@ -628,6 +657,10 @@ export class MultiWriterStore {
   }
 
   appendEvent<T extends JsonValue>(input: AppendEventInput<T>): AppendEventResult {
+    return this.transaction(() => this.appendEventInTransaction(input))
+  }
+
+  private appendEventInTransaction<T extends JsonValue>(input: AppendEventInput<T>): AppendEventResult {
     const capability = input.capability ?? 'events'
     assertIdentifier(capability, 'capability')
     assertIdentifier(input.streamId, 'streamId')
@@ -651,10 +684,9 @@ export class MultiWriterStore {
       expectedSequence: input.expectedSequence ?? null,
     }))
 
-    return this.transaction(() => {
-      const replay = this.readOperation<AppendEventResult>(input.operationId, capability, payloadHash)
-      if (replay) return { ...replay, replayed: true }
-      this.assertWritable(capability)
+    const replay = this.readOperation<AppendEventResult>(input.operationId, capability, payloadHash)
+    if (replay) return { ...replay, replayed: true }
+    this.assertWritable(capability)
 
       const head = this.database.prepare(`
         SELECT last_sequence FROM mortise_stream_heads WHERE stream_id = ?
@@ -710,10 +742,35 @@ export class MultiWriterStore {
         ON CONFLICT (stream_id) DO UPDATE SET last_sequence = excluded.last_sequence
       `).run(input.streamId, sequence)
 
-      const result: AppendEventResult = { status: 'applied', sequence, replayed: false }
-      this.saveOperation(input.operationId, capability, payloadHash, result)
-      return result
+    const result: AppendEventResult = { status: 'applied', sequence, replayed: false }
+    this.saveOperation(input.operationId, capability, payloadHash, result)
+    return result
+  }
+
+  writeTransaction<T>(
+    options: { requiredCapabilities?: readonly string[] },
+    operation: (transaction: MultiWriterTransaction) => T,
+  ): T {
+    return this.transaction(() => {
+      for (const capability of options.requiredCapabilities ?? []) this.assertWritable(capability)
+      return operation(this.createTransactionContext())
     })
+  }
+
+  readTransaction<T>(operation: (transaction: MultiWriterReadTransaction) => T): T {
+    this.database.exec('BEGIN')
+    try {
+      const result = operation(this.createTransactionContext())
+      this.database.exec('COMMIT')
+      return result
+    } catch (error) {
+      try {
+        this.database.exec('ROLLBACK')
+      } catch {
+        // Preserve the original read error.
+      }
+      throw error
+    }
   }
 
   listEvents<T extends JsonValue = JsonValue>(streamId: string): StoredEvent<T>[] {
@@ -776,6 +833,21 @@ export class MultiWriterStore {
           INSERT INTO mortise_schema_migrations (id, checksum, applied_at) VALUES (?, ?, ?)
         `).run(migration.id, checksum, Date.now())
       }
+      for (const migration of this.moduleMigrations) {
+        assertIdentifier(migration.id, 'module migration id')
+        assertIdentifier(migration.checksum, 'module migration checksum')
+        const existing = this.database.prepare(`
+          SELECT checksum FROM mortise_schema_migrations WHERE id = ?
+        `).get<{ checksum: string }>(migration.id)
+        if (existing) {
+          if (existing.checksum !== migration.checksum) throw new MigrationChecksumError(migration.id)
+          continue
+        }
+        migration.migrate(this.createTransactionContext())
+        this.database.prepare(`
+          INSERT INTO mortise_schema_migrations (id, checksum, applied_at) VALUES (?, ?, ?)
+        `).run(migration.id, migration.checksum, Date.now())
+      }
     })
   }
 
@@ -825,6 +897,28 @@ export class MultiWriterStore {
       JSON.stringify(result),
       Date.now(),
     )
+  }
+
+  private createTransactionContext(): MultiWriterTransaction {
+    return {
+      getRecord: <T extends JsonValue = JsonValue>(namespace: string, key: string) => this.getRecord<T>(namespace, key),
+      mutateRecord: <T extends JsonValue>(mutation: RecordMutation<T>) => this.mutateRecordInTransaction(mutation),
+      appendEvent: <T extends JsonValue>(input: AppendEventInput<T>) => this.appendEventInTransaction(input),
+      exec: sql => this.database.exec(sql),
+      run: (sql, ...params) => this.database.prepare(sql).run(...params),
+      get: <T extends object>(sql: string, ...params: SqliteValue[]) => this.database.prepare(sql).get<T>(...params),
+      all: <T extends object>(sql: string, ...params: SqliteValue[]) => this.database.prepare(sql).all<T>(...params),
+      getCapabilityVersion: capability => this.getCapabilityVersion(capability),
+      setCapabilityVersion: (capability, version) => {
+        assertIdentifier(capability, 'capability')
+        if (!Number.isSafeInteger(version) || version <= 0) throw new TypeError('capability version must be a positive safe integer')
+        this.database.prepare(`
+          INSERT INTO mortise_capabilities (name, version, updated_at)
+          VALUES (?, ?, ?)
+          ON CONFLICT(name) DO UPDATE SET version = excluded.version, updated_at = excluded.updated_at
+        `).run(capability, version, Date.now())
+      },
+    }
   }
 
   private transaction<T>(operation: () => T): T {

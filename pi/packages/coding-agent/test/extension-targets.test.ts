@@ -4,8 +4,8 @@ import { basename, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { ExtensionTarget } from "../src/core/extensions/index.ts";
 import { getExtensionCatalog } from "../src/core/host-facade.ts";
-import { DefaultPackageManager, type ResolvedResource } from "../src/core/package-manager.ts";
 import { DefaultResourceLoader } from "../src/core/resource-loader.ts";
+import { type ResolvedResource, ResourceResolver } from "../src/core/resource-resolver.ts";
 import { type Settings, SettingsManager } from "../src/core/settings-manager.ts";
 
 function extensionNames(resources: ResolvedResource[]): string[] {
@@ -38,11 +38,11 @@ describe("extension targets", () => {
 		rmSync(tempDir, { recursive: true, force: true });
 	});
 
-	function createPackageManager(
+	function createResourceResolver(
 		settingsManager: SettingsManager,
 		extensionTarget: ExtensionTarget,
-	): DefaultPackageManager {
-		return new DefaultPackageManager({
+	): ResourceResolver {
+		return new ResourceResolver({
 			cwd,
 			agentDir,
 			settingsManager,
@@ -64,8 +64,8 @@ describe("extension targets", () => {
 			],
 		});
 
-		const piResult = await createPackageManager(settingsManager, "pi").resolve();
-		const mortiseResult = await createPackageManager(settingsManager, "mortise").resolve();
+		const piResult = await createResourceResolver(settingsManager, "pi").resolve();
+		const mortiseResult = await createResourceResolver(settingsManager, "mortise").resolve();
 
 		expect(extensionNames(piResult.extensions)).toEqual(["both.js", "pi-only.js"]);
 		expect(extensionNames(mortiseResult.extensions)).toEqual(["both.js", "mortise-only.js"]);
@@ -82,7 +82,7 @@ describe("extension targets", () => {
 			extensions: [{ id: "legacy", path: "extensions/legacy.js", targets: ["craft"] }],
 		} as unknown as Partial<Settings>;
 
-		await expect(createPackageManager(SettingsManager.inMemory(settings), "mortise").resolve()).rejects.toThrow(
+		await expect(createResourceResolver(SettingsManager.inMemory(settings), "mortise").resolve()).rejects.toThrow(
 			/extension targets must explicitly contain pi, mortise, or both/,
 		);
 	});
@@ -95,7 +95,7 @@ describe("extension targets", () => {
 			extensions: [{ id: "unknown", path: "extensions/unknown.js", targets: ["unknown-host"] }],
 		} as unknown as Partial<Settings>;
 
-		await expect(createPackageManager(SettingsManager.inMemory(settings), "mortise").resolve()).rejects.toThrow(
+		await expect(createResourceResolver(SettingsManager.inMemory(settings), "mortise").resolve()).rejects.toThrow(
 			/extension targets must explicitly contain pi, mortise, or both/,
 		);
 	});
@@ -110,7 +110,7 @@ describe("extension targets", () => {
 		writeFileSync(join(extensionsDir, "unmarked.js"), "export default function() {}");
 		const settingsManager = SettingsManager.inMemory({ extensions: [entry] } as Partial<Settings>);
 
-		await expect(createPackageManager(settingsManager, "pi").resolve()).rejects.toThrow(
+		await expect(createResourceResolver(settingsManager, "pi").resolve()).rejects.toThrow(
 			/extension (entries|id|targets)/,
 		);
 	});
@@ -123,7 +123,7 @@ describe("extension targets", () => {
 		} as unknown as Partial<Settings>;
 		const settingsManager = SettingsManager.inMemory(settings);
 
-		const result = await createPackageManager(settingsManager, "mortise").resolve();
+		const result = await createResourceResolver(settingsManager, "mortise").resolve();
 
 		expect(result.extensions).toEqual([]);
 	});
@@ -133,7 +133,7 @@ describe("extension targets", () => {
 		mkdirSync(extensionsDir, { recursive: true });
 		writeFileSync(join(extensionsDir, "loose.js"), "export default function() {}");
 
-		const result = await createPackageManager(SettingsManager.inMemory(), "pi").resolve();
+		const result = await createResourceResolver(SettingsManager.inMemory(), "pi").resolve();
 
 		expect(result.extensions).toEqual([]);
 	});
@@ -197,8 +197,8 @@ describe("extension targets", () => {
 		);
 
 		const settingsManager = SettingsManager.inMemory();
-		const piResult = await createPackageManager(settingsManager, "pi").resolveExtensionSources([packageDir]);
-		const mortiseResult = await createPackageManager(settingsManager, "mortise").resolveExtensionSources([
+		const piResult = await createResourceResolver(settingsManager, "pi").resolveExtensionSources([packageDir]);
+		const mortiseResult = await createResourceResolver(settingsManager, "mortise").resolveExtensionSources([
 			packageDir,
 		]);
 
@@ -229,41 +229,9 @@ describe("extension targets", () => {
 				},
 			}),
 		);
-		const result = await createPackageManager(SettingsManager.inMemory(), "mortise").resolveExtensionSources([
-			packageDir,
-		]);
-		expect(result.extensions).toEqual([]);
-	});
-
-	it("preserves ids and targets from convention extension package manifests", async () => {
-		const packageDir = join(tempDir, "convention-target-package");
-		const piDir = join(packageDir, "extensions", "pi-extension");
-		const mortiseDir = join(packageDir, "extensions", "mortise-extension");
-		mkdirSync(piDir, { recursive: true });
-		mkdirSync(mortiseDir, { recursive: true });
-		writeFileSync(join(piDir, "main.js"), "export default function() {}");
-		writeFileSync(join(mortiseDir, "main.js"), "export default function() {}");
-		writeFileSync(
-			join(piDir, "package.json"),
-			JSON.stringify({ pi: { extensions: [{ id: "pi-extension", path: "main.js", targets: ["pi"] }] } }),
-		);
-		writeFileSync(
-			join(mortiseDir, "package.json"),
-			JSON.stringify({ pi: { extensions: [{ id: "mortise-extension", path: "main.js", targets: ["mortise"] }] } }),
-		);
-
-		const settingsManager = SettingsManager.inMemory();
-		const piResult = await createPackageManager(settingsManager, "pi").resolveExtensionSources([packageDir]);
-		const mortiseResult = await createPackageManager(settingsManager, "mortise").resolveExtensionSources([
-			packageDir,
-		]);
-
-		expect(piResult.extensions.map((resource) => basename(resource.path))).toEqual(["main.js"]);
-		expect(piResult.extensions[0]?.path).toContain("pi-extension");
-		expect(piResult.extensions[0]?.metadata.extensionId).toBe("pi-extension");
-		expect(mortiseResult.extensions.map((resource) => basename(resource.path))).toEqual(["main.js"]);
-		expect(mortiseResult.extensions[0]?.path).toContain("mortise-extension");
-		expect(mortiseResult.extensions[0]?.metadata.extensionId).toBe("mortise-extension");
+		await expect(
+			createResourceResolver(SettingsManager.inMemory(), "mortise").resolveExtensionSources([packageDir]),
+		).rejects.toThrow(/schemaVersion/);
 	});
 
 	it("loads only startup extensions matching the resource loader target", async () => {

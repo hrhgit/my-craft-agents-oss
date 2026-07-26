@@ -38,7 +38,7 @@ describe('automation.workspace/v1 requests', () => {
   it('publishes the complete canonical operation set', () => {
     expect(AUTOMATION_WORKSPACE_OPERATIONS_V1).toEqual([
       'describe', 'list', 'get', 'validate', 'simulate', 'create', 'update', 'delete',
-      'set-enabled', 'run', 'get-run', 'list-runs', 'emit-event',
+      'set-enabled', 'run', 'get-run', 'list-runs', 'list-changes', 'emit-event',
     ])
   })
 

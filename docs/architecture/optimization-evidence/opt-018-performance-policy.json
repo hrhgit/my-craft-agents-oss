@@ -1,0 +1,43 @@
+{
+  "schema": "mortise/headless-runtime-performance-policy/v1",
+  "frozenAt": "2026-07-26",
+  "baselineRevision": "f398a42eeaff1fc21a23f1f9a6622ec4f141fb23",
+  "baselineSourceId": "359a866884d4177b56a286ba66fb6e3bf880e881e86e1d7401a8133e33e7f887",
+  "baselineBuildId": "9dd77e991b08adcad4cc2b1f75ebdf853d4db0f8c64757c8ab1aeb997f96b8ed",
+  "baselineExecutableSha256": "f14cc6e5096047194eba90aa7e0471c45c28c3030cff09cb488a96da39d79c22",
+  "environment": {
+    "platform": "win32",
+    "arch": "x64",
+    "runtime": "OPT-017 immutable Bun-compiled executable",
+    "profile": "isolated temporary MORTISE_CONFIG_DIR",
+    "network": "loopback deterministic OpenAI-compatible fixture server"
+  },
+  "fixture": {
+    "schema": "mortise/headless-first-turn-fixture/v1",
+    "prompt": "Return the exact text: headless fixture complete",
+    "assistantText": "headless fixture complete",
+    "completionEvent": "agent_settled",
+    "externalNetwork": false
+  },
+  "metrics": [
+    "compiledExecutableBytes",
+    "completeStagedRuntimeBytes",
+    "coldProcessToCapabilitiesHandshakeMs",
+    "idleProcessTreeRssBytes",
+    "activeProcessTreeRssBytes",
+    "promptToAgentSettledMs"
+  ],
+  "sampling": {
+    "warmup": 1,
+    "baseSamples": 10,
+    "finalSamples": 10,
+    "statistics": ["median", "p95"],
+    "timeoutMsPerSample": 60000,
+    "noisePolicy": "Do not discard individual samples. Any timeout, identity mismatch, fixture mismatch, orphan process, or foreign-process interference invalidates the complete base/final set and requires a fresh rerun."
+  },
+  "budgets": {
+    "relativeRegressionCeilingPercent": 5,
+    "requiredBehavior": "Every sample must complete the capabilities handshake and the deterministic first turn through agent_settled, then leave no child process.",
+    "identity": "Executable and staged-runtime hashes must match the selected OPT-017 build manifest exactly."
+  }
+}

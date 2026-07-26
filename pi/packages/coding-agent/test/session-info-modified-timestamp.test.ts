@@ -2,10 +2,9 @@ import { writeFileSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SessionHeader } from "../src/core/session-manager.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
-import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 
 async function createSessionFile(path: string): Promise<void> {
 	const header: SessionHeader = {
@@ -41,8 +40,6 @@ async function createSessionFile(path: string): Promise<void> {
 }
 
 describe("SessionInfo.modified", () => {
-	beforeAll(() => initTheme("dark"));
-
 	afterEach(() => {
 		vi.restoreAllMocks();
 	});

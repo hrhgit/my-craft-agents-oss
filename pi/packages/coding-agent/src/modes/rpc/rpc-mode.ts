@@ -35,10 +35,8 @@ import type {
 	ExtensionUIContribution,
 	ExtensionUIDialogOptions,
 	ExtensionUIValidationDefinitionV1,
-	ExtensionWidgetOptions,
 	HostCapabilityInvokeOptions,
 	HostCapabilityResult,
-	WorkingIndicatorOptions,
 } from "../../core/extensions/index.ts";
 import { getProcessGlobalBackgroundTaskCoordinator } from "../../core/global-background-tasks.ts";
 import {
@@ -70,7 +68,6 @@ import {
 } from "../../core/output-guard.ts";
 import { SessionManager } from "../../core/session-manager.ts";
 import { killTrackedDetachedChildren } from "../../utils/shell.ts";
-import { type Theme, theme } from "../interactive/theme/theme.ts";
 import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.ts";
 import type {
 	RpcCapabilities,
@@ -331,8 +328,6 @@ export interface RpcGlobalHostRuntimeFactory {
 const NO_RPC_HOST_UI: RpcHostUICapabilities = {
 	kind: "none",
 	dialogs: false,
-	widgets: false,
-	editorControl: false,
 	contributions: false,
 	validation: false,
 	interactionSchemas: [],
@@ -347,21 +342,10 @@ function normalizeRpcHostUICapabilities(value: unknown): RpcHostUICapabilities {
 	const interactionSchemas = candidate.interactionSchemas;
 	if (
 		Object.keys(candidate).some(
-			(key) =>
-				![
-					"kind",
-					"dialogs",
-					"widgets",
-					"editorControl",
-					"contributions",
-					"validation",
-					"interactionSchemas",
-				].includes(key),
+			(key) => !["kind", "dialogs", "contributions", "validation", "interactionSchemas"].includes(key),
 		) ||
 		(candidate.kind !== "mortise" && candidate.kind !== "none") ||
 		typeof candidate.dialogs !== "boolean" ||
-		typeof candidate.widgets !== "boolean" ||
-		typeof candidate.editorControl !== "boolean" ||
 		typeof candidate.contributions !== "boolean" ||
 		(candidate.validation !== undefined && typeof candidate.validation !== "boolean") ||
 		!Array.isArray(interactionSchemas) ||
@@ -372,20 +356,13 @@ function normalizeRpcHostUICapabilities(value: unknown): RpcHostUICapabilities {
 	const schemas = interactionSchemas as number[];
 	if (
 		candidate.kind === "none" &&
-		(candidate.dialogs ||
-			candidate.widgets ||
-			candidate.editorControl ||
-			candidate.contributions ||
-			candidate.validation ||
-			schemas.length > 0)
+		(candidate.dialogs || candidate.contributions || candidate.validation || schemas.length > 0)
 	) {
 		throw new Error('RPC host UI kind "none" cannot declare UI features');
 	}
 	return {
 		kind: candidate.kind as RpcHostUICapabilities["kind"],
 		dialogs: candidate.dialogs as boolean,
-		widgets: candidate.widgets as boolean,
-		editorControl: candidate.editorControl as boolean,
 		contributions: candidate.contributions as boolean,
 		validation: candidate.validation === true,
 		interactionSchemas: Array.from(new Set(schemas)).filter((schema) => schema === 1),
@@ -1182,10 +1159,6 @@ export async function runRpcMode(
 			capabilities: {
 				kind: binding.uiCapabilities.kind,
 				dialogs: binding.uiCapabilities.dialogs,
-				widgets: binding.uiCapabilities.widgets,
-				customComponents: false,
-				terminalInput: false,
-				editorControl: binding.uiCapabilities.editorControl,
 				contributions: binding.uiCapabilities.contributions,
 				interactionSchemas: binding.uiCapabilities.interactionSchemas,
 			},
@@ -1337,192 +1310,6 @@ export async function runRpcMode(
 					} as RpcExtensionUIRequest,
 					binding,
 				);
-			},
-
-			onTerminalInput(): () => void {
-				// Raw terminal input not supported in RPC mode
-				return () => {};
-			},
-
-			setStatus(key: string, text: string | undefined): void {
-				// Fire and forget - no response needed
-				output(
-					{
-						type: "extension_ui_request",
-						id: crypto.randomUUID(),
-						extensionId,
-						method: "setStatus",
-						statusKey: key,
-						statusText: text,
-					} as RpcExtensionUIRequest,
-					binding,
-				);
-			},
-
-			setWorkingMessage(_message?: string): void {
-				// Working message not supported in RPC mode - requires TUI loader access
-			},
-
-			setWorkingVisible(_visible: boolean): void {
-				// Working visibility not supported in RPC mode - requires TUI loader access
-			},
-
-			setWorkingIndicator(_options?: WorkingIndicatorOptions): void {
-				// Working indicator customization not supported in RPC mode - requires TUI loader access
-			},
-
-			setHiddenThinkingLabel(_label?: string): void {
-				// Hidden thinking label not supported in RPC mode - requires TUI message rendering access
-			},
-
-			setWidget(key: string, content: unknown, options?: ExtensionWidgetOptions): void {
-				if (!binding.uiCapabilities.widgets || !binding.uiCapabilities.contributions) return;
-				if (content === undefined) {
-					activeContributions.get(`${binding.runtimeId}\0${extensionId}`)?.delete(key);
-					output(
-						{
-							type: "extension_ui_request",
-							id: crypto.randomUUID(),
-							extensionId,
-							method: "contribution",
-							operation: "remove",
-							revision: nextContributionRevision(binding, extensionId),
-							contributionId: key,
-						} satisfies RpcExtensionUIRequest,
-						binding,
-					);
-					return;
-				}
-				if (!Array.isArray(content) || content.some((line) => typeof line !== "string")) return;
-				const contribution = {
-					schemaVersion: 1 as const,
-					id: key,
-					surface:
-						options?.placement === "belowEditor" ? ("composer.below" as const) : ("composer.above" as const),
-					content: { type: "text" as const, text: content.join("\n") },
-				};
-				const ownerKey = `${binding.runtimeId}\0${extensionId}`;
-				const contributions = activeContributions.get(ownerKey) ?? new Map();
-				contributions.set(key, contribution);
-				activeContributions.set(ownerKey, contributions);
-				output(
-					{
-						type: "extension_ui_request",
-						id: crypto.randomUUID(),
-						extensionId,
-						method: "contribution",
-						operation: "upsert",
-						revision: nextContributionRevision(binding, extensionId),
-						contribution,
-					} satisfies RpcExtensionUIRequest,
-					binding,
-				);
-			},
-
-			setFooter(_factory: unknown): void {
-				// Custom footer not supported in RPC mode - requires TUI access
-			},
-
-			setHeader(_factory: unknown): void {
-				// Custom header not supported in RPC mode - requires TUI access
-			},
-
-			setTitle(title: string): void {
-				if (!binding.uiCapabilities.editorControl) return;
-				// Fire and forget - host can implement terminal title control
-				output(
-					{
-						type: "extension_ui_request",
-						id: crypto.randomUUID(),
-						extensionId,
-						method: "setTitle",
-						title,
-					} as RpcExtensionUIRequest,
-					binding,
-				);
-			},
-
-			async custom() {
-				// Custom UI not supported in RPC mode
-				return undefined as never;
-			},
-
-			pasteToEditor(text: string): void {
-				// Paste handling not supported in RPC mode - falls back to setEditorText
-				this.setEditorText(text);
-			},
-
-			setEditorText(text: string): void {
-				if (!binding.uiCapabilities.editorControl) return;
-				// Fire and forget - host can implement editor control
-				output(
-					{
-						type: "extension_ui_request",
-						id: crypto.randomUUID(),
-						extensionId,
-						method: "set_editor_text",
-						text,
-					} as RpcExtensionUIRequest,
-					binding,
-				);
-			},
-
-			getEditorText(): string {
-				// Synchronous method can't wait for RPC response
-				// Host should track editor state locally if needed
-				return "";
-			},
-
-			editor: (title: string, prefill?: string): Promise<string | undefined> =>
-				binding.uiCapabilities.dialogs
-					? interact({
-							schemaVersion: 1,
-							title,
-							fields: [{ id: "value", kind: "text", label: title, multiline: true, defaultValue: prefill }],
-						}).then((response) => {
-							if (response.status !== "submitted") return undefined;
-							const answer = response.answers.find((item) => item.fieldId === "value");
-							return answer?.kind === "text" ? answer.value : undefined;
-						})
-					: Promise.resolve(undefined),
-
-			addAutocompleteProvider(): void {
-				// Autocomplete provider composition is not supported in RPC mode
-			},
-
-			setEditorComponent(): void {
-				// Custom editor components not supported in RPC mode
-			},
-
-			getEditorComponent() {
-				// Custom editor components not supported in RPC mode
-				return undefined;
-			},
-
-			get theme() {
-				return theme;
-			},
-
-			getAllThemes() {
-				return [];
-			},
-
-			getTheme(_name: string) {
-				return undefined;
-			},
-
-			setTheme(_theme: string | Theme) {
-				// Theme switching not supported in RPC mode
-				return { success: false, error: "Theme switching not supported in RPC mode" };
-			},
-
-			getToolsExpanded() {
-				// Tool expansion not supported in RPC mode - no TUI
-				return false;
-			},
-
-			setToolsExpanded(_expanded: boolean) {
-				// Tool expansion not supported in RPC mode - no TUI
 			},
 		};
 	};
@@ -2203,11 +1990,6 @@ export async function runRpcMode(
 			case "get_session_stats": {
 				const stats = session.getSessionStats();
 				return success(id, "get_session_stats", stats);
-			}
-
-			case "export_html": {
-				const path = await session.exportToHtml(command.outputPath);
-				return success(id, "export_html", { path });
 			}
 
 			case "switch_session": {

@@ -59,12 +59,11 @@ describe("Pi RPC GlobalHost process", () => {
 		roots.push(root);
 		const options = {
 			command: process.execPath,
-			cliPath: join(process.cwd(), "dist", "cli.js"),
+			runtimePath: join(process.cwd(), "dist", "bun", "headless.js"),
 			cwd,
 			provider: "test",
 			model: "model-a",
-			args: ["--no-session", "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-context-files"],
-			env: { PI_CODING_AGENT_DIR: root },
+			env: { MORTISE_AGENT_DIR: root },
 			globalHost: { enabled: true, agentDir: root },
 			pipeStderr: false,
 		};
@@ -168,12 +167,11 @@ describe("Pi RPC GlobalHost process", () => {
 
 		const commonOptions = {
 			command: process.execPath,
-			cliPath: join(process.cwd(), "dist", "cli.js"),
+			runtimePath: join(process.cwd(), "dist", "bun", "headless.js"),
 			cwd,
 			provider: "test",
 			model: "model-a",
-			args: ["--no-session", "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-context-files"],
-			env: { PI_CODING_AGENT_DIR: root },
+			env: { MORTISE_AGENT_DIR: root },
 			pipeStderr: false,
 		};
 		const firstInstanceId = "config-generation-a";
@@ -243,12 +241,11 @@ describe("Pi RPC GlobalHost process", () => {
 
 		const client = new RpcClient({
 			command: process.execPath,
-			cliPath: join(process.cwd(), "dist", "cli.js"),
+			runtimePath: join(process.cwd(), "dist", "bun", "headless.js"),
 			cwd: process.cwd(),
 			provider: "test",
 			model: "model-a",
-			args: ["--no-session", "--no-skills", "--no-prompt-templates", "--no-context-files"],
-			env: { PI_CODING_AGENT_DIR: root },
+			env: { MORTISE_AGENT_DIR: root },
 			globalHost: { enabled: true, agentDir: root },
 			pipeStderr: false,
 		});

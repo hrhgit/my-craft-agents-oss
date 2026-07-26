@@ -29,9 +29,7 @@ export type {
 	AgentToolResult,
 	AgentToolUpdateCallback,
 	AppendEntryHandler,
-	// App keybindings (for custom editors)
-	AppKeybinding,
-	AutocompleteProviderFactory,
+	AutocompleteItem,
 	// Events - Tool (ToolCallEvent types)
 	BashToolCallEvent,
 	BashToolResultEvent,
@@ -49,7 +47,6 @@ export type {
 	ContextUsage,
 	CustomToolCallEvent,
 	CustomToolResultEvent,
-	EditorFactory,
 	EditToolCallEvent,
 	EditToolResultEvent,
 	ExecOptions,
@@ -68,7 +65,6 @@ export type {
 	ExtensionEvent,
 	ExtensionFactory,
 	ExtensionFactoryV2,
-	ExtensionFlag,
 	ExtensionHandler,
 	ExtensionHostAPI,
 	ExtensionInteractionAnswerV1,
@@ -79,7 +75,6 @@ export type {
 	ExtensionIsolation,
 	// Runtime
 	ExtensionRuntime,
-	ExtensionShortcut,
 	ExtensionTarget,
 	ExtensionUIAction,
 	ExtensionUICapabilities,
@@ -99,7 +94,6 @@ export type {
 	ExtensionUIValidationStatus,
 	ExtensionUIVerificationLevel,
 	ExtensionV2Definition,
-	ExtensionWidgetOptions,
 	ExtensionWorkspaceContentInstancePolicy,
 	ExtensionWorkspaceContentMetadataV1,
 	ExtensionWorkspaceContentPreferredGroup,
@@ -120,15 +114,11 @@ export type {
 	InputEvent,
 	InputEventResult,
 	InputSource,
-	KeybindingsManager,
 	LoadExtensionsResult,
 	LsToolCallEvent,
 	LsToolResultEvent,
 	// Events - Message
 	MessageEndEvent,
-	// Message Rendering
-	MessageRenderer,
-	MessageRenderOptions,
 	MessageStartEvent,
 	MessageUpdateEvent,
 	ModelSelectEvent,
@@ -167,7 +157,6 @@ export type {
 	SetLabelHandler,
 	SetModelHandler,
 	SetThinkingLevelHandler,
-	TerminalInputHandler,
 	// Events - Tool
 	ToolCallEvent,
 	ToolCallEventResult,
@@ -180,7 +169,6 @@ export type {
 	ToolExecutionStartEvent,
 	ToolExecutionUpdateEvent,
 	ToolInfo,
-	ToolRenderResultOptions,
 	ToolResultEvent,
 	ToolResultEventResult,
 	TreePreparation,
@@ -191,8 +179,6 @@ export type {
 	UserBashEventResult,
 	WebFetchToolCallEvent,
 	WebFetchToolResultEvent,
-	WidgetPlacement,
-	WorkingIndicatorOptions,
 	WriteToolCallEvent,
 	WriteToolResultEvent,
 } from "./types.ts";

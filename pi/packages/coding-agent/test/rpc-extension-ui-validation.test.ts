@@ -12,8 +12,6 @@ type RpcContributionRequest = Extract<RpcExtensionUIRequest, { method: "contribu
 const baseCapabilities = {
 	kind: "mortise",
 	dialogs: true,
-	widgets: true,
-	editorControl: true,
 	contributions: true,
 	interactionSchemas: [1],
 } as const;
@@ -48,8 +46,6 @@ describe("extension UI validation capability", () => {
 				JSON.stringify({
 					kind: "none",
 					dialogs: false,
-					widgets: false,
-					editorControl: false,
 					contributions: false,
 					validation: true,
 					interactionSchemas: [],
@@ -77,14 +73,6 @@ describe("extension UI validation capability", () => {
 		expect(send).not.toHaveBeenCalled();
 	});
 
-	it("does not emit a retired widget protocol from the capability-free headless context", () => {
-		const send = vi.fn();
-		const ui = createHeadlessUIContext({ send });
-		expect(ui.capabilities.widgets).toBe(false);
-		ui.setWidget("status", ["ready"]);
-		expect(send).not.toHaveBeenCalled();
-	});
-
 	it("emits revisioned validation deltas from a real RPC extension context", async () => {
 		const root = join(tmpdir(), `pi-ui-validation-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 		const extensionPath = join(root, "validation-extension.js");
@@ -106,7 +94,7 @@ describe("extension UI validation capability", () => {
 		writeFileSync(
 			join(root, "settings.json"),
 			JSON.stringify({
-				extensions: [{ id: "validation", path: extensionPath, activation: "startup", targets: ["pi"] }],
+				extensions: [{ id: "validation", path: extensionPath, activation: "startup", targets: ["mortise"] }],
 			}),
 			"utf8",
 		);
@@ -140,13 +128,12 @@ describe("extension UI validation capability", () => {
 
 		const client = new RpcClient({
 			command: process.execPath,
-			cliPath: join(process.cwd(), "src", "cli.ts"),
+			runtimePath: join(process.cwd(), "src", "bun", "headless.ts"),
 			cwd: root,
 			provider: "test",
 			model: "model-a",
-			args: ["--no-session", "--no-skills", "--no-prompt-templates", "--no-context-files"],
 			env: {
-				PI_CODING_AGENT_DIR: root,
+				MORTISE_AGENT_DIR: root,
 				PI_RPC_UI_CAPABILITIES: JSON.stringify({ ...baseCapabilities, validation: true }),
 			},
 			pipeStderr: false,
@@ -204,14 +191,12 @@ describe("extension UI validation capability", () => {
 
 		const client = new RpcClient({
 			command: process.execPath,
-			cliPath: join(process.cwd(), "src", "cli.ts"),
+			runtimePath: join(process.cwd(), "src", "bun", "headless.ts"),
 			cwd: root,
 			provider: "test",
 			model: "model-a",
-			args: ["--no-session", "--no-skills", "--no-prompt-templates", "--no-context-files"],
 			env: {
-				PI_CODING_AGENT_DIR: root,
-				PI_EXTENSION_TARGET: "mortise",
+				MORTISE_AGENT_DIR: root,
 				PI_RPC_UI_CAPABILITIES: JSON.stringify({ ...baseCapabilities, validation: true }),
 			},
 			pipeStderr: false,

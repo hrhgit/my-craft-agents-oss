@@ -33,7 +33,7 @@ collaborates_with: [web-viewer-clients]
 validation:
   - { id: server-cli-regression, kind: unit, command: "bun test apps/cli packages/server packages/server-core", description: "Run headless server and CLI regressions.", triggers: [owned-change], required: true, evidence: "Bun test exit status and output." }
   - { id: server-cli-contract, kind: contract, command: "bun run typecheck:all", description: "Verify repository-wide server and CLI type contracts.", triggers: [contract-change], required: true, evidence: "TypeScript compiler exit status and diagnostics." }
-scope_digest: 5a8ae684f2ab24dc3d30f35167b03ba8ab65b6a8
+scope_digest: f42ff9c5a0930eaaffdb1592e805a545e6f3b711
 ---
 
 ## Purpose

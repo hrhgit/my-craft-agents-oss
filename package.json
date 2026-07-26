@@ -65,7 +65,7 @@
     "test:shared:config": "cd packages/shared && bun test --isolate src/config/__tests__",
     "test:shared:all": "bun run test:shared:models-pi && bun run test:shared:config",
     "test:doc-tools": "bun run scripts/build/run-doc-tool-tests.ts",
-    "test:build-validation": "bun test scripts/build/__tests__/production-bundle-validation.test.ts scripts/build/__tests__/workspace-package-graph.test.ts",
+		"test:build-validation": "bun test scripts/build/__tests__/production-bundle-validation.test.ts scripts/build/__tests__/workspace-package-graph.test.ts scripts/build/__tests__/headless-runtime-boundary.test.ts",
     "validate:production-node-bundles": "bun run scripts/build/validate-production-node-bundles.ts",
     "validate:dev": "bun run validate:production-node-bundles && bun run typecheck:all && bun run test:shared:all && bun run test:doc-tools",
     "validate:production-bundles": "bun run scripts/build/validate-production-bundles.ts",

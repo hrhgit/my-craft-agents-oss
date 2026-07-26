@@ -1,15 +1,8 @@
 {
 	"name": "@mortise/pi-coding-agent",
 	"version": "0.1.0",
-	"description": "Coding agent CLI with read, bash, edit, write tools and session management",
+	"description": "Mortise embedded headless Agent and RPC runtime",
 	"type": "module",
-	"piConfig": {
-		"configDir": ".pi",
-		"updateChannel": "published"
-	},
-	"bin": {
-		"pi": "dist/cli.bundle.js"
-	},
 	"main": "./dist/index.js",
 	"types": "./dist/index.d.ts",
 	"exports": {
@@ -34,32 +27,24 @@
 	},
 	"files": [
 		"dist",
-		"docs",
-		"examples",
-		"sidecar/bin",
-		"CHANGELOG.md",
-		"npm-shrinkwrap.json"
+		"sidecar/bin"
 	],
 	"scripts": {
 		"clean": "shx rm -rf dist sidecar/bin",
 		"build:sidecar": "node ./scripts/build-sidecar.mjs",
-		"build:bundle": "node ../../scripts/build-coding-agent-bundle.mjs",
+		"build:bundle": "bun ../../scripts/build-coding-agent-bundle.mjs",
 		"build:host-facade-cjs": "node ../../scripts/build-host-facade-cjs.mjs",
-		"build": "npm run build:sidecar && tsgo -p tsconfig.build.json && npm run build:host-facade-cjs && npm run build:bundle && shx chmod +x dist/cli.js dist/cli.bundle.js && npm run copy-assets",
-		"build:workspace": "tsgo -p tsconfig.build.json && npm run build:host-facade-cjs && npm run build:bundle && shx chmod +x dist/cli.js dist/cli.bundle.js && npm run copy-assets",
-		"build:workspace:binary": "bun build --compile ./dist/bun/cli.js ./src/utils/image-resize-worker.ts --outfile dist/pi && npm run copy-binary-assets",
-		"build:binary": "npm --prefix ../tui run build && npm --prefix ../ai run build && npm --prefix ../agent run build && npm run build && bun build --compile ./dist/bun/cli.js ./src/utils/image-resize-worker.ts --outfile dist/pi && npm run copy-binary-assets",
-		"copy-assets": "node ./scripts/copy-assets.mjs",
+		"build": "shx rm -rf dist && npm run build:sidecar && tsgo -p tsconfig.build.json && npm run build:host-facade-cjs && npm run build:bundle",
+		"build:workspace": "shx rm -rf dist && tsgo -p tsconfig.build.json && npm run build:host-facade-cjs && npm run build:bundle",
+		"build:workspace:binary": "shx rm -rf dist/pi dist/pi.exe dist/sidecar dist/photon_rs_bg.wasm dist/package.json && bun build --compile ./dist/bun/headless.js ./src/utils/image-resize-worker.ts --outfile dist/pi && npm run copy-binary-assets",
+		"build:binary": "npm --prefix ../ai run build && npm --prefix ../agent run build && npm run build && npm run build:workspace:binary",
 		"copy-binary-assets": "node ./scripts/copy-assets.mjs --binary",
 		"test": "vitest --run",
-		"measure:headless": "node ./scripts/measure-headless-runtime.mjs",
-		"shrinkwrap": "node ../../scripts/generate-coding-agent-shrinkwrap.mjs",
-		"prepublishOnly": "npm run clean && npm run build && npm run shrinkwrap"
+		"measure:headless": "node ./scripts/measure-headless-runtime.mjs"
 	},
 	"dependencies": {
 		"@mortise/pi-agent-core": "0.1.0",
 		"@mortise/pi-ai": "0.1.0",
-		"@mortise/pi-tui": "0.1.0",
 		"@mozilla/readability": "0.6.0",
 		"@silvia-odwyer/photon-node": "0.3.4",
 		"chalk": "5.6.2",
@@ -105,11 +90,11 @@
 		"coding-agent",
 		"ai",
 		"llm",
-		"cli",
-		"tui",
+		"headless",
+		"rpc",
 		"agent"
 	],
-	"author": "Mario Zechner",
+	"author": "Mortise",
 	"license": "MIT",
 	"repository": {
 		"type": "git",

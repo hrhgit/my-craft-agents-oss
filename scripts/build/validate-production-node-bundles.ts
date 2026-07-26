@@ -8,7 +8,6 @@ const piWorkspacePackages = new Map([
   ['@mortise/pi-agent-core', 'pi/packages/agent'],
   ['@mortise/pi-ai', 'pi/packages/ai'],
   ['@mortise/pi-coding-agent', 'pi/packages/coding-agent'],
-  ['@mortise/pi-tui', 'pi/packages/tui'],
 ])
 
 interface PiWorkspacePackageManifest {

@@ -4,10 +4,7 @@
 
 import type { AgentMessage } from "@mortise/pi-agent-core";
 import type { ImageContent, Model } from "@mortise/pi-ai/types";
-import type { KeyId } from "@mortise/pi-tui";
-import { type Theme, theme } from "../../modes/interactive/theme/theme.ts";
 import type { ResourceDiagnostic } from "../diagnostics.ts";
-import type { KeybindingsConfig } from "../keybindings.ts";
 import type { ModelRegistry } from "../model-registry.ts";
 import { SessionActivityRegistry } from "../session-activity-registry.ts";
 import type { SessionManager } from "../session-manager.ts";
@@ -30,16 +27,13 @@ import type {
 	ExtensionContextActions,
 	ExtensionError,
 	ExtensionEvent,
-	ExtensionFlag,
 	ExtensionRuntime,
-	ExtensionShortcut,
 	ExtensionUIContext,
 	InputEvent,
 	InputEventResult,
 	InputSource,
 	MessageEndEvent,
 	MessageEndEventResult,
-	MessageRenderer,
 	ProviderConfig,
 	RegisteredCommand,
 	RegisteredTool,
@@ -59,52 +53,6 @@ import type {
 	UserBashEvent,
 	UserBashEventResult,
 } from "./types.ts";
-
-// Extension shortcuts compete with canonical keybinding ids from keybindings.json.
-// Only editor-global shortcuts are reserved here. Picker-specific bindings are not.
-const RESERVED_KEYBINDINGS_FOR_EXTENSION_CONFLICTS = [
-	"app.interrupt",
-	"app.clear",
-	"app.exit",
-	"app.suspend",
-	"app.thinking.cycle",
-	"app.model.cycleForward",
-	"app.model.cycleBackward",
-	"app.model.select",
-	"app.tools.expand",
-	"app.thinking.toggle",
-	"app.editor.external",
-	"app.message.steer",
-	"app.message.followUp",
-	"tui.input.submit",
-	"tui.select.confirm",
-	"tui.select.cancel",
-	"tui.input.copy",
-	"tui.editor.deleteToLineEnd",
-] as const;
-
-type BuiltInKeyBindings = Partial<Record<KeyId, { keybinding: string; restrictOverride: boolean }>>;
-
-const buildBuiltinKeybindings = (resolvedKeybindings: KeybindingsConfig): BuiltInKeyBindings => {
-	const builtinKeybindings = {} as BuiltInKeyBindings;
-	for (const [keybinding, keys] of Object.entries(resolvedKeybindings)) {
-		if (keys === undefined) continue;
-		const keyList = Array.isArray(keys) ? keys : [keys];
-		const restrictOverride = (RESERVED_KEYBINDINGS_FOR_EXTENSION_CONFLICTS as readonly string[]).includes(keybinding);
-		for (const key of keyList) {
-			const normalizedKey = key.toLowerCase() as KeyId;
-			// If multiple actions bind the same key, the reserved action wins so extensions
-			// remain blocked by reserved shortcuts regardless of iteration order.
-			const existing = builtinKeybindings[normalizedKey];
-			if (existing?.restrictOverride && !restrictOverride) continue;
-			builtinKeybindings[normalizedKey] = {
-				keybinding,
-				restrictOverride,
-			};
-		}
-	}
-	return builtinKeybindings;
-};
 
 /** Combined result from all before_agent_start handlers */
 interface BeforeAgentStartCombinedResult {
@@ -201,10 +149,6 @@ const noOpUIContext: ExtensionUIContext = {
 	capabilities: {
 		kind: "none",
 		dialogs: false,
-		widgets: false,
-		customComponents: false,
-		terminalInput: false,
-		editorControl: false,
 		contributions: false,
 		interactionSchemas: [],
 	},
@@ -224,32 +168,6 @@ const noOpUIContext: ExtensionUIContext = {
 	confirm: async () => false,
 	input: async () => undefined,
 	notify: () => {},
-	onTerminalInput: () => () => {},
-	setStatus: () => {},
-	setWorkingMessage: () => {},
-	setWorkingVisible: () => {},
-	setWorkingIndicator: () => {},
-	setHiddenThinkingLabel: () => {},
-	setWidget: () => {},
-	setFooter: () => {},
-	setHeader: () => {},
-	setTitle: () => {},
-	custom: async () => undefined as never,
-	pasteToEditor: () => {},
-	setEditorText: () => {},
-	getEditorText: () => "",
-	editor: async () => undefined,
-	addAutocompleteProvider: () => {},
-	setEditorComponent: () => {},
-	getEditorComponent: () => undefined,
-	get theme() {
-		return theme;
-	},
-	getAllThemes: () => [],
-	getTheme: () => undefined,
-	setTheme: (_theme: string | Theme) => ({ success: false, error: "UI not available" }),
-	getToolsExpanded: () => false,
-	setToolsExpanded: () => {},
 };
 
 const unsupportedCapabilitiesContext: ExtensionCapabilitiesContext = {
@@ -286,7 +204,6 @@ export class ExtensionRunner {
 	private switchSessionHandler: SwitchSessionHandler = async () => ({ cancelled: false });
 	private reloadHandler: ReloadHandler = async () => {};
 	private shutdownHandler: ShutdownHandler = () => {};
-	private shortcutDiagnostics: ResourceDiagnostic[] = [];
 	private commandDiagnostics: ResourceDiagnostic[] = [];
 	private staleMessage: string | undefined;
 
@@ -446,75 +363,6 @@ export class ExtensionRunner {
 		return undefined;
 	}
 
-	getFlags(): Map<string, ExtensionFlag> {
-		const allFlags = new Map<string, ExtensionFlag>();
-		for (const ext of this.extensions) {
-			for (const [name, flag] of ext.flags) {
-				if (!allFlags.has(name)) {
-					allFlags.set(name, flag);
-				}
-			}
-		}
-		return allFlags;
-	}
-
-	setFlagValue(name: string, value: boolean | string): void {
-		this.runtime.flagValues.set(name, value);
-	}
-
-	getFlagValues(): Map<string, boolean | string> {
-		return new Map(this.runtime.flagValues);
-	}
-
-	getShortcuts(resolvedKeybindings: KeybindingsConfig): Map<KeyId, ExtensionShortcut> {
-		this.shortcutDiagnostics = [];
-		const builtinKeybindings = buildBuiltinKeybindings(resolvedKeybindings);
-		const extensionShortcuts = new Map<KeyId, ExtensionShortcut>();
-
-		const addDiagnostic = (message: string, extensionPath: string) => {
-			this.shortcutDiagnostics.push({ type: "warning", message, path: extensionPath });
-			if (!this.hasUI()) {
-				console.warn(message);
-			}
-		};
-
-		for (const ext of this.extensions) {
-			for (const [key, shortcut] of ext.shortcuts) {
-				const normalizedKey = key.toLowerCase() as KeyId;
-
-				const builtInKeybinding = builtinKeybindings[normalizedKey];
-				if (builtInKeybinding?.restrictOverride === true) {
-					addDiagnostic(
-						`Extension shortcut '${key}' from ${shortcut.extensionPath} conflicts with built-in shortcut. Skipping.`,
-						shortcut.extensionPath,
-					);
-					continue;
-				}
-
-				if (builtInKeybinding?.restrictOverride === false) {
-					addDiagnostic(
-						`Extension shortcut conflict: '${key}' is built-in shortcut for ${builtInKeybinding.keybinding} and ${shortcut.extensionPath}. Using ${shortcut.extensionPath}.`,
-						shortcut.extensionPath,
-					);
-				}
-
-				const existingExtensionShortcut = extensionShortcuts.get(normalizedKey);
-				if (existingExtensionShortcut) {
-					addDiagnostic(
-						`Extension shortcut conflict: '${key}' registered by both ${existingExtensionShortcut.extensionPath} and ${shortcut.extensionPath}. Using ${shortcut.extensionPath}.`,
-						shortcut.extensionPath,
-					);
-				}
-				extensionShortcuts.set(normalizedKey, shortcut);
-			}
-		}
-		return extensionShortcuts;
-	}
-
-	getShortcutDiagnostics(): ResourceDiagnostic[] {
-		return this.shortcutDiagnostics;
-	}
-
 	invalidate(
 		message = "This extension ctx is stale after session replacement or reload. Do not use a captured pi or command ctx after ctx.newSession(), ctx.fork(), ctx.switchSession(), or ctx.reload(). For newSession, fork, and switchSession, move post-replacement work into withSession and use the ctx passed to withSession. For reload, do not use the old ctx after await ctx.reload().",
 	): void {
@@ -560,16 +408,6 @@ export class ExtensionRunner {
 			}
 		}
 		return false;
-	}
-
-	getMessageRenderer(customType: string): MessageRenderer | undefined {
-		for (const ext of this.extensions) {
-			const renderer = ext.messageRenderers.get(customType);
-			if (renderer) {
-				return renderer;
-			}
-		}
-		return undefined;
 	}
 
 	private resolveRegisteredCommands(): ResolvedCommand[] {
@@ -1066,11 +904,9 @@ export class ExtensionRunner {
 	): Promise<{
 		skillPaths: Array<{ path: string; extensionPath: string }>;
 		promptPaths: Array<{ path: string; extensionPath: string }>;
-		themePaths: Array<{ path: string; extensionPath: string }>;
 	}> {
 		const skillPaths: Array<{ path: string; extensionPath: string }> = [];
 		const promptPaths: Array<{ path: string; extensionPath: string }> = [];
-		const themePaths: Array<{ path: string; extensionPath: string }> = [];
 
 		for (const ext of this.extensions) {
 			const handlers = ext.handlers.get("resources_discover");
@@ -1088,9 +924,6 @@ export class ExtensionRunner {
 					if (result?.promptPaths?.length) {
 						promptPaths.push(...result.promptPaths.map((path) => ({ path, extensionPath: ext.path })));
 					}
-					if (result?.themePaths?.length) {
-						themePaths.push(...result.themePaths.map((path) => ({ path, extensionPath: ext.path })));
-					}
 				} catch (err) {
 					const message = err instanceof Error ? err.message : String(err);
 					const stack = err instanceof Error ? err.stack : undefined;
@@ -1104,7 +937,7 @@ export class ExtensionRunner {
 			}
 		}
 
-		return { skillPaths, promptPaths, themePaths };
+		return { skillPaths, promptPaths };
 	}
 
 	/** Emit input event. Transforms chain, "handled" short-circuits. */

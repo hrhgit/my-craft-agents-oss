@@ -326,12 +326,16 @@ const instance = await (async () => {
                 }
               }
             }
+            const host = sessionManager.getAutomationHost(workspace.id)
+            if (!host) return {
+              schemaVersion: 1,
+              status: 'unsupported',
+              error: { code: 'automation_host_unavailable', message: 'The workspace automation host is unavailable', retryable: true },
+            }
             return executeAutomationWorkspaceOperationV1({
               workspaceId: workspace.id,
-              workspaceRootPath: workspace.rootPath,
-              writerId: `${process.env.MORTISE_BUILD_ID}:${process.pid}`,
               eventSourceKind: context.eventSourceKind,
-              host: sessionManager.getAutomationHost(workspace.id) ?? undefined,
+              host,
             }, command)
           },
         }

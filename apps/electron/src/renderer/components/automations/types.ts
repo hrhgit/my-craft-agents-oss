@@ -3,16 +3,14 @@
  *
  * UI-specific types for the automations components.
  *
- * ARCHITECTURE NOTE: These types are mirrored from packages/shared/src/automations/types.ts.
- * The renderer runs in a browser context and CANNOT import from @mortise/shared,
- * which uses Node.js APIs (crypto, fs, etc.). Additionally, the automations package is not
- * exported as a package entry point. These types must be manually kept in sync.
- * See apps/electron/CLAUDE.md "Common Mistake: Node.js APIs in Renderer".
+ * Canonical V3 DTOs come from the browser-safe shared protocol entrypoint. This
+ * file contains only renderer projections and display helpers.
  */
 
 import { computeNextRuns } from './utils'
 import type { PermissionMode } from '../../../shared/types'
 import type { ThinkingLevel } from '@mortise/shared/agent/thinking-levels'
+import type { AutomationDefinitionPageV1 } from '@mortise/shared/protocol'
 
 // ============================================================================
 // Automation System Types (mirrored from packages/shared/src/automations/types.ts)
@@ -20,7 +18,7 @@ import type { ThinkingLevel } from '@mortise/shared/agent/thinking-levels'
 
 export type AppEvent =
   | 'PermissionModeChange'
-  | 'SchedulerTick'
+  | 'scheduled'
 
 export type AgentEvent =
   | 'PreToolUse'
@@ -40,7 +38,7 @@ export type AgentEvent =
 export type AutomationTrigger = AppEvent | AgentEvent
 
 export const APP_EVENTS: AppEvent[] = [
-  'PermissionModeChange', 'SchedulerTick'
+  'PermissionModeChange', 'scheduled'
 ]
 
 export const AGENT_EVENTS: AgentEvent[] = [
@@ -196,7 +194,7 @@ export interface AutomationListItem {
   enabled: boolean
   /** Regex matcher (if any) */
   matcher?: string
-  /** Cron expression (SchedulerTick only) */
+  /** Cron expression for scheduled triggers. */
   cron?: string
   /** IANA timezone for cron */
   timezone?: string
@@ -218,18 +216,7 @@ export interface AutomationListItem {
   definition?: AutomationDefinitionV3UI
 }
 
-export interface AutomationDefinitionV3UI {
-  id: string
-  name: string
-  description?: string
-  enabled: boolean
-  triggers: Array<Record<string, unknown> & { id: string; type: 'event' | 'time' }>
-  conditions?: AutomationConditionUI[]
-  actions: Array<Record<string, unknown> & { id: string; type: 'prompt' | 'webhook' }>
-  runPolicy?: { overlap?: 'skip' | 'queue-one'; actionFailure?: 'continue' | 'stop' }
-  createdAt: string
-  updatedAt: string
-}
+export type AutomationDefinitionV3UI = AutomationDefinitionPageV1['items'][number]
 
 // ============================================================================
 // Filter
@@ -303,7 +290,7 @@ export interface TestResult {
 export const EVENT_DISPLAY_NAMES: Record<AutomationTrigger, string> = {
   // App events
   PermissionModeChange: 'Permission Changed',
-  SchedulerTick:        'Scheduled',
+  scheduled:            'Scheduled',
 
   // Agent events
   PreToolUse:           'Before Tool Runs',
@@ -384,7 +371,7 @@ export function parseAutomationDefinitionsV3(json: unknown): AutomationListItem[
     const schedule = trigger.type === 'time' && trigger.schedule && typeof trigger.schedule === 'object'
       ? trigger.schedule as Record<string, unknown>
       : undefined
-    const event = trigger.type === 'time' ? 'SchedulerTick' : String(trigger.eventType ?? 'ExternalEvent')
+    const event = trigger.type === 'time' ? 'scheduled' : String(trigger.eventType ?? 'ExternalEvent')
     const cron = schedule?.kind === 'cron' && typeof schedule.expression === 'string' ? schedule.expression : undefined
     const timezone = schedule?.kind === 'cron' && typeof schedule.timezone === 'string' ? schedule.timezone : undefined
     const matcher = trigger.type === 'event' && typeof trigger.matcher === 'string' ? trigger.matcher : undefined
@@ -421,7 +408,7 @@ export function parseAutomationDefinitionsV3(json: unknown): AutomationListItem[
 
 export function getEventCategory(event: AutomationTrigger): EventCategory {
   switch (event) {
-    case 'SchedulerTick':
+    case 'scheduled':
       return 'scheduled'
     case 'PermissionModeChange':
     case 'PermissionRequest':

@@ -14,7 +14,7 @@ export interface ResolvedBackendRuntimePaths {
   sessionServerPath?: string;
   nodeRuntimePath?: string;
   bundledRuntimePath?: string;
-  piCliPath?: string;
+	piRuntimePath?: string;
 }
 
 export interface ResolvedBackendHostTooling {
@@ -86,16 +86,8 @@ function resolveServerPath(hostRuntime: BackendHostRuntimeContext, serverName: s
   );
 }
 
-function resolvePiCliPath(hostRuntime: BackendHostRuntimeContext): string | undefined {
-  const packageCli = join(
-    'node_modules',
-    '@mortise',
-    'pi-coding-agent',
-    'dist',
-    'cli.js',
-  );
-
-  if (usesBundledRuntime(hostRuntime)) {
+function resolvePiRuntimePath(hostRuntime: BackendHostRuntimeContext): string | undefined {
+	if (usesBundledRuntime(hostRuntime)) {
     const runtimeLabel = hostRuntime.isPackaged ? 'Packaged' : 'Immutable';
     if (!hostRuntime.resourcesPath) {
       throw new Error(`${runtimeLabel} Pi runtime resolution requires resourcesPath`);
@@ -109,11 +101,10 @@ function resolvePiCliPath(hostRuntime: BackendHostRuntimeContext): string | unde
     if (!existsSync(compiledRuntimePath)) {
       throw new Error(`${runtimeLabel} Pi runtime is missing: ${compiledRuntimePath}`);
     }
-    return compiledRuntimePath;
-  }
+		return compiledRuntimePath;
+	}
 
-  return resolveUpwards(hostRuntime.appRootPath, packageCli, 10)
-    ?? (existsSync(join(process.cwd(), packageCli)) ? join(process.cwd(), packageCli) : undefined);
+	return undefined;
 }
 
 /**
@@ -162,7 +153,7 @@ export function resolveBackendRuntimePaths(hostRuntime: BackendHostRuntimeContex
     sessionServerPath: resolveServerPath(hostRuntime, 'session-mcp-server'),
     nodeRuntimePath: hostRuntime.immutableRuntime?.nodeRuntimePath || bundledRuntimePath || process.execPath,
     bundledRuntimePath,
-    piCliPath: resolvePiCliPath(hostRuntime),
+		piRuntimePath: resolvePiRuntimePath(hostRuntime),
   };
 }
 

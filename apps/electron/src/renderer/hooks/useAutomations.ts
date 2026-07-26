@@ -9,12 +9,17 @@
  * - Syncing automations to Jotai atom for cross-component access
  */
 
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useSetAtom } from 'jotai'
 import { toast } from 'sonner'
 import { automationsAtom } from '@/atoms/automations'
 import { parseAutomationDefinitionsV3, type AutomationDefinitionV3UI, type AutomationListItem, type TestResult, type ExecutionEntry } from '@/components/automations/types'
+import type {
+  AutomationChangedNotificationV1,
+  AutomationDefinitionPageV1,
+  AutomationRunPageV1,
+} from '@mortise/shared/protocol'
 
 interface AutomationCommandResult {
   status: 'ok' | 'accepted' | 'duplicate' | 'conflict' | 'invalid' | 'denied' | 'unsupported'
@@ -54,6 +59,7 @@ export function useAutomations(
   const [automationRevision, setAutomationRevision] = useState<number | null>(null)
   const [automationTestResults, setAutomationTestResults] = useState<Record<string, TestResult>>({})
   const [automationPendingDelete, setAutomationPendingDelete] = useState<string | null>(null)
+  const changeTokenRef = useRef({ revision: 0, historyCursor: 0 })
 
   // Sync automations to Jotai atom for cross-component access (MainContentPanel)
   const setAutomationsAtom = useSetAtom(automationsAtom)
@@ -67,12 +73,15 @@ export function useAutomations(
   const loadAndHydrate = useCallback(async () => {
     if (!activeWorkspaceId) return
     try {
-      const listed = await automationCommand({ operation: 'list' })
-      const items = parseAutomationDefinitionsV3(listed.data)
-      setAutomationRevision(listed.revision ?? null)
+      const listed = await automationCommand({ operation: 'list', limit: 500 })
+      const definitionPage = listed.data as AutomationDefinitionPageV1
+      const items = parseAutomationDefinitionsV3(definitionPage.items)
+      setAutomationRevision(definitionPage.revision)
+      changeTokenRef.current.revision = definitionPage.revision
       const runs = await automationCommand({ operation: 'list-runs', limit: 500 })
+      const runPage = runs.data as AutomationRunPageV1
       const lastByAutomation = new Map<string, number>()
-      for (const run of Array.isArray(runs.data) ? runs.data as Array<Record<string, unknown>> : []) {
+      for (const run of runPage.items) {
         if (typeof run.automationId !== 'string') continue
         const timestamp = Date.parse(String(run.completedAt ?? run.startedAt ?? run.createdAt ?? ''))
         if (Number.isFinite(timestamp) && timestamp > (lastByAutomation.get(run.automationId) ?? 0)) lastByAutomation.set(run.automationId, timestamp)
@@ -93,7 +102,16 @@ export function useAutomations(
   // Subscribe to canonical store updates.
   useEffect(() => {
     if (!activeWorkspaceId) return
-    const cleanup = window.electronAPI.onAutomationsChanged(() => { loadAndHydrate() })
+    const cleanup = window.electronAPI.onAutomationsChanged((change: AutomationChangedNotificationV1) => {
+      if (change.workspaceId !== activeWorkspaceId) return
+      const previous = changeTokenRef.current
+      const hasGap = change.revision > previous.revision + 1
+        || change.historyCursor > previous.historyCursor + 1
+      changeTokenRef.current = { revision: change.revision, historyCursor: change.historyCursor }
+      if (hasGap || change.revision !== previous.revision || change.historyCursor !== previous.historyCursor) {
+        void loadAndHydrate()
+      }
+    })
     return () => { cleanup() }
   }, [activeWorkspaceId, loadAndHydrate])
 
@@ -178,12 +196,12 @@ export function useAutomations(
     if (!activeWorkspaceId) return []
     try {
       const response = await automationCommand({ operation: 'list-runs', automationId, limit: 20 })
-      const entries = Array.isArray(response.data) ? response.data as Array<Record<string, any>> : []
+      const entries = (response.data as AutomationRunPageV1).items as Array<Record<string, any>>
       const automation = findAutomation(automationId)
       return entries.map(e => ({
         id: String(e.runId),
         automationId: String(e.automationId),
-        event: automation?.event ?? 'SchedulerTick',
+        event: automation?.event ?? 'scheduled',
         status: e.state === 'succeeded' || e.state === 'partial' ? 'success' as const : e.state === 'skipped' ? 'blocked' as const : 'error' as const,
         duration: e.startedAt && e.completedAt ? Math.max(0, Date.parse(e.completedAt) - Date.parse(e.startedAt)) : 0,
         timestamp: Date.parse(e.completedAt ?? e.startedAt ?? e.createdAt),

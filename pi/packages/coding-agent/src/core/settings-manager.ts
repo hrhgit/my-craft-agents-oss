@@ -32,13 +32,6 @@ export interface RetrySettings {
 	provider?: ProviderRetrySettings;
 }
 
-export interface TerminalSettings {
-	showImages?: boolean; // default: true (only relevant if terminal supports images)
-	imageWidthCells?: number; // default: 60 (preferred inline image width in terminal cells)
-	clearOnShrink?: boolean; // default: false (clear empty rows when content shrinks)
-	showTerminalProgress?: boolean; // default: false (OSC 9;4 terminal progress indicators)
-}
-
 export interface ImageSettings {
 	autoResize?: boolean; // default: true (resize images to 2000x2000 max for better model compatibility)
 	blockImages?: boolean; // default: false - when true, prevents all images from being sent to LLM providers
@@ -50,37 +43,6 @@ export interface ThinkingBudgetsSettings {
 	medium?: number;
 	high?: number;
 }
-
-export interface MarkdownSettings {
-	codeBlockIndent?: string; // default: "  "
-}
-
-export interface WarningSettings {
-	anthropicExtraUsage?: boolean; // default: true
-}
-
-/**
- * Package source for npm/git packages.
- * - String form: load all resources from the package
- * - Object form: filter which resources to load
- */
-export type PackageSource =
-	| string
-	| {
-			source: string;
-			extensions?: Array<
-				| string
-				| {
-						id?: string;
-						path: string;
-						activation?: ExtensionActivation;
-						targets?: ExtensionTarget[];
-				  }
-			>;
-			skills?: string[];
-			prompts?: string[];
-			themes?: string[];
-	  };
 
 export type ExtensionPathSource =
 	| string
@@ -127,7 +89,6 @@ export interface ShellGuiNamespaceSettings {
 }
 
 export interface Settings {
-	lastChangelogVersion?: string;
 	defaultProvider?: string;
 	defaultModel?: string;
 	defaultThinkingLevel?: ModelDefaultThinkingLevel;
@@ -136,36 +97,21 @@ export interface Settings {
 	webSearch?: boolean;
 	steeringMode?: "all" | "one-at-a-time";
 	followUpMode?: "all" | "one-at-a-time";
-	theme?: string;
 	compaction?: CompactionSettings;
 	branchSummary?: BranchSummarySettings;
 	retry?: RetrySettings;
 	hideThinkingBlock?: boolean;
 	shellPath?: string; // Custom shell path (e.g., for Cygwin users on Windows)
-	quietStartup?: boolean;
 	shellCommandPrefix?: string; // Prefix prepended to every bash command (e.g., "shopt -s expand_aliases" for alias support)
-	npmCommand?: string[]; // Command used for npm package lookup/install operations, argv-style (e.g., ["mise", "exec", "node@20", "--", "npm"])
-	collapseChangelog?: boolean; // Show condensed changelog after update (use /changelog for full)
-	enableInstallTelemetry?: boolean; // default: true - anonymous version/update ping after changelog-detected updates
-	packages?: PackageSource[]; // Array of npm/git package sources (string or object with filtering)
 	extensions?: ExtensionPathSource[]; // Array of local extension file paths/directories, optionally with activation/targets
 	extensionConfig?: Record<string, ExtensionNamespaceSettings>; // Per-extension namespace config (model/enabled/concurrency), keyed by extension name
 	shellGui?: Record<string, ShellGuiNamespaceSettings>; // mortise shell GUI preferences (shell.gui.<name>.*); ignored by pi CLI standalone
 	skills?: string[]; // Array of local skill file paths or directories
 	prompts?: string[]; // Array of local prompt template paths or directories
-	themes?: string[]; // Array of local theme file paths or directories
 	enableSkillCommands?: boolean; // default: true - register skills as /skill:name commands
-	terminal?: TerminalSettings;
 	images?: ImageSettings;
 	enabledModels?: string[]; // Model patterns for cycling (same format as --models CLI flag)
-	doubleEscapeAction?: "fork" | "tree" | "none"; // Action for double-escape with empty editor (default: "tree")
-	treeFilterMode?: "default" | "no-tools" | "user-only" | "labeled-only" | "all"; // Default filter when opening /tree
 	thinkingBudgets?: ThinkingBudgetsSettings; // Custom token budgets for thinking levels
-	editorPaddingX?: number; // Horizontal padding for input editor (default: 0)
-	autocompleteMaxVisible?: number; // Max visible items in autocomplete dropdown (default: 5)
-	showHardwareCursor?: boolean; // Show terminal cursor while still positioning it for IME
-	markdown?: MarkdownSettings;
-	warnings?: WarningSettings;
 	sessionDir?: string; // Custom session storage directory (same format as --session-dir CLI flag)
 	httpIdleTimeoutMs?: number; // HTTP header/body idle timeout in milliseconds; 0 disables it
 	websocketConnectTimeoutMs?: number; // Legacy transport connect/open timeout in milliseconds; 0 disables it
@@ -665,16 +611,6 @@ export class SettingsManager {
 		return drained;
 	}
 
-	getLastChangelogVersion(): string | undefined {
-		return this.settings.lastChangelogVersion;
-	}
-
-	setLastChangelogVersion(version: string): void {
-		this.globalSettings.lastChangelogVersion = version;
-		this.markModified("lastChangelogVersion");
-		this.save();
-	}
-
 	getSessionDir(): string | undefined {
 		const sessionDir = this.settings.sessionDir;
 		return sessionDir ? normalizePath(sessionDir) : sessionDir;
@@ -809,16 +745,6 @@ export class SettingsManager {
 	setFollowUpMode(mode: "all" | "one-at-a-time"): void {
 		this.globalSettings.followUpMode = mode;
 		this.markModified("followUpMode");
-		this.save();
-	}
-
-	getTheme(): string | undefined {
-		return this.settings.theme;
-	}
-
-	setTheme(theme: string): void {
-		this.globalSettings.theme = theme;
-		this.markModified("theme");
 		this.save();
 	}
 
@@ -968,16 +894,6 @@ export class SettingsManager {
 		this.save();
 	}
 
-	getQuietStartup(): boolean {
-		return this.settings.quietStartup ?? false;
-	}
-
-	setQuietStartup(quiet: boolean): void {
-		this.globalSettings.quietStartup = quiet;
-		this.markModified("quietStartup");
-		this.save();
-	}
-
 	getShellCommandPrefix(): string | undefined {
 		return this.settings.shellCommandPrefix;
 	}
@@ -986,53 +902,6 @@ export class SettingsManager {
 		this.globalSettings.shellCommandPrefix = prefix;
 		this.markModified("shellCommandPrefix");
 		this.save();
-	}
-
-	getNpmCommand(): string[] | undefined {
-		return this.settings.npmCommand ? [...this.settings.npmCommand] : undefined;
-	}
-
-	setNpmCommand(command: string[] | undefined): void {
-		this.globalSettings.npmCommand = command ? [...command] : undefined;
-		this.markModified("npmCommand");
-		this.save();
-	}
-
-	getCollapseChangelog(): boolean {
-		return this.settings.collapseChangelog ?? false;
-	}
-
-	setCollapseChangelog(collapse: boolean): void {
-		this.globalSettings.collapseChangelog = collapse;
-		this.markModified("collapseChangelog");
-		this.save();
-	}
-
-	getEnableInstallTelemetry(): boolean {
-		return this.settings.enableInstallTelemetry ?? true;
-	}
-
-	setEnableInstallTelemetry(enabled: boolean): void {
-		this.globalSettings.enableInstallTelemetry = enabled;
-		this.markModified("enableInstallTelemetry");
-		this.save();
-	}
-
-	getPackages(): PackageSource[] {
-		return [...(this.settings.packages ?? [])];
-	}
-
-	setPackages(packages: PackageSource[]): void {
-		this.globalSettings.packages = packages;
-		this.markModified("packages");
-		this.save();
-	}
-
-	setProjectPackages(packages: PackageSource[]): void {
-		const projectSettings = structuredClone(this.projectSettings);
-		projectSettings.packages = packages;
-		this.markProjectModified("packages");
-		this.saveProjectSettings(projectSettings);
 	}
 
 	getExtensionPaths(): ExtensionPathSource[] {
@@ -1239,23 +1108,6 @@ export class SettingsManager {
 		this.saveProjectSettings(projectSettings);
 	}
 
-	getThemePaths(): string[] {
-		return [...(this.settings.themes ?? [])];
-	}
-
-	setThemePaths(paths: string[]): void {
-		this.globalSettings.themes = paths;
-		this.markModified("themes");
-		this.save();
-	}
-
-	setProjectThemePaths(paths: string[]): void {
-		const projectSettings = structuredClone(this.projectSettings);
-		projectSettings.themes = paths;
-		this.markProjectModified("themes");
-		this.saveProjectSettings(projectSettings);
-	}
-
 	getEnableSkillCommands(): boolean {
 		return this.settings.enableSkillCommands ?? true;
 	}
@@ -1268,66 +1120,6 @@ export class SettingsManager {
 
 	getThinkingBudgets(): ThinkingBudgetsSettings | undefined {
 		return this.settings.thinkingBudgets;
-	}
-
-	getShowImages(): boolean {
-		return this.settings.terminal?.showImages ?? true;
-	}
-
-	setShowImages(show: boolean): void {
-		if (!this.globalSettings.terminal) {
-			this.globalSettings.terminal = {};
-		}
-		this.globalSettings.terminal.showImages = show;
-		this.markModified("terminal", "showImages");
-		this.save();
-	}
-
-	getImageWidthCells(): number {
-		const width = this.settings.terminal?.imageWidthCells;
-		if (typeof width !== "number" || !Number.isFinite(width)) {
-			return 60;
-		}
-		return Math.max(1, Math.floor(width));
-	}
-
-	setImageWidthCells(width: number): void {
-		if (!this.globalSettings.terminal) {
-			this.globalSettings.terminal = {};
-		}
-		this.globalSettings.terminal.imageWidthCells = Math.max(1, Math.floor(width));
-		this.markModified("terminal", "imageWidthCells");
-		this.save();
-	}
-
-	getClearOnShrink(): boolean {
-		// Settings takes precedence, then env var, then default false
-		if (this.settings.terminal?.clearOnShrink !== undefined) {
-			return this.settings.terminal.clearOnShrink;
-		}
-		return process.env.PI_CLEAR_ON_SHRINK === "1";
-	}
-
-	setClearOnShrink(enabled: boolean): void {
-		if (!this.globalSettings.terminal) {
-			this.globalSettings.terminal = {};
-		}
-		this.globalSettings.terminal.clearOnShrink = enabled;
-		this.markModified("terminal", "clearOnShrink");
-		this.save();
-	}
-
-	getShowTerminalProgress(): boolean {
-		return this.settings.terminal?.showTerminalProgress ?? false;
-	}
-
-	setShowTerminalProgress(enabled: boolean): void {
-		if (!this.globalSettings.terminal) {
-			this.globalSettings.terminal = {};
-		}
-		this.globalSettings.terminal.showTerminalProgress = enabled;
-		this.markModified("terminal", "showTerminalProgress");
-		this.save();
 	}
 
 	getImageAutoResize(): boolean {
@@ -1363,72 +1155,6 @@ export class SettingsManager {
 	setEnabledModels(patterns: string[] | undefined): void {
 		this.globalSettings.enabledModels = patterns;
 		this.markModified("enabledModels");
-		this.save();
-	}
-
-	getDoubleEscapeAction(): "fork" | "tree" | "none" {
-		return this.settings.doubleEscapeAction ?? "tree";
-	}
-
-	setDoubleEscapeAction(action: "fork" | "tree" | "none"): void {
-		this.globalSettings.doubleEscapeAction = action;
-		this.markModified("doubleEscapeAction");
-		this.save();
-	}
-
-	getTreeFilterMode(): "default" | "no-tools" | "user-only" | "labeled-only" | "all" {
-		const mode = this.settings.treeFilterMode;
-		const valid = ["default", "no-tools", "user-only", "labeled-only", "all"];
-		return mode && valid.includes(mode) ? mode : "default";
-	}
-
-	setTreeFilterMode(mode: "default" | "no-tools" | "user-only" | "labeled-only" | "all"): void {
-		this.globalSettings.treeFilterMode = mode;
-		this.markModified("treeFilterMode");
-		this.save();
-	}
-
-	getShowHardwareCursor(): boolean {
-		return this.settings.showHardwareCursor ?? process.env.PI_HARDWARE_CURSOR === "1";
-	}
-
-	setShowHardwareCursor(enabled: boolean): void {
-		this.globalSettings.showHardwareCursor = enabled;
-		this.markModified("showHardwareCursor");
-		this.save();
-	}
-
-	getEditorPaddingX(): number {
-		return this.settings.editorPaddingX ?? 0;
-	}
-
-	setEditorPaddingX(padding: number): void {
-		this.globalSettings.editorPaddingX = Math.max(0, Math.min(3, Math.floor(padding)));
-		this.markModified("editorPaddingX");
-		this.save();
-	}
-
-	getAutocompleteMaxVisible(): number {
-		return this.settings.autocompleteMaxVisible ?? 5;
-	}
-
-	setAutocompleteMaxVisible(maxVisible: number): void {
-		this.globalSettings.autocompleteMaxVisible = Math.max(3, Math.min(20, Math.floor(maxVisible)));
-		this.markModified("autocompleteMaxVisible");
-		this.save();
-	}
-
-	getCodeBlockIndent(): string {
-		return this.settings.markdown?.codeBlockIndent ?? "  ";
-	}
-
-	getWarnings(): WarningSettings {
-		return { ...(this.settings.warnings ?? {}) };
-	}
-
-	setWarnings(warnings: WarningSettings): void {
-		this.globalSettings.warnings = { ...warnings };
-		this.markModified("warnings");
 		this.save();
 	}
 

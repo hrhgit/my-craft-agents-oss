@@ -54,7 +54,6 @@ describe("AgentSessionRuntime session lifecycle events", () => {
 				extensionFactories: [extensionFactory],
 				noSkills: true,
 				noPromptTemplates: true,
-				noThemes: true,
 			},
 		};
 		const createRuntime: CreateAgentSessionRuntimeFactory = async ({ cwd, sessionManager, sessionStartEvent }) => {
@@ -220,7 +219,6 @@ describe("AgentSessionRuntime session lifecycle events", () => {
 					],
 					noSkills: true,
 					noPromptTemplates: true,
-					noThemes: true,
 				},
 			});
 			return {
@@ -296,7 +294,6 @@ describe("AgentSessionRuntime session lifecycle events", () => {
 				resourceLoaderOptions: {
 					noSkills: true,
 					noPromptTemplates: true,
-					noThemes: true,
 				},
 			});
 			return {
@@ -386,7 +383,6 @@ export default function (pi) {
 			resourceLoaderOptions: {
 				noSkills: true,
 				noPromptTemplates: true,
-				noThemes: true,
 			},
 		});
 		const runtime = await createAgentSessionFromServices({

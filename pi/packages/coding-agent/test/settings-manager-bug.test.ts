@@ -25,7 +25,7 @@ describe("SettingsManager - External Edit Preservation", () => {
 			rmSync(testDir, { recursive: true });
 		}
 		mkdirSync(agentDir, { recursive: true });
-		mkdirSync(join(projectDir, ".pi"), { recursive: true });
+		mkdirSync(join(projectDir, ".mortise"), { recursive: true });
 	});
 
 	afterEach(() => {
@@ -34,41 +34,38 @@ describe("SettingsManager - External Edit Preservation", () => {
 		}
 	});
 
-	it("should preserve file changes to packages array when changing unrelated setting", async () => {
+	it("should preserve file changes to skills when changing an unrelated setting", async () => {
 		const settingsPath = join(agentDir, "settings.json");
 
-		// Initial state: packages has one item
 		writeFileSync(
 			settingsPath,
 			JSON.stringify({
-				theme: "dark",
-				packages: ["npm:pi-mcp-adapter"],
+				defaultThinkingLevel: "low",
+				skills: ["skills/original"],
 			}),
 		);
 
 		// Pi starts up, loads settings into memory
 		const manager = SettingsManager.create(projectDir, agentDir);
 
-		// At this point, globalSettings.packages = ["npm:pi-mcp-adapter"]
-		expect(manager.getPackages()).toEqual(["npm:pi-mcp-adapter"]);
+		expect(manager.getSkillPaths()).toEqual(["skills/original"]);
 
 		// User externally edits settings.json to remove the package
 		const currentSettings = JSON.parse(readFileSync(settingsPath, "utf-8"));
-		currentSettings.packages = []; // User wants to remove this!
+		currentSettings.skills = [];
 		writeFileSync(settingsPath, JSON.stringify(currentSettings, null, 2));
 
 		// Verify file was changed
-		expect(JSON.parse(readFileSync(settingsPath, "utf-8")).packages).toEqual([]);
+		expect(JSON.parse(readFileSync(settingsPath, "utf-8")).skills).toEqual([]);
 
 		// User changes an UNRELATED setting via UI (this triggers save)
-		manager.setTheme("light");
+		manager.setDefaultThinkingLevel("high");
 		await manager.flush();
 
-		// With the fix, packages should be preserved as [] (not reverted to startup value)
 		const savedSettings = JSON.parse(readFileSync(settingsPath, "utf-8"));
 
-		expect(savedSettings.packages).toEqual([]);
-		expect(savedSettings.theme).toBe("light");
+		expect(savedSettings.skills).toEqual([]);
+		expect(savedSettings.defaultThinkingLevel).toBe("high");
 	});
 
 	it("should preserve file changes to extensions array when changing unrelated setting", async () => {
@@ -77,7 +74,7 @@ describe("SettingsManager - External Edit Preservation", () => {
 		writeFileSync(
 			settingsPath,
 			JSON.stringify({
-				theme: "dark",
+				defaultThinkingLevel: "low",
 				extensions: ["/old/extension.ts"],
 			}),
 		);
@@ -100,7 +97,7 @@ describe("SettingsManager - External Edit Preservation", () => {
 	});
 
 	it("should preserve external project settings changes when updating unrelated project field", async () => {
-		const projectSettingsPath = join(projectDir, ".pi", "settings.json");
+		const projectSettingsPath = join(projectDir, ".mortise", "settings.json");
 		writeFileSync(
 			projectSettingsPath,
 			JSON.stringify({
@@ -124,7 +121,7 @@ describe("SettingsManager - External Edit Preservation", () => {
 	});
 
 	it("should let in-memory project changes override external changes for the same project field", async () => {
-		const projectSettingsPath = join(projectDir, ".pi", "settings.json");
+		const projectSettingsPath = join(projectDir, ".mortise", "settings.json");
 		writeFileSync(
 			projectSettingsPath,
 			JSON.stringify({

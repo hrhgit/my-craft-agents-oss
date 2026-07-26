@@ -62,7 +62,6 @@ describe("regression #2860: replaced session callbacks", () => {
 					],
 					noSkills: true,
 					noPromptTemplates: true,
-					noThemes: true,
 				},
 			});
 			registerApiProvider(fauxApiProvider, `faux-2860:${faux.getModel().provider}`);

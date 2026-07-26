@@ -1,12 +1,9 @@
 import { CapabilityReadOnlyError } from '@mortise/shared/storage'
 import {
   AutomationDefinitionV3Schema,
-  AutomationV3Runtime,
-  AutomationV3Store,
   CloudEventV1Schema,
   evaluateConditions,
   type AutomationCapabilityResultV1,
-  type AutomationExecutionCallbacksV1,
   type AutomationRunV1,
   type AutomationWorkspaceHostV3,
   type CloudEventV1,
@@ -18,13 +15,9 @@ import {
 
 export interface AutomationWorkspaceCapabilityContextV1 {
   workspaceId: string
-  workspaceRootPath: string
-  writerId?: string
   /** Trusted source assigned from the authenticated capability caller. */
   eventSourceKind: 'mortise' | 'agent' | 'extension' | 'external'
-  callbacks?: AutomationExecutionCallbacksV1
-  host?: AutomationWorkspaceHostV3
-  validateSession?: (sessionId: string, workspaceId: string) => boolean
+  host: AutomationWorkspaceHostV3
 }
 /**
  * Host-owned implementation of automation.workspace/v1. Transport layers only
@@ -44,10 +37,9 @@ export async function executeAutomationWorkspaceOperationV1(
       error: { code: 'invalid_automation_command', message: error instanceof Error ? error.message : String(error), retryable: false },
     }
   }
-  const ownsStore = !context.host
-  const store = context.host?.store ?? new AutomationV3Store(context)
+  const store = context.host.store
   const finalizeMutation = <T>(result: AutomationCapabilityResultV1<T>): AutomationCapabilityResultV1<T> => {
-    if (result.status === 'ok' || result.status === 'duplicate') context.host?.refresh()
+    if (result.status === 'ok' || result.status === 'duplicate') context.host.refresh()
     return result
   }
   try {
@@ -62,10 +54,10 @@ export async function executeAutomationWorkspaceOperationV1(
             capability: 'automation.workspace',
             schemaVersion: 1,
             capabilities: {
-              'automations.definitions': { minRead: 3, maxRead: 3, minWrite: 3, maxWrite: 3 },
-              'automations.ingress': { minRead: 1, maxRead: 1, minWrite: 1, maxWrite: 1 },
-              'automations.runs': { minRead: 1, maxRead: 1, minWrite: 1, maxWrite: 1 },
-              'automations.history': { minRead: 1, maxRead: 1, minWrite: 1, maxWrite: 1 },
+              'automations.definitions': { minRead: 4, maxRead: 4, minWrite: 4, maxWrite: 4 },
+              'automations.ingress': { minRead: 2, maxRead: 2, minWrite: 2, maxWrite: 2 },
+              'automations.runs': { minRead: 2, maxRead: 2, minWrite: 2, maxWrite: 2 },
+              'automations.history': { minRead: 2, maxRead: 2, minWrite: 2, maxWrite: 2 },
             },
             triggerKinds: ['event', 'cron', 'once', 'interval'],
             actionKinds: ['prompt', 'webhook'],
@@ -74,8 +66,18 @@ export async function executeAutomationWorkspaceOperationV1(
             permissionScopes: ['automations.read', 'automations.history.read', 'automations.write', 'automations.run', 'automations.events.emit'],
           },
         }
-      case 'list':
-        return { schemaVersion: 1, status: 'ok', revision: document.revision, data: document.definitions }
+      case 'list': {
+        const page = store.listDefinitionsPage({
+          ...(request.limit ? { limit: request.limit } : {}),
+          ...(request.cursor ? { cursor: request.cursor } : {}),
+        })
+        return {
+          schemaVersion: 1,
+          status: 'ok',
+          revision: page.revision,
+          data: { schemaVersion: 1, ...page },
+        }
+      }
       case 'get': {
         const definition = document.definitions.find(item => item.id === request.automationId)
         return definition
@@ -147,25 +149,38 @@ export async function executeAutomationWorkspaceOperationV1(
         const run = store.getRun(request.runId)
         return run ? { schemaVersion: 1, status: 'ok', data: run } : { schemaVersion: 1, status: 'invalid', error: { code: 'run_not_found', message: 'Automation run not found', retryable: false } }
       }
-      case 'list-runs':
-        return { schemaVersion: 1, status: 'ok', data: store.listRuns({ ...(request.automationId ? { automationId: request.automationId } : {}), ...(request.limit ? { limit: request.limit } : {}) }) }
+      case 'list-runs': {
+        const page = store.listRunsPage({
+          ...(request.automationId ? { automationId: request.automationId } : {}),
+          ...(request.states ? { states: request.states } : {}),
+          ...(request.eventId ? { eventId: request.eventId } : {}),
+          ...(request.createdAfter !== undefined ? { createdAfter: request.createdAfter } : {}),
+          ...(request.createdBefore !== undefined ? { createdBefore: request.createdBefore } : {}),
+          ...(request.limit ? { limit: request.limit } : {}),
+          ...(request.cursor ? { cursor: request.cursor } : {}),
+        })
+        return { schemaVersion: 1, status: 'ok', data: { schemaVersion: 1, ...page } }
+      }
+      case 'list-changes': {
+        const page = store.readHistoryChanges({
+          ...(request.automationId ? { automationId: request.automationId } : {}),
+          ...(request.runId ? { runId: request.runId } : {}),
+          ...(request.limit ? { limit: request.limit } : {}),
+          ...(request.cursor ? { cursor: request.cursor } : {}),
+        })
+        return { schemaVersion: 1, status: 'ok', data: { schemaVersion: 1, ...page } }
+      }
       case 'run': {
-        if (context.host) {
-          const result = context.host.acceptManual(request.automationId, request.operationId, request.triggerId)
-          return { schemaVersion: 1, operationId: request.operationId, status: result.duplicate ? 'duplicate' : 'accepted', data: { runId: result.run.runId } }
-        }
-        if (!context.callbacks) return { schemaVersion: 1, operationId: request.operationId, status: 'unsupported', error: { code: 'execution_callbacks_unavailable', message: 'The host has not mounted automation execution callbacks', retryable: true } }
-        const runtime = new AutomationV3Runtime({ workspaceId: context.workspaceId, store, callbacks: context.callbacks })
-        const result = await runtime.runManual(request.automationId, request.operationId, request.triggerId)
+        const result = context.host.acceptManual(request.automationId, request.operationId, request.triggerId)
         return { schemaVersion: 1, operationId: request.operationId, status: result.duplicate ? 'duplicate' : 'accepted', data: { runId: result.run.runId } }
       }
       case 'emit-event': {
-        if (!context.host && !context.callbacks) return { schemaVersion: 1, operationId: request.operationId, status: 'unsupported', error: { code: 'execution_callbacks_unavailable', message: 'The host has not mounted automation execution callbacks', retryable: true } }
         const parsed = CloudEventV1Schema.safeParse(request.event)
         if (!parsed.success) return { schemaVersion: 1, operationId: request.operationId, status: 'invalid', error: { code: 'invalid_cloudevent', message: parsed.error.message, retryable: false } }
-        const result = context.host
-          ? await context.host.acceptEvent(parsed.data as CloudEventV1, { sourceKind: context.eventSourceKind, ...(request.matchValue ? { matchValue: request.matchValue } : {}) })
-          : await new AutomationV3Runtime({ workspaceId: context.workspaceId, store, callbacks: context.callbacks! }).emitEvent(parsed.data as CloudEventV1, { sourceKind: context.eventSourceKind, ...(request.matchValue ? { matchValue: request.matchValue } : {}), ...(context.validateSession ? { validateSession: context.validateSession } : {}) })
+        const result = await context.host.acceptEvent(parsed.data as CloudEventV1, {
+          sourceKind: context.eventSourceKind,
+          ...(request.matchValue ? { matchValue: request.matchValue } : {}),
+        })
         if (result.status !== 'accepted' && result.status !== 'duplicate') {
           return { schemaVersion: 1, operationId: request.operationId, status: result.status, error: result.error }
         }
@@ -182,8 +197,6 @@ export async function executeAutomationWorkspaceOperationV1(
       }
     }
     throw error
-  } finally {
-    if (ownsStore) store.close()
   }
   return {
     schemaVersion: 1,

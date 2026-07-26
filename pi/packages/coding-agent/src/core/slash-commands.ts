@@ -36,7 +36,7 @@ export const BUILTIN_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 	{ name: "new", description: "Start a new session" },
 	{ name: "compact", description: "Manually compact the session context" },
 	{ name: "resume", description: "Resume a different session" },
-	{ name: "reload", description: "Reload keybindings, extensions, skills, prompts, and themes" },
+	{ name: "reload", description: "Reload extensions, skills, and prompts" },
 	{ name: "network-reset", description: "Reset network routing state and restart the sidecar" },
 	{ name: "quit", description: `Quit ${APP_NAME}` },
 ];

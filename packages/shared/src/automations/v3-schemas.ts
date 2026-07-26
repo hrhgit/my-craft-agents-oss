@@ -216,6 +216,73 @@ export const AutomationsDocumentV3Schema = z.object({
   if (new Set(ids).size !== ids.length) ctx.addIssue({ code: 'custom', path: ['definitions'], message: 'Automation IDs must be unique' })
 })
 
+const AutomationActionExecutionDetailsV1Schema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('webhook'),
+    statusCode: z.number().int().optional(),
+    attempts: z.number().int().nonnegative(),
+    durationMs: z.number().nonnegative(),
+    responseBody: z.string().optional(),
+  }).strict(),
+  z.object({
+    kind: z.literal('isolated-agent'),
+    output: z.string(),
+    notification: z.enum(['none', 'delivered']),
+  }).strict(),
+])
+
+const AutomationActionRunV1Schema = z.object({
+  actionRunId: OpaqueIdSchema,
+  actionId: OpaqueIdSchema,
+  state: z.enum(['queued', 'running', 'succeeded', 'failed', 'blocked', 'cancelled', 'skipped']),
+  attempts: z.number().int().nonnegative(),
+  startedAt: IsoDateSchema.optional(),
+  completedAt: IsoDateSchema.optional(),
+  sessionId: z.string().min(1).optional(),
+  details: AutomationActionExecutionDetailsV1Schema.optional(),
+  error: z.object({ code: z.string().min(1), message: z.string(), retryable: z.boolean() }).strict().optional(),
+}).strict()
+
+export const AutomationRunV1Schema = z.object({
+  schemaVersion: z.literal(1),
+  runId: OpaqueIdSchema,
+  occurrenceId: OpaqueIdSchema,
+  occurrenceKey: z.string().min(1),
+  automationId: OpaqueIdSchema,
+  definitionRevision: z.number().int().positive(),
+  definitionSnapshot: AutomationDefinitionV3Schema,
+  triggerId: OpaqueIdSchema,
+  state: z.enum(['queued', 'running', 'succeeded', 'partial', 'failed', 'cancelled', 'skipped']),
+  reason: z.string().optional(),
+  eventId: OpaqueIdSchema.optional(),
+  scheduledAt: IsoDateSchema.optional(),
+  createdAt: IsoDateSchema,
+  startedAt: IsoDateSchema.optional(),
+  completedAt: IsoDateSchema.optional(),
+  executor: z.object({
+    ownerId: z.string().min(1),
+    claimedAt: IsoDateSchema,
+    leaseExpiresAt: IsoDateSchema,
+  }).strict().optional(),
+  actions: z.array(AutomationActionRunV1Schema),
+}).strict().superRefine((value, ctx) => {
+  if (value.definitionSnapshot.id !== value.automationId) {
+    ctx.addIssue({ code: 'custom', path: ['automationId'], message: 'Must match definitionSnapshot.id' })
+  }
+  if (!value.definitionSnapshot.triggers.some(trigger => trigger.id === value.triggerId)) {
+    ctx.addIssue({ code: 'custom', path: ['triggerId'], message: 'Must reference a trigger in definitionSnapshot' })
+  }
+  const expectedActions = value.definitionSnapshot.actions.map(action => action.id)
+  const actualActions = value.actions.map(action => action.actionId)
+  if (expectedActions.length !== actualActions.length
+    || expectedActions.some((actionId, index) => actualActions[index] !== actionId)) {
+    ctx.addIssue({ code: 'custom', path: ['actions'], message: 'Must preserve definition action order and identity' })
+  }
+  if (value.state === 'running' && !value.executor) {
+    ctx.addIssue({ code: 'custom', path: ['executor'], message: 'Running runs require an execution lease' })
+  }
+})
+
 const JsonValueSchema: z.ZodType<unknown> = z.lazy(() => z.union([
   z.null(), z.boolean(), z.number().finite(), z.string(), z.array(JsonValueSchema), z.record(z.string(), JsonValueSchema),
 ]))
@@ -259,6 +326,10 @@ export const CloudEventV1Schema = z.object({
 
 export function parseAutomationsDocumentV3(input: unknown) {
   return AutomationsDocumentV3Schema.parse(input)
+}
+
+export function parseAutomationRunV1(input: unknown) {
+  return AutomationRunV1Schema.parse(input)
 }
 
 export function parseCloudEventV1(input: unknown) {

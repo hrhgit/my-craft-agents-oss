@@ -313,7 +313,7 @@ export const piDriver: ProviderDriver = {
     return ({
     paths: {
       node: resolvedPaths.nodeRuntimePath,
-      piCli: resolvedPaths.piCliPath,
+		piRuntime: resolvedPaths.piRuntimePath,
     },
     piAuthProvider: inferredPiAuthProvider,
     baseUrl,

@@ -16,7 +16,7 @@ export interface BackendRuntimePaths {
   sessionServer?: string;
   node?: string;
   bridgeServer?: string;
-  piCli?: string;
+	piRuntime?: string;
 }
 
 export interface BackendRuntimePayload extends Record<string, unknown> {

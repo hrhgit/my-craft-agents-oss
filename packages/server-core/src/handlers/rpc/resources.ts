@@ -29,7 +29,8 @@ export function registerResourcesHandlers(server: RpcServer, deps: HandlerDeps):
       const workspace = getWorkspaceOrThrow(resolvedWorkspaceId)
 
       const { exportResources } = await import('@mortise/shared/resources')
-      const result = exportResources(workspace.rootPath, options, resolvedWorkspaceId)
+      const automationHost = deps.sessionManager.getAutomationHost(resolvedWorkspaceId) ?? undefined
+      const result = exportResources(workspace.rootPath, options, resolvedWorkspaceId, automationHost)
 
       deps.platform.logger?.info(
         `RESOURCES_EXPORT: Exported from ${resolvedWorkspaceId}: ` +
@@ -50,7 +51,8 @@ export function registerResourcesHandlers(server: RpcServer, deps: HandlerDeps):
       const workspace = getWorkspaceOrThrow(resolvedWorkspaceId)
 
       const { importResources } = await import('@mortise/shared/resources')
-      const result = await importResources(workspace.rootPath, bundle, mode, resolvedWorkspaceId)
+      const automationHost = deps.sessionManager.getAutomationHost(resolvedWorkspaceId) ?? undefined
+      const result = await importResources(workspace.rootPath, bundle, mode, resolvedWorkspaceId, automationHost)
 
       deps.platform.logger?.info(
         `RESOURCES_IMPORT: Imported into ${resolvedWorkspaceId} (mode=${mode}): ` +

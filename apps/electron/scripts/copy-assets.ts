@@ -14,7 +14,7 @@
 import { cpSync, copyFileSync, mkdirSync, rmSync } from 'fs';
 import { dirname, join, resolve } from 'path';
 import {
-  copyPiRuntime,
+  stageCompiledPiRuntime,
   type Arch,
   type BuildConfig,
   type Platform,
@@ -67,4 +67,4 @@ try {
   console.log('⚠ powershell-parser.ps1 copy skipped (not critical on non-Windows)');
 }
 
-copyPiRuntime(getCurrentBuildConfig());
+stageCompiledPiRuntime(getCurrentBuildConfig(), join(resourcesDest, 'pi-runtime'));

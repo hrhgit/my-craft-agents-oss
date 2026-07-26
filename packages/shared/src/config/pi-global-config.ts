@@ -7,7 +7,7 @@
  */
 
 import { existsSync, mkdirSync, watch, type FSWatcher } from 'fs';
-import { DefaultPackageManager, SettingsManager } from '@mortise/pi-coding-agent';
+import { ResourceResolver, SettingsManager } from '@mortise/pi-coding-agent';
 import {
   deleteGlobalApiKey as deletePiHostGlobalApiKey,
   deleteGlobalProvider as deletePiHostGlobalProvider,
@@ -606,14 +606,14 @@ export async function getPiExtensionCatalog(options: { cwd?: string; agentDir?: 
   const agentDir = options.agentDir ?? MORTISE_AGENT_DIR;
   try {
     const settingsManager = SettingsManager.create(cwd, agentDir, MORTISE_PROJECT_DIR);
-    const packageManager = new DefaultPackageManager({
+    const resourceResolver = new ResourceResolver({
       cwd,
       agentDir,
       projectConfigDir: MORTISE_PROJECT_DIR,
       settingsManager,
       extensionTarget: 'mortise',
     });
-    const result = await packageManager.resolve();
+    const result = await resourceResolver.resolve();
     return {
       // PackageManager deliberately retains disabled resources. Loading the
       // runtime (and the host facade catalog built on it) filters them out.
@@ -650,8 +650,6 @@ export async function getPiExtensionCatalog(options: { cwd?: string; agentDir?: 
             resolvedPath: resource.path,
             commands: [],
             tools: [],
-            flags: [],
-            shortcuts: [],
             config,
           };
         }),
