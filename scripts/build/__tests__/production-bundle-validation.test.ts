@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { delimiter, dirname, join, resolve } from 'node:path'
 import {
   createProductionBundleEnvironment,
   productionBundleCommand,
@@ -19,6 +19,7 @@ import {
   resolvePackageTarget,
 } from '../package-electron'
 import { getProcessStartTime } from '../process-identity'
+import { createElectronBuildCommandEnvironment } from '../electron-build-cache'
 
 const repositoryRoot = resolve(import.meta.dir, '../../..')
 const temporaryRoots: string[] = []
@@ -96,6 +97,28 @@ describe('production bundle validation composition', () => {
     expect(scripts['validate:production-bundles']).toBe('bun run scripts/build/validate-production-bundles.ts')
     expect(scripts['validate:ci']).toContain('bun run test:build-validation')
     expect(scripts['validate:ci']).toContain('bun run validate:production-bundles')
+  })
+
+  test('pins embedded build lifecycle tools to the producer Bun runtime', () => {
+    const codingPackage = JSON.parse(readFileSync(
+      resolve(repositoryRoot, 'pi/packages/coding-agent/package.json'),
+      'utf8',
+    )) as { scripts: Record<string, string> }
+    for (const name of ['build:sidecar', 'build:host-facade-cjs', 'copy-binary-assets']) {
+      expect(codingPackage.scripts[name]?.startsWith('bun ')).toBe(true)
+      expect(codingPackage.scripts[name]).not.toMatch(/(^|\s)node(?:\.exe)?\s/)
+    }
+
+    const bunExecutable = resolve(repositoryRoot, 'toolchain', process.platform === 'win32' ? 'bun.exe' : 'bun')
+    const environment = createElectronBuildCommandEnvironment(
+      { Path: resolve(repositoryRoot, 'machine-node') },
+      'production',
+      'source-id',
+      resolve(repositoryRoot, 'build-root'),
+      bunExecutable,
+    )
+    expect(environment.PATH).toBe(`${dirname(bunExecutable)}${delimiter}${resolve(repositoryRoot, 'machine-node')}`)
+    expect(environment.Path).toBeUndefined()
   })
 
   test('keeps installer creation behind explicit target-platform package commands', () => {

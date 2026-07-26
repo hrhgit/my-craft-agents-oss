@@ -12,7 +12,7 @@ import {
   statSync,
   unlinkSync,
 } from 'node:fs'
-import { basename, dirname, join, relative, resolve } from 'node:path'
+import { basename, delimiter, dirname, join, relative, resolve } from 'node:path'
 import { UI_VALIDATION_MAX_WAIT_MS } from '@mortise/shared/ui-validation'
 import {
   immutableElectronExecutableRelativePath,
@@ -657,22 +657,36 @@ function runElectronBuild(repoRoot: string, mode: ElectronBuildMode, sourceId: s
   runBuildCommand(repoRoot, ['run', 'electron:build:source'], 'Electron source build', mode, sourceId, buildRoot)
 }
 
+export function createElectronBuildCommandEnvironment(
+  baseEnv: NodeJS.ProcessEnv,
+  mode: ElectronBuildMode,
+  sourceId: string,
+  buildRoot: string,
+  bunExecutable = process.execPath,
+): NodeJS.ProcessEnv {
+  const inheritedPath = Object.entries(baseEnv)
+    .find(([name]) => name.toLowerCase() === 'path')?.[1]
+  const envWithoutPath = Object.fromEntries(
+    Object.entries(baseEnv).filter(([name]) => name.toLowerCase() !== 'path'),
+  )
+  return {
+    ...envWithoutPath,
+    PATH: [dirname(bunExecutable), inheritedPath].filter(Boolean).join(delimiter),
+    MORTISE_UI_VALIDATION_BUILD: mode === 'ui-validation' ? '1' : '0',
+    MORTISE_UI_TEST_HOST: mode === 'ui-validation' ? '1' : '0',
+    MORTISE_DEV_HOST_BUILD: '0',
+    MORTISE_DEV_RUNTIME: mode === 'development' ? '1' : '0',
+    MORTISE_BUILD_SOURCE_ID: sourceId,
+    MORTISE_BUILD_TOOLCHAIN_CACHE_DIR: join(buildRoot, 'toolchains'),
+  }
+}
+
 function runBuildCommand(repoRoot: string, args: string[], label: string, mode: ElectronBuildMode, sourceId: string, buildRoot: string): void {
-  const uiValidation = mode === 'ui-validation' ? '1' : '0'
-  const development = mode === 'development' ? '1' : '0'
   const startedAt = Date.now()
   process.stdout.write(`[electron-build] Starting ${label}...\n`)
   const result = spawnSync(process.execPath, args, {
     cwd: repoRoot,
-    env: {
-      ...process.env,
-      MORTISE_UI_VALIDATION_BUILD: uiValidation,
-      MORTISE_UI_TEST_HOST: uiValidation,
-      MORTISE_DEV_HOST_BUILD: '0',
-      MORTISE_DEV_RUNTIME: development,
-      MORTISE_BUILD_SOURCE_ID: sourceId,
-      MORTISE_BUILD_TOOLCHAIN_CACHE_DIR: join(buildRoot, 'toolchains'),
-    },
+    env: createElectronBuildCommandEnvironment(process.env, mode, sourceId, buildRoot),
     stdio: 'inherit',
     windowsHide: true,
   })

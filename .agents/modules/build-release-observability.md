@@ -127,7 +127,7 @@ validation:
   - { id: pi-workspace-regression, kind: integration, command: "bun run pi:test", description: "Run the embedded Pi workspace regression suites without composing a second CI run.", triggers: [release, runtime-change], required: true, evidence: "Pi package regression exit status and output." }
   - { id: production-bundles, kind: integration, command: "bun run validate:production-bundles", description: "Run the complete production Electron build consumed by packaging.", triggers: [ci-change, release], required: true, evidence: "Production main, workspace server, preload, renderer, and resource build exit status." }
   - { id: ci-integration, kind: integration, command: "bun run validate:ci", description: "Run the repository CI validation composition.", triggers: [release, ci-change], required: true, evidence: "CI validation exit status and output." }
-scope_digest: 903c5c4994634207d2117c1ef1d786bf94d8780d
+scope_digest: 7ce6adcbc1c194a87eed423b6ba964c2c074dbef
 ---
 
 ## Purpose
@@ -158,7 +158,7 @@ Run the in-memory production Node bundle gate frequently, retain the complete pr
 Bundled binaries and lockfiles are large shared surfaces; concurrent regeneration can overwrite another build's artifacts.
 
 ## Semantic history
-- 2026-07-26: Bounded immutable source-capsule Bun and npm dependency preparation with the canonical 600-second cold-start budget and attributed timeout failure instead of allowing an interrupted or stalled cache operation to hang the production gate indefinitely.
+- 2026-07-26: Bounded immutable source-capsule dependency preparation to 600 seconds with attributed timeout failure, retained the capsule-local dependency view and Pi npm cache, and moved root Bun downloads to Bun's concurrency-safe global content-addressed cache after isolated private-cache candidates stalled while the canonical cache completed in 94 seconds.
 - 2026-07-26: Converged production validation and packaging on the canonical compiled Pi runtime producer and four-file stage, rejected stale/ignored inputs, fallback artifacts, and undeclared dependency hoists in clean checkouts, and made the optional Developer Kit NSIS page abort in silent mode so unattended installed-app validation cannot hang.
 - 2026-07-25: Made source identity derive from an empty temporary Git index populated only by declared build inputs, so unrelated tracked files and commit-state transitions cannot enter the immutable capsule or change its identity.
 - 2026-07-25: Converged production validation, target packaging, Developer Kit staging, and UI validation on one build-owned immutable Electron producer with closed Bun/Pi dependency capsules, verified external-toolchain caching, SHA-256 artifact manifests, lease-held staging, and no live-checkout fallback; decomposed the full module gate into separately attributed Pi contract, Pi regression, production, and CI commands instead of nesting a duplicate CI run inside one timeout-bound command.

@@ -13,7 +13,7 @@ collaborates_with: []
 validation:
   - { id: pi-coding-regression, kind: unit, command: "npm --prefix pi test --workspace @mortise/pi-coding-agent", description: "Run Pi coding runtime regressions.", triggers: [owned-change], required: true, evidence: "Workspace test exit status and output." }
   - { id: pi-workspace-contract, kind: contract, command: "npm --prefix pi run build:workspace", description: "Build Pi workspaces to verify package contracts.", triggers: [contract-change], required: true, evidence: "Workspace build exit status and diagnostics." }
-scope_digest: e1249bbd5d2849b31cbbe5e8096c59e38831a940
+scope_digest: 885f78dcd91b8218878662489a8cf69cc591804b
 ---
 
 ## Purpose
@@ -44,6 +44,7 @@ Run coding-runtime and workspace contract tests plus downstream Agent Loop, Sess
 Future changes can accidentally reintroduce terminal dependencies through exports, package metadata, extension types, assets, or resolver candidates, or alter event ordering, cancellation, durability, compaction, and extension cleanup semantics while changing the headless boundary. Production import, metafile, staged-artifact, and runtime-resolution guards must therefore remain fail-closed. External-Pi compatibility pressure must not reintroduce aliases or fallbacks into the Mortise runtime.
 
 ## Semantic history
+- 2026-07-26: Bound embedded runtime build lifecycle scripts to the producer's exact Bun executable and removed their undeclared Node command dependency, so immutable source builds do not depend on ambient PATH ordering.
 - 2026-07-26: Converged the embedded product on one compiled headless entrypoint, closed its direct runtime/type dependency declarations, and removed TUI, interactive/standalone CLI, launcher, updater, terminal extension APIs, and JavaScript fallback source and artifact paths while retaining Agent Loop, Session, tools, compaction, extension lifecycle, and RPC contracts.
 - 2026-07-24: Locked the embedded host thinking-level boundary to the six current values and retained typed rejection for retired values without aliases or migration.
 - 2026-07-23: Declared this repository's `pi/` subtree a Mortise-only embedded headless runtime, preserved canonical UI-neutral Agent and RPC semantics, and classified TUI, interactive, standalone CLI, launcher, updater, and separate Pi product surfaces as non-production removal scope with no compatibility fallback.

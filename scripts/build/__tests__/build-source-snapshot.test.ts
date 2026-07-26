@@ -6,6 +6,7 @@ import {
   assertMaterializedBuildSourceIdentity,
   BUILD_DEPENDENCY_INSTALL_TIMEOUT_MS,
   captureBuildSource,
+  frozenBunInstallArgs,
   MATERIALIZED_BUILD_SOURCE_PROVENANCE,
   runFrozenDependencyInstall,
 } from '../../build-source-snapshot.ts'
@@ -19,6 +20,16 @@ afterEach(() => {
 describe('immutable build source snapshot', () => {
   it('bounds frozen dependency preparation with the canonical cold-start budget', () => {
     expect(BUILD_DEPENDENCY_INSTALL_TIMEOUT_MS).toBe(600_000)
+    expect(frozenBunInstallArgs()).toEqual([
+      'install',
+      '--frozen-lockfile',
+      '--no-save',
+      '--linker=hoisted',
+      '--backend=hardlink',
+      '--no-progress',
+      '--no-summary',
+    ])
+    expect(frozenBunInstallArgs().some(argument => argument.startsWith('--cache-dir'))).toBe(false)
     expect(() => runFrozenDependencyInstall(
       process.execPath,
       ['-e', 'setTimeout(() => {}, 60_000)'],

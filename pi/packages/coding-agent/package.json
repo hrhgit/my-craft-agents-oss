@@ -31,14 +31,14 @@
 	],
 	"scripts": {
 		"clean": "shx rm -rf dist sidecar/bin",
-		"build:sidecar": "node ./scripts/build-sidecar.mjs",
+		"build:sidecar": "bun ./scripts/build-sidecar.mjs",
 		"build:bundle": "bun ../../scripts/build-coding-agent-bundle.mjs",
-		"build:host-facade-cjs": "node ../../scripts/build-host-facade-cjs.mjs",
+		"build:host-facade-cjs": "bun ../../scripts/build-host-facade-cjs.mjs",
 		"build": "shx rm -rf dist && npm run build:sidecar && tsgo -p tsconfig.build.json && npm run build:host-facade-cjs && npm run build:bundle",
 		"build:workspace": "shx rm -rf dist && tsgo -p tsconfig.build.json && npm run build:host-facade-cjs && npm run build:bundle",
 		"build:workspace:binary": "shx rm -rf dist/pi dist/pi.exe dist/sidecar dist/photon_rs_bg.wasm dist/package.json && bun build --compile ./dist/bun/headless.js ./src/utils/image-resize-worker.ts --outfile dist/pi && npm run copy-binary-assets",
 		"build:binary": "npm --prefix ../ai run build && npm --prefix ../agent run build && npm run build && npm run build:workspace:binary",
-		"copy-binary-assets": "node ./scripts/copy-assets.mjs --binary",
+		"copy-binary-assets": "bun ./scripts/copy-assets.mjs --binary",
 		"test": "vitest --run",
 		"measure:headless": "node ./scripts/measure-headless-runtime.mjs"
 	},

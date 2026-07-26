@@ -278,18 +278,7 @@ function prepareFrozenDependencies(sourceRoot: string, scratchRoot: string): voi
   if (!existsSync(join(sourceRoot, 'bun.lock'))) {
     throw new Error('Immutable build dependencies require a captured bun.lock.')
   }
-  const bunCacheDir = join(scratchRoot, 'dependency-cache', 'bun')
-  mkdirSync(bunCacheDir, { recursive: true })
-  runFrozenDependencyInstall(process.execPath, [
-    'install',
-    '--frozen-lockfile',
-    '--no-save',
-    '--linker=hoisted',
-    '--backend=hardlink',
-    `--cache-dir=${bunCacheDir}`,
-    '--no-progress',
-    '--no-summary',
-  ], sourceRoot, 'root Bun dependency domain')
+  runFrozenDependencyInstall(process.execPath, frozenBunInstallArgs(), sourceRoot, 'root Bun dependency domain')
 
   const piRoot = join(sourceRoot, PI_DEPENDENCY_ROOT)
   if (!existsSync(join(piRoot, 'package-lock.json'))) {
@@ -306,6 +295,18 @@ function prepareFrozenDependencies(sourceRoot: string, scratchRoot: string): voi
   ], piRoot, 'embedded Pi npm dependency domain')
 
   assertDependencyViewsContained(sourceRoot)
+}
+
+export function frozenBunInstallArgs(): string[] {
+  return [
+    'install',
+    '--frozen-lockfile',
+    '--no-save',
+    '--linker=hoisted',
+    '--backend=hardlink',
+    '--no-progress',
+    '--no-summary',
+  ]
 }
 
 export function runFrozenDependencyInstall(
