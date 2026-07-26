@@ -127,7 +127,7 @@ validation:
   - { id: pi-workspace-regression, kind: integration, command: "bun run pi:test", description: "Run the embedded Pi workspace regression suites without composing a second CI run.", triggers: [release, runtime-change], required: true, evidence: "Pi package regression exit status and output." }
   - { id: production-bundles, kind: integration, command: "bun run validate:production-bundles", description: "Run the complete production Electron build consumed by packaging.", triggers: [ci-change, release], required: true, evidence: "Production main, workspace server, preload, renderer, and resource build exit status." }
   - { id: ci-integration, kind: integration, command: "bun run validate:ci", description: "Run the repository CI validation composition.", triggers: [release, ci-change], required: true, evidence: "CI validation exit status and output." }
-scope_digest: f9630357754b5f5382d549a289c578a183937253
+scope_digest: 903c5c4994634207d2117c1ef1d786bf94d8780d
 ---
 
 ## Purpose
@@ -158,6 +158,7 @@ Run the in-memory production Node bundle gate frequently, retain the complete pr
 Bundled binaries and lockfiles are large shared surfaces; concurrent regeneration can overwrite another build's artifacts.
 
 ## Semantic history
+- 2026-07-26: Bounded immutable source-capsule Bun and npm dependency preparation with the canonical 600-second cold-start budget and attributed timeout failure instead of allowing an interrupted or stalled cache operation to hang the production gate indefinitely.
 - 2026-07-26: Converged production validation and packaging on the canonical compiled Pi runtime producer and four-file stage, rejected stale/ignored inputs, fallback artifacts, and undeclared dependency hoists in clean checkouts, and made the optional Developer Kit NSIS page abort in silent mode so unattended installed-app validation cannot hang.
 - 2026-07-25: Made source identity derive from an empty temporary Git index populated only by declared build inputs, so unrelated tracked files and commit-state transitions cannot enter the immutable capsule or change its identity.
 - 2026-07-25: Converged production validation, target packaging, Developer Kit staging, and UI validation on one build-owned immutable Electron producer with closed Bun/Pi dependency capsules, verified external-toolchain caching, SHA-256 artifact manifests, lease-held staging, and no live-checkout fallback; decomposed the full module gate into separately attributed Pi contract, Pi regression, production, and CI commands instead of nesting a duplicate CI run inside one timeout-bound command.
@@ -177,4 +178,3 @@ Bundled binaries and lockfiles are large shared surfaces; concurrent regeneratio
 - 2026-07-23: Verified OPT-008 end to end with deterministic indexed search, bounded renderer metrics, current-build physical deep links, production bundles, and retained evidence.
 - 2026-07-23: Made incremental Session search delete through turn-owned segment keys, normalize NFKC by Unicode grapheme cluster for exact equivalent source ranges, and expose structural deletion diagnostics instead of timing-only complexity coverage.
 - 2026-07-23: Verified OPT-007 with asynchronous renderer/main layout coordinators, zero storage work on the interaction hot path, foreground narrow resize and drag evidence, and same-profile two-group restart recovery.
-- 2026-07-23: Verified OPT-006 after bounded async Pi Session and runtime/specialized log writers passed shutdown, backpressure, concurrency, rotation, event-loop responsiveness, and representative throughput evidence.

@@ -4,8 +4,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   assertMaterializedBuildSourceIdentity,
+  BUILD_DEPENDENCY_INSTALL_TIMEOUT_MS,
   captureBuildSource,
   MATERIALIZED_BUILD_SOURCE_PROVENANCE,
+  runFrozenDependencyInstall,
 } from '../../build-source-snapshot.ts'
 
 const roots: string[] = []
@@ -15,6 +17,17 @@ afterEach(() => {
 })
 
 describe('immutable build source snapshot', () => {
+  it('bounds frozen dependency preparation with the canonical cold-start budget', () => {
+    expect(BUILD_DEPENDENCY_INSTALL_TIMEOUT_MS).toBe(600_000)
+    expect(() => runFrozenDependencyInstall(
+      process.execPath,
+      ['-e', 'setTimeout(() => {}, 60_000)'],
+      process.cwd(),
+      'timeout fixture',
+      100,
+    )).toThrow('Frozen installation for timeout fixture timed out after 100ms.')
+  }, 5_000)
+
   it('captures dirty tracked changes, deletions, and untracked files but excludes ignored outputs', () => {
     const root = createRepository()
     write(root, 'package.json', '{"version":2}\n')

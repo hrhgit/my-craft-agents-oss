@@ -16,6 +16,7 @@ import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 const SOURCE_SNAPSHOT_SCHEMA_VERSION = 1
 export const MATERIALIZED_BUILD_SOURCE_PROVENANCE = '.mortise-build-source.json'
+export const BUILD_DEPENDENCY_INSTALL_TIMEOUT_MS = 600_000
 const ABANDONED_SNAPSHOT_MS = 60 * 60 * 1_000
 const PI_DEPENDENCY_ROOT = 'pi'
 const DEFAULT_SOURCE_PATHS = [
@@ -279,7 +280,7 @@ function prepareFrozenDependencies(sourceRoot: string, scratchRoot: string): voi
   }
   const bunCacheDir = join(scratchRoot, 'dependency-cache', 'bun')
   mkdirSync(bunCacheDir, { recursive: true })
-  runDependencyInstall(process.execPath, [
+  runFrozenDependencyInstall(process.execPath, [
     'install',
     '--frozen-lockfile',
     '--no-save',
@@ -296,7 +297,7 @@ function prepareFrozenDependencies(sourceRoot: string, scratchRoot: string): voi
   }
   const npmCacheDir = join(scratchRoot, 'dependency-cache', 'npm')
   mkdirSync(npmCacheDir, { recursive: true })
-  runDependencyInstall(process.platform === 'win32' ? 'npm.cmd' : 'npm', [
+  runFrozenDependencyInstall(process.platform === 'win32' ? 'npm.cmd' : 'npm', [
     'ci',
     '--ignore-scripts',
     '--no-audit',
@@ -307,16 +308,29 @@ function prepareFrozenDependencies(sourceRoot: string, scratchRoot: string): voi
   assertDependencyViewsContained(sourceRoot)
 }
 
-function runDependencyInstall(command: string, args: string[], cwd: string, label: string): void {
+export function runFrozenDependencyInstall(
+  command: string,
+  args: string[],
+  cwd: string,
+  label: string,
+  timeoutMs = BUILD_DEPENDENCY_INSTALL_TIMEOUT_MS,
+): void {
   const startedAt = Date.now()
   process.stdout.write(`[build-source] Preparing ${label}...\n`)
   const result = spawnSync(command, args, {
     cwd,
     env: { ...process.env, HUSKY: '0' },
     stdio: 'inherit',
+    timeout: timeoutMs,
     windowsHide: true,
   })
-  if (result.error) throw result.error
+  if (result.error) {
+    const error = result.error as NodeJS.ErrnoException
+    if (error.code === 'ETIMEDOUT') {
+      throw new Error(`Frozen installation for ${label} timed out after ${timeoutMs}ms.`)
+    }
+    throw result.error
+  }
   if (result.status !== 0) {
     throw new Error(`Frozen installation for ${label} failed with exit code ${result.status ?? 'unknown'}.`)
   }
