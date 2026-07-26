@@ -22,40 +22,55 @@ const LOCALES_DIR = resolve(
   'locales',
 )
 
-const checkOnly = process.argv.includes('--check')
-
-const localeFiles = readdirSync(LOCALES_DIR)
-  .filter(f => f.endsWith('.json'))
-  .sort()
-
-let drift = 0
-for (const file of localeFiles) {
-  const path = resolve(LOCALES_DIR, file)
-  const original = readFileSync(path, 'utf-8')
+export function formatLocaleDocument(original: string): { changed: boolean; formatted: string } {
+  const lineEnding = original.includes('\r\n') ? '\r\n' : '\n'
   const parsed = JSON.parse(original) as Record<string, unknown>
 
   const sortedKeys = Object.keys(parsed).sort()
   const sorted: Record<string, unknown> = {}
   for (const key of sortedKeys) sorted[key] = parsed[key]
 
-  const formatted = JSON.stringify(sorted, null, 2) + '\n'
-
-  if (formatted === original) continue
-
-  drift++
-  if (checkOnly) {
-    console.error(`drift: ${file} is not sorted`)
-  } else {
-    writeFileSync(path, formatted, 'utf-8')
-    console.log(`sorted: ${file}`)
+  const canonical = JSON.stringify(sorted, null, 2) + '\n'
+  const formatted = lineEnding === '\r\n' ? canonical.replace(/\n/g, '\r\n') : canonical
+  return {
+    changed: formatted !== original,
+    formatted,
   }
 }
 
-if (checkOnly && drift > 0) {
-  console.error(`\n${drift} locale file(s) out of order. Run \`bun run sort-locales\` to fix.`)
-  process.exit(1)
+function run(): number {
+  const checkOnly = process.argv.includes('--check')
+  const localeFiles = readdirSync(LOCALES_DIR)
+    .filter(f => f.endsWith('.json'))
+    .sort()
+
+  let drift = 0
+  for (const file of localeFiles) {
+    const path = resolve(LOCALES_DIR, file)
+    const original = readFileSync(path, 'utf-8')
+    const { changed, formatted } = formatLocaleDocument(original)
+
+    if (!changed) continue
+
+    drift++
+    if (checkOnly) {
+      console.error(`drift: ${file} is not sorted`)
+    } else {
+      writeFileSync(path, formatted, 'utf-8')
+      console.log(`sorted: ${file}`)
+    }
+  }
+
+  if (checkOnly && drift > 0) {
+    console.error(`\n${drift} locale file(s) out of order. Run \`bun run sort-locales\` to fix.`)
+    return 1
+  }
+
+  if (!checkOnly && drift === 0) {
+    console.log('all locale files already sorted')
+  }
+
+  return 0
 }
 
-if (!checkOnly && drift === 0) {
-  console.log('all locale files already sorted')
-}
+if (import.meta.main) process.exitCode = run()

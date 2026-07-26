@@ -35,7 +35,7 @@ collaborates_with: [conversation-ui]
 validation:
   - { id: shared-ui-regression, kind: unit, command: "bun test packages/ui", description: "Run shared UI regressions.", triggers: [owned-change], required: true, evidence: "Bun test exit status and output." }
   - { id: i18n-contract, kind: contract, command: "bun run lint:i18n:parity && bun run lint:i18n:sorted", description: "Verify locale parity and deterministic sorting.", triggers: [locale-change, contract-change], required: true, evidence: "Lint exit status and diagnostics." }
-scope_digest: 8599e5142898ecf41293817a4852cf4f1244ccdc
+scope_digest: 565821dd5be502d1faff2ac1949c114e4d520185
 ---
 
 ## Purpose
@@ -66,6 +66,7 @@ Run package tests, ESLint rules, type checking, locale parity, and locale orderi
 Primitive changes have a wide visual blast radius; translation drift and focus regressions are easy to miss in unit tests.
 
 ## Semantic history
+- 2026-07-27: Made locale ordering validation accept consistent LF or CRLF checkouts while preserving the existing line-ending style during rewrites, so Windows Git conversion cannot fail the canonical monorepo gate or conceal real key and formatting drift.
 - 2026-07-21: Deferred PDF and Mermaid/ELK preview engines until matching content is rendered, with stable busy placeholders and explicit lightweight PDF overlay export.
 - 2026-07-21: Retired legacy RemoteUI locale keys and retained only the current extension interaction submission label across all locales.
 - 2026-07-21: Forwarded refs through the shared Popover trigger so stacked Tooltip and Popover `asChild` primitives preserve focus ownership without React runtime warnings.
