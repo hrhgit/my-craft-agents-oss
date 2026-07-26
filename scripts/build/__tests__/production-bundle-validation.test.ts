@@ -30,7 +30,9 @@ const repositoryRoot = resolve(import.meta.dir, '../../..')
 const temporaryRoots: string[] = []
 
 afterEach(() => {
-  for (const root of temporaryRoots.splice(0)) rmSync(root, { recursive: true, force: true })
+  for (const root of temporaryRoots.splice(0)) {
+    rmSync(root, { recursive: true, force: true, maxRetries: 8, retryDelay: 100 })
+  }
 })
 
 function packageScripts(): Record<string, string> {
