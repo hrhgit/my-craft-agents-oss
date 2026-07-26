@@ -1,5 +1,5 @@
 ---
-schema: module-agent/v1
+schema: module-agent/v2
 id: sources-skills-mcp
 name: Skills and MCP Utilities
 summary: Skill storage, skill management surfaces, resource RPC, and generic in-process MCP server utilities.
@@ -18,7 +18,6 @@ depends_on: [shared-contracts]
 collaborates_with: []
 validation:
   - { id: skills-mcp-regression, kind: unit, command: "bun test packages/shared/src/skills packages/server-core/src/handlers/rpc/skills.test.ts", description: "Run skill storage, discovery, and import regressions.", triggers: [owned-change], required: true, evidence: "Bun test exit status and output." }
-scope_digest: 0a7ff86eeaaa2b8feaf15f043f2e783df3758937
 ---
 
 ## Purpose

@@ -1,5 +1,5 @@
 ---
-schema: module-agent/v1
+schema: module-agent/v2
 id: shared-ui-i18n
 name: Shared UI and Internationalization
 summary: Reusable UI primitives, icons, themes, localization, styling, and platform-neutral presentation helpers.
@@ -35,7 +35,6 @@ collaborates_with: [conversation-ui]
 validation:
   - { id: shared-ui-regression, kind: unit, command: "bun test packages/ui", description: "Run shared UI regressions.", triggers: [owned-change], required: true, evidence: "Bun test exit status and output." }
   - { id: i18n-contract, kind: contract, command: "bun run lint:i18n:parity && bun run lint:i18n:sorted", description: "Verify locale parity and deterministic sorting.", triggers: [locale-change, contract-change], required: true, evidence: "Lint exit status and diagnostics." }
-scope_digest: 8599e5142898ecf41293817a4852cf4f1244ccdc
 ---
 
 ## Purpose

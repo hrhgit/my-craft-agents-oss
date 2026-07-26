@@ -1,5 +1,5 @@
 ---
-schema: module-agent/v1
+schema: module-agent/v2
 id: workspace-state
 name: Workspace State
 summary: Workspace discovery, storage, selection, file watching, and workspace-scoped transitions.
@@ -19,7 +19,6 @@ depends_on: [shared-contracts]
 collaborates_with: []
 validation:
   - { id: workspace-state-regression, kind: unit, command: "bun test packages/shared/src/workspaces packages/shared/src/storage packages/server-core/src/handlers/rpc/files.test.ts", description: "Run workspace state, storage, and file RPC regressions.", triggers: [owned-change], required: true, evidence: "Bun test exit status and output." }
-scope_digest: f301d3bd8c7fa5730c66b99f4f0b682d0eea8545
 ---
 
 ## Purpose

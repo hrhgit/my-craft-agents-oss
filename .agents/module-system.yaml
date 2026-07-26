@@ -1,4 +1,4 @@
-schema: module-agent-system/v1
+schema: module-agent-system/v2
 modules_dir: .agents/modules
 include:
   - '**/*'
@@ -12,4 +12,7 @@ history_limit: 20
 max_route_candidates: 5
 test_timeout_ms: 600000
 test_output_limit: 12000
+lock_file: .agents/module-lock.json
+state_dir: output/module-agents
+receipt_ttl_ms: 86400000
 strict: true

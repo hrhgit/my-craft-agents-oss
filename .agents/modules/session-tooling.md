@@ -1,5 +1,5 @@
 ---
-schema: module-agent/v1
+schema: module-agent/v2
 id: session-tooling
 name: Session Tooling
 summary: Session-scoped tools, MCP bridge, child-session delegation, and tool result helpers.
@@ -17,7 +17,6 @@ collaborates_with: [extension-runtime, conversation-ui]
 validation:
   - { id: session-tooling-regression, kind: unit, command: "bun test packages/session-tools-core packages/session-mcp-server", description: "Run session tool and MCP server regressions.", triggers: [owned-change], required: true, evidence: "Bun test exit status and output." }
   - { id: session-tool-contract, kind: contract, command: "bun run typecheck:all", description: "Verify session tool contracts compile across consumers.", triggers: [contract-change], required: true, evidence: "TypeScript compiler exit status and diagnostics." }
-scope_digest: 5611418044bb8a62f05022fcf6fca8ee9f42ef5f
 ---
 
 ## Purpose

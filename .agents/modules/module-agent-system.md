@@ -1,5 +1,5 @@
 ---
-schema: module-agent/v1
+schema: module-agent/v2
 id: module-agent-system
 name: Module Agent System
 summary: Document protocol, routing CLI, and Codex adapter for capability-owned module agents.
@@ -7,6 +7,7 @@ status: active
 keywords: [module-agent, routing, ownership, scope-digest, specialist]
 owns:
   - .agents/module-system.yaml
+  - .agents/module-lock.json
   - .agents/modules/**
   - .agents/skills/module-agent-router/**
   - scripts/module-agents/**
@@ -16,7 +17,6 @@ collaborates_with: [build-release-observability]
 validation:
   - { id: protocol-regression, kind: unit, command: "bun test scripts/module-agents", description: "Run module protocol, routing, digest, and CLI regressions.", triggers: [owned-change], required: true, evidence: "Bun test exit status and output." }
   - { id: repository-contract, kind: contract, command: "bun run scripts/module-agents/cli.ts validate --strict", description: "Verify repository ownership, relationships, schema, and digest contracts.", triggers: [module-document-change, ownership-change], required: true, evidence: "Structured strict validation result." }
-scope_digest: e4dd88e8a21e48c304f686c4e263d5e8e19f9834
 ---
 
 ## Purpose
@@ -32,10 +32,10 @@ Maintain the module registry, document parser, route scoring, strict diagnostics
 Do not implement an agent runtime, grant permissions, or store long-lived specialist conversations.
 
 ## Contracts and invariants
-Module Markdown is authoritative. Primary ownership is unique, related scopes may overlap, and digests include tracked and working-tree changes. Each module owns reproducible behavior regressions; contract providers own contract tests; the primary agent coordinates cross-module integration and acceptance. Physical UI validation stays with the business module and uses shared Developer Kit infrastructure.
+Module Markdown is authoritative for semantic knowledge, ownership, relationships, and validation responsibilities. Generated scope digests live only in `.agents/module-lock.json`. Primary ownership is unique, related scopes may overlap, and digests include tracked and working-tree changes. Task plans freeze intent and ownership under ignored local state; validation receipts require identical repository, environment, toolchain, build mode, and source/build identities. Each module owns reproducible behavior regressions; contract providers own contract tests; the primary agent coordinates cross-module integration and acceptance. Physical UI validation stays with the business module and uses shared Developer Kit infrastructure.
 
 ## Architecture and entry points
-Configuration starts at `.agents/module-system.yaml`; documents are scanned from `.agents/modules`; the CLI lives under `scripts/module-agents`.
+Configuration starts at `.agents/module-system.yaml`; Markdown documents are scanned from `.agents/modules`; generated freshness state lives in `.agents/module-lock.json`; ignored task plans and receipts live under `output/module-agents`; the CLI lives under `scripts/module-agents`.
 
 ## Collaboration
 The primary agent dispatches specialists. Specialists may consult named collaborators but may not recursively create peers.
@@ -44,9 +44,10 @@ The primary agent dispatches specialists. Specialists may consult named collabor
 Run module-agent unit tests, then strict repository validation and impact checks against a known Git base.
 
 ## Known risks
-Broad globs can conceal new capabilities; stale digests can make accurate prose look current when it is not.
+Broad globs can conceal new capabilities; overly broad frozen owner sets can hide scope expansion; validation receipts are unsafe if an input identity omits a material environment or build dimension.
 
 ## Semantic history
+- 2026-07-27: Migrated the module protocol to v2: kept Markdown as the authoritative semantic and ownership record, moved generated scope digests into a single lock, added phase-frozen task plans, split structural from freshness validation, and introduced risk-tiered deduplicated validation with identity-bound receipts.
 - 2026-07-25: Removed the empty shared-runtime ownership pattern after sealed runtime authority moved to the session-tooling module, preserving strict one-owner coverage without a compatibility scope.
 - 2026-07-24: Removed empty ownership patterns for deleted legacy migration scripts so strict ownership validation describes only extant managed files.
 - 2026-07-20: Made structured, level-based validation plans and module-owned test execution part of the portable protocol.

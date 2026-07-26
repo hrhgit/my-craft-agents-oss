@@ -1,5 +1,5 @@
 ---
-schema: module-agent/v1
+schema: module-agent/v2
 id: messaging
 name: Messaging
 summary: Telegram, WhatsApp, Feishu, and messaging-to-session gateway behavior.
@@ -15,7 +15,6 @@ depends_on: [session-lifecycle, headless-server-cli]
 collaborates_with: []
 validation:
   - { id: messaging-regression, kind: unit, command: "bun test packages/messaging-gateway packages/messaging-whatsapp-worker", description: "Run messaging gateway and worker regressions.", triggers: [owned-change], required: true, evidence: "Bun test exit status and output." }
-scope_digest: e4db332e62a55d9ffa4e459f7b0f77e830dc5dcd
 ---
 
 ## Purpose

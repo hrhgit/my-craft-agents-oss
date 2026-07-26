@@ -1,7 +1,9 @@
 import { spawn } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { matches, ownedFiles, type ModuleRepository } from './repository.ts'
 import { changedFiles } from './git.ts'
-import type { ImpactResultV1, ModuleDocumentV1, ModuleTestResultV1, RouteCandidateV1, RouteResultV1, ValidationEntryV1, ValidationLevelV1, ValidationRunV1 } from './types.ts'
+import { readValidationReceipt, validationExecutionKey, validationInputTree, writeValidationReceipt } from './receipts.ts'
+import type { ImpactResultV1, ModuleDocumentV1, ModuleTestBatchResultV1, ModuleTestResultV1, RouteCandidateV1, RouteResultV1, ValidationEntryV1, ValidationLevelV1, ValidationRunV1 } from './types.ts'
 
 function normalizedFiles(files: string[]): string[] {
   return [...new Set(files.map(file => file.replaceAll('\\', '/').replace(/^\.\//, '')))].sort()
@@ -70,8 +72,10 @@ export async function impact(repo: ModuleRepository, base: string): Promise<Impa
     ...item,
     validation: {
       recommended_level: recommendContract ? 'contract' as const : 'fast' as const,
+      recommended_tier: recommendContract ? 'B' as const : 'A' as const,
       available_plans: (['fast', 'contract', 'full'] as const).map(level => ({
         level,
+        risk_tier: level === 'fast' ? 'A' as const : level === 'contract' ? 'B' as const : 'C' as const,
         validation_ids: validationPlan(module, level).map(entry => entry.id),
       })),
     },
@@ -134,21 +138,127 @@ async function runValidation(repo: ModuleRepository, entry: ValidationEntryV1): 
   }
 }
 
-export async function testModule(repo: ModuleRepository, module: ModuleDocumentV1, level: ValidationLevelV1, dryRun = false): Promise<ModuleTestResultV1> {
-  const plan = validationPlan(module, level)
-  if (dryRun) {
-    return {
-      schema: 'module-agent/test/v1', module: module.id, level, dry_run: true, passed: null,
-      validations: plan.map(entry => ({ ...entry, status: 'planned' })),
+interface ValidationDagNode {
+  key: string
+  entry: ValidationEntryV1
+  dependencies: Set<string>
+  modules: Set<string>
+  validationIds: Set<string>
+  kinds: Set<ValidationEntryV1['kind']>
+}
+
+function commandKey(command: string): string {
+  return createHash('sha256').update(command).digest('hex')
+}
+
+function validationDag(selections: Array<{ module: ModuleDocumentV1; level: ValidationLevelV1 }>): Map<string, ValidationDagNode> {
+  const nodes = new Map<string, ValidationDagNode>()
+  for (const selection of selections) {
+    let previous: string | undefined
+    for (const entry of validationPlan(selection.module, selection.level)) {
+      const key = commandKey(entry.command)
+      const node = nodes.get(key) ?? { key, entry, dependencies: new Set<string>(), modules: new Set<string>(), validationIds: new Set<string>(), kinds: new Set<ValidationEntryV1['kind']>() }
+      node.modules.add(selection.module.id)
+      node.validationIds.add(entry.id)
+      node.kinds.add(entry.kind)
+      if (previous && previous !== key) node.dependencies.add(previous)
+      nodes.set(key, node)
+      previous = key
     }
   }
-  const validations: ValidationRunV1[] = []
-  for (const entry of plan) validations.push(await runValidation(repo, entry))
-  return {
-    schema: 'module-agent/test/v1', module: module.id, level, dry_run: false,
-    passed: validations.every(entry => !entry.required || entry.status === 'passed'),
-    validations,
+  return nodes
+}
+
+function topologicalValidationOrder(nodes: Map<string, ValidationDagNode>): ValidationDagNode[] {
+  const remaining = new Map(nodes)
+  const completed = new Set<string>()
+  const result: ValidationDagNode[] = []
+  while (remaining.size) {
+    const ready = [...remaining.values()].find(node => [...node.dependencies].every(key => completed.has(key)))
+    if (!ready) throw new Error('Validation plan contains contradictory module ordering')
+    remaining.delete(ready.key)
+    completed.add(ready.key)
+    result.push(ready)
   }
+  return result
+}
+
+export interface ModuleTestOptions {
+  dryRun?: boolean
+  reuseReceipts?: boolean
+  fresh?: boolean
+  sourceId?: string
+  buildId?: string
+}
+
+export async function testModules(
+  repo: ModuleRepository,
+  selections: Array<{ module: ModuleDocumentV1; level: ValidationLevelV1 }>,
+  options: ModuleTestOptions = {},
+): Promise<ModuleTestBatchResultV1> {
+  const nodes = validationDag(selections)
+  const order = topologicalValidationOrder(nodes)
+  const runs = new Map<string, ValidationRunV1>()
+  const inputTree = options.reuseReceipts && !options.dryRun ? await validationInputTree(repo) : undefined
+
+  if (!options.dryRun) for (const node of order) {
+    const receiptKey = inputTree ? validationExecutionKey(repo, node.entry, inputTree, options.sourceId, options.buildId) : undefined
+    const receipt = receiptKey && !options.fresh && !node.kinds.has('physical')
+      ? await readValidationReceipt(repo, receiptKey)
+      : undefined
+    if (receipt) {
+      runs.set(node.key, {
+        ...node.entry,
+        status: 'passed',
+        exit_code: 0,
+        duration_ms: 0,
+        receipt_status: 'hit',
+        receipt_key: receipt.key,
+        receipt_created_at: receipt.created_at,
+      })
+      continue
+    }
+    const result: ValidationRunV1 = { ...await runValidation(repo, node.entry), receipt_status: 'disabled', receipt_key: receiptKey }
+    if (receiptKey && inputTree && !node.kinds.has('physical')) {
+      const stored = await writeValidationReceipt(repo, receiptKey, inputTree, node.entry, result)
+      if (stored) result.receipt_status = 'stored'
+    }
+    runs.set(node.key, result)
+  }
+
+  const results: ModuleTestResultV1[] = selections.map(({ module, level }) => {
+    const validations = validationPlan(module, level).map(entry => {
+      if (options.dryRun) return { ...entry, status: 'planned' as const }
+      const run = runs.get(commandKey(entry.command))!
+      return { ...run, ...entry, status: run.status, exit_code: run.exit_code, duration_ms: run.duration_ms, stdout: run.stdout, stderr: run.stderr, output_truncated: run.output_truncated, receipt_status: run.receipt_status, receipt_key: run.receipt_key, receipt_created_at: run.receipt_created_at }
+    })
+    return {
+      schema: 'module-agent/test/v1',
+      module: module.id,
+      level,
+      dry_run: Boolean(options.dryRun),
+      passed: options.dryRun ? null : validations.every(entry => !entry.required || entry.status === 'passed'),
+      validations,
+    }
+  })
+  return {
+    schema: 'module-agent/test-batch/v1',
+    modules: selections.map(({ module, level }) => ({ module: module.id, level, validation_ids: validationPlan(module, level).map(entry => entry.id) })),
+    dry_run: Boolean(options.dryRun),
+    passed: options.dryRun ? null : results.every(result => result.passed),
+    executions: order.map(node => ({
+      key: node.key,
+      modules: [...node.modules].sort(),
+      validation_ids: [...node.validationIds].sort(),
+      status: options.dryRun ? 'planned' : runs.get(node.key)!.status,
+      receipt_status: options.dryRun ? undefined : runs.get(node.key)!.receipt_status,
+    })),
+    results,
+  }
+}
+
+export async function testModule(repo: ModuleRepository, module: ModuleDocumentV1, level: ValidationLevelV1, dryRun = false): Promise<ModuleTestResultV1> {
+  return (await testModules(repo, [{ module, level }], { dryRun })).results[0]
 }
 
 export function listModules(repo: ModuleRepository, details = false) {

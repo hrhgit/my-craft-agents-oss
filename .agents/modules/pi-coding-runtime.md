@@ -1,5 +1,5 @@
 ---
-schema: module-agent/v1
+schema: module-agent/v2
 id: pi-coding-runtime
 name: Mortise Embedded Coding Runtime
 summary: Mortise-only embedded headless Agent runtime, RPC host, sessions, tools, compaction, and extension lifecycle.
@@ -13,7 +13,6 @@ collaborates_with: []
 validation:
   - { id: pi-coding-regression, kind: unit, command: "npm --prefix pi test --workspace @mortise/pi-coding-agent", description: "Run Pi coding runtime regressions.", triggers: [owned-change], required: true, evidence: "Workspace test exit status and output." }
   - { id: pi-workspace-contract, kind: contract, command: "npm --prefix pi run build:workspace", description: "Build Pi workspaces to verify package contracts.", triggers: [contract-change], required: true, evidence: "Workspace build exit status and diagnostics." }
-scope_digest: 2f91f89b98f070b512c4e32f464669aeb2e958f0
 ---
 
 ## Purpose

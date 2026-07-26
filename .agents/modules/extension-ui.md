@@ -1,5 +1,5 @@
 ---
-schema: module-agent/v1
+schema: module-agent/v2
 id: extension-ui
 name: Extension UI
 summary: Versioned host-rendered extension contributions, interactions, sandbox surfaces, and placement contracts.
@@ -21,7 +21,6 @@ collaborates_with: [extension-runtime, ui-validation-developer-kit]
 validation:
   - { id: extension-ui-regression, kind: unit, command: "bun test --isolate apps/electron/src/renderer/components/extensions packages/shared/src/protocol/extension-contributions.test.ts", description: "Run extension contribution UI regressions with per-file module isolation.", triggers: [owned-change], required: true, evidence: "Bun test exit status and output." }
   - { id: extension-ui-physical, kind: physical, command: "bun run test:ui-validation:extension", description: "Exercise extension UI through the shared Developer Kit host.", triggers: [ui-change, extension-contract-change, release], required: false, evidence: "Developer Kit run output and retained extension UI evidence." }
-scope_digest: 760737103fb8713c2343f1ee4d0ed0c310765fbe
 ---
 
 ## Purpose

@@ -1,5 +1,5 @@
 ---
-schema: module-agent/v1
+schema: module-agent/v2
 id: headless-server-cli
 name: Headless Server and CLI
 summary: Reusable backend bootstrap, RPC transport, runtime services, standalone server, and command-line client.
@@ -33,7 +33,6 @@ collaborates_with: [web-viewer-clients]
 validation:
   - { id: server-cli-regression, kind: unit, command: "bun test apps/cli packages/server packages/server-core", description: "Run headless server and CLI regressions.", triggers: [owned-change], required: true, evidence: "Bun test exit status and output." }
   - { id: server-cli-contract, kind: contract, command: "bun run typecheck:all", description: "Verify repository-wide server and CLI type contracts.", triggers: [contract-change], required: true, evidence: "TypeScript compiler exit status and diagnostics." }
-scope_digest: f42ff9c5a0930eaaffdb1592e805a545e6f3b711
 ---
 
 ## Purpose

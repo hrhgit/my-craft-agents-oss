@@ -1,5 +1,5 @@
 ---
-schema: module-agent/v1
+schema: module-agent/v2
 id: shared-contracts
 name: Shared Contracts
 summary: Cross-process domain types, protocol DTOs, routing, utilities, and core workspace abstractions.
@@ -36,7 +36,6 @@ collaborates_with: []
 validation:
   - { id: shared-regression, kind: unit, command: "bun test packages/shared/src/protocol packages/shared/src/utils", description: "Run shared protocol and utility regressions.", triggers: [owned-change], required: true, evidence: "Bun test exit status and output." }
   - { id: shared-contract, kind: contract, command: "bun run typecheck:shared", description: "Verify shared contracts compile for consumers.", triggers: [contract-change], required: true, evidence: "TypeScript compiler exit status and diagnostics." }
-scope_digest: eb6b0ea1119ce51a024ba6e9beb3d5bf264a5df1
 ---
 
 ## Purpose

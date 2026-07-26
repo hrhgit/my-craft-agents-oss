@@ -1,5 +1,5 @@
 ---
-schema: module-agent/v1
+schema: module-agent/v2
 id: session-lifecycle
 name: Session Lifecycle
 summary: Session creation, persistence, projection, execution state, and transcript durability.
@@ -17,7 +17,6 @@ depends_on: [workspace-state, pi-agent-engine]
 collaborates_with: [conversation-ui]
 validation:
   - { id: session-lifecycle-regression, kind: unit, command: "bun test packages/shared/src/sessions packages/shared/tests/persistence-queue.test.ts packages/server-core/src/sessions packages/server-core/src/handlers/rpc/sessions apps/electron/src/renderer/lib/__tests__/drafts.test.ts", description: "Run session lifecycle, durability queue, projection, Session RPC, and draft regressions.", triggers: [owned-change], required: true, evidence: "Bun test exit status and output." }
-scope_digest: d12babaac6b1ba80225d01a5ff942d5bcd66e253
 ---
 
 ## Purpose

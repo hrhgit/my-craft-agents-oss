@@ -1,5 +1,5 @@
 ---
-schema: module-agent/v1
+schema: module-agent/v2
 id: file-workbench
 name: File Workbench
 summary: Workspace file tree, previews, rich documents, code and diff viewers, and safe fallbacks.
@@ -27,7 +27,6 @@ collaborates_with: [universal-layout]
 validation:
   - { id: file-workbench-regression, kind: unit, command: "bun test packages/ui/src/components/markdown packages/ui/src/components/overlay apps/electron/src/renderer/components/right-workbench", description: "Run file preview and workbench regressions.", triggers: [owned-change], required: true, evidence: "Bun test exit status and output." }
   - { id: file-workbench-physical, kind: physical, command: "bun run test:ui-validation:electron", description: "Exercise file workbench behavior through the shared Developer Kit host.", triggers: [ui-change, release], required: false, evidence: "Developer Kit run output and retained UI evidence." }
-scope_digest: cb3fd7906d68fd706fd34e1621ae3eac63c6283f
 ---
 
 ## Purpose

@@ -1,5 +1,5 @@
 ---
-schema: module-agent/v1
+schema: module-agent/v2
 id: conversation-ui
 name: Conversation UI
 summary: Transcript rendering, composer interactions, plans, annotations, and conversation pages.
@@ -18,7 +18,6 @@ collaborates_with: [session-lifecycle, session-tooling, shared-ui-i18n]
 validation:
   - { id: conversation-regression, kind: unit, command: "bun test packages/ui/src/components/chat packages/ui/src/components/annotations apps/electron/src/renderer/pages/__tests__/new-conversation-submit.test.ts", description: "Run conversation, annotation, and new-conversation draft regressions.", triggers: [owned-change], required: true, evidence: "Bun test exit status and output." }
   - { id: conversation-physical, kind: physical, command: "bun run test:ui-validation:electron", description: "Exercise conversation behavior through the shared Developer Kit host.", triggers: [ui-change, release], required: false, evidence: "Developer Kit run output and retained UI evidence." }
-scope_digest: b63dfc4f6ca2b3a71b99b91448d471b80fffa940
 ---
 
 ## Purpose

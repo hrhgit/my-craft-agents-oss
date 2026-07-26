@@ -1,5 +1,5 @@
 ---
-schema: module-agent/v1
+schema: module-agent/v2
 id: replace-with-module-id
 name: Replace With Module Name
 summary: One sentence describing the owned business capability.
@@ -17,7 +17,6 @@ validation:
     triggers: [owned-change]
     required: true
     evidence: Test exit status and focused failure output.
-scope_digest: ""
 ---
 
 ## Purpose

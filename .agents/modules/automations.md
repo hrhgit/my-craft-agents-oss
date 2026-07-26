@@ -1,5 +1,5 @@
 ---
-schema: module-agent/v1
+schema: module-agent/v2
 id: automations
 name: Automations
 summary: Scheduled and event-driven automation definitions, execution, persistence, and UI.
@@ -19,7 +19,6 @@ depends_on: [workspace-state, session-lifecycle]
 collaborates_with: []
 validation:
   - { id: regression, kind: unit, command: "bun test packages/shared/src/automations packages/shared/src/scheduler apps/electron/src/renderer/components/automations", description: "Run automation and scheduler regressions.", triggers: [owned-change], required: true, evidence: "Bun test exit status and output." }
-scope_digest: 4addf88d9e73b4ab52ad83cd6b0c3a47149b6979
 ---
 
 ## Purpose

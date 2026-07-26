@@ -1,5 +1,5 @@
 ---
-schema: module-agent/v1
+schema: module-agent/v2
 id: web-viewer-clients
 name: Web and Viewer Clients
 summary: Browser adapter, WebUI bootstrap, read-only viewer, and local WebUI launch lifecycle.
@@ -22,7 +22,6 @@ collaborates_with: [headless-server-cli]
 validation:
   - { id: web-client-regression, kind: unit, command: "bun test apps/webui apps/viewer scripts/webui-process-utils.test.ts", description: "Run WebUI, viewer, and process utility regressions.", triggers: [owned-change], required: true, evidence: "Bun test exit status and output." }
   - { id: web-client-contract, kind: contract, command: "bun run lint:webui", description: "Verify WebUI client contracts and lint rules.", triggers: [contract-change], required: true, evidence: "Lint exit status and diagnostics." }
-scope_digest: 2af2d7e101dc0ae3d69e4579386c18191936d485
 ---
 
 ## Purpose

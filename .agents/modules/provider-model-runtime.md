@@ -1,5 +1,5 @@
 ---
-schema: module-agent/v1
+schema: module-agent/v2
 id: provider-model-runtime
 name: Provider and Model Runtime
 summary: Provider transports, model catalogs, credentials, and Mortise model-selection integration.
@@ -16,7 +16,6 @@ collaborates_with: [app-settings-security]
 validation:
   - { id: provider-model-regression, kind: unit, command: "npm --prefix pi test --workspace @mortise/pi-ai", description: "Run provider and model runtime regressions.", triggers: [owned-change], required: true, evidence: "Workspace test exit status and output." }
   - { id: mortise-pi-model-contract, kind: contract, command: "bun test packages/shared/tests/models-pi.test.ts", description: "Verify the Mortise-to-Pi model contract.", triggers: [contract-change], required: true, evidence: "Contract test exit status and output." }
-scope_digest: 35fd36810dcf4d1b86e1d63c40292dacb4a2f30e
 ---
 
 ## Purpose

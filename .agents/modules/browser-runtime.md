@@ -1,5 +1,5 @@
 ---
-schema: module-agent/v1
+schema: module-agent/v2
 id: browser-runtime
 name: Browser Runtime
 summary: Embedded browser panes, CDP control, request observation, toolbar, and blank new-tab behavior.
@@ -25,7 +25,6 @@ collaborates_with: [universal-layout]
 validation:
   - { id: browser-regression, kind: unit, command: "bun test apps/electron/src/main/__tests__/browser-cdp.test.ts apps/electron/src/renderer/browser-new-tab-contract.test.ts", description: "Run browser CDP and new-tab regressions.", triggers: [owned-change], required: true, evidence: "Bun test exit status and output." }
   - { id: browser-physical, kind: physical, command: "bun run test:ui-validation:electron", description: "Exercise browser behavior through the shared Developer Kit host.", triggers: [ui-change, native-change, release], required: false, evidence: "Developer Kit run output and retained UI evidence." }
-scope_digest: f9555a9673149a1a429c2fc6f9e6268d7e1dd539
 ---
 
 ## Purpose

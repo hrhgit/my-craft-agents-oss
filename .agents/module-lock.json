@@ -1,0 +1,30 @@
+{
+  "schema": "module-agent-lock/v1",
+  "digests": {
+    "app-settings-security": "dd2f86c46f2b3e83f1ee6d442ad1e7ead10d2675",
+    "automations": "4addf88d9e73b4ab52ad83cd6b0c3a47149b6979",
+    "browser-runtime": "f9555a9673149a1a429c2fc6f9e6268d7e1dd539",
+    "build-release-observability": "4b73d38080ff94b18425cd538a6b5752e1bada2e",
+    "conversation-ui": "b63dfc4f6ca2b3a71b99b91448d471b80fffa940",
+    "extension-runtime": "445ffade23ba53295ebf046421130c810251c831",
+    "extension-ui": "760737103fb8713c2343f1ee4d0ed0c310765fbe",
+    "file-workbench": "cb3fd7906d68fd706fd34e1621ae3eac63c6283f",
+    "headless-server-cli": "f42ff9c5a0930eaaffdb1592e805a545e6f3b711",
+    "messaging": "e4db332e62a55d9ffa4e459f7b0f77e830dc5dcd",
+    "module-agent-system": "857a155eca4d33a48432549dd816ac1fe9195bdb",
+    "native-desktop": "7d6235ace133d40f97f431466a25a707b199f636",
+    "pi-agent-engine": "8d8a94429d341350a40b555e8c9653e9d1e2feea",
+    "pi-coding-runtime": "2f91f89b98f070b512c4e32f464669aeb2e958f0",
+    "product-semantics": "95c3fcec6fb9ea2fb70b0fea55ed485f0d92229a",
+    "provider-model-runtime": "35fd36810dcf4d1b86e1d63c40292dacb4a2f30e",
+    "session-lifecycle": "d12babaac6b1ba80225d01a5ff942d5bcd66e253",
+    "session-tooling": "5611418044bb8a62f05022fcf6fca8ee9f42ef5f",
+    "shared-contracts": "eb6b0ea1119ce51a024ba6e9beb3d5bf264a5df1",
+    "shared-ui-i18n": "8599e5142898ecf41293817a4852cf4f1244ccdc",
+    "sources-skills-mcp": "0a7ff86eeaaa2b8feaf15f043f2e783df3758937",
+    "ui-validation-developer-kit": "57fde39a835996e60c140555dd65e0e862f0f544",
+    "universal-layout": "b5769dfdb2a8e17f3f54a26710a13e49aa429857",
+    "web-viewer-clients": "2af2d7e101dc0ae3d69e4579386c18191936d485",
+    "workspace-state": "f301d3bd8c7fa5730c66b99f4f0b682d0eea8545"
+  }
+}

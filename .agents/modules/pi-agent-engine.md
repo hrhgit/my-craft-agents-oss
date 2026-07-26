@@ -1,5 +1,5 @@
 ---
-schema: module-agent/v1
+schema: module-agent/v2
 id: pi-agent-engine
 name: Pi Agent Engine
 summary: Model-independent agent loop, message state, tool execution, and retry behavior.
@@ -12,7 +12,6 @@ depends_on: [provider-model-runtime]
 collaborates_with: []
 validation:
   - { id: pi-agent-regression, kind: unit, command: "npm --prefix pi test --workspace @mortise/pi-agent-core", description: "Run Pi agent engine regressions.", triggers: [owned-change], required: true, evidence: "Workspace test exit status and output." }
-scope_digest: 8d8a94429d341350a40b555e8c9653e9d1e2feea
 ---
 
 ## Purpose
