@@ -30,7 +30,7 @@
 		"sidecar/bin"
 	],
 	"scripts": {
-		"clean": "shx rm -rf dist sidecar/bin",
+		"clean": "shx rm -rf dist",
 		"build:sidecar": "bun ./scripts/build-sidecar.mjs",
 		"build:bundle": "bun ../../scripts/build-coding-agent-bundle.mjs",
 		"build:host-facade-cjs": "bun ../../scripts/build-host-facade-cjs.mjs",

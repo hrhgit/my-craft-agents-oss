@@ -104,6 +104,8 @@ describe('production bundle validation composition', () => {
       resolve(repositoryRoot, 'pi/packages/coding-agent/package.json'),
       'utf8',
     )) as { scripts: Record<string, string> }
+    expect(codingPackage.scripts.clean).toBe('shx rm -rf dist')
+    expect(codingPackage.scripts.clean).not.toContain('sidecar/bin')
     for (const name of ['build:sidecar', 'build:host-facade-cjs', 'copy-binary-assets']) {
       expect(codingPackage.scripts[name]?.startsWith('bun ')).toBe(true)
       expect(codingPackage.scripts[name]).not.toMatch(/(^|\s)node(?:\.exe)?\s/)
