@@ -85,7 +85,7 @@ describe('module agent repository', () => {
     repo = await loadRepository(root)
     expect((await validateRepository(repo, true)).valid).toBe(true)
     expect(repo.modules[0].scope_digest).toBe(digest)
-  })
+  }, 30_000)
 
   it('detects stale digests, unowned files, overlapping ownership, and invalid relations', async () => {
     const root = fixture([

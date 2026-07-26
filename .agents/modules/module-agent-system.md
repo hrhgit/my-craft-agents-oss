@@ -16,7 +16,7 @@ collaborates_with: [build-release-observability]
 validation:
   - { id: protocol-regression, kind: unit, command: "bun test scripts/module-agents", description: "Run module protocol, routing, digest, and CLI regressions.", triggers: [owned-change], required: true, evidence: "Bun test exit status and output." }
   - { id: repository-contract, kind: contract, command: "bun run scripts/module-agents/cli.ts validate --strict", description: "Verify repository ownership, relationships, schema, and digest contracts.", triggers: [module-document-change, ownership-change], required: true, evidence: "Structured strict validation result." }
-scope_digest: 4670b2f1ad303bd6fa47dafadd3023e348336530
+scope_digest: e4dd88e8a21e48c304f686c4e263d5e8e19f9834
 ---
 
 ## Purpose
