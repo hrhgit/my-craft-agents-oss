@@ -70,7 +70,6 @@ export function MainContentPanel({
     onReplayAutomation,
     automationTestResults,
     getAutomationHistory,
-    activeWorkspaceRoot,
   } = useAppShellContext()
 
   // Session multi-select state

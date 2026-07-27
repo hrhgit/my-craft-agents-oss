@@ -120,6 +120,7 @@ interface DockTabConfig {
   route?: string
   serverId?: string
   workspaceId?: string
+  locationId?: string
   contentKind?: ContentKind
   resourceId?: string
   sessionId?: string
@@ -138,6 +139,7 @@ interface UnifiedDockWorkspaceProps {
   activeWorkspaceId: string | null
   workspaceTransition: WorkspaceTransitionState | null
   serverId: string
+  locationId?: string
   sessionId?: string | null
   isLeadingChromeHidden: boolean
   canvasLayoutToggleRequest: number
@@ -148,6 +150,7 @@ export function UnifiedDockWorkspace({
   activeWorkspaceId,
   workspaceTransition,
   serverId,
+  locationId,
   sessionId,
   isLeadingChromeHidden,
   canvasLayoutToggleRequest,
@@ -205,12 +208,12 @@ export function UnifiedDockWorkspace({
   const initialConversationRoute = React.useRef(createInitialConversationRouteConsumer(window.location.search))
 
   const [model, setModel] = React.useState(() => {
-    const fallback = createDockModel(initialPanelStack.current, serverId, activeWorkspaceId)
+    const fallback = createDockModel(initialPanelStack.current, serverId, activeWorkspaceId, locationId)
     const saved = savedGeometry.current
     if (!saved) return fallback
     if (initialPanelStack.current.length === 0) return fallback
     try {
-      return Model.fromJson(sanitizeSavedGeometry(saved, initialPanelStack.current, serverId, activeWorkspaceId))
+      return Model.fromJson(sanitizeSavedGeometry(saved, initialPanelStack.current, serverId, activeWorkspaceId, locationId))
     } catch (error) {
       console.warn('[UnifiedDockWorkspace] Failed to restore layout geometry:', error)
       return fallback
@@ -222,7 +225,7 @@ export function UnifiedDockWorkspace({
   }
   const coordinatorRevision = React.useRef<number | null>(null)
   const coordinatorReady = React.useRef(false)
-  const coordinatorScope = JSON.stringify([activeWorkspaceId ?? '', serverId, layoutWindowId])
+  const coordinatorScope = JSON.stringify([activeWorkspaceId ?? '', locationId ?? '', serverId, layoutWindowId])
   const coordinatorScopeRef = React.useRef(coordinatorScope)
   const layoutSaveQueue = React.useRef(createCoordinatedLayoutSaveQueue())
   const suppressedModel = React.useRef<Model | null>(null)
@@ -262,6 +265,7 @@ export function UnifiedDockWorkspace({
         sessionMetaMap,
         serverId,
         activeWorkspaceId ?? '',
+        locationId,
         effectiveSnapshot.revision,
         protections,
       )
@@ -300,7 +304,7 @@ export function UnifiedDockWorkspace({
     onCanvasLayoutFocusChange(Boolean(nextModel.getMaximizedTabset()))
     setModel(nextModel)
     queueMicrotask(() => { syncingFromAtoms.current = false })
-  }, [activeWorkspaceId, coordinatorScope, dynamicProtections, layoutWindowId, model, onCanvasLayoutFocusChange, serverId, sessionMetaMap, setFocusedPanelId, setPanelStack, store, workspaceLayoutTransitioning])
+  }, [activeWorkspaceId, coordinatorScope, dynamicProtections, layoutWindowId, locationId, model, onCanvasLayoutFocusChange, serverId, sessionMetaMap, setFocusedPanelId, setPanelStack, store, workspaceLayoutTransitioning])
   const applyCoordinatorSnapshotRef = React.useRef(applyCoordinatorSnapshot)
   React.useLayoutEffect(() => {
     applyCoordinatorSnapshotRef.current = applyCoordinatorSnapshot
@@ -352,14 +356,14 @@ export function UnifiedDockWorkspace({
       const preferredGroup = tool.extension?.contribution.workspaceContent?.preferredGroup ?? 'active'
       const location = resolveInitialWorkspaceContentDockLocation(preferredGroup, Boolean(targetTabsetId))
       model.doAction(Actions.addTab(
-        toJsonToolTab(tool, tabId, serverId, activeWorkspaceId, sessionId),
+        toJsonToolTab(tool, tabId, serverId, activeWorkspaceId, locationId, sessionId),
         targetId,
         location,
         -1,
         true,
       ))
     }
-  }, [activeWorkspaceId, enterCompactDockDetail, model, serverId, sessionId])
+  }, [activeWorkspaceId, enterCompactDockDetail, locationId, model, serverId, sessionId])
 
   const openToolPickerTab = React.useCallback((targetTabsetId?: string) => {
     enterCompactDockDetail()
@@ -389,7 +393,7 @@ export function UnifiedDockWorkspace({
     const index = parent.getChildren().indexOf(node)
     model.doAction(Actions.deleteTab(tabId))
     model.doAction(Actions.addTab(
-      toJsonTab(entry, resolvePanelTitle(entry, sessionMetaMap, t), serverId, activeWorkspaceId),
+      toJsonTab(entry, resolvePanelTitle(entry, sessionMetaMap, t), serverId, activeWorkspaceId, locationId),
       parent.getId(),
       DockLocation.CENTER,
       index,
@@ -397,7 +401,7 @@ export function UnifiedDockWorkspace({
     ))
     setActiveDockTabId(entry.id)
     return true
-  }, [activeWorkspaceId, enterCompactDockDetail, model, serverId, sessionMetaMap, setActiveDockTabId, t])
+  }, [activeWorkspaceId, enterCompactDockDetail, locationId, model, serverId, sessionMetaMap, setActiveDockTabId, t])
 
   const replaceEmptyPageWithSession = React.useCallback((tabId: string, sessionId: string): boolean => (
     replaceEmptyPageWithRoute(tabId, routes.view.allSessions(sessionId) as PanelStackEntry['route'])
@@ -409,12 +413,12 @@ export function UnifiedDockWorkspace({
     setEmptyPageSessionRequest(null)
   }, [emptyPageSessionRequest, replaceEmptyPageWithSession, setEmptyPageSessionRequest])
 
-  // A remote reconnect may keep the workspace ID while changing its server URL.
+  // A topology change may keep the Workspace ID while changing its primary location.
   // Retarget every workspace-owned tab before its scoped API is used again.
   React.useEffect(() => {
     if (!activeWorkspaceId) return
-    retargetWorkspaceTabs(model, activeWorkspaceId, serverId)
-  }, [activeWorkspaceId, model, serverId])
+    retargetWorkspaceTabs(model, activeWorkspaceId, { serverId, locationId })
+  }, [activeWorkspaceId, locationId, model, serverId])
 
   React.useEffect(() => {
     if (workspaceLayoutTransitioning) return
@@ -425,6 +429,7 @@ export function UnifiedDockWorkspace({
           panelStack,
           serverId,
           activeWorkspaceId,
+          locationId,
         ), model)
         geometryRestored.current = true
         pendingRestoredModel.current = restored
@@ -451,13 +456,13 @@ export function UnifiedDockWorkspace({
       const title = resolvePanelTitle(entry, sessionMetaMap, t)
       const existing = model.getNodeById(entry.id)
       if (!existing) {
-        model.doAction(Actions.addTab(toJsonTab(entry, title, serverId, activeWorkspaceId), activeTabsetId, DockLocation.CENTER, -1, entry.id === focusedPanelId))
+        model.doAction(Actions.addTab(toJsonTab(entry, title, serverId, activeWorkspaceId, locationId), activeTabsetId, DockLocation.CENTER, -1, entry.id === focusedPanelId))
         continue
       }
       if (existing instanceof TabNode) {
         const config = existing.getConfig() as DockTabConfig
         const tabWorkspaceId = activeWorkspaceId || ''
-        const normalizedTab = toJsonTab(entry, title, serverId, activeWorkspaceId)
+        const normalizedTab = toJsonTab(entry, title, serverId, activeWorkspaceId, locationId)
         const normalizedConfig = {
           ...config,
           ...normalizedTab.config,
@@ -466,6 +471,7 @@ export function UnifiedDockWorkspace({
           existing.getName() !== title
           || config.route !== normalizedConfig.route
           || config.serverId !== normalizedConfig.serverId
+          || config.locationId !== normalizedConfig.locationId
           || config.workspaceId !== tabWorkspaceId
           || config.contentKind !== normalizedConfig.contentKind
           || config.resourceId !== normalizedConfig.resourceId
@@ -486,7 +492,7 @@ export function UnifiedDockWorkspace({
     const activeNode = model.getActiveTabset()?.getSelectedNode()
     setActiveDockTabId(activeNode instanceof TabNode ? activeNode.getId() : null)
     syncingFromAtoms.current = false
-  }, [activeWorkspaceId, focusedPanelId, model, panelStack, serverId, sessionMetaMap, setActiveDockTabId, t, workspaceLayoutTransitioning])
+  }, [activeWorkspaceId, focusedPanelId, locationId, model, panelStack, serverId, sessionMetaMap, setActiveDockTabId, t, workspaceLayoutTransitioning])
 
   React.useEffect(() => () => setActiveDockTabId(null), [setActiveDockTabId])
 
@@ -611,6 +617,7 @@ export function UnifiedDockWorkspace({
       sessionMetaMap,
       serverId,
       activeWorkspaceId ?? '',
+      locationId,
       capturedRevision,
       protections,
       geometry,
@@ -649,7 +656,7 @@ export function UnifiedDockWorkspace({
       ) coordinatorRevision.current = saved.revision
       return saved
     })
-  }, [activeWorkspaceId, coordinatorScope, dynamicProtections, serverId, sessionMetaMap])
+  }, [activeWorkspaceId, coordinatorScope, dynamicProtections, locationId, serverId, sessionMetaMap])
 
   const persistWindowModelRef = React.useRef({ scope: coordinatorScope, persist: persistWindowModel })
   React.useLayoutEffect(() => {
@@ -921,6 +928,7 @@ export function UnifiedDockWorkspace({
           sessionId={config.sessionId ?? sessionId}
           serverId={config.serverId || serverId}
           workspaceId={config.workspaceId || activeWorkspaceId || ''}
+          locationId={config.locationId ?? locationId}
           nativeBrowserPanesAvailable={nativeBrowserPanesAvailable}
           onProtectionChange={handleProtectionChange}
           onOpenTool={tool => openToolTab(tool, targetTabsetId)}
@@ -932,12 +940,13 @@ export function UnifiedDockWorkspace({
         route={config.route}
         serverId={config.serverId || serverId}
         workspaceId={config.workspaceId}
+        locationId={config.locationId ?? locationId}
         activeWorkspaceId={activeWorkspaceId}
         isLeadingChromeHidden={isLeadingChromeHidden}
         focused={node.getId() === focusedPanelId}
       />
     )
-  }, [activeWorkspaceId, focusedPanelId, handleProtectionChange, isLeadingChromeHidden, nativeBrowserPanesAvailable, openToolTab, replaceEmptyPageWithRoute, serverId, sessionId, workbenchTools])
+  }, [activeWorkspaceId, focusedPanelId, handleProtectionChange, isLeadingChromeHidden, locationId, nativeBrowserPanesAvailable, openToolTab, replaceEmptyPageWithRoute, serverId, sessionId, workbenchTools])
 
   return (
     <div
@@ -1065,6 +1074,7 @@ function DockedToolPanel({
   sessionId,
   serverId,
   workspaceId,
+  locationId,
   nativeBrowserPanesAvailable,
   onProtectionChange,
   onOpenTool,
@@ -1075,6 +1085,7 @@ function DockedToolPanel({
   sessionId?: string | null
   serverId: string
   workspaceId: string
+  locationId?: string
   nativeBrowserPanesAvailable: boolean
   onProtectionChange: (tabId: string, protection: { dirty: boolean }) => void
   onOpenTool: (tool: WorkbenchTool) => void
@@ -1082,7 +1093,7 @@ function DockedToolPanel({
   const tool = usePersistedWorkbenchTool({ resourceId, sessionId, workspaceId })
   if (tool && (nativeBrowserPanesAvailable || !isNativeBrowserWorkbenchToolId(tool.id))) {
     return (
-      <WorkspaceElectronApiProvider route={{ serverId, workspaceId }}>
+      <WorkspaceElectronApiProvider route={{ serverId, workspaceId, locationId }}>
         <div data-mortise-semantic-id={`workspace.content.${tool.id}`} className="h-full min-h-0 bg-background">
           <WorkbenchToolContent
             tool={tool}
@@ -1106,6 +1117,7 @@ function DockedContentPanel({
   route,
   serverId,
   workspaceId,
+  locationId,
   activeWorkspaceId,
   isLeadingChromeHidden,
   focused,
@@ -1113,6 +1125,7 @@ function DockedContentPanel({
   route?: string
   serverId: string
   workspaceId?: string
+  locationId?: string
   activeWorkspaceId: string | null
   isLeadingChromeHidden: boolean
   focused: boolean
@@ -1120,7 +1133,7 @@ function DockedContentPanel({
   const navState = route ? parseRouteToNavigationState(route) : null
   const tabWorkspaceId = workspaceId || activeWorkspaceId || ''
   return (
-    <WorkspaceElectronApiProvider route={{ serverId, workspaceId: tabWorkspaceId }}>
+    <WorkspaceElectronApiProvider route={{ serverId, workspaceId: tabWorkspaceId, locationId }}>
       <DockedContentRuntime
         navState={navState}
         workspaceId={tabWorkspaceId}
@@ -1178,7 +1191,12 @@ function DockedContentRuntime({
   )
 }
 
-function createDockModel(entries: PanelStackEntry[], serverId: string, workspaceId: string | null): Model {
+function createDockModel(
+  entries: PanelStackEntry[],
+  serverId: string,
+  workspaceId: string | null,
+  locationId?: string,
+): Model {
   return Model.fromJson({
     global: {
       enableEdgeDock: true,
@@ -1205,7 +1223,7 @@ function createDockModel(entries: PanelStackEntry[], serverId: string, workspace
         id: MAIN_TABSET_ID,
         active: true,
         enableDeleteWhenEmpty: false,
-        children: entries.map(entry => toJsonTab(entry, entry.route, serverId, workspaceId)),
+        children: entries.map(entry => toJsonTab(entry, entry.route, serverId, workspaceId, locationId)),
       }],
     },
   })
@@ -1222,6 +1240,7 @@ function createDockModelFromSnapshot(snapshot: AppLayout, windowId: string): Mod
         panelEntriesForWindow(snapshot, windowId),
         snapshot.tabs[snapshot.focusedTabId ?? '']?.ref.serverId ?? 'local',
         snapshot.tabs[snapshot.focusedTabId ?? '']?.ref.workspaceId ?? '',
+        snapshot.tabs[snapshot.focusedTabId ?? '']?.ref.locationId,
         new Set(contentTabIdsForWindow(snapshot, windowId)),
         snapshot.tabs,
       ))
@@ -1290,6 +1309,7 @@ function jsonTabFromContent(tab: ContentTab) {
       route: source === 'panel' ? tab.ref.resourceId : undefined,
       serverId: tab.ref.serverId,
       workspaceId: tab.ref.workspaceId,
+      locationId: tab.ref.locationId,
       contentKind: tab.ref.kind,
       resourceId: tab.ref.resourceId,
       sessionId: tab.ref.sessionId,
@@ -1336,6 +1356,7 @@ function sanitizeSavedGeometry(
   entries: PanelStackEntry[],
   serverId: string,
   workspaceId: string | null,
+  locationId?: string,
   allowedTabIds?: Set<string>,
   canonicalTabs?: Record<string, ContentTab>,
 ): IJsonModel {
@@ -1367,6 +1388,7 @@ function sanitizeSavedGeometry(
           typeof tab.name === 'string' ? tab.name : entry.route,
           serverId,
           workspaceId,
+          locationId,
         )
         normalized.config = { ...config, ...normalized.config }
         Object.assign(tab, normalized)
@@ -1381,7 +1403,11 @@ function sanitizeSavedGeometry(
       && (!allowedTabIds || allowedTabIds.has(tab.id))
     if (!validWorkspaceContent) return false
     const canonical = canonicalTabs?.[tab.id]
-    if (canonical) Object.assign(tab, jsonTabFromContent(canonical))
+    if (canonical) {
+      Object.assign(tab, jsonTabFromContent(canonical))
+    } else {
+      tab.config = { ...config, serverId, workspaceId: workspaceId ?? '', locationId }
+    }
     return true
   }
 
@@ -1420,15 +1446,21 @@ function sanitizeSavedGeometry(
   }
   findFirst(next.layout)
   const resolvedFirstTabset = firstTabset as IJsonTabSetNode | null
-  if (!resolvedFirstTabset) return createDockModel(entries, serverId, workspaceId).toJson()
+  if (!resolvedFirstTabset) return createDockModel(entries, serverId, workspaceId, locationId).toJson()
   resolvedFirstTabset.children ??= []
   for (const entry of entries) {
-    if (!present.has(entry.id)) resolvedFirstTabset.children.push(toJsonTab(entry, entry.route, serverId, workspaceId))
+    if (!present.has(entry.id)) resolvedFirstTabset.children.push(toJsonTab(entry, entry.route, serverId, workspaceId, locationId))
   }
   return next
 }
 
-function toJsonTab(entry: PanelStackEntry, name: string, serverId: string, workspaceId: string | null) {
+function toJsonTab(
+  entry: PanelStackEntry,
+  name: string,
+  serverId: string,
+  workspaceId: string | null,
+  locationId?: string,
+) {
   return {
     type: 'tab',
     id: entry.id,
@@ -1438,6 +1470,7 @@ function toJsonTab(entry: PanelStackEntry, name: string, serverId: string, works
       route: entry.route,
       serverId,
       workspaceId: workspaceId ?? '',
+      locationId,
       contentKind: contentKindForPanel(entry),
       resourceId: entry.route,
       source: 'panel',
@@ -1456,6 +1489,7 @@ function toJsonToolTab(
   id: string,
   serverId: string,
   workspaceId: string | null,
+  locationId?: string,
   sessionId?: string | null,
 ) {
   const contentKind: ContentKind = tool.id === 'files'
@@ -1474,6 +1508,7 @@ function toJsonToolTab(
     config: {
       serverId,
       workspaceId: workspaceId ?? '',
+      locationId,
       contentKind,
       resourceId: tool.id,
       sessionId: tool.id === 'files' ? undefined : tool.extension?.sessionId ?? sessionId ?? undefined,
@@ -1623,11 +1658,16 @@ function buildAppLayoutSnapshot(
   sessions: Map<string, { name?: string; preview?: string; isProcessing?: boolean }>,
   defaultServerId: string,
   defaultWorkspaceId: string,
+  defaultLocationId: string | undefined,
   revision: number,
   protections: Record<string, DockTabProtection>,
   geometry: IJsonModel = model.toJson(),
 ): AppLayout {
-  const base = createDefaultAppLayout({ serverId: defaultServerId, workspaceId: defaultWorkspaceId })
+  const base = createDefaultAppLayout({
+    serverId: defaultServerId,
+    workspaceId: defaultWorkspaceId,
+    locationId: defaultLocationId,
+  })
   const tabs: Record<string, ContentTab> = {}
   const groups: Record<string, PanelGroup> = {}
   const groupIds: string[] = []
@@ -1662,6 +1702,7 @@ function buildAppLayoutSnapshot(
             kind: config.contentKind,
             serverId: config.serverId || defaultServerId,
             workspaceId: defaultWorkspaceId,
+            ...((config.locationId ?? defaultLocationId) ? { locationId: config.locationId ?? defaultLocationId } : {}),
             ...(config.sessionId ? { sessionId: config.sessionId } : {}),
             ...(config.resourceId ? { resourceId: config.resourceId } : {}),
           },
@@ -1686,6 +1727,7 @@ function buildAppLayoutSnapshot(
           kind: contentKind,
           serverId: config.serverId || defaultServerId,
           workspaceId: defaultWorkspaceId,
+          ...((config.locationId ?? defaultLocationId) ? { locationId: config.locationId ?? defaultLocationId } : {}),
           ...(sessionId ? { sessionId } : {}),
           resourceId: config.resourceId ?? route,
         },

@@ -10,7 +10,7 @@ import { useSessionMenuActions } from '@/hooks/useSessionMenuActions'
 
 export interface SessionMenuProps {
   item: SessionMeta
-  hasRemoteWorkspaces?: boolean
+  hasOtherWorkspaces?: boolean
   onRename: () => void
   onMarkUnread: () => void
   onOpenInNewWindow?: () => void
@@ -18,7 +18,7 @@ export interface SessionMenuProps {
   onDelete: () => void
 }
 
-export function SessionMenu({ item, hasRemoteWorkspaces, onRename, onMarkUnread, onOpenInNewWindow, onSendToWorkspace, onDelete }: SessionMenuProps) {
+export function SessionMenu({ item, hasOtherWorkspaces, onRename, onMarkUnread, onOpenInNewWindow, onSendToWorkspace, onDelete }: SessionMenuProps) {
   const { t } = useTranslation()
   const actions = useSessionMenuActions({ item })
   const { MenuItem, Separator, Sub, SubTrigger, SubContent } = useMenuComponents()
@@ -33,7 +33,7 @@ export function SessionMenu({ item, hasRemoteWorkspaces, onRename, onMarkUnread,
           <SubContent><ShareMenuItems onOpenInBrowser={actions.openSharedInBrowser} onCopyLink={actions.copySharedLink} onUpdateShare={actions.updateShare} onRevokeShare={actions.revokeShare} menu={{ MenuItem, Separator }} /></SubContent>
         </Sub>
       )}
-      {hasRemoteWorkspaces && onSendToWorkspace && <MenuItem onClick={onSendToWorkspace}><Send className="h-3.5 w-3.5" /><span className="flex-1">{t('sessionMenu.sendToWorkspace')}</span></MenuItem>}
+      {hasOtherWorkspaces && onSendToWorkspace && <MenuItem onClick={onSendToWorkspace}><Send className="h-3.5 w-3.5" /><span className="flex-1">{t('sessionMenu.sendToWorkspace')}</span></MenuItem>}
       <MessagingSessionMenuItem sessionId={item.id} />
       {!hasUnreadMeta(item) && hasMessagesMeta(item) && <MenuItem onClick={onMarkUnread}><MailOpen className="h-3.5 w-3.5" /><span className="flex-1">{t('sessionMenu.markAsUnread')}</span></MenuItem>}
       <Separator />

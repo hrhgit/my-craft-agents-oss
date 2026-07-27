@@ -10,6 +10,7 @@ import { SkillMenu } from './SkillMenu'
 import { EditPopover, getEditConfig } from '@/components/ui/EditPopover'
 import { useActiveWorkspace } from '@/context/AppShellContext'
 import { getFileManagerName } from '@/lib/platform'
+import { isPrimaryWorkspaceLocal } from '@/lib/workspace-info'
 import type { LoadedSkill } from '../../../shared/types'
 
 export interface SkillsListPanelProps {
@@ -17,7 +18,6 @@ export interface SkillsListPanelProps {
   onSkillClick: (skill: LoadedSkill) => void
   selectedSkillSlug?: string | null
   workspaceId?: string
-  workspaceRootPath?: string
   className?: string
 }
 
@@ -26,12 +26,11 @@ export function SkillsListPanel({
   onSkillClick,
   selectedSkillSlug,
   workspaceId,
-  workspaceRootPath,
   className,
 }: SkillsListPanelProps) {
   const { t } = useTranslation()
   const activeWorkspace = useActiveWorkspace()
-  const canRevealLocally = !activeWorkspace?.remoteServer
+  const canRevealLocally = activeWorkspace ? isPrimaryWorkspaceLocal(activeWorkspace) : false
 
   return (
     <EntityPanel<LoadedSkill>
@@ -49,17 +48,15 @@ export function SkillsListPanel({
           description={t('skillsList.emptyDescription')}
           docKey="skills"
         >
-          {workspaceRootPath && (
-            <EditPopover
-              align="center"
-              trigger={
-                <button className="inline-flex items-center h-7 px-3 text-xs font-medium rounded-[8px] bg-background shadow-minimal hover:bg-foreground/[0.03] transition-colors">
-                  {t('skillsList.addSkill')}
-                </button>
-              }
-              {...getEditConfig('add-skill', workspaceRootPath)}
-            />
-          )}
+          <EditPopover
+            align="center"
+            trigger={
+              <button className="inline-flex items-center h-7 px-3 text-xs font-medium rounded-[8px] bg-background shadow-minimal hover:bg-foreground/[0.03] transition-colors">
+                {t('skillsList.addSkill')}
+              </button>
+            }
+            {...getEditConfig('add-skill', '.')}
+          />
         </EntityListEmptyScreen>
       }
       mapItem={(skill) => ({

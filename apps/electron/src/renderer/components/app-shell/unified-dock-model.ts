@@ -64,7 +64,11 @@ export function countCanvasPanelGroups(model: Model): number {
   return canvasPanelGroups(model).length
 }
 
-export function retargetWorkspaceTabs(model: Model, workspaceId: string, serverId: string): number {
+export function retargetWorkspaceTabs(
+  model: Model,
+  workspaceId: string,
+  route: { serverId: string; locationId?: string },
+): number {
   const tabs: TabNode[] = []
   model.visitNodes(node => {
     if (node instanceof TabNode) tabs.push(node)
@@ -73,9 +77,12 @@ export function retargetWorkspaceTabs(model: Model, workspaceId: string, serverI
   let updated = 0
   for (const tab of tabs) {
     const config = tab.getConfig() as Record<string, unknown>
-    if (config.workspaceId !== workspaceId || config.serverId === serverId) continue
+    if (
+      config.workspaceId !== workspaceId
+      || (config.serverId === route.serverId && config.locationId === route.locationId)
+    ) continue
     model.doAction(Actions.updateNodeAttributes(tab.getId(), {
-      config: { ...config, serverId },
+      config: { ...config, serverId: route.serverId, locationId: route.locationId },
     }))
     updated++
   }

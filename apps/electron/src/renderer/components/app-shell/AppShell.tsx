@@ -91,7 +91,7 @@ import { useFocusZone } from "@/hooks/keyboard"
 import { useFocusContext } from "@/context/FocusContext"
 import { getSessionTitle } from "@/utils/session"
 import { useSetAtom } from "jotai"
-import type { Session, Workspace, FileAttachment, PermissionRequest, DiscoveredSkill, LoadedSkill, PermissionMode, AutomationFilter } from "../../../shared/types"
+import type { Session, FileAttachment, PermissionRequest, DiscoveredSkill, LoadedSkill, PermissionMode, AutomationFilter } from "../../../shared/types"
 import { sessionMetaMapAtom, sendToWorkspaceAtom, type SessionMeta } from "@/atoms/sessions"
 import { piProjectionIsProcessingAtomFamily } from "@/atoms/pi-projection"
 import { skillsAtom } from "@/atoms/skills"
@@ -140,6 +140,12 @@ import { hasOpenOverlay } from "@/lib/overlay-detection"
 import { dispatchFocusInputEvent } from "./input/focus-input-events"
 import { useWorkspaceNavigation } from "@/components/workspace/useWorkspaceNavigation"
 import { UnifiedDockWorkspace } from "./UnifiedDockWorkspace"
+import {
+  getPrimaryRemoteWorkspaceId,
+  getPrimaryWorkspaceLocationInfo,
+  getPrimaryWorkspaceRoute,
+  isPrimaryWorkspaceLocal,
+} from "@/lib/workspace-info"
 import {
   mergeWorkspaceSessionSummaries,
   RECENT_WORKSPACE_SESSION_LIMIT,
@@ -407,7 +413,9 @@ function AppShellContent({
   }, [skills, setSkillsAtom])
   // Automations — state, handlers, loading, subscriptions
   const activeWorkspace = workspaces.find(w => w.id === activeWorkspaceId)
-  const canImportSkill = window.electronAPI.getRuntimeEnvironment() === 'electron' && !activeWorkspace?.remoteServer
+  const activeWorkspaceRoute = activeWorkspace ? getPrimaryWorkspaceRoute(activeWorkspace) : null
+  const canImportSkill = window.electronAPI.getRuntimeEnvironment() === 'electron'
+    && Boolean(activeWorkspace && isPrimaryWorkspaceLocal(activeWorkspace))
   const activeWorkspaceIdRef = React.useRef(activeWorkspaceId)
   activeWorkspaceIdRef.current = activeWorkspaceId
   const skillDiscoveryRequestRef = React.useRef(0)
@@ -813,7 +821,6 @@ function AppShellContent({
     refreshWorkspaceRemoteHealth()
   }, [refreshWorkspaceRemoteHealth])
 
-  const activeWorkspaceRoot = activeWorkspace?.rootPath
   React.useEffect(() => {
     if (!activeWorkspaceId) return
     let cancelled = false
@@ -824,13 +831,13 @@ function AppShellContent({
       if (!cancelled) console.error('[Chat] Failed to load skills:', err)
     })
     return () => { cancelled = true }
-  }, [activeWorkspaceId, activeWorkspace?.rootPath])
+  }, [activeWorkspaceId, activeWorkspace?.primaryLocationId, activeWorkspace?.revision])
 
   // Filter session metadata by active workspace
   // Also exclude hidden sessions (mini-agent sessions) from all counts and lists
   // For remote workspaces, sessions have the remote workspace ID (not the local one),
   // so we match against both the local and remote workspace IDs.
-  const remoteWorkspaceId = activeWorkspace?.remoteServer?.remoteWorkspaceId
+  const remoteWorkspaceId = activeWorkspace ? getPrimaryRemoteWorkspaceId(activeWorkspace) : undefined
   const workspaceSessionMetas = useMemo(() => {
     const metas = Array.from(sessionMetaMap.values())
     if (!activeWorkspaceId) return metas.filter(s => !s.hidden)
@@ -862,14 +869,13 @@ function AppShellContent({
       try {
         const sessions = await window.electronAPI.invokeWorkspaceApi(
           {
-            serverId: workspace.remoteServer?.url ?? 'local',
-            workspaceId: workspace.id,
+            ...getPrimaryWorkspaceRoute(workspace),
           },
           'getSessions',
         ) as Session[]
         const allowedWorkspaceIds = new Set([
           workspace.id,
-          workspace.remoteServer?.remoteWorkspaceId,
+          getPrimaryRemoteWorkspaceId(workspace),
         ].filter((id): id is string => Boolean(id)))
         return [workspace.id, sessions
           .filter(session => !session.hidden && allowedWorkspaceIds.has(session.workspaceId))
@@ -903,7 +909,7 @@ function AppShellContent({
       for (const workspace of workspaces) {
         next[workspace.id] = !!summary.hasUnreadByWorkspace[workspace.id]
         nextProcessing[workspace.id] = !!summary.hasProcessingByWorkspace?.[workspace.id]
-        const remoteWorkspaceId = workspace.remoteServer?.remoteWorkspaceId
+        const remoteWorkspaceId = getPrimaryRemoteWorkspaceId(workspace)
         if (remoteWorkspaceId && summary.hasProcessingByWorkspace?.[remoteWorkspaceId]) {
           nextProcessing[workspace.id] = true
         }
@@ -936,7 +942,7 @@ function AppShellContent({
       for (const workspace of workspaces) {
         next[workspace.id] = !!summary.hasUnreadByWorkspace[workspace.id]
         nextProcessing[workspace.id] = !!summary.hasProcessingByWorkspace?.[workspace.id]
-        const remoteWorkspaceId = workspace.remoteServer?.remoteWorkspaceId
+        const remoteWorkspaceId = getPrimaryRemoteWorkspaceId(workspace)
         if (remoteWorkspaceId && summary.hasProcessingByWorkspace?.[remoteWorkspaceId]) {
           nextProcessing[workspace.id] = true
         }
@@ -985,7 +991,7 @@ function AppShellContent({
           if (!confirmed) return false
         }
         await window.electronAPI.invokeWorkspaceApi(
-          { serverId: workspace.remoteServer?.url ?? 'local', workspaceId },
+          getPrimaryWorkspaceRoute(workspace),
           'deleteSession',
           summary.id,
         )
@@ -1025,7 +1031,7 @@ function AppShellContent({
     }
 
     void window.electronAPI.invokeWorkspaceApi(
-      { serverId: workspace.remoteServer?.url ?? 'local', workspaceId },
+      getPrimaryWorkspaceRoute(workspace),
       'sessionCommand',
       summary.id,
       { type: 'markUnread' },
@@ -1065,7 +1071,7 @@ function AppShellContent({
     }
 
     void window.electronAPI.invokeWorkspaceApi(
-      { serverId: workspace.remoteServer?.url ?? 'local', workspaceId },
+      getPrimaryWorkspaceRoute(workspace),
       'sessionCommand',
       summary.id,
       { type: 'rename', name },
@@ -1082,7 +1088,6 @@ function AppShellContent({
     ...contextValue,
     onDeleteSession: handleDeleteSession,
     skills,
-    activeWorkspaceRoot,
     enabledModes,
     extensionInteraction,
     respondToExtensionInteraction,
@@ -1101,7 +1106,7 @@ function AppShellContent({
     getAutomationHistory,
     onReplayAutomation: handleReplayAutomation,
     workspaceNavigation,
-  }), [contextValue, handleDeleteSession, skills, activeWorkspaceRoot, enabledModes, extensionInteraction, respondToExtensionInteraction, isAutoCompact, searchActive, searchQuery, handleChatMatchInfoChange, handleTestAutomation, handleToggleAutomation, handleDuplicateAutomation, handleDeleteAutomation, automationTestResults, getAutomationHistory, handleReplayAutomation, workspaceNavigation])
+  }), [contextValue, handleDeleteSession, skills, enabledModes, extensionInteraction, respondToExtensionInteraction, isAutoCompact, searchActive, searchQuery, handleChatMatchInfoChange, handleTestAutomation, handleToggleAutomation, handleDuplicateAutomation, handleDeleteAutomation, automationTestResults, getAutomationHistory, handleReplayAutomation, workspaceNavigation])
 
   // Persist expanded folders to localStorage (workspace-scoped)
   React.useEffect(() => {
@@ -1275,12 +1280,13 @@ function AppShellContent({
     ?? (isSessionsNavigation(navState) && navState.details?.type === 'session'
       ? navState.details.sessionId
       : null)
-  const hasRemoteWorkspaces = workspaces.some(workspace => Boolean(workspace.remoteServer))
+  const hasOtherWorkspaces = workspaces.length > 1
 
   const workspaceSidebarItems = React.useMemo<LeftSidebarLinkItem[]>(() => [
     ...workspaceNavigation.items.map((item) => {
       const sessions = workspaceSessionSummaries[item.workspace.id] ?? []
       const workspaceId = item.workspace.id
+      const primaryLocation = getPrimaryWorkspaceLocationInfo(item.workspace)
       const sessionLimit = workspaceSessionLimits[workspaceId] ?? RECENT_WORKSPACE_SESSION_LIMIT
       const recentSessions = sessions.slice(0, sessionLimit)
       const nestedItems: LeftSidebarLinkItem[] = recentSessions.map(summary => ({
@@ -1306,17 +1312,17 @@ function AppShellContent({
         ),
         menuContent: (
           <WorkspaceElectronApiProvider
-            route={{ serverId: item.workspace.remoteServer?.url ?? 'local', workspaceId }}
+            route={getPrimaryWorkspaceRoute(item.workspace)}
           >
             <SessionMenu
               item={summary}
-              hasRemoteWorkspaces={hasRemoteWorkspaces}
+              hasOtherWorkspaces={hasOtherWorkspaces}
               onRename={() => openSidebarSessionRename(workspaceId, summary)}
               onMarkUnread={() => handleSidebarSessionMarkUnread(workspaceId, summary)}
               onOpenInNewWindow={canOpenSeparateBrowserSurface()
                 ? () => window.electronAPI.openSessionInNewWindow(workspaceId, summary.id)
                 : undefined}
-              onSendToWorkspace={item.isActive && hasRemoteWorkspaces
+              onSendToWorkspace={item.isActive && hasOtherWorkspaces
                 ? () => setSendToWorkspaceIds([summary.id])
                 : undefined}
               onDelete={() => { void handleSidebarSessionDelete(workspaceId, summary) }}
@@ -1354,8 +1360,8 @@ function AppShellContent({
         accessory: (
           <>
             {item.isProcessing && <Spinner className="text-[9px]" />}
-            {item.workspace.remoteServer && (
-              <span title={item.isDisconnected ? item.disconnectLabel : item.workspace.remoteServer.url}>
+            {primaryLocation.endpoint.kind === 'remote' && (
+              <span title={item.isDisconnected ? item.disconnectLabel : primaryLocation.endpoint.url}>
                 {item.isDisconnected
                   ? <CloudOff className="h-3 w-3 text-destructive" />
                   : <Cloud className={cn('h-3 w-3', item.isChecking && 'animate-pulse')} />}
@@ -1374,7 +1380,7 @@ function AppShellContent({
         },
       }
     }),
-  ], [collapsedWorkspaceIds, handleAllSessionsClick, handleSidebarSessionDelete, handleSidebarSessionMarkUnread, hasRemoteWorkspaces, navState, navigateToSessionInPanel, openSidebarSessionRename, selectedSidebarSessionId, setSendToWorkspaceIds, showMoreWorkspaceSessions, t, toggleWorkspaceExpanded, workspaceNavigation, workspaceSessionLimits, workspaceSessionSummaries])
+  ], [collapsedWorkspaceIds, handleAllSessionsClick, handleSidebarSessionDelete, handleSidebarSessionMarkUnread, hasOtherWorkspaces, navState, navigateToSessionInPanel, openSidebarSessionRename, selectedSidebarSessionId, setSendToWorkspaceIds, showMoreWorkspaceSessions, t, toggleWorkspaceExpanded, workspaceNavigation, workspaceSessionLimits, workspaceSessionSummaries])
 
   const bottomSidebarItems = React.useMemo<LeftSidebarLinkItem[]>(() => [
     {
@@ -1631,7 +1637,7 @@ function AppShellContent({
           isWorkspaceCanvasActive={isSessionsNavigation(navState)}
           leftExtensionSlot={activeWorkspace ? (
             <WorkspaceElectronApiProvider
-              route={{ serverId: activeWorkspace.remoteServer?.url ?? 'local', workspaceId: activeWorkspace.id }}
+              route={getPrimaryWorkspaceRoute(activeWorkspace)}
             >
               <div className="flex min-w-0 items-center gap-1">
                 <WorkspaceCoordinationStatusPopover />
@@ -1815,7 +1821,7 @@ function AppShellContent({
                             data-tutorial="add-skill-button"
                           />
                         }
-                        {...getEditConfig('add-skill', activeWorkspace.rootPath)}
+                        {...getEditConfig('add-skill', '.')}
                       />
                     </>
                   )}
@@ -1828,7 +1834,7 @@ function AppShellContent({
                           tooltip={t("sidebarMenu.addAutomation")}
                         />
                       }
-                      {...getEditConfig('automation-config', activeWorkspace.rootPath)}
+                      {...getEditConfig('automation-config', '.')}
                     />
                   )}
                 </>
@@ -1840,7 +1846,6 @@ function AppShellContent({
               <SkillsListPanel
                 skills={skills}
                 workspaceId={activeWorkspaceId}
-                workspaceRootPath={activeWorkspace?.rootPath}
                 onSkillClick={handleSkillSelect}
                 selectedSkillSlug={isSkillsNavigation(navState) && navState.details?.type === 'skill' ? navState.details.skillSlug : null}
               />
@@ -1856,7 +1861,6 @@ function AppShellContent({
                 onDuplicateAutomation={handleDuplicateAutomation}
                 onDeleteAutomation={handleDeleteAutomation}
                 selectedAutomationId={isAutomationsNavigation(navState) && navState.details ? navState.details.automationId : null}
-                workspaceRootPath={activeWorkspace?.rootPath}
               />
             )}
             {isSettingsNavigation(navState) && (
@@ -1888,7 +1892,8 @@ function AppShellContent({
                   key={activeWorkspaceId ?? 'no-workspace'}
                   activeWorkspaceId={activeWorkspaceId}
                   workspaceTransition={workspaceTransition}
-                  serverId={activeWorkspace?.remoteServer?.url ?? 'local'}
+                  serverId={activeWorkspaceRoute?.serverId ?? 'local'}
+                  locationId={activeWorkspaceRoute?.locationId}
                   sessionId={effectiveSessionId}
                   isLeadingChromeHidden={isPrimarySidebarHidden}
                   canvasLayoutToggleRequest={canvasLayoutToggleRequest}
@@ -1971,7 +1976,7 @@ function AppShellContent({
             }
             side="bottom"
             align="start"
-            {...getEditConfig('add-skill', activeWorkspace.rootPath)}
+            {...getEditConfig('add-skill', '.')}
           />
           {/* Add Automation EditPopover - triggered from "Add Automation" context menu in automations */}
           <EditPopover
@@ -1987,7 +1992,7 @@ function AppShellContent({
             }
             side="bottom"
             align="start"
-            {...getEditConfig('automation-config', activeWorkspace.rootPath)}
+            {...getEditConfig('automation-config', '.')}
           />
         </>
       )}

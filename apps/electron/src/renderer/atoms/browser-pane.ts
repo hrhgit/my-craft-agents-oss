@@ -30,7 +30,7 @@ export const browserInstanceCountAtom = atom<number>(
  *   (used to stamp locally-opened manual tabs).
  * - `remoteWorkspaceId` — the remote server's workspace identity for the same
  *   conceptual workspace (used by the remote agent when it stamps tabs
- *   through the WS bridge). Read from `activeWorkspace.remoteServer.remoteWorkspaceId`.
+ *   through the routed runtime). Resolve it from the Workspace primary location.
  *
  * An instance is visible when:
  *   - its `workspaceId` matches the local workspace, OR
