@@ -10,7 +10,7 @@ import { existsSync } from 'fs'
 import { readFile, writeFile, mkdir, rename, rm, lstat, open } from 'fs/promises'
 import { randomUUID } from 'node:crypto'
 import { setPermissionMode, hydratePreviousPermissionMode, getPermissionModeDiagnostics, type PermissionMode, unregisterSessionScopedToolCallbacks, mergeSessionScopedToolCallbacks, AbortReason, type BrowserPaneFns, generateConversationSummary } from '@mortise/shared/agent'
-import type { AgentEvent, PlanArtifactV1, PlanModeStateV1 } from '@mortise/core/types'
+import { requirePrimaryLocalWorkspaceRoot, type AgentEvent, type PlanArtifactV1, type PlanModeStateV1 } from '@mortise/core/types'
 import {
   resolveSessionProvider,
   createBackendFromProvider,
@@ -83,7 +83,7 @@ import {
 import { ConfigWatcher, type ConfigWatcherCallbacks } from '@mortise/shared/config'
 import { getLastApiError } from '@mortise/shared/interceptor'
 import { restoreFiles } from '@mortise/shared/utils/bundle-files'
-import { type Session, type SessionEvent, type FileAttachment, type SendMessageOptions, type UnreadSummary, type PiProjectionEventV1, type PiProjectionSnapshotV1, type ExtensionInteractionResponseV1, RPC_CHANNELS, SESSION_SETTLEMENT_ERROR_CODE, generateMessageId } from '@mortise/shared/protocol'
+import { type Session, type SessionEvent, type FileAttachment, type SendMessageOptions, type UnreadSummary, type PiProjectionEventV1, type PiProjectionSnapshotV1, type ExtensionInteractionResponseV1, RPC_CHANNELS, SESSION_SETTLEMENT_ERROR_CODE, generateMessageId, redactWorkspaceInfo } from '@mortise/shared/protocol'
 import {
   ConversationProjector,
   resolvePiBranchTarget,
@@ -958,7 +958,7 @@ export function createManagedSession(
     managed.branchSeedApplied = !!managed.sdkSessionId
   }
 
-  managed.sdkCwd = managed.sdkCwd ?? workspace.rootPath
+  managed.sdkCwd = managed.sdkCwd ?? requirePrimaryLocalWorkspaceRoot(workspace)
 
   return managed
 }
@@ -1200,7 +1200,7 @@ function managedToSession(
         }
       : {}),
     ...(includeSessionFolderPath
-      ? { sessionFolderPath: getSessionStoragePath(m.workspace.rootPath, m.id) }
+      ? { sessionFolderPath: getSessionStoragePath(m.workspace.id, m.id) }
       : {}),
     supportsBranching: resolveSupportsBranching(m),
     ...overrides,
@@ -1262,7 +1262,7 @@ export class SessionManager implements ISessionManager {
         return {
           id: managed.id,
           workspaceId: managed.workspace.id,
-          workspaceRootPath: managed.workspace.rootPath,
+          workspaceRootPath: requirePrimaryLocalWorkspaceRoot(managed.workspace),
           isProcessing: managed.isProcessing,
           sharedId: managed.sharedId,
           sharedUrl: managed.sharedUrl,
@@ -1270,7 +1270,7 @@ export class SessionManager implements ISessionManager {
           permissionMode: managed.permissionMode,
         }
       },
-      loadStoredSession: session => loadStoredSession(session.workspaceRootPath, session.id),
+      loadStoredSession: session => loadStoredSession(session.workspaceId, session.id),
       setAsyncOperation: (sessionId, ongoing) => {
         const managed = this.sessions.get(sessionId)
         if (!managed) return
@@ -1282,7 +1282,7 @@ export class SessionManager implements ISessionManager {
         if (!managed) throw new Error('Session not found')
         managed.sharedId = metadata.sharedId
         managed.sharedUrl = metadata.sharedUrl
-        await updateSessionMetadata(managed.workspace.rootPath, sessionId, metadata)
+        await updateSessionMetadata(managed.workspace.id, sessionId, metadata)
       },
       emitShareEvent: (event, workspaceId) => this.sendEvent(event, workspaceId),
       persistAndFlush: async sessionId => {
@@ -1741,7 +1741,7 @@ export class SessionManager implements ISessionManager {
         onError: error => sessionLog.error(`[Automations] ${workspaceId}:`, error),
       })
       host.start()
-      this.automationHosts.set(workspaceRootPath, host)
+      this.automationHosts.set(workspaceId, host)
       sessionLog.info(`Initialized canonical Automations V3 host for workspace ${workspaceId}`)
     }
   }
@@ -1872,7 +1872,11 @@ export class SessionManager implements ISessionManager {
     }
 
     try {
-      const piProjection = await findPiSessionProjectionById(managed.workspace.rootPath, sessionId)
+      const piProjection = await findPiSessionProjectionById(
+        managed.workspace.id,
+        requirePrimaryLocalWorkspaceRoot(managed.workspace),
+        sessionId,
+      )
       if (!piProjection) return null
 
       const snapshot = buildPiProjectionSnapshotFromHostProjection(
@@ -2055,7 +2059,7 @@ export class SessionManager implements ISessionManager {
   }
 
   private getPiProjectionSnapshotPath(managed: ManagedSession): string {
-    return join(getSessionStoragePath(managed.workspace.rootPath, managed.id), 'pi-projection-v1.json')
+    return join(getSessionStoragePath(managed.workspace.id, managed.id), 'pi-projection-v1.json')
   }
 
   private persistPiProjection(managed: ManagedSession, snapshot: PiProjectionSnapshotV1): void {
@@ -2072,7 +2076,7 @@ export class SessionManager implements ISessionManager {
     const previous = this.automationSessionMetadata.get(sessionId)
     this.automationSessionMetadata.set(sessionId, next)
     if (!previous || previous.permissionMode === next.permissionMode) return
-    const host = this.automationHosts.get(workspaceRootPath)
+    const host = this.automationHosts.get(workspaceId)
     if (!host) return
     const result = await host.acceptEvent({
       specversion: '1.0',
@@ -2163,7 +2167,7 @@ export class SessionManager implements ISessionManager {
       // ever connect, yet scheduled/event-driven automations must still fire.
       const workspaces = getWorkspaces()
       for (const workspace of workspaces) {
-        this.setupConfigWatcher(workspace.rootPath, workspace.id)
+        this.setupConfigWatcher(requirePrimaryLocalWorkspaceRoot(workspace), workspace.id)
       }
 
       // Load existing sessions from disk
@@ -2185,8 +2189,8 @@ export class SessionManager implements ISessionManager {
 
       // Iterate over each workspace and load its sessions
       for (const workspace of workspaces) {
-        const workspaceRootPath = workspace.rootPath
-        const sessionMetadata = listStoredSessions(workspaceRootPath)
+        const workspaceRootPath = requirePrimaryLocalWorkspaceRoot(workspace)
+        const sessionMetadata = listStoredSessions(workspace.id, workspaceRootPath)
 
         for (const meta of sessionMetadata) {
           // Create managed session from metadata only (messages lazy-loaded on demand)
@@ -2257,7 +2261,7 @@ export class SessionManager implements ISessionManager {
   // queue recovery has already run here.
   private hydrateMessagesForColdPersist(managed: ManagedSession): void {
     sessionLog.debug(`Cold-load triggered for persistSession on ${managed.id}`)
-    const stored = loadStoredSession(managed.workspace.rootPath, managed.id)
+    const stored = loadStoredSession(managed.workspace.id, managed.id)
     if (stored) {
       managed.messages = (stored.messages || []).map(storedToMessage)
       managed.tokenUsage = stored.tokenUsage
@@ -2286,7 +2290,8 @@ export class SessionManager implements ISessionManager {
     const storedSession: StoredSession = {
       ...pickMortiseSessionMetadata(managed),
       mortiseId: managed.id,
-      workspaceRootPath: managed.workspace.rootPath,
+      workspaceId: managed.workspace.id,
+      workspaceRootPath: requirePrimaryLocalWorkspaceRoot(managed.workspace),
       createdAt: managed.createdAt ?? Date.now(),
       lastUsedAt: Date.now(),
       messageCount: managed.messageCount,
@@ -2318,7 +2323,7 @@ export class SessionManager implements ISessionManager {
   }
 
   getWorkspacesInfo(): WorkspaceInfo[] {
-    return getWorkspaces().map(({ rootPath, createdAt, ...info }) => info)
+    return getWorkspaces().map(redactWorkspaceInfo)
   }
 
   getActiveSessionCount(workspaceId?: string): number {
@@ -2335,14 +2340,14 @@ export class SessionManager implements ISessionManager {
     const workspace = this.resolveWorkspaceByNameOrId(workspaceId)
     if (!workspace) return { automationCount: 0, schedulerRunning: false }
 
-    const host = this.automationHosts.get(workspace.rootPath)
+    const host = this.automationHosts.get(workspace.id)
     if (!host) return { automationCount: 0, schedulerRunning: false }
     return { automationCount: host.store.initialize().definitions.length, schedulerRunning: !host.isReadOnly() }
   }
 
   getAutomationHost(workspaceId: string): AutomationWorkspaceHostV3 | null {
     const workspace = this.resolveWorkspaceByNameOrId(workspaceId)
-    return workspace ? this.automationHosts.get(workspace.rootPath) ?? null : null
+    return workspace ? this.automationHosts.get(workspace.id) ?? null : null
   }
 
   getActiveSessionsInfo(): ActiveSessionInfo[] {
@@ -2495,7 +2500,7 @@ export class SessionManager implements ISessionManager {
    * Internal: Load messages from disk storage into the managed session.
    */
   private async loadMessagesFromDisk(managed: ManagedSession): Promise<void> {
-    const storedSession = loadStoredSession(managed.workspace.rootPath, managed.id)
+    const storedSession = loadStoredSession(managed.workspace.id, managed.id)
     if (storedSession) {
       managed.messages = (storedSession.messages || []).map(storedToMessage)
       managed.tokenUsage = storedSession.tokenUsage
@@ -2524,11 +2529,11 @@ export class SessionManager implements ISessionManager {
   getSessionPath(sessionId: string): string | null {
     const managed = this.sessions.get(sessionId)
     if (!managed) return null
-    return getSessionStoragePath(managed.workspace.rootPath, sessionId)
+    return getSessionStoragePath(managed.workspace.id, sessionId)
   }
 
   private getSubagentDeliveryLedgerPath(managed: ManagedSession): string {
-    return join(getSessionStoragePath(managed.workspace.rootPath, managed.id), 'subagent-deliveries.json')
+    return join(getSessionStoragePath(managed.workspace.id, managed.id), 'subagent-deliveries.json')
   }
 
   private async readSubagentDeliveryLedger(managed: ManagedSession): Promise<SubagentDeliveryLedger> {
@@ -2752,7 +2757,7 @@ export class SessionManager implements ISessionManager {
           error instanceof Error ? error.message : String(error),
         )
       }
-      await this.cleanupFirstTurnAttachmentStaging(workspace.rootPath, input.attachmentStagingId)
+      await this.cleanupFirstTurnAttachmentStaging(workspace.id, input.attachmentStagingId)
       throw error
     }
     if (!provisional) throw new Error('First-turn provisional session was not created')
@@ -2776,7 +2781,7 @@ export class SessionManager implements ISessionManager {
           error instanceof Error ? error.message : String(error),
         )
       }
-      await this.cleanupFirstTurnAttachmentStaging(workspace.rootPath, input.attachmentStagingId)
+      await this.cleanupFirstTurnAttachmentStaging(workspace.id, input.attachmentStagingId)
       throw error
     }
 
@@ -2859,9 +2864,9 @@ export class SessionManager implements ISessionManager {
     const workspace = this.sessions.get(session.id)?.workspace ?? this.resolveWorkspaceByNameOrId(session.workspaceId)
     if (!workspace) throw new Error(`Workspace ${session.workspaceId} not found`)
 
-    const stagingSessionPath = getSessionStoragePath(workspace.rootPath, stagingId)
-    const stagingAttachmentsPath = getSessionAttachmentsPath(workspace.rootPath, stagingId)
-    const targetAttachmentsPath = getSessionAttachmentsPath(workspace.rootPath, session.id)
+    const stagingSessionPath = getSessionStoragePath(workspace.id, stagingId)
+    const stagingAttachmentsPath = getSessionAttachmentsPath(workspace.id, stagingId)
+    const targetAttachmentsPath = getSessionAttachmentsPath(workspace.id, session.id)
 
     const remapRequiredPath = (value: string | undefined): string | undefined => {
       if (!value) return value
@@ -2918,27 +2923,27 @@ export class SessionManager implements ISessionManager {
   }
 
   private async cleanupFirstTurnAttachmentStaging(
-    workspaceRootPath: string,
+    workspaceId: string,
     stagingId: string | undefined,
   ): Promise<void> {
     if (!stagingId) return
     this.validateFirstTurnAttachmentStagingId(stagingId)
-    await rm(getSessionStoragePath(workspaceRootPath, stagingId), { recursive: true, force: true })
+    await rm(getSessionStoragePath(workspaceId, stagingId), { recursive: true, force: true })
   }
 
   async discardFirstTurnAttachmentStaging(workspaceId: string, stagingId: string): Promise<void> {
     const workspace = this.resolveWorkspaceByNameOrId(workspaceId)
     if (!workspace) throw new Error(`Workspace ${workspaceId} not found`)
-    await this.cleanupFirstTurnAttachmentStaging(workspace.rootPath, stagingId)
+    await this.cleanupFirstTurnAttachmentStaging(workspace.id, stagingId)
   }
 
   async createSession(workspaceId: string, options?: import('@mortise/shared/protocol').CreateSessionOptions): Promise<Session> {
     return this.createSessionInternal(workspaceId, options, false)
   }
 
-  private generateProvisionalSessionId(workspaceRootPath: string): string {
-    let sessionId = generateSessionId(workspaceRootPath)
-    while (this.sessions.has(sessionId)) sessionId = generateSessionId(workspaceRootPath)
+  private generateProvisionalSessionId(workspaceId: string): string {
+    let sessionId = generateSessionId(workspaceId)
+    while (this.sessions.has(sessionId)) sessionId = generateSessionId(workspaceId)
     return sessionId
   }
 
@@ -2957,7 +2962,7 @@ export class SessionManager implements ISessionManager {
 
     // Workspace defaults remain for workspace-scoped behavior such as permissions.
     // Options.permissionMode overrides the workspace default (used by EditPopover for auto-execute).
-    const workspaceRootPath = workspace.rootPath
+    const workspaceRootPath = requirePrimaryLocalWorkspaceRoot(workspace)
     const wsConfig = loadWorkspaceConfig(workspaceRootPath)
     const globalDefaults = loadConfigDefaults()
 
@@ -3030,11 +3035,11 @@ export class SessionManager implements ISessionManager {
 
       const sourceManaged = this.sessions.get(options.branchFromSessionId)
       if (sourceManaged) {
-        if (sourceManaged.workspace.rootPath !== workspaceRootPath) {
+        if (sourceManaged.workspace.id !== workspace.id) {
           sessionLog.warn('Branch validation failed: source session belongs to different workspace', {
             workspaceId,
             targetWorkspaceRootPath: workspaceRootPath,
-            sourceWorkspaceRootPath: sourceManaged.workspace.rootPath,
+            sourceWorkspaceId: sourceManaged.workspace.id,
             branchFromSessionId: options.branchFromSessionId,
           })
           throw new Error('Invalid branch request: source session belongs to a different workspace')
@@ -3045,7 +3050,7 @@ export class SessionManager implements ISessionManager {
         await sessionPersistenceQueue.flush(sourceManaged.id)
       }
 
-      const sourceSession = loadStoredSession(workspaceRootPath, options.branchFromSessionId)
+      const sourceSession = loadStoredSession(workspace.id, options.branchFromSessionId)
       if (!sourceSession) {
         sessionLog.warn('Branch validation failed: source session not found on disk', {
           workspaceId,
@@ -3080,7 +3085,11 @@ export class SessionManager implements ISessionManager {
         throw new Error('Branching is only supported within the same provider/backend. Switch this panel provider and try again.')
       }
 
-      const sourceProjection = await findPiSessionProjectionById(workspaceRootPath, options.branchFromSessionId)
+      const sourceProjection = await findPiSessionProjectionById(
+        workspace.id,
+        workspaceRootPath,
+        options.branchFromSessionId,
+      )
       if (!sourceProjection) {
         throw new Error(`Invalid branch request: Pi projection for source session ${options.branchFromSessionId} not found`)
       }
@@ -3134,7 +3143,8 @@ export class SessionManager implements ISessionManager {
     const now = Date.now()
     const storedSession: SessionHeader = provisional
       ? {
-          mortiseId: this.generateProvisionalSessionId(workspaceRootPath),
+          mortiseId: this.generateProvisionalSessionId(workspace.id),
+          workspaceId: workspace.id,
           workspaceRootPath,
           name: options?.name,
           createdAt: now,
@@ -3142,7 +3152,7 @@ export class SessionManager implements ISessionManager {
           permissionMode: defaultPermissionMode,
           sdkCwd: workspaceRootPath,
         }
-      : await createStoredSession(workspaceRootPath, {
+      : await createStoredSession(workspace.id, workspaceRootPath, {
           name: options?.name,
           permissionMode: defaultPermissionMode,
           hidden: options?.hidden,
@@ -3153,7 +3163,7 @@ export class SessionManager implements ISessionManager {
     // retains UI-only overlay fields (annotations, attachments, badges).
     if (validatedBranch) {
       try {
-        const branchedStored = loadStoredSession(workspaceRootPath, storedSession.mortiseId)
+        const branchedStored = loadStoredSession(workspace.id, storedSession.mortiseId)
         if (!branchedStored) {
           throw new Error(`Failed to load newly created session ${storedSession.mortiseId} for branch copy`)
         }
@@ -3162,8 +3172,8 @@ export class SessionManager implements ISessionManager {
           .filter(message => validatedBranch.sourceEntryIds.has(message.id))
 
         // Re-map embedded paths from the source Mortise sidecar to the branch sidecar.
-        const sourceDir = normalizePath(getSessionStoragePath(workspaceRootPath, validatedBranch.sourceSessionId))
-        const branchDir = normalizePath(getSessionStoragePath(workspaceRootPath, storedSession.mortiseId))
+        const sourceDir = normalizePath(getSessionStoragePath(workspace.id, validatedBranch.sourceSessionId))
+        const branchDir = normalizePath(getSessionStoragePath(workspace.id, storedSession.mortiseId))
         const remappedMessages = sourceDir !== branchDir
           ? sourceMessages.map(m => {
             const json = JSON.stringify(m)
@@ -3173,7 +3183,7 @@ export class SessionManager implements ISessionManager {
           : sourceMessages
 
         const branchSessionFile = getSessionFilePath(
-          workspaceRootPath,
+          workspace.id,
           storedSession.mortiseId,
           storedSession.createdAt,
         )
@@ -3539,7 +3549,7 @@ export class SessionManager implements ISessionManager {
       // Keep SDK subprocess side-channel files, such as api-error.json,
       // scoped to this session. Tool metadata now travels through typed Pi
       // events and no longer uses tool-metadata.json.
-      process.env.MORTISE_SESSION_DIR = getSessionStoragePath(managed.workspace.rootPath, managed.id)
+      process.env.MORTISE_SESSION_DIR = getSessionStoragePath(managed.workspace.id, managed.id)
 
       // Set up agentReady promise so title generation can await agent creation
       managed.agentReady = new Promise<void>(r => { managed.agentReadyResolve = r })
@@ -3548,11 +3558,12 @@ export class SessionManager implements ISessionManager {
       // Common session setup
       // ============================================================
 
-      const sessionPath = getSessionStoragePath(managed.workspace.rootPath, managed.id)
+      const sessionPath = getSessionStoragePath(managed.workspace.id, managed.id)
+      const workspaceRootPath = requirePrimaryLocalWorkspaceRoot(managed.workspace)
       // Per-session env overrides
       const miniModel = providerConfig?.models?.[1]?.id ?? providerConfig?.models?.[0]?.id
       const envOverrides: Record<string, string> = {
-        MORTISE_WORKSPACE_PATH: managed.workspace.rootPath,
+        MORTISE_WORKSPACE_PATH: workspaceRootPath,
       }
       managed.envOverrides = envOverrides
 
@@ -3562,7 +3573,8 @@ export class SessionManager implements ISessionManager {
 
       const sessionConfig = {
         mortiseId: managed.id,
-        workspaceRootPath: managed.workspace.rootPath,
+        workspaceId: managed.workspace.id,
+        workspaceRootPath,
         sdkSessionId: managed.sdkSessionId,
         branchFromSdkSessionId: managed.branchContextStrategy === 'sdk-fork' ? managed.branchFromSdkSessionId : undefined,
         branchFromSessionPath: managed.branchContextStrategy === 'sdk-fork' ? managed.branchFromSessionPath : undefined,
@@ -3572,7 +3584,7 @@ export class SessionManager implements ISessionManager {
         branchFromMessageId: managed.branchContextStrategy === 'sdk-fork' ? managed.branchFromMessageId : undefined,
         createdAt: managed.lastMessageAt,
         lastUsedAt: managed.lastMessageAt,
-        sdkCwd: managed.sdkCwd ?? managed.workspace.rootPath,
+        sdkCwd: managed.sdkCwd ?? workspaceRootPath,
         model: managed.model,
         provider: managed.provider,
         permissionMode: managed.permissionMode,
@@ -3733,7 +3745,7 @@ export class SessionManager implements ISessionManager {
         isHeadless: !AGENT_FLAGS.defaultModesEnabled,
         skipConfigWatcher: true, // Server owns workspace-level ConfigWatcher — don't duplicate in agents
         automationEventSink: async (event, input) => {
-          const host = this.automationHosts.get(managed.workspace.rootPath)
+          const host = this.automationHosts.get(managed.workspace.id)
           if (!host) return
           const result = await host.acceptEvent({
             specversion: '1.0',
@@ -4082,7 +4094,7 @@ export class SessionManager implements ISessionManager {
           }
         }
 
-        const templates = await listSubagentTemplates({ cwd: managed.workspace.rootPath })
+        const templates = await listSubagentTemplates({ cwd: requirePrimaryLocalWorkspaceRoot(managed.workspace) })
         const template = request.template
           ? templates.find(candidate => candidate.id === request.template)
           : undefined
@@ -4338,7 +4350,7 @@ export class SessionManager implements ISessionManager {
   async setPendingPlanExecution(sessionId: string, target: string | { planPath?: string; artifactId?: string }, draftInputSnapshot?: string): Promise<void> {
     const managed = this.sessions.get(sessionId)
     if (managed) {
-      await setStoredPendingPlanExecution(managed.workspace.rootPath, sessionId, target, draftInputSnapshot)
+      await setStoredPendingPlanExecution(managed.workspace.id, sessionId, target, draftInputSnapshot)
       const normalizedTarget = typeof target === 'string' ? { planPath: target } : target
       managed.pendingPlanExecution = {
         ...normalizedTarget,
@@ -4358,7 +4370,7 @@ export class SessionManager implements ISessionManager {
   async markCompactionComplete(sessionId: string): Promise<void> {
     const managed = this.sessions.get(sessionId)
     if (managed) {
-      await markStoredCompactionComplete(managed.workspace.rootPath, sessionId)
+      await markStoredCompactionComplete(managed.workspace.id, sessionId)
       if (managed.pendingPlanExecution) {
         managed.pendingPlanExecution.awaitingCompaction = false
       }
@@ -4375,7 +4387,7 @@ export class SessionManager implements ISessionManager {
   async markPendingPlanExecutionDispatched(sessionId: string): Promise<void> {
     const managed = this.sessions.get(sessionId)
     if (managed) {
-      await markStoredPendingPlanExecutionDispatched(managed.workspace.rootPath, sessionId)
+      await markStoredPendingPlanExecutionDispatched(managed.workspace.id, sessionId)
       sessionLog.info(`Session ${sessionId}: marked pending plan execution as dispatched`)
     }
   }
@@ -4388,7 +4400,7 @@ export class SessionManager implements ISessionManager {
   async clearPendingPlanExecution(sessionId: string): Promise<void> {
     const managed = this.sessions.get(sessionId)
     if (managed) {
-      await clearStoredPendingPlanExecution(managed.workspace.rootPath, sessionId)
+      await clearStoredPendingPlanExecution(managed.workspace.id, sessionId)
       sessionLog.info(`Session ${sessionId}: cleared pending plan execution`)
     }
   }
@@ -4400,7 +4412,7 @@ export class SessionManager implements ISessionManager {
   getPendingPlanExecution(sessionId: string): { planPath?: string; artifactId?: string; draftInputSnapshot?: string; awaitingCompaction: boolean; executionDispatched: boolean } | null {
     const managed = this.sessions.get(sessionId)
     if (!managed) return null
-    return getStoredPendingPlanExecution(managed.workspace.rootPath, sessionId)
+    return getStoredPendingPlanExecution(managed.workspace.id, sessionId)
   }
 
   /**
@@ -4551,8 +4563,7 @@ export class SessionManager implements ISessionManager {
 
     // Persist changes
     if (needsPersist) {
-      const workspaceRootPath = managed.workspace.rootPath
-      await updateSessionMetadata(workspaceRootPath, sessionId, updates)
+      await updateSessionMetadata(managed.workspace.id, sessionId, updates)
       this.emitUnreadSummaryChanged()
     }
   }
@@ -4567,8 +4578,7 @@ export class SessionManager implements ISessionManager {
       managed.hasUnread = true
       managed.lastReadMessageId = undefined
       // Persist to disk
-      const workspaceRootPath = managed.workspace.rootPath
-      await updateSessionMetadata(workspaceRootPath, sessionId, { hasUnread: true, lastReadMessageId: undefined })
+      await updateSessionMetadata(managed.workspace.id, sessionId, { hasUnread: true, lastReadMessageId: undefined })
       this.emitUnreadSummaryChanged()
     }
   }
@@ -4586,7 +4596,7 @@ export class SessionManager implements ISessionManager {
       if (!managed.hasUnread) continue
       managed.hasUnread = false
       updates.push(
-        updateSessionMetadata(managed.workspace.rootPath, managed.id, { hasUnread: false })
+        updateSessionMetadata(managed.workspace.id, managed.id, { hasUnread: false })
       )
     }
     if (updates.length > 0) {
@@ -4660,7 +4670,8 @@ export class SessionManager implements ISessionManager {
           miniModel: resolvedMiniModel,
           session: {
             mortiseId: `title-${managed.id}`,
-            workspaceRootPath: managed.workspace.rootPath,
+            workspaceId: managed.workspace.id,
+            workspaceRootPath: requirePrimaryLocalWorkspaceRoot(managed.workspace),
             provider: managed.provider,
             createdAt: Date.now(),
             lastUsedAt: Date.now(),
@@ -4740,7 +4751,7 @@ export class SessionManager implements ISessionManager {
       if (provider) {
         updates.provider = provider
       }
-      await updateSessionMetadata(managed.workspace.rootPath, sessionId, updates)
+      await updateSessionMetadata(managed.workspace.id, sessionId, updates)
       if (provider && provider !== previousProvider) {
         await this.tryRefreshAgentRuntime(managed, 'session model provider changed')
         this.sendEvent({
@@ -4952,9 +4963,13 @@ export class SessionManager implements ISessionManager {
         managed.publicationState === 'provisional' && this.sessions.get(managed.id) === managed
       )
       if (!isCurrentProvisional()) return false
-      const sessionFile = tryGetSessionFilePath(managed.workspace.rootPath, managed.id)
+      const sessionFile = tryGetSessionFilePath(managed.workspace.id, managed.id)
       if (!sessionFile || !existsSync(sessionFile)) return false
-      const projection = await findPiSessionProjectionById(managed.workspace.rootPath, managed.id)
+      const projection = await findPiSessionProjectionById(
+        managed.workspace.id,
+        requirePrimaryLocalWorkspaceRoot(managed.workspace),
+        managed.id,
+      )
       if (!isCurrentProvisional()) return false
       const entries = (projection as { entries?: unknown[] } | null)?.entries ?? []
       const hasAssistant = entries.some(entry => {
@@ -5051,7 +5066,7 @@ export class SessionManager implements ISessionManager {
       this.piProjectionWrites.delete(managed.id)
       this.piProjectionPendingSnapshots.delete(managed.id)
       this.piProjectionWriteErrors.delete(managed.id)
-      await deleteStoredSession(managed.workspace.rootPath, managed.id)
+      await deleteStoredSession(managed.workspace.id, managed.id)
       sessionLog.info(`Abandoned unpublished provisional session ${managed.id}: ${reason}`)
     })()
     managed.abandonPromise = work
@@ -5065,8 +5080,8 @@ export class SessionManager implements ISessionManager {
       return
     }
 
-    // Get workspace slug before deleting
-    const workspaceRootPath = managed.workspace.rootPath
+    // Session storage is keyed by stable Workspace identity.
+    const workspaceId = managed.workspace.id
     managed.deleting = true
 
     try {
@@ -5116,7 +5131,7 @@ export class SessionManager implements ISessionManager {
     await sessionPersistenceQueue.cancel(sessionId, { preventFutureEnqueue: true })
 
     // Delete from disk too
-    if (!await deleteStoredSession(workspaceRootPath, sessionId)) {
+    if (!await deleteStoredSession(workspaceId, sessionId)) {
       managed.deleting = false
       throw new Error(`Failed to delete Session data: ${sessionId}`)
     }
@@ -5200,7 +5215,7 @@ export class SessionManager implements ISessionManager {
     // Clear any pending plan execution state when a new user message is sent.
     // This acts as a safety valve - if the user moves on, we don't want to
     // auto-execute an old plan later.
-    await clearStoredPendingPlanExecution(managed.workspace.rootPath, sessionId)
+    await clearStoredPendingPlanExecution(managed.workspace.id, sessionId)
 
     // Ensure messages are loaded before we try to add new ones
     await this.ensureMessagesLoaded(managed)
@@ -5591,7 +5606,7 @@ export class SessionManager implements ISessionManager {
             // Check if there's a captured API error that explains the silent failure.
             // Pass explicit session path to avoid reading from the wrong session
             // (_sessionDir singleton can be clobbered by concurrent sessions).
-            const sessionErrorPath = getSessionStoragePath(managed.workspace.rootPath, managed.id)
+            const sessionErrorPath = getSessionStoragePath(managed.workspace.id, managed.id)
             const apiError = getLastApiError(sessionErrorPath)
 
             if (apiError && apiError.status === 400) {
@@ -5695,7 +5710,7 @@ export class SessionManager implements ISessionManager {
           meta: {
             sessionId,
             workspaceId: managed.workspace.id,
-            workspaceRootPath: managed.workspace.rootPath,
+            workspaceRootPath: requirePrimaryLocalWorkspaceRoot(managed.workspace),
             provider: managed.provider,
             model: managed.model,
             error,
@@ -5953,7 +5968,7 @@ export class SessionManager implements ISessionManager {
         // User is not watching - mark as unread for NEW badge
         if (!managed.hasUnread) {
           managed.hasUnread = true
-          await updateSessionMetadata(managed.workspace.rootPath, sessionId, { hasUnread: true })
+          await updateSessionMetadata(managed.workspace.id, sessionId, { hasUnread: true })
           this.emitUnreadSummaryChanged()
         }
       }
@@ -6642,7 +6657,8 @@ export class SessionManager implements ISessionManager {
           miniModel: providerConfig?.models?.[1]?.id ?? providerConfig?.models?.[0]?.id,
           session: {
             mortiseId: `title-${managed.id}`,
-            workspaceRootPath: managed.workspace.rootPath,
+            workspaceId: managed.workspace.id,
+            workspaceRootPath: requirePrimaryLocalWorkspaceRoot(managed.workspace),
             provider: managed.provider,
             createdAt: Date.now(),
             lastUsedAt: Date.now(),
@@ -6757,7 +6773,7 @@ export class SessionManager implements ISessionManager {
             isUpdate: artifactProjection.isUpdate,
           })
           if (artifactProjection.artifact.state === 'executing' || artifactProjection.artifact.state === 'completed') {
-            await clearStoredPendingPlanExecution(managed.workspace.rootPath, sessionId)
+            await clearStoredPendingPlanExecution(managed.workspace.id, sessionId)
           }
           this.persistSession(managed)
           break
@@ -6768,7 +6784,7 @@ export class SessionManager implements ISessionManager {
 
       case 'tool_start': {
         const formattedToolInput = formatToolInputPaths(event.input)
-        const workspaceRootPath = managed.workspace.rootPath
+        const workspaceRootPath = requirePrimaryLocalWorkspaceRoot(managed.workspace)
         let toolDisplayMeta: ToolDisplayMeta | undefined
         if (formattedToolInput && Object.keys(formattedToolInput).length > 0) {
           toolDisplayMeta = await resolveToolDisplayMeta(event.toolName, formattedToolInput, workspaceRootPath)
@@ -7198,10 +7214,11 @@ export class SessionManager implements ISessionManager {
         workspace,
         session: {
           mortiseId: `automation-isolated-${randomUUID()}`,
-          workspaceRootPath: workspace.rootPath,
+          workspaceId: workspace.id,
+          workspaceRootPath: requirePrimaryLocalWorkspaceRoot(workspace),
           createdAt: Date.now(),
           lastUsedAt: Date.now(),
-          sdkCwd: workspace.rootPath,
+          sdkCwd: requirePrimaryLocalWorkspaceRoot(workspace),
           model: target.model,
           provider: target.provider,
           permissionMode: target.permissionMode ?? 'safe',
@@ -7210,7 +7227,7 @@ export class SessionManager implements ISessionManager {
         miniModel: target.model ?? backendContext.resolvedModel,
         thinkingLevel,
         systemPromptPreset: 'mini',
-        envOverrides: { MORTISE_WORKSPACE_PATH: workspace.rootPath },
+        envOverrides: { MORTISE_WORKSPACE_PATH: requirePrimaryLocalWorkspaceRoot(workspace) },
         isHeadless: true,
         skipConfigWatcher: true,
       },
@@ -7354,7 +7371,7 @@ export class SessionManager implements ISessionManager {
 
     if (messages.length === 0) return null
 
-    const workspaceRootPath = managed.workspace.rootPath
+    const workspaceRootPath = requirePrimaryLocalWorkspaceRoot(managed.workspace)
     const backendContext = resolveBackendContext({
       sessionProvider: managed.provider,
       managedModel: managed.model,
@@ -7375,6 +7392,7 @@ export class SessionManager implements ISessionManager {
         workspace: managed.workspace,
         session: {
           mortiseId: `${managed.id}-remote-transfer-summary`,
+          workspaceId: managed.workspace.id,
           workspaceRootPath,
           createdAt: Date.now(),
           lastUsedAt: Date.now(),
@@ -7428,7 +7446,7 @@ export class SessionManager implements ISessionManager {
     this.persistSession(managed)
     await sessionPersistenceQueue.flush(sessionId)
 
-    const bundle = serializeSession(managed.workspace.rootPath, sessionId)
+    const bundle = serializeSession(managed.workspace.id, sessionId)
     if (!bundle) {
       sessionLog.error(`[dispatch] Failed to serialize session ${sessionId}`)
       return null
@@ -7464,16 +7482,15 @@ export class SessionManager implements ISessionManager {
       throw new Error(`Workspace ${workspaceId} not found`)
     }
 
-    sessionLog.info(`[import] Target workspace: "${workspace.name}" at ${workspace.rootPath}`)
-
     const warnings: string[] = []
-    const workspaceRootPath = workspace.rootPath
+    const workspaceRootPath = requirePrimaryLocalWorkspaceRoot(workspace)
+    sessionLog.info(`[import] Target workspace: "${workspace.name}" at ${workspaceRootPath}`)
 
     // Determine session ID from the canonical bundle header.
     const header = bundle.session.header
     const sessionId = mode === 'move'
       ? header.mortiseId
-      : generateSessionId(workspaceRootPath)
+      : generateSessionId(workspace.id)
 
     // Check for ID collision on move
     if (mode === 'move' && this.sessions.has(sessionId)) {
@@ -7481,7 +7498,7 @@ export class SessionManager implements ISessionManager {
     }
 
     // Create session directory with all subdirectories
-    const sessionDir = ensureSessionDir(workspaceRootPath, sessionId)
+    const sessionDir = ensureSessionDir(workspace.id, sessionId)
 
     // Build the stored session from bundle data.
     // 用 pickMortiseSessionMetadata(header) 作为基底，让 Mortise metadata 字段自动透传
@@ -7491,6 +7508,7 @@ export class SessionManager implements ISessionManager {
       ...(pickMortiseSessionMetadata(header) as Partial<SessionHeader>),
       // 显式覆盖：目标工作区的身份与路径
       mortiseId: sessionId,
+      workspaceId: workspace.id,
       workspaceRootPath,
       // Always regenerate sdkCwd for the target workspace.
       // sdkCwd is the working directory the SDK runs in (where it stores
@@ -7563,7 +7581,7 @@ export class SessionManager implements ISessionManager {
 
     // Create/update the Pi session header + Mortise metadata first, then import
     // canonical transcript entries through Pi's public SessionManager API.
-    const sessionFile = getSessionFilePath(workspaceRootPath, sessionId, storedSession.createdAt)
+    const sessionFile = getSessionFilePath(workspace.id, sessionId, storedSession.createdAt)
     sessionLog.info(`[import] Creating Pi canonical session: ${sessionFile} (provider=${storedSession.provider ?? 'default'}, messages=${storedSession.messages.length})`)
     await saveStoredSession(storedSession)
     const importedIdMap = await appendStoredMessagesViaPiSessionManager(

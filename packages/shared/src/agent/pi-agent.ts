@@ -405,7 +405,7 @@ export class PiAgent extends BaseAgent {
         sessionId: this.config.session?.mortiseId,
         piSessionId: this.piSessionId,
         workspaceId: this.config.workspace.id,
-        workspaceRootPath: this.config.workspace.rootPath,
+        workspaceRootPath: this.workspaceRoot,
         providerKey: this.config.providerKey,
         provider: this.config.provider,
         providerType: this.config.providerType,
@@ -483,8 +483,8 @@ export class PiAgent extends BaseAgent {
     // Set session dir on adapter for concurrent-safe toolMetadataStore lookups.
     // session dir is the Pi sidecar `.mortise/{sessionId}/` under the
     // Pi sessions bucket, NOT the legacy `workspaces/{id}/sessions/{sessionId}/`.
-    if (config.session?.mortiseId && config.workspace.rootPath) {
-      this.adapter.setSessionDir(getSessionPath(config.workspace.rootPath, config.session.mortiseId));
+    if (config.session?.mortiseId) {
+      this.adapter.setSessionDir(getSessionPath(config.workspace.id, config.session.mortiseId));
     }
 
     if (!config.isHeadless) {
@@ -650,7 +650,7 @@ export class PiAgent extends BaseAgent {
     };
 
     const sessionDir = this.config.session
-      ? getPiNativeSessionDir(this.config.workspace.rootPath)
+      ? getPiNativeSessionDir(this.config.workspace.id)
       : undefined;
     const runtimeId = this.config.session?.mortiseId ?? `runtime-${Date.now()}`;
     const lease = await piHostManager.acquire({
@@ -1536,10 +1536,10 @@ export class PiAgent extends BaseAgent {
     const workspaceSlug = extractWorkspaceSlug(rootPath, this.config.workspace.id);
     const sessionId = this.config.session?.mortiseId || this._sessionId;
     const plansFolderPath = sessionId
-      ? getSessionPlansPath(rootPath, sessionId)
+      ? getSessionPlansPath(this.config.workspace.id, sessionId)
       : undefined;
     const dataFolderPath = sessionId
-      ? getSessionDataPath(rootPath, sessionId)
+      ? getSessionDataPath(this.config.workspace.id, sessionId)
       : undefined;
 
     // Build RTK context fresh per call so toggling the preference takes
@@ -1710,7 +1710,7 @@ export class PiAgent extends BaseAgent {
     if (this._sessionToolContext) return this._sessionToolContext;
 
     const sessionId = this.config.session?.mortiseId || '';
-    const workspacePath = this.config.workspace.rootPath;
+    const workspacePath = this.workspaceRoot;
     this._sessionToolContext = createSessionToolContext({
       sessionId,
       workspacePath,
@@ -2013,7 +2013,7 @@ export class PiAgent extends BaseAgent {
   private getChildSessionDir(): string {
     const parentSessionId = this.config.session?.mortiseId;
     if (!parentSessionId) throw new Error('Child tasks require a persisted parent Session');
-    return join(getSessionPath(this.config.workspace.rootPath, parentSessionId), 'subagents');
+    return join(getSessionPath(this.config.workspace.id, parentSessionId), 'subagents');
   }
 
   private emitPiProjectionEvents(event: AgentEvent): void {
@@ -2821,8 +2821,8 @@ export class PiAgent extends BaseAgent {
             getSystemPrompt(
               undefined, // pinnedPreferencesPrompt
               this.config.debugMode,
-              this.config.workspace.rootPath,
-              this.config.workspace.rootPath,
+              this.workspaceRoot,
+              this.workspaceRoot,
               this.config.systemPromptPreset,
               'Mortise Backend', // backendName
               getCoAuthorPreference() // respect user's includeCoAuthoredBy preference (#576)
@@ -2841,7 +2841,7 @@ export class PiAgent extends BaseAgent {
       // session_state) ride the user-message tail so a per-turn
       // re-stamp doesn't invalidate the prompt cache. buildVolatileContextParts
       // consumes the one-shot mode-change signal, so it is called exactly once.
-      const plansFolderPath = getSessionPlansPath(this.config.workspace.rootPath, this._sessionId);
+      const plansFolderPath = getSessionPlansPath(this.config.workspace.id, this._sessionId);
       const stableParts = this.promptBuilder.buildStableContextParts();
       const { formatDeveloperKitSystemPrompt } = await import('../config/developer-kit.ts');
       const developerKitSystemPrompt = formatDeveloperKitSystemPrompt();

@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { dirname } from 'path'
 import { RPC_CHANNELS } from '@mortise/shared/protocol'
+import { requirePrimaryLocalWorkspaceRoot } from '@mortise/core/types'
 import {
   getPreferencesPath,
   getSessionDraft,
@@ -183,7 +184,7 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
 
     // Load workspace config
     const { loadWorkspaceConfig } = await import('@mortise/shared/workspaces')
-    const config = loadWorkspaceConfig(workspace.rootPath)
+    const config = loadWorkspaceConfig(requirePrimaryLocalWorkspaceRoot(workspace))
 
     return {
       name: config?.name,
@@ -205,7 +206,8 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
     }
 
     const { loadWorkspaceConfig, saveWorkspaceConfig } = await import('@mortise/shared/workspaces')
-    const config = loadWorkspaceConfig(workspace.rootPath)
+    const workspaceRoot = requirePrimaryLocalWorkspaceRoot(workspace)
+    const config = loadWorkspaceConfig(workspaceRoot)
     if (!config) {
       throw new Error(`Failed to load workspace config: ${wid}`)
     }
@@ -220,7 +222,7 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
     }
 
     // Save the config
-    saveWorkspaceConfig(workspace.rootPath, config)
+    saveWorkspaceConfig(workspaceRoot, config)
     deps.platform.logger.info(`Workspace setting updated: ${key} = ${JSON.stringify(normalizedValue)}`)
   })
 

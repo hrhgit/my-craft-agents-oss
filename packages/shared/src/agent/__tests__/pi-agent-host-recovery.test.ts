@@ -9,9 +9,14 @@ function createConfig(): BackendConfig {
   return {
     provider: 'pi',
     workspace: {
+      schemaVersion: 2,
       id: 'ws-host-recovery',
+      revision: 0,
+      primaryLocationId: 'primary',
+      locations: [{ id: 'primary', name: 'Primary', endpoint: { kind: 'local', rootPath: '/tmp/mortise-host-recovery' } }],
       name: 'Host Recovery',
-      rootPath: '/tmp/mortise-host-recovery',
+      slug: 'host-recovery',
+      createdAt: Date.now(),
     } as BackendConfig['workspace'],
     session: {
       mortiseId: 'session-host-recovery',

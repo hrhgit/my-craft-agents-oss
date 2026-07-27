@@ -1098,8 +1098,13 @@ describe('registerFilesHandlers STORE_ATTACHMENT', () => {
         createWorkspaceAtPath(process.env.TEST_WORKSPACE_ROOT, 'Workspace')
         saveConfig({
           workspaces: [{
-            id: 'ws-1', name: 'Workspace', slug: 'workspace',
-            rootPath: process.env.TEST_WORKSPACE_ROOT, createdAt: Date.now(),
+            schemaVersion: 2, id: 'ws-1', revision: 0,
+            name: 'Workspace', slug: 'workspace', primaryLocationId: 'primary',
+            locations: [{
+              id: 'primary', name: 'Primary',
+              endpoint: { kind: 'local', rootPath: process.env.TEST_WORKSPACE_ROOT },
+            }],
+            createdAt: Date.now(),
           }],
           activeWorkspaceId: 'ws-1',
           activeSessionId: null,

@@ -1,10 +1,10 @@
 import { existsSync } from 'node:fs'
 import { join } from 'path'
 import { homedir } from 'os'
-import { RPC_CHANNELS } from '@mortise/shared/protocol'
+import { RPC_CHANNELS, redactWorkspaceInfo } from '@mortise/shared/protocol'
 import { addWorkspace, setActiveWorkspace } from '@mortise/shared/config'
 import { getDefaultWorkspacesDir, ensureDefaultWorkspacesDir } from '@mortise/shared/workspaces'
-import type { ServerHealth } from '@mortise/core/types'
+import { WORKSPACE_SCHEMA_VERSION, type ServerHealth } from '@mortise/core/types'
 import type { RpcServer } from '@mortise/server-core/transport'
 import type { HandlerDeps } from '../handler-deps'
 import type { ServerHandlerContext } from '../../bootstrap/headless-start'
@@ -52,12 +52,21 @@ export function registerServerHandlers(
       rootPath = join(baseDir, uniqueSlug)
     }
 
-    const workspace = addWorkspace({ name: trimmed, rootPath })
+    const workspace = addWorkspace({
+      schemaVersion: WORKSPACE_SCHEMA_VERSION,
+      revision: 0,
+      name: trimmed,
+      primaryLocationId: 'primary',
+      locations: [{
+        id: 'primary',
+        name: 'Primary',
+        endpoint: { kind: 'local', rootPath },
+      }],
+    })
     setActiveWorkspace(workspace.id)
     deps.platform.logger.info(`Created workspace "${trimmed}" at ${rootPath} (server:createWorkspace)`)
 
-    const { rootPath: _rp, createdAt: _ca, ...info } = workspace
-    return info
+    return redactWorkspaceInfo(workspace)
   })
 
   // -----------------------------------------------------------------------

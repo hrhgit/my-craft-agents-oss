@@ -19,9 +19,13 @@ export interface CredentialBackend {
 
   /** Get a credential by ID */
   get(id: CredentialId): Promise<StoredCredential | null>;
+  /** Read a credential synchronously when the backend supports startup migrations. */
+  getSync?(id: CredentialId): StoredCredential | null;
 
   /** Set/update a credential */
   set(id: CredentialId, credential: StoredCredential): Promise<void>;
+  /** Persist a credential synchronously when the backend supports startup migrations. */
+  setSync?(id: CredentialId, credential: StoredCredential): void;
 
   /** Delete a credential */
   delete(id: CredentialId): Promise<boolean>;

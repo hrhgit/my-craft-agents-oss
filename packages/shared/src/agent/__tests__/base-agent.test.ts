@@ -84,10 +84,13 @@ describe('BaseAgent', () => {
 
     it('should allow setting workspace', () => {
       agent.setWorkspace({
+        schemaVersion: 2,
         id: 'new-workspace',
+        revision: 0,
+        primaryLocationId: 'primary',
+        locations: [{ id: 'primary', name: 'Primary', endpoint: { kind: 'local', rootPath: '/new/path' } }],
         name: 'New Workspace',
         slug: 'path',
-        rootPath: '/new/path',
         createdAt: Date.now(),
       });
       expect(agent.getWorkspace().id).toBe('new-workspace');

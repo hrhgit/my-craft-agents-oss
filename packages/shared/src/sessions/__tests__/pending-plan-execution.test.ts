@@ -8,6 +8,7 @@ import {
   markCompactionComplete,
   markPendingPlanExecutionDispatched,
   saveSession,
+  setSharedPiSessionsDirForTests,
   setPendingPlanExecution,
 } from '../storage.ts'
 
@@ -20,6 +21,7 @@ function makeTmpDir(): string {
 function makeStoredSession(workspaceRootPath: string): StoredSession {
   return {
     mortiseId: 'session-1',
+    workspaceId: 'workspace-1',
     workspaceRootPath,
     createdAt: 1000,
     lastUsedAt: 1000,
@@ -42,29 +44,31 @@ describe('pending plan execution persistence', () => {
 
   beforeEach(async () => {
     workspaceRoot = makeTmpDir()
+    setSharedPiSessionsDirForTests(join(workspaceRoot, 'pi-sessions'))
     await saveSession(makeStoredSession(workspaceRoot))
   })
 
   afterEach(() => {
+    setSharedPiSessionsDirForTests(undefined)
     if (existsSync(workspaceRoot)) {
       rmSync(workspaceRoot, { recursive: true, force: true })
     }
   })
 
   it('defaults executionDispatched to false and persists transitions', async () => {
-    await setPendingPlanExecution(workspaceRoot, 'session-1', '/tmp/plan.md', 'draft snapshot')
+    await setPendingPlanExecution('workspace-1', 'session-1', '/tmp/plan.md', 'draft snapshot')
 
-    expect(getPendingPlanExecution(workspaceRoot, 'session-1')).toEqual({
+    expect(getPendingPlanExecution('workspace-1', 'session-1')).toEqual({
       planPath: '/tmp/plan.md',
       draftInputSnapshot: 'draft snapshot',
       awaitingCompaction: true,
       executionDispatched: false,
     })
 
-    await markCompactionComplete(workspaceRoot, 'session-1')
-    await markPendingPlanExecutionDispatched(workspaceRoot, 'session-1')
+    await markCompactionComplete('workspace-1', 'session-1')
+    await markPendingPlanExecutionDispatched('workspace-1', 'session-1')
 
-    expect(getPendingPlanExecution(workspaceRoot, 'session-1')).toEqual({
+    expect(getPendingPlanExecution('workspace-1', 'session-1')).toEqual({
       planPath: '/tmp/plan.md',
       draftInputSnapshot: 'draft snapshot',
       awaitingCompaction: false,
@@ -73,8 +77,8 @@ describe('pending plan execution persistence', () => {
   })
 
   it('persists artifactId for compact-then-execute recovery', async () => {
-    await setPendingPlanExecution(workspaceRoot, 'session-1', { artifactId: 'plan-123' })
-    expect(getPendingPlanExecution(workspaceRoot, 'session-1')).toEqual({
+    await setPendingPlanExecution('workspace-1', 'session-1', { artifactId: 'plan-123' })
+    expect(getPendingPlanExecution('workspace-1', 'session-1')).toEqual({
       artifactId: 'plan-123',
       awaitingCompaction: true,
       executionDispatched: false,
@@ -82,6 +86,6 @@ describe('pending plan execution persistence', () => {
   })
 
   it('rejects a pending execution without a plan target', async () => {
-    await expect(setPendingPlanExecution(workspaceRoot, 'session-1', {})).rejects.toThrow('requires planPath or artifactId')
+    await expect(setPendingPlanExecution('workspace-1', 'session-1', {})).rejects.toThrow('requires planPath or artifactId')
   })
 })

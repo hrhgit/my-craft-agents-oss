@@ -20,10 +20,13 @@ import { BaseAgent } from '../base-agent.ts';
  */
 export function createMockWorkspace(overrides: Partial<Workspace> = {}): Workspace {
   return {
+    schemaVersion: 2,
     id: 'test-workspace-id',
+    revision: 0,
+    primaryLocationId: 'primary',
+    locations: [{ id: 'primary', name: 'Primary', endpoint: { kind: 'local', rootPath: '/test/workspace' } }],
     name: 'Test Workspace',
     slug: 'workspace',
-    rootPath: '/test/workspace',
     createdAt: Date.now(),
     ...overrides,
   };
@@ -45,6 +48,7 @@ export function createMockSession(overrides: Partial<Session> = {}): Session {
     lastUsedAt: Date.now(),
     permissionMode: 'ask',
     ...overrides,
+    workspaceId: overrides.workspaceId ?? 'test-workspace-id',
   };
 }
 

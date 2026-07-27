@@ -27,6 +27,7 @@
 
 import { join, resolve } from 'node:path'
 import { readFileSync, existsSync, writeFileSync } from 'node:fs'
+import { getPrimaryWorkspaceLocation } from '@mortise/core/types'
 import { version as packageVersion } from '../package.json'
 import { enableDebug } from '@mortise/shared/utils/debug'
 import {
@@ -344,14 +345,18 @@ const instance = await (async () => {
           tokens: automationIngressTokens,
         })
         for (const workspace of getWorkspaces()) {
-          if (!workspace.remoteServer) automationIngressTokens.ensure(workspace.id)
+          if (getPrimaryWorkspaceLocation(workspace).endpoint.kind === 'local') {
+            automationIngressTokens.ensure(workspace.id)
+          }
         }
 
         const handle = messagingHandle
         if (handle) {
           handle.setPublisher(server.push.bind(server))
           await handle.initializeWorkspaces(
-            getWorkspaces().filter(workspace => !workspace.remoteServer).map(workspace => workspace.id),
+            getWorkspaces()
+              .filter(workspace => getPrimaryWorkspaceLocation(workspace).endpoint.kind === 'local')
+              .map(workspace => workspace.id),
           )
         }
 

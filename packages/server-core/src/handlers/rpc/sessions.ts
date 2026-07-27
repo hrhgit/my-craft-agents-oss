@@ -15,7 +15,7 @@ import {
   validateExtensionInteractionResponseV1,
 } from '@mortise/shared/protocol'
 import type { StoredAttachment } from '@mortise/core/types'
-import { storedToMessage } from '@mortise/core/types'
+import { requirePrimaryLocalWorkspaceRoot, storedToMessage } from '@mortise/core/types'
 import { getWorkspaceByNameOrId } from '@mortise/shared/config'
 import {
   findPiSessionProjectionById,
@@ -176,7 +176,7 @@ function resolveWorkspaceRootPath(
     : undefined
   const workspaceId = ctx.workspaceId ?? windowWorkspaceId ?? ''
   const workspace = workspaceId ? getWorkspaceByNameOrId(workspaceId) : undefined
-  return workspace?.rootPath ?? ''
+  return workspace ? requirePrimaryLocalWorkspaceRoot(workspace) : ''
 }
 
 function resolveSessionDirectory(
@@ -308,12 +308,12 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
         : undefined
       const workspaceId = ctx.workspaceId ?? windowWorkspaceId ?? ''
       const workspace = workspaceId ? getWorkspaceByNameOrId(workspaceId) : undefined
-      const workspaceRoot = workspace?.rootPath ?? ''
+      const workspaceRoot = workspace ? requirePrimaryLocalWorkspaceRoot(workspace) : ''
       const projection = workspaceRoot
-        ? await findPiSessionProjectionById(workspaceRoot, sessionId)
+        ? await findPiSessionProjectionById(workspaceId, workspaceRoot, sessionId)
         : null
       const projectedSession = projection
-        ? projectTreeSessionProjectionAsStoredSession(projection, { workspaceRootPath: workspaceRoot })
+        ? projectTreeSessionProjectionAsStoredSession(projection, { workspaceId, workspaceRootPath: workspaceRoot })
         : null
       if (projection && projectedSession) {
         const messages = projectedSession.messages.map(storedToMessage)
@@ -687,7 +687,7 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
 
     const { searchSessions } = await import('@mortise/server-core/services')
     const workspaceSessions = sessionManager.getSessions(wid)
-    const searchRoots = collectSessionSearchRoots(workspace.rootPath, workspaceSessions)
+    const searchRoots = collectSessionSearchRoots(requirePrimaryLocalWorkspaceRoot(workspace), workspaceSessions)
       .filter((root) => existsSync(root))
     if (searchRoots.length === 0) {
       log.debug(`SEARCH_SESSIONS: No session roots found for workspace ${wid}`)

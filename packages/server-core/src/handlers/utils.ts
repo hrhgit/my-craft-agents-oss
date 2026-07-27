@@ -113,7 +113,9 @@ export function getWorkspaceAllowedDirs(workspaceId?: string | null): string[] {
   const workspace = getWorkspaceByNameOrId(workspaceId)
   if (!workspace) return []
 
-  return [workspace.rootPath]
+  return workspace.locations.flatMap(location => (
+    location.endpoint.kind === 'local' ? [location.endpoint.rootPath] : []
+  ))
 }
 
 export interface ValidateFilePathOptions {

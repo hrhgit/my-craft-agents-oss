@@ -15,7 +15,7 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
-import type { AgentEvent } from '@mortise/core/types';
+import { requirePrimaryLocalWorkspaceRoot, type AgentEvent } from '@mortise/core/types';
 import type { FileAttachment } from '../utils/files.ts';
 import { buildTransferredSessionContext } from './conversation-summary.ts';
 import type { ThinkingLevel } from './thinking-levels.ts';
@@ -209,7 +209,7 @@ export abstract class BaseAgent implements AgentBackend {
 
   constructor(config: BackendConfig, defaultModel: string, contextWindow?: number) {
     this.config = config;
-    this.workspaceRoot = config.workspace.rootPath;
+    this.workspaceRoot = requirePrimaryLocalWorkspaceRoot(config.workspace);
     this._sessionId = config.session?.mortiseId || `agent-${Date.now()}`;
     this._model = config.model || defaultModel;
     this._thinkingLevel = normalizeThinkingLevel(config.thinkingLevel) ?? DEFAULT_THINKING_LEVEL;
@@ -220,8 +220,8 @@ export abstract class BaseAgent implements AgentBackend {
       workspaceId: config.workspace.id,
       sessionId: this._sessionId,
       workspaceRootPath: this.workspaceRoot,
-      plansFolderPath: getSessionPlansPath(config.workspace.rootPath, this._sessionId),
-      dataFolderPath: getSessionDataPath(config.workspace.rootPath, this._sessionId),
+      plansFolderPath: getSessionPlansPath(config.workspace.id, this._sessionId),
+      dataFolderPath: getSessionDataPath(config.workspace.id, this._sessionId),
     });
 
     // PromptBuilder: builds context blocks for user messages
@@ -245,7 +245,7 @@ export abstract class BaseAgent implements AgentBackend {
 
     // PrerequisiteManager: enforces reading selected skill instructions.
     this.prerequisiteManager = new PrerequisiteManager({
-      workspaceRootPath: config.workspace.rootPath,
+      workspaceRootPath: this.workspaceRoot,
       onDebug: (msg) => this.debug(msg),
     });
 
@@ -278,7 +278,7 @@ export abstract class BaseAgent implements AgentBackend {
 
     this.configWatcherManager = new ConfigWatcherManager(
       {
-        workspaceRootPath: this.config.workspace.rootPath,
+        workspaceRootPath: this.workspaceRoot,
         isHeadless: this.config.isHeadless,
         onDebug: (msg) => this.debug(msg),
       },
@@ -489,7 +489,7 @@ export abstract class BaseAgent implements AgentBackend {
    * Uses workspace root path for config file locations.
    */
   getMiniSystemPrompt(): string {
-    return getMiniAgentSystemPrompt(this.config.workspace.rootPath);
+    return getMiniAgentSystemPrompt(this.workspaceRoot);
   }
 
   /**
@@ -603,8 +603,8 @@ ${formattedMessages}
    * @returns Session path, or undefined if session/workspace not configured
    */
   protected getSessionStoragePath(): string | undefined {
-    if (!this.config.session?.mortiseId || !this.config.workspace.rootPath) return undefined;
-    return getSessionPath(this.config.workspace.rootPath, this.config.session.mortiseId);
+    if (!this.config.session?.mortiseId) return undefined;
+    return getSessionPath(this.config.workspace.id, this.config.session.mortiseId);
   }
 
   // ============================================================
@@ -937,7 +937,7 @@ ${formattedMessages}
         defaultProvider: settings.defaultProvider ?? null,
         permissionMode: this.permissionManager.getPermissionMode(),
       },
-      templates: (await listSubagentTemplates({ cwd: this.config.workspace.rootPath })).map(({ id, name, description, model }) => ({
+      templates: (await listSubagentTemplates({ cwd: this.workspaceRoot })).map(({ id, name, description, model }) => ({
         id,
         name,
         description,

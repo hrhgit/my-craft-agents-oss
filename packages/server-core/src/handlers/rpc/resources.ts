@@ -5,6 +5,7 @@
  */
 
 import { RPC_CHANNELS } from '@mortise/shared/protocol'
+import { requirePrimaryLocalWorkspaceRoot } from '@mortise/core/types'
 import { MORTISE_PROJECT_SKILLS_DIR } from '@mortise/shared/config/paths'
 import { getWorkspaceOrThrow, resolveWorkspaceId } from '../utils'
 import type { RpcServer } from '@mortise/server-core/transport'
@@ -30,7 +31,8 @@ export function registerResourcesHandlers(server: RpcServer, deps: HandlerDeps):
 
       const { exportResources } = await import('@mortise/shared/resources')
       const automationHost = deps.sessionManager.getAutomationHost(resolvedWorkspaceId) ?? undefined
-      const result = exportResources(workspace.rootPath, options, resolvedWorkspaceId, automationHost)
+      const workspaceRoot = requirePrimaryLocalWorkspaceRoot(workspace)
+      const result = exportResources(workspaceRoot, options, resolvedWorkspaceId, automationHost)
 
       deps.platform.logger?.info(
         `RESOURCES_EXPORT: Exported from ${resolvedWorkspaceId}: ` +
@@ -52,7 +54,8 @@ export function registerResourcesHandlers(server: RpcServer, deps: HandlerDeps):
 
       const { importResources } = await import('@mortise/shared/resources')
       const automationHost = deps.sessionManager.getAutomationHost(resolvedWorkspaceId) ?? undefined
-      const result = await importResources(workspace.rootPath, bundle, mode, resolvedWorkspaceId, automationHost)
+      const workspaceRoot = requirePrimaryLocalWorkspaceRoot(workspace)
+      const result = await importResources(workspaceRoot, bundle, mode, resolvedWorkspaceId, automationHost)
 
       deps.platform.logger?.info(
         `RESOURCES_IMPORT: Imported into ${resolvedWorkspaceId} (mode=${mode}): ` +
@@ -63,7 +66,7 @@ export function registerResourcesHandlers(server: RpcServer, deps: HandlerDeps):
       // Skills remain filesystem resources; Automations V3 publishes through
       // its canonical store/dispatcher rather than ConfigWatcher.
       for (const slug of result.skills.imported) {
-        deps.sessionManager.notifyConfigFileChange(workspace.rootPath, `${MORTISE_PROJECT_SKILLS_DIR}/${slug}/SKILL.md`)
+        deps.sessionManager.notifyConfigFileChange(workspaceRoot, `${MORTISE_PROJECT_SKILLS_DIR}/${slug}/SKILL.md`)
       }
 
       return result

@@ -2,6 +2,7 @@ import { basename, join, resolve } from 'path'
 import { existsSync, readFileSync, readdirSync, statSync } from 'fs'
 import { readdir, readFile } from 'fs/promises'
 import { homedir } from 'os'
+import { requirePrimaryLocalWorkspaceRoot } from '@mortise/core/types'
 import { RPC_CHANNELS, type SkillFile } from '@mortise/shared/protocol'
 import { validateSkillContent } from '@mortise/shared/config'
 import { MORTISE_PROJECT_SKILLS_DIR } from '@mortise/shared/config/paths'
@@ -210,9 +211,10 @@ export function registerSkillsHandlers(server: RpcServer, deps: HandlerDeps): vo
     deps.platform.logger?.info(`SKILLS_GET: Loading skills for workspace: ${wid}`)
     const workspace = getWorkspaceOrNull(wid, deps.platform.logger, 'SKILLS_GET')
     if (!workspace) return []
+    const workspaceRoot = requirePrimaryLocalWorkspaceRoot(workspace)
     const { loadAllSkills } = await import('@mortise/shared/skills')
-    const skills = loadAllSkills(workspace.rootPath, workspace.rootPath)
-    deps.platform.logger?.info(`SKILLS_GET: Loaded ${skills.length} skills from ${workspace.rootPath}`)
+    const skills = loadAllSkills(workspaceRoot, workspaceRoot)
+    deps.platform.logger?.info(`SKILLS_GET: Loaded ${skills.length} skills from ${workspaceRoot}`)
     return skills
   })
 
@@ -222,8 +224,9 @@ export function registerSkillsHandlers(server: RpcServer, deps: HandlerDeps): vo
     if (!wid) return []
     const workspace = getWorkspaceOrNull(wid, deps.platform.logger, 'SKILLS_GET_FILES')
     if (!workspace) return []
+    const workspaceRoot = requirePrimaryLocalWorkspaceRoot(workspace)
 
-    const skillDir = resolveSkillDir(skillSlug, workspace.rootPath, workspace.rootPath)
+    const skillDir = resolveSkillDir(skillSlug, workspaceRoot, workspaceRoot)
     if (!skillDir) {
       deps.platform.logger?.error(`SKILLS_GET_FILES: Skill not found: ${skillSlug}`)
       return []
@@ -268,8 +271,7 @@ export function registerSkillsHandlers(server: RpcServer, deps: HandlerDeps): vo
   server.handle(RPC_CHANNELS.skills.DISCOVER, async (ctx, workspaceId: string): Promise<DiscoveredSkill[]> => {
     const wid = resolveWorkspaceId(ctx.workspaceId, workspaceId)!
     const workspace = getWorkspaceOrThrow(wid)
-    if (workspace.remoteServer) throw new Error('Skill discovery is not available for remote workspaces')
-    const discovered = await discoverSkillsUnderHome(homedir(), workspace.rootPath)
+    const discovered = await discoverSkillsUnderHome(homedir(), requirePrimaryLocalWorkspaceRoot(workspace))
     deps.platform.logger?.info(`SKILLS_DISCOVER: Found ${discovered.length} skills under the user home directory`)
     return discovered
   })
@@ -281,12 +283,12 @@ export function registerSkillsHandlers(server: RpcServer, deps: HandlerDeps): vo
   ): Promise<SkillImportBatchResult> => {
     const wid = resolveWorkspaceId(ctx.workspaceId, workspaceId)!
     const workspace = getWorkspaceOrThrow(wid)
-    if (workspace.remoteServer) throw new Error('Skill import is not available for remote workspaces')
     if (!Array.isArray(sourcePaths)) throw new Error('Skill source paths must be an array')
 
-    const importResult = await importSkillDirectories(workspace.rootPath, sourcePaths)
+    const workspaceRoot = requirePrimaryLocalWorkspaceRoot(workspace)
+    const importResult = await importSkillDirectories(workspaceRoot, sourcePaths)
     for (const imported of importResult.imported) {
-      deps.sessionManager.notifyConfigFileChange(workspace.rootPath, `${MORTISE_PROJECT_SKILLS_DIR}/${imported.slug}/SKILL.md`)
+      deps.sessionManager.notifyConfigFileChange(workspaceRoot, `${MORTISE_PROJECT_SKILLS_DIR}/${imported.slug}/SKILL.md`)
     }
     deps.platform.logger?.info(
       `SKILLS_IMPORT: ${importResult.imported.length} imported, ` +
@@ -299,9 +301,10 @@ export function registerSkillsHandlers(server: RpcServer, deps: HandlerDeps): vo
   server.handle(RPC_CHANNELS.skills.DELETE, async (ctx, workspaceId: string, skillSlug: string) => {
     const wid = resolveWorkspaceId(ctx.workspaceId, workspaceId)!
     const workspace = getWorkspaceOrThrow(wid)
+    const workspaceRoot = requirePrimaryLocalWorkspaceRoot(workspace)
 
     const { deleteSkill } = await import('@mortise/shared/skills')
-    deleteSkill(workspace.rootPath, skillSlug, workspace.rootPath)
+    deleteSkill(workspaceRoot, skillSlug, workspaceRoot)
     deps.platform.logger?.info(`Deleted skill: ${skillSlug}`)
   })
 
@@ -309,9 +312,9 @@ export function registerSkillsHandlers(server: RpcServer, deps: HandlerDeps): vo
   server.handle(RPC_CHANNELS.skills.OPEN_EDITOR, async (ctx, workspaceId: string, skillSlug: string) => {
     const wid = resolveWorkspaceId(ctx.workspaceId, workspaceId)!
     const workspace = getWorkspaceOrThrow(wid)
-    if (workspace.remoteServer) throw new Error('Open in editor is not available for remote workspaces')
+    const workspaceRoot = requirePrimaryLocalWorkspaceRoot(workspace)
 
-    const skillDir = resolveSkillDir(skillSlug, workspace.rootPath, workspace.rootPath)
+    const skillDir = resolveSkillDir(skillSlug, workspaceRoot, workspaceRoot)
     if (!skillDir) throw new Error('Skill not found')
     const skillFile = join(skillDir, 'SKILL.md')
     await deps.platform.openPath?.(skillFile)
@@ -321,9 +324,9 @@ export function registerSkillsHandlers(server: RpcServer, deps: HandlerDeps): vo
   server.handle(RPC_CHANNELS.skills.OPEN_FINDER, async (ctx, workspaceId: string, skillSlug: string) => {
     const wid = resolveWorkspaceId(ctx.workspaceId, workspaceId)!
     const workspace = getWorkspaceOrThrow(wid)
-    if (workspace.remoteServer) throw new Error('Show in Finder is not available for remote workspaces')
+    const workspaceRoot = requirePrimaryLocalWorkspaceRoot(workspace)
 
-    const skillDir = resolveSkillDir(skillSlug, workspace.rootPath, workspace.rootPath)
+    const skillDir = resolveSkillDir(skillSlug, workspaceRoot, workspaceRoot)
     if (!skillDir) throw new Error('Skill not found')
     await deps.platform.showItemInFolder?.(skillDir)
   })

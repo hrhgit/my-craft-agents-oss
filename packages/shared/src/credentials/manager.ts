@@ -261,6 +261,59 @@ export class CredentialManager {
     );
   }
 
+  getSync(id: CredentialId): StoredCredential | null {
+    this.ensureInitializedSync();
+    for (const backend of this.backends) {
+      if (!backend.getSync) continue;
+      const credential = backend.getSync(id);
+      if (credential) return credential;
+    }
+    return null;
+  }
+
+  setSync(id: CredentialId, credential: StoredCredential): void {
+    this.ensureInitializedSync();
+    if (!this.writeBackend?.setSync) {
+      throw new Error('No synchronous writable credential backend available');
+    }
+    this.writeBackend.setSync(id, credential);
+  }
+
+  async getWorkspaceRemoteBearer(workspaceId: string, credentialRef: string): Promise<string | null> {
+    const credential = await this.get({
+      type: 'workspace_remote_bearer',
+      workspaceId,
+      name: credentialRef,
+    });
+    return credential?.value ?? null;
+  }
+
+  async setWorkspaceRemoteBearer(
+    workspaceId: string,
+    credentialRef: string,
+    token: string,
+  ): Promise<void> {
+    await this.set(
+      { type: 'workspace_remote_bearer', workspaceId, name: credentialRef },
+      { value: token },
+    );
+  }
+
+  setWorkspaceRemoteBearerSync(workspaceId: string, credentialRef: string, token: string): void {
+    this.setSync(
+      { type: 'workspace_remote_bearer', workspaceId, name: credentialRef },
+      { value: token },
+    );
+  }
+
+  async deleteWorkspaceRemoteBearer(workspaceId: string, credentialRef: string): Promise<boolean> {
+    return this.delete({
+      type: 'workspace_remote_bearer',
+      workspaceId,
+      name: credentialRef,
+    });
+  }
+
   async getAutomationSecret(workspaceId: string, id: string): Promise<string | null> {
     const credential = await this.get({ type: 'automation_secret', workspaceId, name: id })
     return credential?.value ?? null

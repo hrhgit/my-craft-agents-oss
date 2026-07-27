@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import type { PiProjectionEventV1 } from '@mortise/shared/protocol'
+import type { Workspace } from '@mortise/core/types'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { dirname, join } from 'path'
@@ -13,6 +14,21 @@ import {
 import { PiProjectionBuilder } from '@mortise/shared/agent/backend'
 import type { ConversationProjector } from '../projection'
 import { SessionManager, createManagedSession, selectPiProjectionReplaceStrategy } from './SessionManager.ts'
+
+const WORKSPACE_ID = 'workspace-1'
+
+function createTestWorkspace(rootPath: string): Workspace {
+  return {
+    schemaVersion: 2,
+    id: WORKSPACE_ID,
+    revision: 0,
+    name: 'Projection Workspace',
+    slug: 'projection-workspace',
+    primaryLocationId: 'primary',
+    locations: [{ id: 'primary', name: 'Primary', endpoint: { kind: 'local', rootPath } }],
+    createdAt: Date.now(),
+  }
+}
 
 function projectionEvent(
   seq: number,
@@ -54,12 +70,7 @@ describe('Pi projection persistence', () => {
   })
 
   it('reloads pi-projection-v1.json after the Host restarts', async () => {
-    const workspace = {
-      id: 'workspace-1',
-      name: 'Projection Workspace',
-      rootPath: workspaceRoot,
-      createdAt: Date.now(),
-    } as never
+    const workspace = createTestWorkspace(workspaceRoot)
     const session = createManagedSession({ mortiseId: 'session-1' }, workspace)
     const firstHost = new SessionManager()
     const firstHostInternals = firstHost as unknown as {
@@ -72,7 +83,7 @@ describe('Pi projection persistence', () => {
     expect(firstHost.applyPiProjectionEvent(projectionEvent(2)).status).toBe('applied')
     await firstHostInternals.piProjectionWrites.get(session.id)
 
-    const sidecarPath = join(getSessionPath(workspaceRoot, session.id), 'pi-projection-v1.json')
+    const sidecarPath = join(getSessionPath(WORKSPACE_ID, session.id), 'pi-projection-v1.json')
     const persisted = JSON.parse(readFileSync(sidecarPath, 'utf8'))
     expect(persisted.lastSeq).toBe(2)
     expect(persisted.entities.map((entity: { entityId: string }) => entity.entityId))
@@ -94,7 +105,7 @@ describe('Pi projection persistence', () => {
   })
 
   it('coalesces streaming updates and persists the latest contiguous snapshot', async () => {
-    const workspace = { id: 'workspace-1', name: 'Projection Workspace', rootPath: workspaceRoot, createdAt: Date.now() } as never
+    const workspace = createTestWorkspace(workspaceRoot)
     const session = createManagedSession({ mortiseId: 'session-1' }, workspace)
     const host = new SessionManager()
     const internals = host as unknown as {
@@ -104,14 +115,14 @@ describe('Pi projection persistence', () => {
     internals.sessions.set(session.id, session)
     for (let seq = 1; seq <= 25; seq++) host.applyPiProjectionEvent(projectionEvent(seq))
     await internals.piProjectionWrites.get(session.id)
-    const sidecarPath = join(getSessionPath(workspaceRoot, session.id), 'pi-projection-v1.json')
+    const sidecarPath = join(getSessionPath(WORKSPACE_ID, session.id), 'pi-projection-v1.json')
     const persisted = JSON.parse(readFileSync(sidecarPath, 'utf8'))
     expect(persisted.lastSeq).toBe(25)
     expect(persisted.entities).toHaveLength(25)
   })
 
   it('atomically replaces an existing projection without leaving write artifacts', async () => {
-    const workspace = { id: 'workspace-1', name: 'Projection Workspace', rootPath: workspaceRoot, createdAt: Date.now() } as never
+    const workspace = createTestWorkspace(workspaceRoot)
     const session = createManagedSession({ mortiseId: 'session-1' }, workspace)
     const host = new SessionManager()
     const internals = host as unknown as {
@@ -125,14 +136,14 @@ describe('Pi projection persistence', () => {
     expect(host.applyPiProjectionEvent(projectionEvent(2)).status).toBe('applied')
     await internals.flushPiProjectionWrites(session)
 
-    const sessionPath = getSessionPath(workspaceRoot, session.id)
+    const sessionPath = getSessionPath(WORKSPACE_ID, session.id)
     const persisted = JSON.parse(readFileSync(join(sessionPath, 'pi-projection-v1.json'), 'utf8'))
     expect(persisted.lastSeq).toBe(2)
     expect(readdirSync(sessionPath).filter(name => name.endsWith('.tmp') || name.endsWith('.replaced'))).toEqual([])
   })
 
   it('propagates projection write failures and retries the retained snapshot', async () => {
-    const workspace = { id: 'workspace-1', name: 'Projection Workspace', rootPath: workspaceRoot, createdAt: Date.now() } as never
+    const workspace = createTestWorkspace(workspaceRoot)
     const session = createManagedSession({ mortiseId: 'session-1' }, workspace)
     const host = new SessionManager()
     const internals = host as unknown as {
@@ -157,15 +168,13 @@ describe('Pi projection persistence', () => {
     internals.enqueuePiProjectionPersist(session, snapshot)
     await internals.flushPiProjectionWrites(session)
 
-    const persisted = JSON.parse(readFileSync(join(getSessionPath(workspaceRoot, session.id), 'pi-projection-v1.json'), 'utf8'))
+    const persisted = JSON.parse(readFileSync(join(getSessionPath(WORKSPACE_ID, session.id), 'pi-projection-v1.json'), 'utf8'))
     expect(persisted.lastSeq).toBe(1)
   })
 
   it('rebuilds a missing sidecar from the public Pi session projection', async () => {
-    const workspace = {
-      id: 'workspace-1', name: 'Projection Workspace', rootPath: workspaceRoot, createdAt: Date.now(),
-    } as never
-    const header = await createSession(workspaceRoot, { name: 'Pi history' })
+    const workspace = createTestWorkspace(workspaceRoot)
+    const header = await createSession(WORKSPACE_ID, workspaceRoot, { name: 'Pi history' })
     await saveSession({
       ...header,
       messages: [
@@ -182,7 +191,7 @@ describe('Pi projection persistence', () => {
       piProjectionWrites: Map<string, Promise<void>>
     }
     internals.sessions.set(managed.id, managed)
-    const sidecarPath = join(getSessionPath(workspaceRoot, managed.id), 'pi-projection-v1.json')
+    const sidecarPath = join(getSessionPath(WORKSPACE_ID, managed.id), 'pi-projection-v1.json')
     expect(existsSync(sidecarPath)).toBe(false)
 
     const rebuilt = await host.getPiProjectionSnapshot(managed.id)
@@ -196,11 +205,9 @@ describe('Pi projection persistence', () => {
   })
 
   it('rebuilds a legacy sidecar whose user messages have no wall-clock time', async () => {
-    const workspace = {
-      id: 'workspace-1', name: 'Projection Workspace', rootPath: workspaceRoot, createdAt: Date.now(),
-    } as never
+    const workspace = createTestWorkspace(workspaceRoot)
     const timestamp = 1_783_861_200_000
-    const header = await createSession(workspaceRoot, { name: 'Pi history' })
+    const header = await createSession(WORKSPACE_ID, workspaceRoot, { name: 'Pi history' })
     await saveSession({
       ...header,
       messages: [
@@ -217,7 +224,7 @@ describe('Pi projection persistence', () => {
       piProjectionWrites: Map<string, Promise<void>>
     }
     internals.sessions.set(managed.id, managed)
-    const sidecarPath = join(getSessionPath(workspaceRoot, managed.id), 'pi-projection-v1.json')
+    const sidecarPath = join(getSessionPath(WORKSPACE_ID, managed.id), 'pi-projection-v1.json')
     mkdirSync(dirname(sidecarPath), { recursive: true })
     writeFileSync(sidecarPath, JSON.stringify({
       schemaVersion: 1,
@@ -248,10 +255,8 @@ describe('Pi projection persistence', () => {
   })
 
   it('rebuilds an invalid sidecar from the public Pi session projection', async () => {
-    const workspace = {
-      id: 'workspace-1', name: 'Projection Workspace', rootPath: workspaceRoot, createdAt: Date.now(),
-    } as never
-    const header = await createSession(workspaceRoot, { name: 'Pi history' })
+    const workspace = createTestWorkspace(workspaceRoot)
+    const header = await createSession(WORKSPACE_ID, workspaceRoot, { name: 'Pi history' })
     await saveSession({
       ...header,
       messages: [
@@ -268,7 +273,7 @@ describe('Pi projection persistence', () => {
       piProjectionWrites: Map<string, Promise<void>>
     }
     internals.sessions.set(managed.id, managed)
-    const sidecarPath = join(getSessionPath(workspaceRoot, managed.id), 'pi-projection-v1.json')
+    const sidecarPath = join(getSessionPath(WORKSPACE_ID, managed.id), 'pi-projection-v1.json')
     mkdirSync(dirname(sidecarPath), { recursive: true })
     writeFileSync(sidecarPath, JSON.stringify({
       schemaVersion: 1,
@@ -288,9 +293,7 @@ describe('Pi projection persistence', () => {
   })
 
   it('continues sequence across replacement runtimes and rejects retired runtimes', async () => {
-    const workspace = {
-      id: 'workspace-1', name: 'Projection Workspace', rootPath: workspaceRoot, createdAt: Date.now(),
-    } as never
+    const workspace = createTestWorkspace(workspaceRoot)
     const managed = createManagedSession({ mortiseId: 'session-1' }, workspace, { messagesLoaded: true })
     const host = new SessionManager()
     const internals = host as unknown as {
@@ -314,9 +317,7 @@ describe('Pi projection persistence', () => {
   })
 
   it('derives cached session metadata from projected message identity and finality', async () => {
-    const workspace = {
-      id: 'workspace-1', name: 'Projection Workspace', rootPath: workspaceRoot, createdAt: Date.now(),
-    } as never
+    const workspace = createTestWorkspace(workspaceRoot)
     const managed = createManagedSession({ mortiseId: 'session-1' }, workspace, { messagesLoaded: true })
     const host = new SessionManager()
     const internals = host as unknown as {
@@ -356,10 +357,8 @@ describe('Pi projection persistence', () => {
   })
 
   it('persists projection-derived metadata through the session queue and restart', async () => {
-    const workspace = {
-      id: 'workspace-1', name: 'Projection Workspace', rootPath: workspaceRoot, createdAt: Date.now(),
-    } as never
-    const header = await createSession(workspaceRoot, { name: 'Projected metadata' })
+    const workspace = createTestWorkspace(workspaceRoot)
+    const header = await createSession(WORKSPACE_ID, workspaceRoot, { name: 'Projected metadata' })
     await saveSession({
       ...header,
       messages: [
@@ -407,7 +406,7 @@ describe('Pi projection persistence', () => {
     await host.flushSession(managed.id)
     await internals.piProjectionWrites.get(managed.id)
 
-    const stored = loadSession(workspaceRoot, managed.id)
+    const stored = loadSession(WORKSPACE_ID, managed.id)
     expect(stored).toMatchObject({
       messageCount: 3,
       preview: 'Persisted projection prompt',
@@ -432,9 +431,7 @@ describe('Pi projection persistence', () => {
   })
 
   it('hands a fallback Host runtime error off to the next real Pi runtime without resetting history', async () => {
-    const workspace = {
-      id: 'workspace-1', name: 'Projection Workspace', rootPath: workspaceRoot, createdAt: Date.now(),
-    } as never
+    const workspace = createTestWorkspace(workspaceRoot)
     const managed = createManagedSession({ mortiseId: 'session-1' }, workspace, { messagesLoaded: true })
     const host = new SessionManager()
     const internals = host as unknown as {
@@ -472,9 +469,7 @@ describe('Pi projection persistence', () => {
   })
 
   it('recovers a queued projection message exactly once after Host restart', async () => {
-    const workspace = {
-      id: 'workspace-1', name: 'Projection Workspace', rootPath: workspaceRoot, createdAt: Date.now(),
-    } as never
+    const workspace = createTestWorkspace(workspaceRoot)
     const firstSession = createManagedSession({ mortiseId: 'session-1' }, workspace, { messagesLoaded: true })
     const firstHost = new SessionManager()
     const firstInternals = firstHost as unknown as {

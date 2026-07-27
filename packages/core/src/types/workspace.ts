@@ -82,6 +82,39 @@ export interface Workspace extends WorkspaceDisplayMetadata {
   createdAt: number;
 }
 
+export function getWorkspaceLocation(
+  workspace: Workspace,
+  locationId: string,
+): WorkspaceLocation | undefined {
+  return workspace.locations.find(location => location.id === locationId);
+}
+
+export function getPrimaryWorkspaceLocation(workspace: Workspace): WorkspaceLocation {
+  const location = getWorkspaceLocation(workspace, workspace.primaryLocationId);
+  if (!location) {
+    throw new Error(`Workspace ${workspace.id} has no primary location ${workspace.primaryLocationId}`);
+  }
+  return location;
+}
+
+export function requireLocalWorkspaceLocationRoot(
+  workspace: Workspace,
+  locationId: string,
+): string {
+  const location = getWorkspaceLocation(workspace, locationId);
+  if (!location) {
+    throw new Error(`Workspace ${workspace.id} has no location ${locationId}`);
+  }
+  if (location.endpoint.kind !== 'local') {
+    throw new Error(`Workspace location ${locationId} is remote and has no local root`);
+  }
+  return location.endpoint.rootPath;
+}
+
+export function requirePrimaryLocalWorkspaceRoot(workspace: Workspace): string {
+  return requireLocalWorkspaceLocationRoot(workspace, workspace.primaryLocationId);
+}
+
 /**
  * Source-compatibility name for callers while they migrate to location
  * endpoints. The old token-bearing shape is intentionally not preserved.
