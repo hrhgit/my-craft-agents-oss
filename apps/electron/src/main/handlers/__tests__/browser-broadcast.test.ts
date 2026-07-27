@@ -12,6 +12,7 @@ import type { HandlerDeps } from '../handler-deps'
 import { RPC_CHANNELS, type BrowserInstanceInfo } from '@mortise/shared/protocol'
 
 const remoteWorkspaceAliases = new Map<string, string>()
+const attachedRemoteWorkspaceAliases = new Map<string, string>()
 
 mock.module('electron', () => ({
   ipcMain: { handle: () => {}, on: () => {} },
@@ -19,7 +20,23 @@ mock.module('electron', () => ({
 mock.module('@mortise/shared/config', () => ({
   getWorkspaceByNameOrId: (workspaceId: string) => {
     const remoteWorkspaceId = remoteWorkspaceAliases.get(workspaceId)
-    return remoteWorkspaceId ? { id: workspaceId, remoteServer: { remoteWorkspaceId } } : null
+    const attachedRemoteWorkspaceId = attachedRemoteWorkspaceAliases.get(workspaceId)
+    return remoteWorkspaceId ? {
+      id: workspaceId,
+      primaryLocationId: 'primary',
+      locations: [{
+        id: 'primary',
+        rootName: 'Remote',
+        endpoint: { kind: 'remote', remoteWorkspaceId },
+      }],
+    } : attachedRemoteWorkspaceId ? {
+      id: workspaceId,
+      primaryLocationId: 'primary',
+      locations: [
+        { id: 'primary', rootName: 'Local', endpoint: { kind: 'local' } },
+        { id: 'attached', rootName: 'Remote', endpoint: { kind: 'remote', remoteWorkspaceId: attachedRemoteWorkspaceId } },
+      ],
+    } : null
   },
 }))
 
@@ -123,6 +140,7 @@ function makeDeps(opts: {
 
 beforeEach(() => {
   remoteWorkspaceAliases.clear()
+  attachedRemoteWorkspaceAliases.clear()
 })
 
 describe('browser handler — workspace filtering', () => {
@@ -230,6 +248,18 @@ describe('browser handler — workspace filtering', () => {
       registerBrowserHandlers(recorder.server, makeDeps({ instances }))
 
       expect(callListHandler('local-ws').map((i) => i.id)).toEqual(['local-tab', 'remote-tab'])
+    })
+
+    it('does not treat an attached remote location as the Workspace runtime alias', async () => {
+      attachedRemoteWorkspaceAliases.set('local-ws', 'attached-remote-ws')
+      const instances = [
+        makeInstance('local-tab', { workspaceId: 'local-ws' }),
+        makeInstance('attached-tab', { workspaceId: 'attached-remote-ws' }),
+      ]
+      const { registerBrowserHandlers } = await import('../browser')
+      registerBrowserHandlers(recorder.server, makeDeps({ instances }))
+
+      expect(callListHandler('local-ws').map((instance) => instance.id)).toEqual(['local-tab'])
     })
   })
 })

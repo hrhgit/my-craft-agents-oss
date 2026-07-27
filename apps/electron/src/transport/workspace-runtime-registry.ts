@@ -72,7 +72,7 @@ export class WorkspaceRuntimeRegistry {
     const rebound = new Map<RuntimeListener, () => void>()
     try {
       for (const listener of existing.listeners) {
-        rebound.set(listener, registration.client.on(listener.channel, listener.callback))
+        rebound.set(listener, bindRuntimeListener(registration, listener))
       }
     } catch (error) {
       for (const unsubscribe of rebound.values()) {
@@ -138,7 +138,8 @@ export class WorkspaceRuntimeRegistry {
     }
     const runtime = this.requireRuntime(route)
     const translatedArgs = translateWorkspaceArgs(args, route.workspaceId, runtime.targetWorkspaceId)
-    return runtime.client.invoke(channel, ...translatedArgs)
+    const result = await runtime.client.invoke(channel, ...translatedArgs)
+    return translateRemoteWorkspaceIdentity(result, runtime.targetWorkspaceId, route.workspaceId)
   }
 
   on(route: ResolvedWorkspaceRoute, channel: string, callback: (...args: any[]) => void): () => void {
@@ -150,9 +151,10 @@ export class WorkspaceRuntimeRegistry {
       key: workspaceRouteKey(route),
       channel,
       callback,
-      unsubscribe: runtime.client.on(channel, callback),
+      unsubscribe: () => {},
       active: true,
     }
+    listener.unsubscribe = bindRuntimeListener(runtime, listener)
     runtime.listeners.add(listener)
     return () => {
       if (!listener.active) return
@@ -226,4 +228,44 @@ function translateWorkspaceArgs(args: unknown[], localId: string, targetId?: str
     }
     return arg
   })
+}
+
+function bindRuntimeListener(
+  runtime: Pick<WorkspaceRuntimeRegistration, 'route' | 'client' | 'targetWorkspaceId'>,
+  listener: Pick<RuntimeListener, 'channel' | 'callback'>,
+): () => void {
+  return runtime.client.on(listener.channel, (...args: any[]) => {
+    listener.callback(...args.map(arg => translateRemoteWorkspaceIdentity(
+      arg,
+      runtime.targetWorkspaceId,
+      runtime.route.workspaceId,
+    )))
+  })
+}
+
+/** Restore logical Workspace identity in remote DTOs without rewriting opaque IDs. */
+export function translateRemoteWorkspaceIdentity(
+  value: unknown,
+  targetWorkspaceId: string | undefined,
+  logicalWorkspaceId: string,
+): unknown {
+  if (!targetWorkspaceId || targetWorkspaceId === logicalWorkspaceId) return value
+  if (Array.isArray(value)) {
+    return value.map(item => translateRemoteWorkspaceIdentity(item, targetWorkspaceId, logicalWorkspaceId))
+  }
+  if (!isPlainObject(value)) return value
+
+  const translated: Record<string, unknown> = {}
+  for (const [key, item] of Object.entries(value)) {
+    translated[key] = key === 'workspaceId' && item === targetWorkspaceId
+      ? logicalWorkspaceId
+      : translateRemoteWorkspaceIdentity(item, targetWorkspaceId, logicalWorkspaceId)
+  }
+  return translated
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (!value || typeof value !== 'object') return false
+  const prototype = Object.getPrototypeOf(value)
+  return prototype === Object.prototype || prototype === null
 }

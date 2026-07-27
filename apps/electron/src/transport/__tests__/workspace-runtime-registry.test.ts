@@ -1,7 +1,7 @@
 import { describe, expect, it, mock } from 'bun:test'
 import { WorkspaceRuntimeRegistry } from '../workspace-runtime-registry'
 
-function client(label: string) {
+function client(label: unknown) {
   const calls: Array<{ channel: string; args: unknown[] }> = []
   const listeners = new Map<string, Set<(...args: any[]) => void>>()
   const destroy = mock(() => {})
@@ -56,6 +56,36 @@ describe('WorkspaceRuntimeRegistry', () => {
       { workspaceId: 'local-alias', id: 'task' },
     )
     expect(remote.calls[0].args).toEqual(['remote-id', { workspaceId: 'remote-id', id: 'task' }])
+  })
+
+  it('recursively restores logical Workspace identity in results and events', async () => {
+    const registry = new WorkspaceRuntimeRegistry()
+    const remote = client({
+      workspaceId: 'remote-id',
+      remoteWorkspaceId: 'remote-id',
+      nested: [{ workspaceId: 'remote-id' }, { workspaceId: 'other-id' }],
+      opaque: 'remote-id',
+    })
+    const route = { serverId: 'remote.example', workspaceId: 'local-alias', locationId: 'primary' }
+    registry.register({ route, targetWorkspaceId: 'remote-id', client: remote as any })
+
+    expect(await registry.invoke(route, 'sessions:get')).toEqual({
+      workspaceId: 'local-alias',
+      remoteWorkspaceId: 'remote-id',
+      nested: [{ workspaceId: 'local-alias' }, { workspaceId: 'other-id' }],
+      opaque: 'remote-id',
+    })
+
+    const callback = mock(() => {})
+    registry.on(route, 'sessions:event', callback)
+    remote.emit('sessions:event', {
+      workspaceId: 'remote-id',
+      detail: { workspaceId: 'remote-id', remoteWorkspaceId: 'remote-id' },
+    })
+    expect(callback).toHaveBeenCalledWith({
+      workspaceId: 'local-alias',
+      detail: { workspaceId: 'local-alias', remoteWorkspaceId: 'remote-id' },
+    })
   })
 
   it('rejects unregistered routes and local-only channels', async () => {
@@ -119,6 +149,24 @@ describe('WorkspaceRuntimeRegistry', () => {
     releaseNew()
     expect(registry.has(route)).toBe(false)
     expect(newClient.destroy).toHaveBeenCalledTimes(1)
+  })
+
+  it('uses the replacement runtime identity when rebinding listeners', () => {
+    const registry = new WorkspaceRuntimeRegistry()
+    const route = { serverId: 'remote.example', workspaceId: 'logical-id', locationId: 'remote' }
+    const oldClient = client('old')
+    const newClient = client('new')
+    registry.register({ route, targetWorkspaceId: 'remote-old', client: oldClient as any, generation: 'old' })
+    const callback = mock(() => {})
+    registry.on(route, 'sessions:event', callback)
+
+    registry.replace({ route, targetWorkspaceId: 'remote-new', client: newClient as any, generation: 'new' })
+    newClient.emit('sessions:event', { workspaceId: 'remote-new', remoteWorkspaceId: 'remote-new' })
+
+    expect(callback).toHaveBeenCalledWith({
+      workspaceId: 'logical-id',
+      remoteWorkspaceId: 'remote-new',
+    })
   })
 
 })

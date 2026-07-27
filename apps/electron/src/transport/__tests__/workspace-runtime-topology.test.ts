@@ -12,14 +12,25 @@ function workspace(revision: number, primaryLocationId = 'local'): WorkspaceInfo
     id: 'workspace-a',
     revision,
     name: 'Workspace',
+    nameSource: 'custom',
     slug: 'workspace',
     primaryLocationId,
     locations: [
-      { id: 'local', name: 'Local', endpoint: { kind: 'local' } },
+      {
+        id: 'local',
+        name: 'Local',
+        rootName: 'workspace',
+        endpoint: { kind: 'local' },
+        availability: { status: 'available', observedAt: 1 },
+        permissions: { read: true, write: true, search: true, runCommands: true },
+      },
       {
         id: 'remote',
         name: 'Remote',
+        rootName: 'remote-workspace',
         endpoint: { kind: 'remote', url: 'wss://remote.example', remoteWorkspaceId: 'remote-a' },
+        availability: { status: 'available', observedAt: 1 },
+        permissions: { read: true, write: true, search: true, runCommands: true },
       },
     ],
   }

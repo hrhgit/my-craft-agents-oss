@@ -24,7 +24,6 @@ type ApiToChannelMapKeys = Exclude<
   | 'removeWorkspace' // direct IPC to main process — modifies local config
   | 'setWorkspaceRemoteCredential' // direct private IPC to the host credential authority
   | 'deleteWorkspaceRemoteCredential' // direct private IPC to the host credential authority
-  | 'invokeOnServer' // direct IPC to main process — cross-server RPC
   | 'invokeWorkspaceApi' // preload-owned trusted workspace method router
   | 'onWorkspaceApiEvent' // preload-owned trusted workspace listener router
   | 'changeLanguage' // direct IPC to main process — syncs i18n language

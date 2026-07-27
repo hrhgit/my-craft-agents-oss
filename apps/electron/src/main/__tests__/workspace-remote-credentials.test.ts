@@ -25,13 +25,15 @@ function workspace(): Workspace {
     id: 'workspace-a',
     revision: 1,
     name: 'Workspace',
+    nameSource: 'custom',
     slug: 'workspace',
     primaryLocationId: 'local',
     locations: [
-      { id: 'local', name: 'Local', endpoint: { kind: 'local', rootPath: 'C:\\workspace' } },
+      { id: 'local', name: 'Local', rootName: 'workspace', endpoint: { kind: 'local', rootPath: 'C:\\workspace' } },
       {
         id: 'remote',
         name: 'Remote',
+        rootName: 'remote-workspace',
         endpoint: {
           kind: 'remote',
           url: 'wss://remote.example',

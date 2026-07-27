@@ -550,13 +550,6 @@ client.onConnectionStateChanged((state) => {
   ipcRenderer.invoke(PRELOAD_LOCAL_CHANNELS.WORKSPACE_SET_REMOTE_CREDENTIAL, input)
 ;(api as ElectronAPI).deleteWorkspaceRemoteCredential = (input) =>
   ipcRenderer.invoke(PRELOAD_LOCAL_CHANNELS.WORKSPACE_DELETE_REMOTE_CREDENTIAL, input)
-;(api as ElectronAPI).invokeOnServer = (
-  url: string,
-  token: string,
-  channel: string,
-  connection: { allowInsecureTls?: boolean },
-  ...args: any[]
-) => ipcRenderer.invoke(PRELOAD_LOCAL_CHANNELS.SERVER_INVOKE_ON_SERVER, url, token, channel, connection, ...args)
 ;(api as ElectronAPI).invokeWorkspaceApi = (route: WorkspaceRoute, method: string, ...args: any[]) =>
   getWorkspaceMethod(route, method, 'invoke')(...args)
 ;(api as ElectronAPI).onWorkspaceApiEvent = (route: WorkspaceRoute, method: string, callback: (...args: any[]) => void) =>

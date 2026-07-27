@@ -147,8 +147,9 @@ describe('RoutedClient', () => {
     routed.onForWorkspace(firstRoute, REMOTE_CHANNEL, callback)
     routed.activateWorkspaceRuntime(secondRoute)
 
-    expect(first.on).toHaveBeenCalledWith(REMOTE_CHANNEL, callback)
-    expect(second.on).not.toHaveBeenCalledWith(REMOTE_CHANNEL, callback)
+    expect(first.on).toHaveBeenCalledTimes(1)
+    expect((first.on as ReturnType<typeof mock>).mock.calls[0]?.[0]).toBe(REMOTE_CHANNEL)
+    expect(second.on).not.toHaveBeenCalled()
   })
 
   it('delegates connection state and reconnect to the active runtime', () => {

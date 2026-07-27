@@ -28,8 +28,6 @@ export const PRELOAD_LOCAL_CHANNELS = {
   WORKSPACE_SET_REMOTE_CREDENTIAL: '__workspace:set-remote-credential',
   /** invoke -> delete one remote location secret through the host credential authority. */
   WORKSPACE_DELETE_REMOTE_CREDENTIAL: '__workspace:delete-remote-credential',
-  /** invoke → cross-server RPC: invoke a channel on an arbitrary remote server. */
-  SERVER_INVOKE_ON_SERVER: 'server:invokeOnServer',
   /** invoke → sync a language change to main (persist + rebuild native menu). */
   I18N_CHANGE_LANGUAGE: 'i18n:changeLanguage',
   /** send -> publish a validated development-only UI state batch. */

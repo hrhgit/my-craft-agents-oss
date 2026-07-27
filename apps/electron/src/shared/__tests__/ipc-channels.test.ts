@@ -309,8 +309,11 @@ const EXPECTED_CHANNELS: string[] = [
   'workspaces:checkSlug',
   'workspaces:create',
   'workspaces:get',
-  'workspaces:remoteUpdated',
-  'workspaces:updateRemote',
+  'workspaces:getTopology',
+  'workspaces:remotePrimaryCommand',
+  'workspaces:topologyChanged',
+  'workspaces:topologyCommand',
+  'workspaces:transfer',
 ]
 
 const EXPECTED_COUNT = EXPECTED_CHANNELS.length

@@ -405,7 +405,19 @@ async function createInitialWindows(): Promise<void> {
       saveConfig({ workspaces: [], activeWorkspaceId: null, activeSessionId: null })
     }
     const defaultPath = join(getDefaultWorkspacesDir(), 'my-workspace')
-    addWorkspace({ rootPath: defaultPath, name: 'My Workspace' })
+    addWorkspace({
+      schemaVersion: 2,
+      revision: 0,
+      name: 'My Workspace',
+      nameSource: 'custom',
+      primaryLocationId: 'primary',
+      locations: [{
+        id: 'primary',
+        name: 'My Workspace',
+        rootName: 'my-workspace',
+        endpoint: { kind: 'local', rootPath: defaultPath },
+      }],
+    })
     workspaces = getWorkspaces() // Refresh after creation
     mainLog.info('Created default workspace on first run')
   }
@@ -1157,26 +1169,6 @@ app.whenReady().then(async () => {
           return resolveWorkspaceLocationRuntime(getCredentialManager(), workspace, locationId)
         },
       )
-
-      // Cross-server RPC — invoke a channel on an arbitrary remote server
-      ipcMain.handle(PRELOAD_LOCAL_CHANNELS.SERVER_INVOKE_ON_SERVER, async (
-        _event,
-        url: string,
-        token: string,
-        channel: string,
-        connection: { allowInsecureTls?: boolean },
-        ...args: unknown[]
-      ) => {
-        const { connectToRemote } = await import('./handlers/workspace')
-        const { client, error } = await connectToRemote(url, token, connection)
-        if (!client) throw new Error(error ?? 'Connection failed')
-        try {
-          return await client.invoke(channel, ...args)
-        } finally {
-          client.destroy()
-        }
-      })
-
 
       // App relaunch (for server config changes — NOT an update install)
       ipcMain.handle(PRELOAD_LOCAL_CHANNELS.APP_RELAUNCH, () => {

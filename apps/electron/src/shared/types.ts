@@ -6,9 +6,13 @@ import type {
   AutomationChangedNotificationV1,
   BrowserHostDockNavigationCommand,
   WorkspaceCoordinationStatusV1,
+  WorkspaceRemotePrimaryCommandV1,
+  WorkspaceRemotePrimaryResultV1,
   WorkspaceTopologyChangedV1,
   WorkspaceTopologyCommandV1,
   WorkspaceTopologyResultV1,
+  WorkspaceTransferRequestV1,
+  WorkspaceTransferResultV1,
 } from '@mortise/shared/protocol'
 
 // =============================================================================
@@ -240,13 +244,6 @@ export interface ElectronAPI {
   // App lifecycle
   relaunchApp(): Promise<void>
   removeWorkspace(workspaceId: string): Promise<boolean>
-  invokeOnServer(
-    url: string,
-    token: string,
-    channel: string,
-    connection: { allowInsecureTls?: boolean },
-    ...args: any[]
-  ): Promise<any>
   /** Invoke a known ElectronAPI method against a trusted workspace runtime. */
   invokeWorkspaceApi(route: import('./app-layout').WorkspaceRoute, method: string, ...args: any[]): Promise<any>
   /** Subscribe to a known ElectronAPI listener on one trusted workspace runtime. */
@@ -271,6 +268,8 @@ export interface ElectronAPI {
   getWorkspaces(): Promise<WorkspaceInfo[]>
   getWorkspaceTopology(workspaceId?: string): Promise<WorkspaceInfo>
   workspaceTopologyCommand(command: WorkspaceTopologyCommandV1): Promise<WorkspaceTopologyResultV1>
+  workspaceRemotePrimaryCommand(command: WorkspaceRemotePrimaryCommandV1): Promise<WorkspaceRemotePrimaryResultV1>
+  workspaceTransfer(request: WorkspaceTransferRequestV1): Promise<WorkspaceTransferResultV1>
   onWorkspaceTopologyChanged(callback: (change: WorkspaceTopologyChangedV1) => void): () => void
   setWorkspaceRemoteCredential(input: { workspaceId: string; credentialRef: string; token: string }): Promise<void>
   deleteWorkspaceRemoteCredential(input: { workspaceId: string; credentialRef: string }): Promise<void>
@@ -286,9 +285,10 @@ export interface ElectronAPI {
     ok: boolean
     error?: string
     needsWorkspace?: boolean
-    remoteWorkspaces?: Array<{ id: string; name: string }>
+    remoteWorkspaces?: Array<{ id: string; name: string; rootName: string }>
     remoteWorkspaceId?: string   // auto-set when exactly one workspace
     remoteWorkspaceName?: string // auto-set when exactly one workspace
+    remoteWorkspaceRootName?: string
     serverVersion?: string       // server app version from handshake
   }>
 
