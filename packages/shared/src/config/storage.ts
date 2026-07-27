@@ -1,9 +1,8 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync, rmSync, statSync, readdirSync } from 'fs';
 import { createHash, randomUUID } from 'node:crypto';
 import { join, dirname, basename } from 'path';
-import { clearAllMortiseCredentials, getCredentialManager } from '../credentials/index.ts';
+import { clearAllMortiseCredentials } from '../credentials/index.ts';
 import {
-  adoptLegacyWorkspaceSessionBucket,
   getOrCreateLatestSession,
   type SessionHeader,
 } from '../sessions/index.ts';
@@ -15,10 +14,11 @@ import {
   isValidWorkspace,
   closeWorkspaceStorage,
 } from '../workspaces/storage.ts';
+import { getDefaultWorkspaceTopologyStore } from '../workspaces/topology-storage.ts';
 import { findIconFile } from '../utils/icon.ts';
 import { extractWorkspaceSlugFromPath } from '../utils/workspace-slug.ts';
 import { initializeDocs } from '../docs/index.ts';
-import { expandPath, toPortablePath, getBundledAssetsDir } from '../utils/paths.ts';
+import { getBundledAssetsDir } from '../utils/paths.ts';
 import { debug } from '../utils/debug.ts';
 import { readJsonFileSync } from '../utils/files.ts';
 import { CONFIG_DIR } from './paths.ts';
@@ -57,7 +57,6 @@ export { CONFIG_DIR } from './paths.ts';
 export type {
   WorkspaceInfo,
   Workspace,
-  RemoteServerConfig,
   McpAuthType,
   AuthType,
   OAuthCredentials,
@@ -69,9 +68,7 @@ import {
   getPrimaryWorkspaceLocation,
   requirePrimaryLocalWorkspaceRoot,
   type Workspace,
-  type WorkspaceLocation,
 } from '@mortise/core/types';
-import { parseWorkspaceV2 } from '../protocol/workspace-topology.ts';
 
 import {
   readPiGlobalProviders,
@@ -98,7 +95,6 @@ export interface StoredConfig {
   midStreamBehavior?: MidStreamBehavior;
   defaultThinkingLevel?: ThinkingLevel;  // App-level default thinking level for new sessions
 
-  workspaces: Workspace[];
   activeWorkspaceId: string | null;
   activeSessionId: string | null;  // Currently active session (primary scope)
   // Notifications
@@ -349,101 +345,6 @@ export function ensureConfigDefaults(): void {
 
 let configDirInitialized = false;
 
-interface LegacyWorkspaceV1 {
-  id: string;
-  name: string;
-  slug?: string;
-  rootPath: string;
-  createdAt?: number;
-  lastAccessedAt?: number;
-  iconUrl?: string;
-  mcpUrl?: string;
-  mcpAuthType?: Workspace['mcpAuthType'];
-  remoteServer?: {
-    url: string;
-    token?: string;
-    remoteWorkspaceId: string;
-    allowInsecureTls?: boolean;
-  };
-}
-
-function isLegacyWorkspaceV1(value: unknown): value is LegacyWorkspaceV1 {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  const candidate = value as Partial<LegacyWorkspaceV1>;
-  return typeof candidate.id === 'string'
-    && typeof candidate.name === 'string'
-    && typeof candidate.rootPath === 'string';
-}
-
-function portableWorkspace(workspace: Workspace): Workspace {
-  return {
-    ...workspace,
-    locations: workspace.locations.map(location => (
-      location.endpoint.kind === 'local'
-        ? { ...location, endpoint: { kind: 'local', rootPath: toPortablePath(location.endpoint.rootPath) } }
-        : location
-    )) as Workspace['locations'],
-  };
-}
-
-function expandedWorkspace(workspace: Workspace): Workspace {
-  return parseWorkspaceV2({
-    ...workspace,
-    locations: workspace.locations.map(location => (
-      location.endpoint.kind === 'local'
-        ? { ...location, endpoint: { kind: 'local', rootPath: expandPath(location.endpoint.rootPath) } }
-        : location
-    )),
-  });
-}
-
-function migrateLegacyWorkspace(value: LegacyWorkspaceV1): Workspace {
-  adoptLegacyWorkspaceSessionBucket(value.id, expandPath(value.rootPath));
-  const locationId = 'primary';
-  let location: WorkspaceLocation;
-  if (value.remoteServer) {
-    const credentialRef = 'legacy-primary-remote';
-    if (value.remoteServer.token) {
-      getCredentialManager().setWorkspaceRemoteBearerSync(value.id, credentialRef, value.remoteServer.token);
-    }
-    location = {
-      id: locationId,
-      name: value.name,
-      endpoint: {
-        kind: 'remote',
-        url: value.remoteServer.url,
-        remoteWorkspaceId: value.remoteServer.remoteWorkspaceId,
-        credentialRef,
-        ...(value.remoteServer.allowInsecureTls === undefined
-          ? {}
-          : { allowInsecureTls: value.remoteServer.allowInsecureTls }),
-      },
-    };
-  } else {
-    const rootPath = expandPath(value.rootPath);
-    location = {
-      id: locationId,
-      name: basename(rootPath) || value.name,
-      endpoint: { kind: 'local', rootPath },
-    };
-  }
-
-  return parseWorkspaceV2({
-    schemaVersion: WORKSPACE_SCHEMA_VERSION,
-    id: value.id,
-    revision: 0,
-    primaryLocationId: locationId,
-    locations: [location],
-    name: value.name,
-    slug: value.slug || extractWorkspaceSlugFromPath(value.rootPath, value.id),
-    createdAt: value.createdAt ?? Date.now(),
-    ...(value.lastAccessedAt === undefined ? {} : { lastAccessedAt: value.lastAccessedAt }),
-    ...(value.iconUrl === undefined ? {} : { iconUrl: value.iconUrl }),
-    ...(value.mcpUrl === undefined ? {} : { mcpUrl: value.mcpUrl }),
-    ...(value.mcpAuthType === undefined ? {} : { mcpAuthType: value.mcpAuthType }),
-  });
-}
-
 export function ensureConfigDir(): void {
   if (configDirInitialized) return;
 
@@ -474,36 +375,22 @@ export function loadStoredConfig(): StoredConfig | null {
       value: storedRecord.value as unknown as StoredConfig,
     };
 
-    const rawConfig = JSON.parse(JSON.stringify(record.value)) as StoredConfig & { workspaces?: unknown[] };
-
-    // Must have workspaces array
-    if (!Array.isArray(rawConfig.workspaces)) {
-      return null;
-    }
-    let migrated = false;
-    const workspaces: Workspace[] = [];
-    for (const value of rawConfig.workspaces) {
-      if (isLegacyWorkspaceV1(value)) {
-        workspaces.push(migrateLegacyWorkspace(value));
-        migrated = true;
-        continue;
-      }
-      workspaces.push(expandedWorkspace(parseWorkspaceV2(value)));
-    }
-    const config: StoredConfig = { ...rawConfig, workspaces } as StoredConfig;
+    const storedValue = JSON.parse(JSON.stringify(record.value)) as StoredConfig & { workspaces?: unknown };
+    const { workspaces: _retiredWorkspaceTopology, ...rawConfig } = storedValue;
+    const config = rawConfig as StoredConfig;
 
     // Validate active workspace exists
-    const activeWorkspace = config.workspaces.find(w => w.id === config.activeWorkspaceId);
+    const workspaces = getDefaultWorkspaceTopologyStore().list();
+    const activeWorkspace = workspaces.find(w => w.id === config.activeWorkspaceId);
     if (!activeWorkspace) {
       // Default to first workspace
-      config.activeWorkspaceId = config.workspaces[0]?.id || null;
+      config.activeWorkspaceId = workspaces[0]?.id || null;
     }
 
     attachConfigSnapshot(config, {
       version: record.version,
       value: record.value,
     });
-    if (migrated) saveConfig(config);
     return config;
   } catch (error) {
     debug('[config] loadStoredConfig failed:', error instanceof Error ? error.message : error);
@@ -514,10 +401,8 @@ export function loadStoredConfig(): StoredConfig | null {
 export function saveConfig(config: StoredConfig): void {
   ensureConfigDir();
 
-  // Convert paths to portable form (~ prefix) for cross-machine compatibility
-  const storageConfig: StoredConfig = {
-    ...config,
-    workspaces: config.workspaces.map(portableWorkspace),
+  const { workspaces: _retiredWorkspaceTopology, ...storageConfig } = config as StoredConfig & {
+    workspaces?: unknown;
   };
 
   const store = getConfigStore();
@@ -941,8 +826,7 @@ export function findWorkspaceIcon(rootPath: string): string | null {
 }
 
 export function getWorkspaces(): Workspace[] {
-  const config = loadStoredConfig();
-  const workspaces = config?.workspaces || [];
+  const workspaces = getDefaultWorkspaceTopologyStore().list();
 
   return workspaces.map(w => {
     const primary = getPrimaryWorkspaceLocation(w);
@@ -972,10 +856,12 @@ export function getWorkspaces(): Workspace[] {
 
 export function getActiveWorkspace(): Workspace | null {
   const config = loadStoredConfig();
-  if (!config || !config.activeWorkspaceId) {
-    return config?.workspaces[0] || null;
+  const topologyStore = getDefaultWorkspaceTopologyStore();
+  if (config?.activeWorkspaceId) {
+    const active = topologyStore.get(config.activeWorkspaceId);
+    if (active) return active;
   }
-  return config.workspaces.find(w => w.id === config.activeWorkspaceId) || config.workspaces[0] || null;
+  return topologyStore.list()[0] || null;
 }
 
 /**
@@ -994,8 +880,7 @@ export function setActiveWorkspace(workspaceId: string): void {
   const config = loadStoredConfig();
   if (!config) return;
 
-  const workspace = config.workspaces.find(w => w.id === workspaceId);
-  if (!workspace) return;
+  if (!getDefaultWorkspaceTopologyStore().get(workspaceId)) return;
 
   config.activeWorkspaceId = workspaceId;
   saveConfig(config);
@@ -1012,7 +897,7 @@ export async function switchWorkspaceAtomic(workspaceId: string): Promise<{ work
   const config = loadStoredConfig();
   if (!config) return null;
 
-  const workspace = config.workspaces.find(w => w.id === workspaceId);
+  const workspace = getDefaultWorkspaceTopologyStore().get(workspaceId);
   if (!workspace) return null;
 
   // Get or create the latest session for this workspace
@@ -1023,7 +908,6 @@ export async function switchWorkspaceAtomic(workspaceId: string): Promise<{ work
 
   // Update active workspace in config
   config.activeWorkspaceId = workspaceId;
-  workspace.lastAccessedAt = Date.now();
   saveConfig(config);
 
   return { workspace, session };
@@ -1046,7 +930,8 @@ export function addWorkspace(workspace: Omit<Workspace, 'id' | 'createdAt' | 'sl
     : primary.endpoint.remoteWorkspaceId;
   const slug = extractWorkspaceSlugFromPath(slugSource, '');
 
-  const duplicate = config.workspaces.find(existing => existing.locations.some(location => {
+  const topologyStore = getDefaultWorkspaceTopologyStore();
+  const duplicate = topologyStore.list().find(existing => existing.locations.some(location => {
     if (location.endpoint.kind !== primary.endpoint.kind) return false;
     if (location.endpoint.kind === 'local' && primary.endpoint.kind === 'local') {
       return location.endpoint.rootPath === primary.endpoint.rootPath;
@@ -1071,10 +956,10 @@ export function addWorkspace(workspace: Omit<Workspace, 'id' | 'createdAt' | 'sl
     createWorkspaceAtPath(primary.endpoint.rootPath, newWorkspace.name);
   }
 
-  config.workspaces.push(newWorkspace);
+  topologyStore.create(newWorkspace);
 
   // If this is the only workspace, make it active
-  if (config.workspaces.length === 1) {
+  if (topologyStore.list().length === 1) {
     config.activeWorkspaceId = newWorkspace.id;
   }
 
@@ -1091,8 +976,9 @@ export function syncWorkspaces(): void {
   const config = loadStoredConfig();
   if (!config) return;
 
+  const topologyStore = getDefaultWorkspaceTopologyStore();
   const discoveredPaths = discoverWorkspacesInDefaultLocation();
-  const trackedPaths = new Set(config.workspaces.flatMap(workspace => workspace.locations.flatMap(location => (
+  const trackedPaths = new Set(topologyStore.list().flatMap(workspace => workspace.locations.flatMap(location => (
     location.endpoint.kind === 'local' ? [location.endpoint.rootPath] : []
   ))));
 
@@ -1112,21 +998,24 @@ export function syncWorkspaces(): void {
       locations: [{
         id: 'primary',
         name: basename(rootPath) || wsConfig.name,
+        rootName: basename(rootPath) || wsConfig.name,
         endpoint: { kind: 'local', rootPath },
       }],
       name: wsConfig.name,
+      nameSource: 'custom',
       slug: extractWorkspaceSlugFromPath(rootPath, ''),
       createdAt: wsConfig.createdAt || Date.now(),
     };
 
-    config.workspaces.push(newWorkspace);
+    topologyStore.create(newWorkspace, `workspace-discovery-${newWorkspace.id}`);
     added = true;
   }
 
   if (added) {
     // If no active workspace, set to first
-    if (!config.activeWorkspaceId && config.workspaces.length > 0) {
-      config.activeWorkspaceId = config.workspaces[0]!.id;
+    const workspaces = topologyStore.list();
+    if (!config.activeWorkspaceId && workspaces.length > 0) {
+      config.activeWorkspaceId = workspaces[0]!.id;
     }
     saveConfig(config);
   }
@@ -1136,14 +1025,12 @@ export async function removeWorkspace(workspaceId: string): Promise<boolean> {
   const config = loadStoredConfig();
   if (!config) return false;
 
-  const index = config.workspaces.findIndex(w => w.id === workspaceId);
-  if (index === -1) return false;
-
-  config.workspaces.splice(index, 1);
+  const topologyStore = getDefaultWorkspaceTopologyStore();
+  if (!topologyStore.remove(workspaceId)) return false;
 
   // If we removed the active workspace, switch to first available
   if (config.activeWorkspaceId === workspaceId) {
-    config.activeWorkspaceId = config.workspaces[0]?.id || null;
+    config.activeWorkspaceId = topologyStore.list()[0]?.id || null;
   }
 
   saveConfig(config);

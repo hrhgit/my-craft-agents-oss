@@ -59,17 +59,7 @@ export interface ValidationResult {
 
 // --- state.sqlite config/root ---
 
-const WorkspaceSchema = z.object({
-  id: z.string().min(1),
-  name: z.string().min(1),
-  slug: z.string().optional(),
-  createdAt: z.number().int().positive(),
-  sessionId: z.string().optional(),
-  iconUrl: z.string().optional(),
-});
-
 export const StoredConfigSchema = z.object({
-  workspaces: z.array(WorkspaceSchema).min(0),
   activeWorkspaceId: z.string().nullable(),
   activeSessionId: z.string().nullable(),
   // Legacy connection fields are intentionally not part of the validated shape.
@@ -178,23 +168,6 @@ export function validateConfig(): ValidationResult {
   const result = StoredConfigSchema.safeParse(content);
   if (!result.success) {
     errors.push(...zodErrorToIssues(result.error, configRecordLabel));
-  } else {
-    const config = result.data;
-
-    // Semantic validations
-    if (config.activeWorkspaceId && config.workspaces.length > 0) {
-      const activeExists = config.workspaces.some(w => w.id === config.activeWorkspaceId);
-      if (!activeExists) {
-        errors.push({
-          file: configRecordLabel,
-          path: 'activeWorkspaceId',
-          message: `Active workspace ID '${config.activeWorkspaceId}' does not exist in workspaces array`,
-          severity: 'error',
-          suggestion: 'Set activeWorkspaceId to an existing workspace ID or null',
-        });
-      }
-    }
-
   }
 
   return {
