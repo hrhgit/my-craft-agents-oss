@@ -1,119 +1,72 @@
-import { useState, useEffect, useCallback, useRef } from "react"
-import { useTranslation } from "react-i18next"
-import { ArrowLeft, CheckCircle, XCircle, Plus } from "lucide-react"
-import { cn } from "@/lib/utils"
-import { slugify } from "@/lib/slugify"
-import { Input } from "../ui/input"
-import { Switch } from "../ui/switch"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select"
-import { AddWorkspaceContainer, AddWorkspaceStepHeader, AddWorkspacePrimaryButton, AddWorkspaceSecondaryButton } from "./primitives"
-import type { RemoteServerConfig } from "../../../shared/types"
-import { normalizeSecureWebSocketOrigin, reconcileInsecureTlsConsentOrigin } from "../../../shared/remote-tls"
+import { useCallback, useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
+import { ArrowLeft, CheckCircle, XCircle } from 'lucide-react'
+import { cn } from '@/lib/utils'
+import { Input } from '../ui/input'
+import { Switch } from '../ui/switch'
+import {
+  AddWorkspaceContainer,
+  AddWorkspacePrimaryButton,
+  AddWorkspaceSecondaryButton,
+  AddWorkspaceStepHeader,
+} from './primitives'
+import type { RemoteWorkspaceLocationInfo } from './workspace-remote-reconnect'
+import {
+  normalizeSecureWebSocketOrigin,
+  reconcileInsecureTlsConsentOrigin,
+} from '../../../shared/remote-tls'
 
-const CREATE_NEW_VALUE = '__create_new__'
 const INSECURE_TLS_LABEL_ID = 'workspace-remote-allow-insecure-tls-label'
 const INSECURE_TLS_DESCRIPTION_ID = 'workspace-remote-allow-insecure-tls-description'
 
-interface AddWorkspaceStep_ConnectRemoteProps {
+export interface WorkspaceRemoteReconnectFormValue {
+  url: string
+  token: string
+  allowInsecureTls?: boolean
+}
+
+interface AddWorkspaceStepConnectRemoteProps {
   onBack: () => void
-  onCreate: (folderPath: string, name: string, remoteServer: RemoteServerConfig) => Promise<void>
+  onReconnect: (value: WorkspaceRemoteReconnectFormValue) => Promise<void>
   isCreating: boolean
-  /** Pre-fill the server URL (for reconnect flow) */
-  initialUrl?: string
-  /** Pre-fill the token (for reconnect flow) */
-  initialToken?: string
-  /** Existing explicit TLS exception when reconnecting a workspace. */
-  initialAllowInsecureTls?: boolean
-  /** When set, updating an existing workspace's remote config instead of creating */
-  reconnectWorkspace?: { id: string; name: string; remoteWorkspaceId: string }
-  /** Called when reconnect updates the remote server config */
-  onUpdate?: (workspaceId: string, remoteServer: RemoteServerConfig) => Promise<void>
+  workspaceName: string
+  location: RemoteWorkspaceLocationInfo
 }
 
-/**
- * Resolve a unique local workspace slug by appending suffixes if needed.
- * Tries: baseName → baseName-remote → baseName-2 → baseName-3 → ...
- */
-async function resolveUniqueSlug(baseName: string): Promise<{ slug: string; path: string }> {
-  const baseSlug = slugify(baseName)
-  if (!baseSlug) return { slug: 'remote', path: '' }
-
-  let slug = baseSlug
-  let attempt = 0
-
-  // eslint-disable-next-line no-constant-condition
-  while (true) {
-    const result = await window.electronAPI.checkWorkspaceSlug(slug)
-    if (!result.exists) {
-      return { slug, path: result.path }
-    }
-    attempt++
-    slug = attempt === 1 ? `${baseSlug}-remote` : `${baseSlug}-${attempt}`
-    if (attempt > 20) {
-      // Safety valve — shouldn't happen in practice
-      return { slug: `${baseSlug}-${Date.now()}`, path: result.path.replace(baseSlug, `${baseSlug}-${Date.now()}`) }
-    }
-  }
-}
-
-/**
- * AddWorkspaceStep_ConnectRemote - Connect to a remote Mortise Agent Server
- *
- * Two paths:
- * 1. Connect to existing workspace — select from dropdown, no name needed, auto-resolve local slug
- * 2. Create new workspace — type a name, creates on server, then connects
- */
 export function AddWorkspaceStep_ConnectRemote({
   onBack,
-  onCreate,
+  onReconnect,
   isCreating,
-  initialUrl,
-  initialToken,
-  initialAllowInsecureTls,
-  reconnectWorkspace,
-  onUpdate,
-}: AddWorkspaceStep_ConnectRemoteProps) {
+  workspaceName,
+  location,
+}: AddWorkspaceStepConnectRemoteProps) {
   const { t } = useTranslation()
-  const isReconnectMode = !!reconnectWorkspace
-  const [serverUrl, setServerUrl] = useState(initialUrl ?? '')
-  const [token, setToken] = useState(initialToken ?? '')
-  // Consent is transient until save and is valid only for the exact normalized WSS origin.
+  const [serverUrl, setServerUrl] = useState(location.endpoint.url)
+  // Credential material is intentionally not projected back into the renderer.
+  const [token, setToken] = useState('')
   const [insecureTlsConsentOrigin, setInsecureTlsConsentOrigin] = useState<string | null>(() => (
-    initialAllowInsecureTls === true ? normalizeSecureWebSocketOrigin(initialUrl) : null
+    location.endpoint.allowInsecureTls === true
+      ? normalizeSecureWebSocketOrigin(location.endpoint.url)
+      : null
   ))
-  const [homeDir, setHomeDir] = useState('')
   const [testState, setTestState] = useState<'idle' | 'testing' | 'ok' | 'error'>('idle')
   const [testError, setTestError] = useState<string | null>(null)
-  const [remoteWorkspaces, setRemoteWorkspaces] = useState<Array<{ id: string; name: string }>>([])
-  const [selectedValue, setSelectedValue] = useState<string | null>(null) // workspace ID or CREATE_NEW_VALUE
-  const [newWorkspaceName, setNewWorkspaceName] = useState('')
   const [serverVersion, setServerVersion] = useState<string | null>(null)
-  const selectPortalRef = useRef<HTMLDivElement>(null)
 
-  useEffect(() => {
-    window.electronAPI.getHomeDir().then(setHomeDir)
-  }, [])
-
-  const isCreateNew = selectedValue === CREATE_NEW_VALUE
   const secureWebSocketOrigin = normalizeSecureWebSocketOrigin(serverUrl)
-  const allowInsecureTls = secureWebSocketOrigin !== null && insecureTlsConsentOrigin === secureWebSocketOrigin
+  const allowInsecureTls = secureWebSocketOrigin !== null
+    && insecureTlsConsentOrigin === secureWebSocketOrigin
   const isSecureWebSocket = secureWebSocketOrigin !== null
-  const selectedWorkspace = !isCreateNew ? remoteWorkspaces.find(w => w.id === selectedValue) : null
-  // Fresh server (no workspaces at all) — always in create mode
-  const isFreshServer = testState === 'ok' && remoteWorkspaces.length === 0
 
   const handleServerUrlChange = useCallback((nextUrl: string) => {
     setServerUrl(nextUrl)
     setInsecureTlsConsentOrigin(current => reconcileInsecureTlsConsentOrigin(nextUrl, current))
   }, [])
 
-  // Reset test state when URL or token changes
   useEffect(() => {
     setTestState('idle')
     setTestError(null)
-    setRemoteWorkspaces([])
-    setSelectedValue(null)
-    setNewWorkspaceName('')
+    setServerVersion(null)
   }, [serverUrl, token, allowInsecureTls])
 
   const handleTestConnection = useCallback(async () => {
@@ -121,137 +74,81 @@ export function AddWorkspaceStep_ConnectRemote({
     setTestState('testing')
     setTestError(null)
     try {
-      const result = await window.electronAPI.testRemoteConnection(serverUrl, token, allowInsecureTls)
-      console.log('[ConnectRemote] testRemoteConnection result:', JSON.stringify(result, null, 2))
-      if (result.ok) {
-        setTestState('ok')
-        setServerVersion(result.serverVersion ?? null)
-        if (result.needsWorkspace) {
-          // Fresh server — no workspaces, go straight to create mode
-          setRemoteWorkspaces([])
-          setSelectedValue(null)
-        } else {
-          const workspaces = result.remoteWorkspaces ?? []
-          setRemoteWorkspaces(workspaces)
-          if (workspaces.length === 1) {
-            setSelectedValue(workspaces[0]!.id)
-          }
-        }
-      } else {
+      const result = await window.electronAPI.testRemoteConnection(
+        serverUrl,
+        token,
+        allowInsecureTls,
+      )
+      if (!result.ok) {
         setTestState('error')
         setTestError(result.error || 'Connection failed')
+        return
       }
-    } catch (err) {
+      const targetExists = result.remoteWorkspaces?.some(
+        workspace => workspace.id === location.endpoint.remoteWorkspaceId,
+      ) === true
+      if (!targetExists) {
+        setTestState('error')
+        setTestError('The remote Workspace is not available on this server')
+        return
+      }
+      setServerVersion(result.serverVersion ?? null)
+      setTestState('ok')
+    } catch (error) {
       setTestState('error')
-      setTestError(err instanceof Error ? err.message : 'Connection failed')
+      setTestError(error instanceof Error ? error.message : 'Connection failed')
     }
-  }, [serverUrl, token, allowInsecureTls])
+  }, [allowInsecureTls, location.endpoint.remoteWorkspaceId, serverUrl, token])
 
-  const handleConnect = useCallback(async () => {
-    if (!serverUrl || !token) return
-
-    // Reconnect mode — update existing workspace config
-    if (isReconnectMode && onUpdate) {
-      try {
-        await onUpdate(reconnectWorkspace!.id, {
-          url: serverUrl,
-          token,
-          remoteWorkspaceId: reconnectWorkspace!.remoteWorkspaceId,
-          ...(allowInsecureTls ? { allowInsecureTls: true } : {}),
-        })
-        return
-      } catch (err) {
-        setTestState('error')
-        setTestError(err instanceof Error ? err.message : 'Failed to reconnect workspace')
-        return
-      }
-    }
-
-    if (!homeDir) return
-    const defaultBasePath = `${homeDir}/.mortise/workspaces`
-
-    if (isCreateNew || isFreshServer) {
-      // Create new workspace on remote server via direct RPC, then connect locally
-      const name = newWorkspaceName.trim()
-      if (!name) return
-
-      try {
-        const created = await window.electronAPI.invokeOnServer(
-          serverUrl, token, 'server:createWorkspace', { allowInsecureTls }, name
-        ) as { id: string; name: string }
-
-        const { slug, path } = await resolveUniqueSlug(name)
-        const finalPath = path || `${defaultBasePath}/${slug}`
-        await onCreate(finalPath, name, {
-          url: serverUrl,
-          token,
-          remoteWorkspaceId: created.id,
-          ...(allowInsecureTls ? { allowInsecureTls: true } : {}),
-        })
-      } catch (err) {
-        setTestState('error')
-        setTestError(err instanceof Error ? err.message : 'Failed to create workspace on remote server')
-        return
-      }
-    } else if (selectedWorkspace) {
-      // Connect to existing workspace — auto-resolve local slug
-      const { slug, path } = await resolveUniqueSlug(selectedWorkspace.name)
-      const finalPath = path || `${defaultBasePath}/${slug}`
-      await onCreate(finalPath, selectedWorkspace.name, {
+  const handleReconnect = useCallback(async () => {
+    if (testState !== 'ok' || !serverUrl || !token) return
+    try {
+      await onReconnect({
         url: serverUrl,
         token,
-        remoteWorkspaceId: selectedWorkspace.id,
         ...(allowInsecureTls ? { allowInsecureTls: true } : {}),
       })
+    } catch (error) {
+      setTestState('error')
+      setTestError(error instanceof Error ? error.message : 'Failed to reconnect Workspace')
     }
-  }, [serverUrl, token, allowInsecureTls, homeDir, isCreateNew, isFreshServer, newWorkspaceName, selectedWorkspace, onCreate, isReconnectMode, onUpdate, reconnectWorkspace])
-
-  const canConnect = testState === 'ok' && !isCreating && (
-    isReconnectMode ? true :
-    (isFreshServer || isCreateNew) ? !!newWorkspaceName.trim() : !!selectedWorkspace
-  )
-
-  const showCreateMode = !isReconnectMode && (isCreateNew || isFreshServer)
-  const buttonLabel = isReconnectMode ? 'Reconnect' : showCreateMode ? 'Create and Connect' : 'Connect'
-  const buttonLoadingLabel = isReconnectMode ? 'Reconnecting...' : showCreateMode ? 'Creating...' : 'Connecting...'
+  }, [allowInsecureTls, onReconnect, serverUrl, testState, token])
 
   return (
     <AddWorkspaceContainer>
-      {/* Back button */}
       <button
+        type="button"
         onClick={onBack}
         disabled={isCreating}
         className={cn(
-          "self-start flex items-center gap-1 text-sm text-muted-foreground",
-          "hover:text-foreground transition-colors mb-4",
-          isCreating && "opacity-50 cursor-not-allowed"
+          'mb-4 flex items-center gap-1 self-start text-sm text-muted-foreground',
+          'transition-colors hover:text-foreground',
+          isCreating && 'cursor-not-allowed opacity-50',
         )}
       >
         <ArrowLeft className="h-4 w-4" />
-        Back
+        {t('common.back')}
       </button>
 
       <AddWorkspaceStepHeader
-        title={isReconnectMode ? t("workspace.reconnect", { name: reconnectWorkspace!.name }) : "Connect to remote server"}
-        description={isReconnectMode
-          ? "Update the server URL or token to restore the connection."
-          : "Connect to a remote Mortise Agent Server for this workspace."}
+        title={t('workspace.reconnect', { name: workspaceName })}
+        description="Update the server URL and provide a new token to restore this Workspace location."
       />
 
       <div className="mt-6 w-full space-y-5">
-        {/* Server URL */}
         <div className="space-y-2">
-          <label className="block text-sm font-medium text-foreground">
+          <label className="block text-sm font-medium text-foreground" htmlFor="workspace-remote-server-url">
             Server URL
           </label>
-          <div className="bg-background shadow-minimal rounded-lg">
+          <div className="rounded-lg bg-background shadow-minimal">
             <Input
+              id="workspace-remote-server-url"
               value={serverUrl}
-              onChange={(e) => handleServerUrlChange(e.target.value)}
+              onChange={event => handleServerUrlChange(event.target.value)}
               placeholder="ws://192.168.1.100:9100"
               disabled={isCreating}
               autoFocus
-              className="border-0 bg-transparent shadow-none font-mono text-sm"
+              className="border-0 bg-transparent font-mono text-sm shadow-none"
             />
           </div>
         </div>
@@ -260,44 +157,42 @@ export function AddWorkspaceStep_ConnectRemote({
           <div className="flex items-center justify-between gap-4 border-y border-border/60 py-3">
             <span className="min-w-0">
               <span id={INSECURE_TLS_LABEL_ID} className="block text-sm font-medium text-foreground">
-                {t("workspace.allowUntrustedCertificates")}
+                {t('workspace.allowUntrustedCertificates')}
               </span>
               <span id={INSECURE_TLS_DESCRIPTION_ID} className="block text-xs text-muted-foreground">
-                {t("workspace.allowUntrustedCertificatesDescription")}
+                {t('workspace.allowUntrustedCertificatesDescription')}
               </span>
             </span>
             <Switch
               semanticId="workspace.remote.allow-insecure-tls"
               checked={allowInsecureTls}
-              onCheckedChange={(checked) => {
+              onCheckedChange={checked => {
                 setInsecureTlsConsentOrigin(checked ? secureWebSocketOrigin : null)
               }}
               disabled={isCreating}
-              aria-label={t("workspace.allowUntrustedTlsCertificates")}
               aria-labelledby={INSECURE_TLS_LABEL_ID}
               aria-describedby={INSECURE_TLS_DESCRIPTION_ID}
             />
           </div>
         )}
 
-        {/* Token */}
         <div className="space-y-2">
-          <label className="block text-sm font-medium text-foreground">
+          <label className="block text-sm font-medium text-foreground" htmlFor="workspace-remote-token">
             Token
           </label>
-          <div className="bg-background shadow-minimal rounded-lg">
+          <div className="rounded-lg bg-background shadow-minimal">
             <Input
+              id="workspace-remote-token"
               type="password"
               value={token}
-              onChange={(e) => setToken(e.target.value)}
-              placeholder={t("workspace.serverAuthToken")}
+              onChange={event => setToken(event.target.value)}
+              placeholder={t('workspace.serverAuthToken')}
               disabled={isCreating}
               className="border-0 bg-transparent shadow-none"
             />
           </div>
         </div>
 
-        {/* Test Connection */}
         <div className="flex items-center gap-3">
           <AddWorkspaceSecondaryButton
             onClick={handleTestConnection}
@@ -305,16 +200,10 @@ export function AddWorkspaceStep_ConnectRemote({
           >
             {testState === 'testing' ? 'Testing...' : 'Test Connection'}
           </AddWorkspaceSecondaryButton>
-          {testState === 'ok' && !isFreshServer && (
+          {testState === 'ok' && (
             <span className="flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
               <CheckCircle className="h-3.5 w-3.5" />
-              Connected{serverVersion ? ` — v${serverVersion}` : ''}
-            </span>
-          )}
-          {testState === 'ok' && isFreshServer && (
-            <span className="flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
-              <CheckCircle className="h-3.5 w-3.5" />
-              Connected{serverVersion ? ` — v${serverVersion}` : ''} — no workspaces yet
+              Connected{serverVersion ? ` - v${serverVersion}` : ''}
             </span>
           )}
           {testState === 'error' && (
@@ -325,96 +214,13 @@ export function AddWorkspaceStep_ConnectRemote({
           )}
         </div>
 
-        {/* Old server warning */}
-        {testState === 'ok' && !serverVersion && (
-          <div className="flex items-start gap-2 px-3 py-2 rounded-lg bg-yellow-500/10 border border-yellow-500/20 text-xs text-yellow-700 dark:text-yellow-400">
-            <XCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-            <span>{t("workspace.olderServerWarning")}</span>
-          </div>
-        )}
-
-        {/* Portal container for Select — must be inside the Dialog to receive pointer events */}
-        <div ref={selectPortalRef} />
-
-        {/* Workspace selector — pick existing or create new (hidden in reconnect mode) */}
-        {!isReconnectMode && testState === 'ok' && remoteWorkspaces.length > 0 && !isCreateNew && (
-          <div className="space-y-2">
-            <label className="block text-sm font-medium text-foreground">
-              Workspace
-            </label>
-            <div className="bg-background shadow-minimal rounded-lg">
-              <Select
-                value={selectedValue ?? ''}
-                onValueChange={setSelectedValue}
-                disabled={isCreating}
-              >
-                <SelectTrigger className="border-0 bg-transparent shadow-none">
-                  <SelectValue placeholder={t("workspace.selectWorkspacePlaceholder")} />
-                </SelectTrigger>
-                <SelectContent container={selectPortalRef.current}>
-                  {remoteWorkspaces.map(ws => (
-                    <SelectItem key={ws.id} value={ws.id}>
-                      {ws.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <button
-              type="button"
-              onClick={() => setSelectedValue(CREATE_NEW_VALUE)}
-              disabled={isCreating}
-              className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
-            >
-              <Plus className="h-3 w-3" />
-              Create new workspace on server
-            </button>
-          </div>
-        )}
-
-        {/* New workspace name — shown for fresh servers or "Create new" selection (hidden in reconnect mode) */}
-        {!isReconnectMode && testState === 'ok' && showCreateMode && (
-          <div className="space-y-2">
-            <label className="block text-sm font-medium text-foreground">
-              Workspace name
-            </label>
-            <div className="bg-background shadow-minimal rounded-lg">
-              <Input
-                value={newWorkspaceName}
-                onChange={(e) => setNewWorkspaceName(e.target.value)}
-                placeholder={t("workspace.myRemoteWorkspace")}
-                disabled={isCreating}
-                className="border-0 bg-transparent shadow-none"
-              />
-            </div>
-            <p className="text-xs text-muted-foreground">
-              A workspace will be created on the remote server with this name.
-            </p>
-            {isCreateNew && remoteWorkspaces.length > 0 && (
-              <button
-                type="button"
-                onClick={() => {
-                  setSelectedValue(remoteWorkspaces.length === 1 ? remoteWorkspaces[0]!.id : null)
-                  setNewWorkspaceName('')
-                }}
-                disabled={isCreating}
-                className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
-              >
-                <ArrowLeft className="h-3 w-3" />
-                Use existing workspace
-              </button>
-            )}
-          </div>
-        )}
-
-        {/* Connect / Create and Connect */}
         <AddWorkspacePrimaryButton
-          onClick={handleConnect}
-          disabled={!canConnect}
+          onClick={handleReconnect}
+          disabled={testState !== 'ok' || isCreating}
           loading={isCreating}
-          loadingText={buttonLoadingLabel}
+          loadingText="Reconnecting..."
         >
-          {buttonLabel}
+          Reconnect
         </AddWorkspacePrimaryButton>
       </div>
     </AddWorkspaceContainer>

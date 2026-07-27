@@ -6,12 +6,15 @@ import { toast } from 'sonner'
 
 import { fullscreenOverlayOpenAtom } from '@/atoms/overlay'
 import { useTransportConnectionState } from '@/hooks/useTransportConnectionState'
-import { useWorkspaceIcons } from '@/hooks/useWorkspaceIcon'
 import { waitForTransportConnected } from '@/lib/transport-wait'
-import type { Workspace } from '../../../shared/types'
-import type { RemoteServerConfig } from '../../../shared/types'
+import type { WorkspaceInfo } from '../../../shared/types'
 import { WorkspaceCreationScreen } from './WorkspaceCreationScreen'
 import type { WorkspaceSwitchDestination } from '@/contexts/navigation-history'
+import {
+  getPrimaryRemoteLocation,
+  type RemoteWorkspaceLocationInfo,
+} from './workspace-remote-reconnect'
+import { useWorkspaceInfoIcons } from './useWorkspaceInfoIcons'
 
 export type { WorkspaceSwitchDestination } from '@/contexts/navigation-history'
 
@@ -22,7 +25,8 @@ export type WorkspaceSelectHandler = (
 ) => void | Promise<void>
 
 export interface WorkspaceNavigationItem {
-  workspace: Workspace
+  workspace: WorkspaceInfo
+  remotePrimary: RemoteWorkspaceLocationInfo | null
   iconUrl?: string
   isActive: boolean
   hasUnread: boolean
@@ -38,14 +42,14 @@ export interface WorkspaceNavigationModel {
   selectWorkspace: (workspaceId: string) => Promise<void>
   selectSession: (workspaceId: string, sessionId: string) => Promise<void>
   openWorkspaceInNewWindow: (workspaceId: string) => Promise<void>
-  removeWorkspace: (workspace: Workspace) => Promise<void>
+  removeWorkspace: (workspace: WorkspaceInfo) => Promise<void>
   openCreation: () => void
   refreshRemoteHealth: () => void
   overlay: React.ReactNode
 }
 
 interface UseWorkspaceNavigationOptions {
-  workspaces: Workspace[]
+  workspaces: WorkspaceInfo[]
   activeWorkspaceId: string | null
   workspaceUnreadMap: Record<string, boolean>
   workspaceProcessingMap: Record<string, boolean>
@@ -64,44 +68,14 @@ export function useWorkspaceNavigation({
   const { t } = useTranslation()
   const setFullscreenOverlayOpen = useSetAtom(fullscreenOverlayOpenAtom)
   const connectionState = useTransportConnectionState()
-  const workspaceIconMap = useWorkspaceIcons(workspaces)
+  const workspaceIconMap = useWorkspaceInfoIcons(workspaces)
   const [showCreationScreen, setShowCreationScreen] = React.useState(false)
-  const [reconnectTarget, setReconnectTarget] = React.useState<Workspace | null>(null)
-  const [remoteHealthMap, setRemoteHealthMap] = React.useState<Map<string, 'ok' | 'error' | 'checking'>>(new Map())
-  const healthCheckAbort = React.useRef<AbortController | null>(null)
-
-  React.useEffect(() => () => healthCheckAbort.current?.abort(), [])
+  const [reconnectTarget, setReconnectTarget] = React.useState<WorkspaceInfo | null>(null)
 
   const refreshRemoteHealth = React.useCallback(() => {
-    healthCheckAbort.current?.abort()
-    const abort = new AbortController()
-    healthCheckAbort.current = abort
-
-    const remoteWorkspaces = workspaces.filter(workspace => workspace.remoteServer && workspace.id !== activeWorkspaceId)
-    if (remoteWorkspaces.length === 0) return
-
-    setRemoteHealthMap(previous => {
-      const next = new Map(previous)
-      for (const workspace of remoteWorkspaces) next.set(workspace.id, 'checking')
-      return next
-    })
-
-    for (const workspace of remoteWorkspaces) {
-      window.electronAPI.testRemoteConnection(
-        workspace.remoteServer!.url,
-        workspace.remoteServer!.token,
-        workspace.remoteServer!.allowInsecureTls,
-      )
-        .then(result => {
-          if (abort.signal.aborted) return
-          setRemoteHealthMap(previous => new Map(previous).set(workspace.id, result.ok ? 'ok' : 'error'))
-        })
-        .catch(() => {
-          if (abort.signal.aborted) return
-          setRemoteHealthMap(previous => new Map(previous).set(workspace.id, 'error'))
-        })
-    }
-  }, [activeWorkspaceId, workspaces])
+    // Inactive remote availability is host-owned and cannot be inferred without
+    // exposing credentials to the renderer. The active transport reports itself.
+  }, [])
 
   const closeCreation = React.useCallback(() => {
     setShowCreationScreen(false)
@@ -115,14 +89,13 @@ export function useWorkspaceNavigation({
     setFullscreenOverlayOpen(true)
   }, [setFullscreenOverlayOpen])
 
-  const isDisconnected = React.useCallback((workspace: Workspace) => {
-    if (!workspace.remoteServer) return false
-    if (workspace.id !== activeWorkspaceId) return remoteHealthMap.get(workspace.id) === 'error'
+  const isDisconnected = React.useCallback((workspace: WorkspaceInfo) => {
+    if (!getPrimaryRemoteLocation(workspace) || workspace.id !== activeWorkspaceId) return false
     if (connectionState?.mode !== 'remote') return false
     return !['connected', 'connecting', 'idle'].includes(connectionState.status)
-  }, [activeWorkspaceId, connectionState, remoteHealthMap])
+  }, [activeWorkspaceId, connectionState])
 
-  const disconnectLabel = React.useCallback((workspace: Workspace) => {
+  const disconnectLabel = React.useCallback((workspace: WorkspaceInfo) => {
     if (workspace.id === activeWorkspaceId && connectionState?.lastError) {
       if (connectionState.lastError.kind === 'auth') return t('toast.authenticationFailed')
       if (connectionState.lastError.kind === 'timeout' || connectionState.lastError.kind === 'network') {
@@ -136,7 +109,7 @@ export function useWorkspaceNavigation({
     const workspace = workspaces.find(item => item.id === workspaceId)
     if (!workspace) return
     if (isDisconnected(workspace)) {
-      if (workspace.remoteServer) {
+      if (getPrimaryRemoteLocation(workspace)) {
         setReconnectTarget(workspace)
         setShowCreationScreen(true)
         setFullscreenOverlayOpen(true)
@@ -150,7 +123,7 @@ export function useWorkspaceNavigation({
     const workspace = workspaces.find(item => item.id === workspaceId)
     if (!workspace) return
     if (isDisconnected(workspace)) {
-      if (workspace.remoteServer) {
+      if (getPrimaryRemoteLocation(workspace)) {
         setReconnectTarget(workspace)
         setShowCreationScreen(true)
         setFullscreenOverlayOpen(true)
@@ -164,7 +137,7 @@ export function useWorkspaceNavigation({
     await Promise.resolve(onSelectWorkspace(workspaceId, true, 'restore'))
   }, [onSelectWorkspace])
 
-  const removeWorkspace = React.useCallback(async (workspace: Workspace) => {
+  const removeWorkspace = React.useCallback(async (workspace: WorkspaceInfo) => {
     if (workspace.id === activeWorkspaceId) {
       toast.error(t('toast.cannotRemoveActiveWorkspace'))
       return
@@ -175,24 +148,18 @@ export function useWorkspaceNavigation({
     onRefreshWorkspaces?.()
   }, [activeWorkspaceId, onRefreshWorkspaces, t])
 
-  const handleWorkspaceCreated = React.useCallback((workspace: Workspace) => {
+  const handleWorkspaceCreated = React.useCallback((workspace: WorkspaceInfo) => {
     closeCreation()
     toast.success(t('toast.createdWorkspace', { name: workspace.name }))
     onRefreshWorkspaces?.()
     void Promise.resolve(onSelectWorkspace(workspace.id, false, 'newConversation'))
   }, [closeCreation, onRefreshWorkspaces, onSelectWorkspace, t])
 
-  const handleReconnectWorkspace = React.useCallback(async (
-    workspaceId: string,
-    remoteServer: RemoteServerConfig,
-  ) => {
-    await window.electronAPI.updateWorkspaceRemoteServer(workspaceId, remoteServer)
-    if (workspaceId === activeWorkspaceId) {
-      // SWITCH_WORKSPACE reads the just-saved config and makes RoutedClient
-      // replace the immutable WsRpcClient instead of reconnecting the old one.
-      await window.electronAPI.switchWorkspace(workspaceId)
+  const handleWorkspaceReconnected = React.useCallback(async (workspace: WorkspaceInfo) => {
+    if (workspace.id === activeWorkspaceId) {
+      await window.electronAPI.switchWorkspace(workspace.id)
     } else {
-      await Promise.resolve(onSelectWorkspace(workspaceId, false, 'newConversation'))
+      await Promise.resolve(onSelectWorkspace(workspace.id, false, 'newConversation'))
     }
     await waitForTransportConnected(window.electronAPI)
     await Promise.resolve(onRefreshWorkspaces?.())
@@ -200,17 +167,21 @@ export function useWorkspaceNavigation({
     toast.success(t('toast.workspaceReconnected'))
   }, [activeWorkspaceId, closeCreation, onRefreshWorkspaces, onSelectWorkspace, t])
 
-  const items = React.useMemo<WorkspaceNavigationItem[]>(() => workspaces.map(workspace => ({
-    workspace,
-    iconUrl: workspaceIconMap.get(workspace.id),
-    isActive: workspace.id === activeWorkspaceId,
-    hasUnread: !!workspaceUnreadMap[workspace.id],
-    isProcessing: !!workspaceProcessingMap[workspace.id]
-      || !!(workspace.remoteServer?.remoteWorkspaceId && workspaceProcessingMap[workspace.remoteServer.remoteWorkspaceId]),
-    isDisconnected: isDisconnected(workspace),
-    isChecking: remoteHealthMap.get(workspace.id) === 'checking',
-    disconnectLabel: disconnectLabel(workspace),
-  })), [activeWorkspaceId, disconnectLabel, isDisconnected, remoteHealthMap, workspaceIconMap, workspaceProcessingMap, workspaceUnreadMap, workspaces])
+  const items = React.useMemo<WorkspaceNavigationItem[]>(() => workspaces.map(workspace => {
+    const remotePrimary = getPrimaryRemoteLocation(workspace)
+    return {
+      workspace,
+      remotePrimary,
+      iconUrl: workspaceIconMap.get(workspace.id),
+      isActive: workspace.id === activeWorkspaceId,
+      hasUnread: !!workspaceUnreadMap[workspace.id],
+      isProcessing: !!workspaceProcessingMap[workspace.id]
+        || !!(remotePrimary && workspaceProcessingMap[remotePrimary.endpoint.remoteWorkspaceId]),
+      isDisconnected: isDisconnected(workspace),
+      isChecking: false,
+      disconnectLabel: disconnectLabel(workspace),
+    }
+  }), [activeWorkspaceId, disconnectLabel, isDisconnected, workspaceIconMap, workspaceProcessingMap, workspaceUnreadMap, workspaces])
 
   const overlay = (
     <AnimatePresence>
@@ -219,7 +190,7 @@ export function useWorkspaceNavigation({
           onWorkspaceCreated={handleWorkspaceCreated}
           onClose={closeCreation}
           reconnectWorkspace={reconnectTarget ?? undefined}
-          onReconnectWorkspace={handleReconnectWorkspace}
+          onWorkspaceReconnected={handleWorkspaceReconnected}
         />
       )}
     </AnimatePresence>
