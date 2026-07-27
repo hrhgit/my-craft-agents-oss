@@ -76,6 +76,8 @@ interface WorkspaceRemotePrimaryCommandBaseV1 {
   displayName:
     | { source: 'derived' }
     | { source: 'custom'; name: string }
+  /** Verified remote root name, distinct from the user-editable Location name. */
+  remoteRootName: string
 }
 
 interface WorkspaceRemoteServerV1 {
@@ -97,7 +99,6 @@ export type WorkspaceRemotePrimaryCommandV1 =
   | (WorkspaceRemotePrimaryCommandBaseV1 & {
       operation: 'create-and-connect'
       server: WorkspaceRemoteServerV1
-      remoteRootName: string
     })
 
 export interface WorkspaceRemotePrimaryResultV1 {
@@ -128,6 +129,7 @@ export type WorkspaceTopologyCommandV1 =
       operation: 'attach-remote'
       locationId: string
       name: string
+      rootName: string
       url: string
       remoteWorkspaceId: string
       credentialRef: string
@@ -140,6 +142,7 @@ export type WorkspaceTopologyCommandV1 =
   | (WorkspaceTopologyCommandBaseV1 & {
       operation: 'replace-endpoint'
       locationId: string
+      rootName: string
       endpoint: WorkspaceEndpoint
     })
   | (WorkspaceTopologyCommandBaseV1 & {
@@ -243,6 +246,7 @@ const WorkspaceEndpointSchema = z.discriminatedUnion('kind', [
 const WorkspaceLocationSchema = z.object({
   id: BoundedIdSchema,
   name: LocationNameSchema,
+  rootName: LocationNameSchema,
   endpoint: WorkspaceEndpointSchema,
 }).strict()
 
@@ -295,6 +299,7 @@ const RemoteEndpointInfoSchema = z.object({
 const WorkspaceLocationInfoSchema = z.object({
   id: BoundedIdSchema,
   name: LocationNameSchema,
+  rootName: LocationNameSchema,
   endpoint: z.discriminatedUnion('kind', [LocalEndpointInfoSchema, RemoteEndpointInfoSchema]),
   availability: WorkspaceLocationAvailabilitySchema,
   permissions: WorkspaceLocationPermissionsSchema,
@@ -436,6 +441,7 @@ function remotePrimaryCommandBase<Operation extends WorkspaceRemotePrimaryComman
     workspaceId: BoundedIdSchema,
     locationId: BoundedIdSchema,
     displayName: WorkspaceDisplayNameRequestSchema,
+    remoteRootName: WorkspaceNameSchema,
   }).strict()
 }
 
@@ -446,7 +452,6 @@ const WorkspaceRemotePrimaryCommandV1Schema = z.discriminatedUnion('operation', 
   }),
   remotePrimaryCommandBase('create-and-connect').extend({
     server: WorkspaceRemoteServerV1Schema,
-    remoteRootName: WorkspaceNameSchema,
   }),
 ])
 
@@ -485,6 +490,7 @@ const WorkspaceTopologyCommandV1Schema = z.discriminatedUnion('operation', [
   topologyCommandBase('attach-remote').extend({
     locationId: BoundedIdSchema,
     name: LocationNameSchema,
+    rootName: LocationNameSchema,
     url: RemoteUrlSchema,
     remoteWorkspaceId: BoundedIdSchema,
     credentialRef: BoundedIdSchema,
@@ -493,6 +499,7 @@ const WorkspaceTopologyCommandV1Schema = z.discriminatedUnion('operation', [
   topologyCommandBase('detach').extend({ locationId: BoundedIdSchema }),
   topologyCommandBase('replace-endpoint').extend({
     locationId: BoundedIdSchema,
+    rootName: LocationNameSchema,
     endpoint: WorkspaceEndpointSchema,
   }),
   topologyCommandBase('set-primary').extend({ locationId: BoundedIdSchema }),
@@ -679,6 +686,7 @@ export function redactWorkspaceInfo(
     return {
       id: location.id,
       name: location.name,
+      rootName: location.rootName,
       endpoint: location.endpoint.kind === 'local'
         ? { kind: 'local' as const }
         : {

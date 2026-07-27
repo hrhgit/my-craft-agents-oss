@@ -67,6 +67,8 @@ export interface WorkspaceLocation {
   id: string;
   /** User-visible name. Names are unique within one Workspace, but are not identities. */
   name: string;
+  /** Endpoint root name used for derived Workspace naming. It is not user-editable location metadata. */
+  rootName: string;
   endpoint: WorkspaceEndpoint;
 }
 
@@ -84,6 +86,7 @@ export type WorkspaceEndpointInfo =
 export interface WorkspaceLocationInfo {
   id: string;
   name: string;
+  rootName: string;
   endpoint: WorkspaceEndpointInfo;
   availability: WorkspaceLocationAvailability;
   permissions: WorkspaceLocationPermissions;

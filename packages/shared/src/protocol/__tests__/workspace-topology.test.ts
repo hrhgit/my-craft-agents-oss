@@ -37,11 +37,13 @@ function workspace(overrides: Partial<Workspace> = {}): Workspace {
       {
         id: 'local-primary',
         name: 'Primary',
+        rootName: 'Product',
         endpoint: { kind: 'local', rootPath: 'E:\\Product' },
       },
       {
         id: 'remote-docs',
         name: 'Docs',
+        rootName: 'docs',
         endpoint: {
           kind: 'remote',
           url: 'wss://agent.example.test',
@@ -85,8 +87,8 @@ describe('Workspace V2', () => {
   test('rejects duplicate location ids and case-insensitive names', () => {
     const duplicateIds = workspace({
       locations: [
-        { id: 'same', name: 'Primary', endpoint: { kind: 'local', rootPath: 'E:\\One' } },
-        { id: 'same', name: 'Other', endpoint: { kind: 'local', rootPath: 'E:\\Two' } },
+        { id: 'same', name: 'Primary', rootName: 'One', endpoint: { kind: 'local', rootPath: 'E:\\One' } },
+        { id: 'same', name: 'Other', rootName: 'Two', endpoint: { kind: 'local', rootPath: 'E:\\Two' } },
       ],
       primaryLocationId: 'same',
     })
@@ -94,8 +96,8 @@ describe('Workspace V2', () => {
 
     const duplicateNames = workspace({
       locations: [
-        { id: 'one', name: 'Docs', endpoint: { kind: 'local', rootPath: 'E:\\One' } },
-        { id: 'two', name: 'docs', endpoint: { kind: 'local', rootPath: 'E:\\Two' } },
+        { id: 'one', name: 'Docs', rootName: 'One', endpoint: { kind: 'local', rootPath: 'E:\\One' } },
+        { id: 'two', name: 'docs', rootName: 'Two', endpoint: { kind: 'local', rootPath: 'E:\\Two' } },
       ],
       primaryLocationId: 'one',
     })
@@ -110,6 +112,7 @@ describe('Workspace V2', () => {
       locations: [{
         id: 'local-primary',
         name: 'Primary',
+        rootName: 'Product',
         role: 'primary',
         endpoint: { kind: 'local', rootPath: 'E:\\Product' },
       }],
@@ -133,6 +136,7 @@ describe('Workspace V2', () => {
       {
         id: 'local-primary',
         name: 'Primary',
+        rootName: 'Product',
         endpoint: { kind: 'local' },
         availability: { status: 'available', observedAt: 1_700_000_000_100 },
         permissions: { read: true, write: true, search: true, runCommands: true },
@@ -140,6 +144,7 @@ describe('Workspace V2', () => {
       {
         id: 'remote-docs',
         name: 'Docs',
+        rootName: 'docs',
         endpoint: {
           kind: 'remote',
           url: 'wss://agent.example.test',
@@ -159,6 +164,7 @@ describe('Workspace V2', () => {
       locations: [{
         id: 'remote-primary',
         name: 'Remote',
+        rootName: 'remote-product',
         endpoint: {
           kind: 'remote',
           url: 'wss://secret@example.test?token=also-secret',
@@ -338,6 +344,7 @@ describe('remote-primary Workspace contract', () => {
       workspaceId: 'local-workspace-id',
       locationId: 'remote-primary',
       displayName: { source: 'derived' as const },
+      remoteRootName: 'customer-docs',
       server,
       remoteWorkspaceId: 'remote-workspace-id',
     }
@@ -354,7 +361,7 @@ describe('remote-primary Workspace contract', () => {
       remoteRootName: 'customer-docs',
     }
     expect(parseWorkspaceRemotePrimaryCommandV1(create)).toEqual(create)
-    expect(() => parseWorkspaceRemotePrimaryCommandV1({ ...connect, remoteRootName: 'shadow-root' })).toThrow()
+    expect(() => parseWorkspaceRemotePrimaryCommandV1({ ...connect, remoteRootName: undefined })).toThrow()
     expect(() => parseWorkspaceRemotePrimaryCommandV1({ ...create, remoteWorkspaceId: 'precreated' })).toThrow()
   })
 
@@ -366,6 +373,7 @@ describe('remote-primary Workspace contract', () => {
       workspaceId: 'local-workspace-id',
       locationId: 'remote-primary',
       displayName: { source: 'derived' },
+      remoteRootName: 'customer-docs',
       server,
       remoteWorkspaceId: 'remote-workspace-id',
     }
@@ -390,6 +398,7 @@ describe('remote-primary Workspace contract', () => {
       locations: [{
         id: 'remote-primary',
         name: 'Primary',
+        rootName: 'customer-docs',
         endpoint: {
           kind: 'remote',
           url: 'wss://agent.example.test',
@@ -438,6 +447,7 @@ describe('Workspace topology commands and errors', () => {
         operation: 'attach-remote',
         locationId: 'docs',
         name: 'Docs',
+        rootName: 'docs',
         url: 'wss://agent.example.test',
         remoteWorkspaceId: 'remote-workspace-1',
         credentialRef: 'credential-docs',
@@ -447,6 +457,7 @@ describe('Workspace topology commands and errors', () => {
         ...base,
         operation: 'replace-endpoint',
         locationId: 'docs',
+        rootName: 'docs-v2',
         endpoint: {
           kind: 'remote',
           url: 'wss://next.example.test',
@@ -483,6 +494,7 @@ describe('Workspace topology commands and errors', () => {
       operation: 'attach-remote',
       locationId: 'docs',
       name: 'Docs',
+      rootName: 'docs',
       url: 'wss://agent.example.test',
       remoteWorkspaceId: 'remote-workspace-1',
       credentialRef: 'credential-docs',
@@ -493,6 +505,7 @@ describe('Workspace topology commands and errors', () => {
       operation: 'attach-remote',
       locationId: 'docs',
       name: 'Docs',
+      rootName: 'docs',
       url: 'wss://secret@example.test?token=also-secret',
       remoteWorkspaceId: 'remote-workspace-1',
       credentialRef: 'credential-docs',
@@ -536,6 +549,7 @@ describe('Workspace topology commands and errors', () => {
         locations: [{
           id: 'local-primary',
           name: 'Primary',
+          rootName: 'Product',
           endpoint: { kind: 'local', rootPath: 'E:\\Product' },
         }],
       },
