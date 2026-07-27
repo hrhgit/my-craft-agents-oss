@@ -22,11 +22,11 @@ export const LOCAL_ONLY_CHANNELS = new Set<string>([
   RPC_CHANNELS.workspaces.GET,
   RPC_CHANNELS.workspaces.CREATE,
   RPC_CHANNELS.workspaces.CHECK_SLUG,
-  RPC_CHANNELS.workspaces.UPDATE_REMOTE,
-  RPC_CHANNELS.workspaces.REMOTE_UPDATED,
   RPC_CHANNELS.workspaces.GET_TOPOLOGY,
   RPC_CHANNELS.workspaces.TOPOLOGY_COMMAND,
   RPC_CHANNELS.workspaces.TOPOLOGY_CHANGED,
+  RPC_CHANNELS.workspaces.REMOTE_PRIMARY_COMMAND,
+  RPC_CHANNELS.workspaces.TRANSFER,
 
   // window — Electron window management
   RPC_CHANNELS.window.GET_WORKSPACE,

@@ -29,7 +29,6 @@ export interface BroadcastEventMap {
   [RPC_CHANNELS.automations.CHANGED]: [workspaceId: string]
   [RPC_CHANNELS.skills.CHANGED]: [workspaceId: string, skills: LoadedSkill[]]
   [RPC_CHANNELS.permissions.DEFAULTS_CHANGED]: [value: null]
-  [RPC_CHANNELS.workspaces.REMOTE_UPDATED]: [data: { workspaceId: string }]
   [RPC_CHANNELS.workspaces.TOPOLOGY_CHANGED]: [change: WorkspaceTopologyChangedV1]
 
   // Pi global config (~/.mortise/agent/) change broadcast

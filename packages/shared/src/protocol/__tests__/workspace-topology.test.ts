@@ -3,16 +3,24 @@ import type { Workspace } from '@mortise/core/types'
 import {
   WORKSPACE_MARKER_KIND,
   WORKSPACE_MARKER_RELATIVE_PATH,
+  WORKSPACE_REMOTE_PRIMARY_SCHEMA_VERSION,
   WORKSPACE_TOPOLOGY_ERROR_CODES,
+  WORKSPACE_TRANSFER_SCHEMA_VERSION,
   assertWorkspaceV2,
   getWorkspaceLocationRole,
+  parseWorkspaceInfoV2,
   parseWorkspaceMarkerV1,
   parseWorkspacePathRefV1,
+  parseWorkspaceRemotePrimaryCommandV1,
+  parseWorkspaceRemotePrimaryResultV1,
   parseWorkspaceTopologyCommandV1,
   parseWorkspaceTopologyChangedV1,
   parseWorkspaceTopologyResultV1,
+  parseWorkspaceTransferRequestV1,
+  parseWorkspaceTransferResultV1,
   parseWorkspaceV2,
   redactWorkspaceInfo,
+  type WorkspaceLocationProjectionV1,
 } from '../workspace-topology'
 import { isTransportErrorCode } from '../types'
 
@@ -22,6 +30,7 @@ function workspace(overrides: Partial<Workspace> = {}): Workspace {
     id: 'workspace-1',
     revision: 4,
     name: 'Product',
+    nameSource: 'derived',
     slug: 'product',
     primaryLocationId: 'local-primary',
     locations: [
@@ -47,10 +56,28 @@ function workspace(overrides: Partial<Workspace> = {}): Workspace {
   }
 }
 
+function projections(): WorkspaceLocationProjectionV1[] {
+  return [
+    {
+      schemaVersion: 1,
+      locationId: 'local-primary',
+      availability: { status: 'available', observedAt: 1_700_000_000_100 },
+      permissions: { read: true, write: true, search: true, runCommands: true },
+    },
+    {
+      schemaVersion: 1,
+      locationId: 'remote-docs',
+      availability: { status: 'unavailable', observedAt: 1_700_000_000_200, reason: 'offline' },
+      permissions: { read: true, write: false, search: true, runCommands: false },
+    },
+  ]
+}
+
 describe('Workspace V2', () => {
   test('accepts one-or-more named locations with a referenced primary', () => {
     const parsed = parseWorkspaceV2(workspace())
     expect(parsed.id).toBe('workspace-1')
+    expect(parsed.nameSource).toBe('derived')
     expect(parsed.locations).toHaveLength(2)
     expect(() => assertWorkspaceV2(parsed)).not.toThrow()
   })
@@ -88,6 +115,8 @@ describe('Workspace V2', () => {
       }],
     })).toThrow()
     expect(() => parseWorkspaceV2({ ...workspace(), schemaVersion: 3 })).toThrow()
+    const { nameSource: _, ...withoutNameSource } = workspace()
+    expect(() => parseWorkspaceV2(withoutNameSource)).toThrow()
   })
 
   test('derives role only from primaryLocationId', () => {
@@ -97,11 +126,17 @@ describe('Workspace V2', () => {
   })
 
   test('redacts local paths and credential references from client info', () => {
-    const info = redactWorkspaceInfo(workspace())
+    const info = redactWorkspaceInfo(workspace(), projections())
     const json = JSON.stringify(info)
 
     expect(info.locations).toEqual([
-      { id: 'local-primary', name: 'Primary', endpoint: { kind: 'local' } },
+      {
+        id: 'local-primary',
+        name: 'Primary',
+        endpoint: { kind: 'local' },
+        availability: { status: 'available', observedAt: 1_700_000_000_100 },
+        permissions: { read: true, write: true, search: true, runCommands: true },
+      },
       {
         id: 'remote-docs',
         name: 'Docs',
@@ -111,6 +146,8 @@ describe('Workspace V2', () => {
           remoteWorkspaceId: 'remote-workspace-1',
           allowInsecureTls: false,
         },
+        availability: { status: 'unavailable', observedAt: 1_700_000_000_200, reason: 'offline' },
+        permissions: { read: true, write: false, search: true, runCommands: false },
       },
     ])
     expect(json).not.toContain('E:\\\\Product')
@@ -130,7 +167,31 @@ describe('Workspace V2', () => {
         },
       }],
       primaryLocationId: 'remote-primary',
-    }))).toThrow('Remote URL must not embed credentials')
+    }), [{
+      schemaVersion: 1,
+      locationId: 'remote-primary',
+      availability: { status: 'unknown', reason: 'not-observed' },
+      permissions: { read: false, write: false, search: false, runCommands: false },
+    }])).toThrow('Remote URL must not embed credentials')
+  })
+
+  test('requires exact truthful availability and permission projections', () => {
+    const duplicate = projections()[0]!
+    expect(() => redactWorkspaceInfo(workspace(), projections().slice(0, 1))).toThrow('exactly cover')
+    expect(() => redactWorkspaceInfo(workspace(), [...projections(), duplicate])).toThrow('unique')
+
+    const info = redactWorkspaceInfo(workspace(), projections())
+    expect(() => parseWorkspaceInfoV2({
+      ...info,
+      locations: info.locations.map(({ availability: _, ...location }) => location),
+    })).toThrow()
+    expect(() => parseWorkspaceInfoV2({
+      ...info,
+      locations: [{
+        ...info.locations[0],
+        availability: { status: 'unavailable', observedAt: 1, reason: 'E:\\secret' },
+      }],
+    })).toThrow()
   })
 })
 
@@ -188,6 +249,176 @@ describe('Workspace markers and path references', () => {
       relativePath: 'safe',
       absolutePath: 'E:\\secret',
     })).toThrow()
+  })
+})
+
+describe('Workspace transfer contract', () => {
+  const source = {
+    schemaVersion: 1 as const,
+    workspaceId: 'workspace-1',
+    locationId: 'local-primary',
+    relativePath: 'source.txt',
+  }
+  const destination = {
+    schemaVersion: 1 as const,
+    workspaceId: 'workspace-1',
+    locationId: 'remote-docs',
+    relativePath: 'archive/source.txt',
+  }
+  const request = {
+    schemaVersion: WORKSPACE_TRANSFER_SCHEMA_VERSION,
+    operationId: 'transfer-1',
+    workspaceId: 'workspace-1',
+    expectedRevision: 4,
+    mode: 'move' as const,
+    source,
+    destination,
+    expectedSha256: 'a'.repeat(64),
+  }
+
+  test('accepts only endpoint-qualified, revisioned, idempotent transfers', () => {
+    expect(parseWorkspaceTransferRequestV1(request)).toEqual(request)
+    expect(() => parseWorkspaceTransferRequestV1({
+      ...request,
+      source: { ...source, workspaceId: 'other-workspace' },
+    })).toThrow('identities must match')
+    expect(() => parseWorkspaceTransferRequestV1({
+      ...request,
+      source: { ...source, relativePath: '.mortise/workspace.json' },
+    })).toThrow('private resources')
+    expect(() => parseWorkspaceTransferRequestV1({
+      ...request,
+      destination: source,
+    })).toThrow('must differ')
+    expect(() => parseWorkspaceTransferRequestV1({ ...request, expectedSha256: 'A'.repeat(64) })).toThrow()
+  })
+
+  test('rejects secret, absolute-path, and compatibility fields', () => {
+    expect(() => parseWorkspaceTransferRequestV1({ ...request, token: 'secret' })).toThrow()
+    expect(() => parseWorkspaceTransferRequestV1({
+      ...request,
+      destination: { ...destination, rootPath: 'E:\\hidden' },
+    })).toThrow()
+    expect(() => parseWorkspaceTransferRequestV1({ ...request, schemaVersion: 2 })).toThrow()
+  })
+
+  test('strictly validates observable transfer outcomes', () => {
+    const result = {
+      schemaVersion: WORKSPACE_TRANSFER_SCHEMA_VERSION,
+      operationId: 'transfer-1',
+      status: 'applied' as const,
+      workspaceId: 'workspace-1',
+      sourceLocationId: 'local-primary',
+      destinationLocationId: 'remote-docs',
+      revision: 4,
+      mode: 'move' as const,
+      sha256: 'a'.repeat(64),
+      bytes: 42,
+      sourceRemoved: true,
+    }
+    expect(parseWorkspaceTransferResultV1(result)).toEqual(result)
+    expect(() => parseWorkspaceTransferResultV1({ ...result, mode: 'copy', sourceRemoved: true })).toThrow()
+    expect(() => parseWorkspaceTransferResultV1({ ...result, bytes: -1 })).toThrow()
+    expect(() => parseWorkspaceTransferResultV1({ ...result, warning: 'ignored' })).toThrow()
+  })
+})
+
+describe('remote-primary Workspace contract', () => {
+  const server = {
+    url: 'wss://agent.example.test',
+    credentialRef: 'credential-remote-primary',
+    allowInsecureTls: false,
+  }
+
+  test('strictly separates connect-existing from create-and-connect', () => {
+    const connect = {
+      schemaVersion: WORKSPACE_REMOTE_PRIMARY_SCHEMA_VERSION,
+      operation: 'connect-existing' as const,
+      operationId: 'remote-primary-1',
+      workspaceId: 'local-workspace-id',
+      locationId: 'remote-primary',
+      displayName: { source: 'derived' as const },
+      server,
+      remoteWorkspaceId: 'remote-workspace-id',
+    }
+    expect(parseWorkspaceRemotePrimaryCommandV1(connect)).toEqual(connect)
+
+    const create = {
+      schemaVersion: WORKSPACE_REMOTE_PRIMARY_SCHEMA_VERSION,
+      operation: 'create-and-connect' as const,
+      operationId: 'remote-primary-2',
+      workspaceId: 'local-workspace-id-2',
+      locationId: 'remote-primary',
+      displayName: { source: 'custom' as const, name: 'Customer Docs' },
+      server,
+      remoteRootName: 'customer-docs',
+    }
+    expect(parseWorkspaceRemotePrimaryCommandV1(create)).toEqual(create)
+    expect(() => parseWorkspaceRemotePrimaryCommandV1({ ...connect, remoteRootName: 'shadow-root' })).toThrow()
+    expect(() => parseWorkspaceRemotePrimaryCommandV1({ ...create, remoteWorkspaceId: 'precreated' })).toThrow()
+  })
+
+  test('rejects credentials, fake local roots, invalid name-source shapes, and URL secrets', () => {
+    const command = {
+      schemaVersion: WORKSPACE_REMOTE_PRIMARY_SCHEMA_VERSION,
+      operation: 'connect-existing',
+      operationId: 'remote-primary-1',
+      workspaceId: 'local-workspace-id',
+      locationId: 'remote-primary',
+      displayName: { source: 'derived' },
+      server,
+      remoteWorkspaceId: 'remote-workspace-id',
+    }
+    expect(() => parseWorkspaceRemotePrimaryCommandV1({ ...command, token: 'secret' })).toThrow()
+    expect(() => parseWorkspaceRemotePrimaryCommandV1({ ...command, rootPath: 'E:\\bootstrap' })).toThrow()
+    expect(() => parseWorkspaceRemotePrimaryCommandV1({
+      ...command,
+      displayName: { source: 'derived', name: 'must-not-be-silently-custom' },
+    })).toThrow()
+    expect(() => parseWorkspaceRemotePrimaryCommandV1({
+      ...command,
+      server: { ...server, url: 'wss://user:secret@agent.example.test' },
+    })).toThrow('must not embed credentials')
+  })
+
+  test('requires stable local and remote identity with a genuinely remote primary', () => {
+    const remoteWorkspace = workspace({
+      id: 'local-workspace-id',
+      name: 'Remote Product',
+      nameSource: 'derived',
+      primaryLocationId: 'remote-primary',
+      locations: [{
+        id: 'remote-primary',
+        name: 'Primary',
+        endpoint: {
+          kind: 'remote',
+          url: 'wss://agent.example.test',
+          remoteWorkspaceId: 'remote-workspace-id',
+          credentialRef: 'credential-remote-primary',
+        },
+      }],
+    })
+    const info = redactWorkspaceInfo(remoteWorkspace, [{
+      schemaVersion: 1,
+      locationId: 'remote-primary',
+      availability: { status: 'unknown', reason: 'checking' },
+      permissions: { read: false, write: false, search: false, runCommands: false },
+    }])
+    const result = {
+      schemaVersion: WORKSPACE_REMOTE_PRIMARY_SCHEMA_VERSION,
+      operationId: 'remote-primary-1',
+      status: 'applied' as const,
+      workspaceId: 'local-workspace-id',
+      locationId: 'remote-primary',
+      remoteWorkspaceId: 'remote-workspace-id',
+      workspace: info,
+    }
+    expect(parseWorkspaceRemotePrimaryResultV1(result)).toEqual(result)
+    expect(() => parseWorkspaceRemotePrimaryResultV1({ ...result, workspaceId: 'different' })).toThrow()
+    expect(() => parseWorkspaceRemotePrimaryResultV1({
+      ...result,
+      workspace: redactWorkspaceInfo(workspace(), projections()),
+    })).toThrow('Created Workspace identity must match')
   })
 })
 
@@ -276,7 +507,7 @@ describe('Workspace topology commands and errors', () => {
   })
 
   test('strictly validates redacted results and monotonic change events', () => {
-    const info = redactWorkspaceInfo(workspace({ revision: 5 }))
+    const info = redactWorkspaceInfo(workspace({ revision: 5 }), projections())
     expect(parseWorkspaceTopologyResultV1({
       schemaVersion: 1,
       operationId: 'operation-1',
