@@ -717,6 +717,15 @@ export interface SessionManagerOptions {
   createSessionBackend?: SessionBackendFactory
 }
 
+export type WorkspaceSessionInterruptionTarget =
+  | { workspaceId: string; scope: 'workspace' }
+  | { workspaceId: string; scope: 'location'; locationId: string }
+
+export interface WorkspaceSessionInterruptionResult {
+  selectedSessionIds: string[]
+  interruptedSessionIds: string[]
+}
+
 interface SubagentDeliveryRecord extends ChildTaskBackgroundOperation {
   state: 'running' | 'ready' | 'delivered'
   status?: ChildTaskSettledOperation['status']
@@ -830,6 +839,15 @@ interface ManagedSession {
   }>
   // Runtime-only marker for the queued message currently being replayed.
   replayingQueuedMessageId?: string
+  // Workspace location captured when the current unit of work started. It must
+  // not be re-derived after a topology mutation.
+  activeWorkspaceLocationId?: string
+  // A topology interruption fences every automatic recovery path until a new
+  // explicit request starts work against the updated Workspace topology.
+  workspaceTopologyAutoResumeBlocked?: boolean
+  workspaceTopologyGeneration: number
+  workspaceTopologyInterruption?: Promise<void>
+  workspaceTopologyInterruptionFailure?: unknown
   // A terminal backend event has arrived, but host metadata/projection is not
   // durable yet. New sends must retry this boundary before entering a new turn.
   pendingSettlementReason?: 'complete' | 'interrupted' | 'error' | 'timeout'
@@ -935,6 +953,7 @@ export function createManagedSession(
     lastMessageAt: (s.lastMessageAt ?? s.lastUsedAt ?? Date.now()) as number,
     streamingText: '',
     processingGeneration: 0,
+    workspaceTopologyGeneration: 0,
     messageQueue: [],
     backgroundShellCommands: new Map(),
     backgroundTaskOutputs: new Map(),
@@ -956,6 +975,10 @@ export function createManagedSession(
   if (managed.branchContextStrategy === 'seeded-fresh-session' && managed.branchSeedApplied === undefined) {
     // If an SDK session ID already exists, first turn has already happened.
     managed.branchSeedApplied = !!managed.sdkSessionId
+  }
+
+  if (managed.pendingPlanExecution) {
+    managed.activeWorkspaceLocationId ??= workspace.primaryLocationId
   }
 
   managed.sdkCwd = managed.sdkCwd ?? requirePrimaryLocalWorkspaceRoot(workspace)
@@ -1901,6 +1924,8 @@ export class SessionManager implements ISessionManager {
     managed: ManagedSession,
     snapshot: PiProjectionSnapshotV1,
   ): void {
+    if (managed.workspaceTopologyAutoResumeBlocked) return
+
     const queued = snapshot.entities
       .filter(entity => entity.kind === 'user_text' && entity.payload && typeof entity.payload === 'object')
       .sort((a, b) => a.createdSeq - b.createdSeq)
@@ -1913,6 +1938,7 @@ export class SessionManager implements ISessionManager {
           : []
       })
     if (queued.length === 0) return
+    managed.activeWorkspaceLocationId ??= managed.workspace.primaryLocationId
 
     if (!managed.messagesLoaded) this.hydrateMessagesForColdPersist(managed)
     let recovered = 0
@@ -2652,6 +2678,9 @@ export class SessionManager implements ISessionManager {
           undefined,
           undefined,
           acknowledge,
+          undefined,
+          false,
+          true,
         ).then(acknowledge, reject)
       })
     }
@@ -4401,6 +4430,8 @@ export class SessionManager implements ISessionManager {
     const managed = this.sessions.get(sessionId)
     if (managed) {
       await clearStoredPendingPlanExecution(managed.workspace.id, sessionId)
+      managed.pendingPlanExecution = undefined
+      managed.pendingCompactionCompletion = false
       sessionLog.info(`Session ${sessionId}: cleared pending plan execution`)
     }
   }
@@ -5183,12 +5214,27 @@ export class SessionManager implements ISessionManager {
      * isProcessing before scheduling replay so newer RPCs queue behind it.
      */
     isQueuedReplay = false,
+    isAutomaticResume = false,
   ): Promise<void> {
     const managed = this.sessions.get(sessionId)
     if (!managed) {
       throw new Error(`Session ${sessionId} not found`)
     }
     if (managed.deleting) throw new Error(`Session ${sessionId} is being deleted`)
+
+    if (_isAuthRetry || isQueuedReplay || isAutomaticResume) {
+      if (managed.workspaceTopologyAutoResumeBlocked) {
+        sessionLog.info(`Suppressed automatic Session resume after Workspace topology interruption: ${sessionId}`)
+        return
+      }
+    } else {
+      await managed.workspaceTopologyInterruption
+      if (managed.workspaceTopologyInterruptionFailure) {
+        throw managed.workspaceTopologyInterruptionFailure
+      }
+      managed.workspaceTopologyAutoResumeBlocked = false
+      managed.activeWorkspaceLocationId = managed.workspace.primaryLocationId
+    }
 
     // A backend turn may already be terminal while its Mortise metadata or Pi
     // projection is still pending durability. Recover that accepted turn first;
@@ -5825,7 +5871,9 @@ export class SessionManager implements ISessionManager {
     workspaceId: string,
     failureErrorCode?: string,
   ): boolean {
-    if (managed.authRetryAttempted || !managed.lastSentMessage) return false
+    if (managed.workspaceTopologyAutoResumeBlocked || managed.authRetryAttempted || !managed.lastSentMessage) return false
+
+    const topologyGeneration = managed.workspaceTopologyGeneration
 
     sessionLog.info(`Auth error detected, attempting token refresh and retry for session ${sessionId}`)
     managed.authRetryAttempted = true
@@ -5841,6 +5889,9 @@ export class SessionManager implements ISessionManager {
 
     setImmediate(async () => {
       try {
+        if (managed.workspaceTopologyAutoResumeBlocked
+          || managed.workspaceTopologyGeneration !== topologyGeneration) return
+
         // 1. Destroy the agent — the new agent's postInit() will refresh auth
         sessionLog.info(`[auth-retry] Destroying agent for session ${sessionId}`)
         managed.agent = null
@@ -6012,7 +6063,7 @@ export class SessionManager implements ISessionManager {
     managed.pendingSettlementReason = undefined
 
     // 5. Check queue and process or complete
-    if (managed.messageQueue.length > 0) {
+    if (!managed.workspaceTopologyAutoResumeBlocked && managed.messageQueue.length > 0) {
       // Has queued messages - process next
       this.processNextQueuedMessage(sessionId)
     } else {
@@ -6041,7 +6092,7 @@ export class SessionManager implements ISessionManager {
    */
   private processNextQueuedMessage(sessionId: string): void {
     const managed = this.sessions.get(sessionId)
-    if (!managed || managed.messageQueue.length === 0) return
+    if (!managed || managed.workspaceTopologyAutoResumeBlocked || managed.messageQueue.length === 0) return
 
     const next = managed.messageQueue.shift()!
     managed.replayingQueuedMessageId = next.messageId
@@ -6087,6 +6138,199 @@ export class SessionManager implements ISessionManager {
         await this.onProcessingStopped(sessionId, 'error')
       })
     })
+  }
+
+  /**
+   * Stop Session-owned work before a Workspace topology mutation. Workspace
+   * scope is used for primary changes; location scope is used for detach and
+   * endpoint replacement.
+   */
+  async interruptWorkspaceSessionsForTopologyChange(
+    target: WorkspaceSessionInterruptionTarget,
+  ): Promise<WorkspaceSessionInterruptionResult> {
+    const selected = Array.from(this.sessions.values()).filter((managed) => {
+      if (managed.workspace.id !== target.workspaceId) return false
+      if (target.scope === 'location' && managed.activeWorkspaceLocationId !== target.locationId) return false
+      return this.hasNonTerminalWorkspaceSessionWork(managed)
+    })
+
+    const interrupted = await Promise.all(selected.map(managed => (
+      this.interruptManagedSessionForTopologyChange(managed)
+    )))
+
+    return {
+      selectedSessionIds: selected.map(managed => managed.id),
+      interruptedSessionIds: selected.filter((_, index) => interrupted[index]).map(managed => managed.id),
+    }
+  }
+
+  /** Adopt the authoritative Workspace record after a topology command commits. */
+  updateWorkspaceTopology(workspace: Workspace): void {
+    for (const managed of this.sessions.values()) {
+      if (managed.workspace.id === workspace.id) managed.workspace = workspace
+    }
+  }
+
+  private hasNonTerminalWorkspaceSessionWork(managed: ManagedSession): boolean {
+    return Boolean(
+      managed.workspaceTopologyInterruption
+      || managed.workspaceTopologyInterruptionFailure
+      || managed.isProcessing
+      || managed.agent?.isProcessing()
+      || this.isPiProjectionProcessing(managed.id)
+      || managed.messageQueue.length > 0
+      || managed.replayingQueuedMessageId
+      || managed.pendingSettlementReason
+      || managed.settlementPromise
+      || managed.pendingCompactionCompletion
+      || managed.pendingPlanExecution
+      || managed.authRetryInProgress
+      || managed.stopRequested
+      || managed.backgroundShellCommands.size > 0
+      || (this.subagentLifecycleTasks.get(managed.id)?.size ?? 0) > 0
+      || this.subagentDeliveryWrites.has(managed.id)
+      || Array.from(this.subagentDeliveryTasks.keys()).some(key => key.startsWith(`${managed.id}:`))
+      || Array.from(this.pendingPermissionRequests.values()).some(request => request.sessionId === managed.id)
+    )
+  }
+
+  private interruptManagedSessionForTopologyChange(managed: ManagedSession): Promise<boolean> {
+    const current = managed.workspaceTopologyInterruption
+    if (current) return current.then(() => false)
+    if (managed.workspaceTopologyInterruptionFailure) {
+      return Promise.reject(managed.workspaceTopologyInterruptionFailure)
+    }
+
+    const sessionId = managed.id
+    const hadPendingPlanExecution = Boolean(managed.pendingPlanExecution)
+    const hadProjectionWork = this.isPiProjectionProcessing(sessionId)
+      || this.piProjectionBySession.get(sessionId)?.createSnapshot().entities.some((entity) => (
+        entity.payload && typeof entity.payload === 'object'
+          && (entity.payload as Record<string, unknown>).queueStatus === 'queued'
+      )) === true
+
+    // Fence recovery synchronously before waiting on backend or persistence.
+    managed.workspaceTopologyAutoResumeBlocked = true
+    managed.workspaceTopologyGeneration++
+    managed.processingGeneration++
+    managed.messageQueue = []
+    managed.replayingQueuedMessageId = undefined
+    managed.pendingPlanExecution = undefined
+    managed.pendingCompactionCompletion = false
+    managed.authRetryAttempted = true
+    managed.authRetryInProgress = false
+    managed.lastSentMessage = undefined
+    managed.lastSentAttachments = undefined
+    managed.lastSentStoredAttachments = undefined
+    managed.lastSentOptions = undefined
+    managed.stopRequested = true
+    managed.wasInterrupted = true
+    this.clearPendingPermissionRequestsForSession(sessionId)
+
+    const work = (async () => {
+      const errors: unknown[] = []
+      const clearPendingPlan = hadPendingPlanExecution
+        ? clearStoredPendingPlanExecution(managed.workspace.id, sessionId).catch(error => { errors.push(error) })
+        : Promise.resolve()
+
+      const agent = managed.agent
+      if (agent) {
+        try {
+          await agent.abort(AbortReason.UserStop)
+        } catch (error) {
+          errors.push(error)
+        }
+      }
+
+      try {
+        await managed.settlementPromise
+      } catch (error) {
+        errors.push(error)
+      }
+
+      try {
+        await this.disposeManagedAgentRuntime(managed, 'Workspace topology interruption', { propagateFailure: true })
+      } catch (error) {
+        errors.push(error)
+      }
+
+      try {
+        await this.drainSubagentLifecycle(managed)
+      } catch (error) {
+        errors.push(error)
+      }
+      await clearPendingPlan
+
+      this.interruptQueuedPiProjectionMessages(managed)
+      if (hadProjectionWork && this.isPiProjectionProcessing(sessionId)) {
+        this.closeStalePiProjection(sessionId)
+      }
+
+      this.setProcessing(managed, false)
+      managed.stopRequested = false
+      managed.turnStartFinalMessageId = undefined
+      managed.pendingExternalMetadata = undefined
+      managed.pendingProviderRuntimeRestart = false
+      managed.pendingSettlementReason = undefined
+      managed.backgroundShellCommands.clear()
+
+      const bpm = this.getBrowserPaneManagerForSession(sessionId)
+      bpm?.unbindAllForSession(sessionId)
+
+      if (!managed.publicationState) {
+        this.persistSession(managed)
+        try {
+          await this.flushSession(sessionId)
+          await this.flushPiProjectionWrites(managed)
+        } catch (error) {
+          errors.push(error)
+        }
+      }
+
+      this.sendEvent({ type: 'interrupted', sessionId }, managed.workspace.id)
+      if (errors.length > 0) {
+        const failure = new AggregateError(errors, `Failed to fully interrupt Session ${sessionId} for Workspace topology change`)
+        managed.workspaceTopologyInterruptionFailure = failure
+        throw failure
+      }
+      managed.workspaceTopologyInterruptionFailure = undefined
+    })()
+
+    managed.workspaceTopologyInterruption = work
+    return work.then(
+      () => true,
+      error => { throw error },
+    ).finally(() => {
+      if (managed.workspaceTopologyInterruption === work) {
+        managed.workspaceTopologyInterruption = undefined
+      }
+    })
+  }
+
+  private interruptQueuedPiProjectionMessages(managed: ManagedSession): void {
+    const projector = this.piProjectionBySession.get(managed.id)
+    if (!projector) return
+
+    const snapshot = projector.createSnapshot()
+    let seq = snapshot.lastSeq + 1
+    for (const entity of snapshot.entities) {
+      if (!entity.payload || typeof entity.payload !== 'object') continue
+      const payload = entity.payload as Record<string, unknown>
+      if (payload.queueStatus !== 'queued') continue
+      this.applyPiProjectionEvent({
+        schemaVersion: 1,
+        eventId: `${snapshot.runtimeId}:host-queue-interrupted:${seq}`,
+        seq,
+        sessionId: managed.id,
+        runtimeId: snapshot.runtimeId,
+        entityId: entity.entityId,
+        entityType: entity.entityType,
+        entityVersion: entity.entityVersion + 1,
+        kind: entity.kind,
+        payload: { ...payload, queueStatus: 'interrupted' },
+      })
+      seq++
+    }
   }
 
   async killShell(sessionId: string, shellId: string): Promise<{ success: boolean; error?: string }> {
