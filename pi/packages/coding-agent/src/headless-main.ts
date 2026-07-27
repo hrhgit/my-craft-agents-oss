@@ -1,5 +1,4 @@
 import type { Api, Model } from "@mortise/pi-ai";
-import { createJiti } from "jiti/static";
 import { ENV_SESSION_DIR, expandTildePath, getAgentDir, getProjectConfigDir } from "./config.ts";
 import { type CreateAgentSessionRuntimeFactory, createAgentSessionRuntime } from "./core/agent-session-runtime.ts";
 import { createAgentSessionFromServices, createAgentSessionServices } from "./core/agent-session-services.ts";
@@ -66,6 +65,7 @@ function hookFactory(factory: UnknownFunction | undefined, label: string): Unkno
 
 export async function loadHostHooks(modulePath: string | undefined, cwd: string) {
 	if (!modulePath) return {};
+	const { createJiti } = await import("jiti/static");
 	const resolvedPath = resolvePath(modulePath, cwd);
 	const loaded = await createJiti(import.meta.url, { moduleCache: false }).import(resolvedPath);
 	const moduleValue = isRecord(loaded) ? loaded : { default: loaded };

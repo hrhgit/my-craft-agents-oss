@@ -36,6 +36,15 @@ export function resolvePackageTarget(
   return { target, builderArgs: [`--${target}`, `--${arch}`] }
 }
 
+export function resolveExpectedPackageBuildId(args: string[]): string | undefined {
+  if (!args.includes('--expected-build-id')) return undefined
+  const expectedBuildId = optionValue(args, '--expected-build-id')
+  if (expectedBuildId === undefined || !/^[0-9a-f]{64}$/.test(expectedBuildId)) {
+    throw new Error('--expected-build-id requires a lowercase SHA-256 immutable build identity')
+  }
+  return expectedBuildId
+}
+
 export function packageElectron(args = process.argv.slice(2)): void {
   const requestedTarget = optionValue(args, '--target') as PackageTarget | undefined
   if (!requestedTarget || !['default', 'win', 'mac', 'linux'].includes(requestedTarget)) {
@@ -43,7 +52,9 @@ export function packageElectron(args = process.argv.slice(2)): void {
   }
   const resolvedTarget = resolvePackageTarget(requestedTarget)
   const mode: ElectronBuildMode = args.includes('--development') ? 'development' : 'production'
+  const expectedBuildId = resolveExpectedPackageBuildId(args)
   const repoRoot = resolve(import.meta.dir, '..', '..')
+  const buildSourceRoot = resolve(optionValue(args, '--build-source-root') ?? repoRoot)
   const electronDir = join(repoRoot, 'apps', 'electron')
   const buildRoot = resolve(process.env.MORTISE_BUILD_ROOT ?? join(repoRoot, 'output', 'electron-builds'))
   const developerKitBuildRoot = resolve(
@@ -70,18 +81,38 @@ export function packageElectron(args = process.argv.slice(2)): void {
   })
 
   let lease: ReturnType<typeof acquireElectronBuild> | undefined
-  const capturedSource = captureElectronBuildSource({ repoRoot, buildRoot })
-  const buildEnvironment = createElectronBuildCommandEnvironment(
-    process.env,
-    mode,
-    capturedSource.sourceId,
-    buildRoot,
-    bunExecutable,
-  )
-  let packageSource: ReturnType<typeof capturedSource.materialize> | undefined
+  let capturedSource: ReturnType<typeof captureElectronBuildSource> | undefined
+  let packageSource: ReturnType<ReturnType<typeof captureElectronBuildSource>['materialize']> | undefined
   try {
-    lease = acquireElectronBuild({ runId, runDir, repoRoot, buildRoot, mode, capturedSource })
+    if (expectedBuildId) {
+      lease = acquireElectronBuild({
+        runId,
+        runDir,
+        repoRoot,
+        buildRoot,
+        mode,
+        expectedBuildId,
+        skipBuild: true,
+      })
+    } else {
+      capturedSource = captureElectronBuildSource({ repoRoot: buildSourceRoot, buildRoot })
+      lease = acquireElectronBuild({ runId, runDir, repoRoot: buildSourceRoot, buildRoot, mode, capturedSource })
+    }
+    const buildEnvironment = createElectronBuildCommandEnvironment(
+      process.env,
+      mode,
+      lease.manifest.sourceId,
+      buildRoot,
+      bunExecutable,
+    )
     if (resolvedTarget.target === 'win') {
+      capturedSource ??= captureElectronBuildSource({ repoRoot: buildSourceRoot, buildRoot })
+      if (capturedSource.sourceId !== lease.manifest.sourceId) {
+        throw new Error(
+          `Pinned Electron build ${lease.buildId.slice(0, 12)} requires source ${lease.manifest.sourceId}; `
+          + `--build-source-root resolved ${capturedSource.sourceId}.`,
+        )
+      }
       packageSource = capturedSource.materialize({
         parentDir: join(buildRoot, 'sources'),
         prepareDependencies: true,
@@ -139,7 +170,7 @@ export function packageElectron(args = process.argv.slice(2)): void {
   } finally {
     packageSource?.dispose()
     if (lease) releaseElectronBuild(lease)
-    capturedSource.dispose()
+    capturedSource?.dispose()
     rmSync(runDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
   }
 }

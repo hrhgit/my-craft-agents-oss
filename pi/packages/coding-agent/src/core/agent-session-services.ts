@@ -80,6 +80,8 @@ export interface AgentSessionServices {
 	modelRegistry: ModelRegistry;
 	networkManager: NetworkManager;
 	resourceLoader: ResourceLoader;
+	/** Full resources and network initialization already completed for the first request. */
+	requestResourcesReady: boolean;
 	diagnostics: AgentSessionRuntimeDiagnostic[];
 }
 
@@ -173,6 +175,7 @@ export async function createAgentSessionServices(
 		modelRegistry,
 		networkManager,
 		resourceLoader,
+		requestResourcesReady: !options.deferResourceLoad,
 		diagnostics,
 	};
 }
@@ -195,6 +198,7 @@ export async function createAgentSessionFromServices(
 		modelRegistry: options.services.modelRegistry,
 		networkManager: options.services.networkManager,
 		resourceLoader: options.services.resourceLoader,
+		requestResourcesReady: options.services.requestResourcesReady,
 		sessionManager: options.sessionManager,
 		model: options.model,
 		thinkingLevel: options.thinkingLevel,

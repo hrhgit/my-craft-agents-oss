@@ -96,6 +96,8 @@ export interface CreateAgentSessionOptions {
 	settingsManager?: SettingsManager;
 	/** Network manager. Default: created by createAgentSessionServices() */
 	networkManager?: NetworkManager;
+	/** Internal service invariant: full resources and network initialization already completed. */
+	requestResourcesReady?: boolean;
 	/**
 	 * Optional fetch interceptor for model traffic.
 	 *
@@ -530,6 +532,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		extensionRunnerRef,
 		sessionStartEvent: options.sessionStartEvent,
 		networkManager,
+		requestResourcesReady: options.requestResourcesReady,
 		onRuntimeDiagnostics: options.onRuntimeDiagnostics,
 	});
 	const extensionsResult = resourceLoader.getExtensions();

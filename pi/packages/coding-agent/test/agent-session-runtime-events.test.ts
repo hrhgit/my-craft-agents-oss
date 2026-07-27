@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fauxAssistantMessage, registerFauxProvider } from "@mortise/pi-ai";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	type CreateAgentSessionRuntimeFactory,
 	createAgentSessionFromServices,
@@ -254,18 +254,49 @@ describe("AgentSessionRuntime session lifecycle events", () => {
 		});
 
 		expect(runtimeHost.isWorkspaceLoaded).toBe(true);
+		expect(runtimeHost.session.requestResourcesReady).toBe(false);
 		expect(runtimeHost.session.resourceLoader.getExtensions().extensions).toEqual([]);
 		expect(runtimeHost.session.sessionManager.getEntries()).toEqual([]);
 
 		await runtimeHost.loadWorkspace();
 
 		expect(runtimeHost.isWorkspaceLoaded).toBe(true);
+		expect(runtimeHost.session.requestResourcesReady).toBe(true);
 		expect(runtimeHost.session.resourceLoader.getExtensions().extensions).toHaveLength(1);
 		expect(events).toEqual([{ type: "session_start", reason: "startup" }]);
 		expect(runtimeHost.session.sessionManager.getEntries().map((entry) => entry.type)).toEqual([
 			"model_change",
 			"thinking_level_change",
 		]);
+	});
+
+	it("does not repeat fully prepared services on the first request", async () => {
+		const tempDir = join(tmpdir(), `pi-runtime-ready-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+		mkdirSync(tempDir, { recursive: true });
+		const services = await createAgentSessionServices({
+			cwd: tempDir,
+			agentDir: tempDir,
+			resourceLoaderOptions: { noSkills: true, noPromptTemplates: true },
+		});
+		const loadPhase = vi.spyOn(services.resourceLoader, "loadPhase");
+		const initialize = vi.spyOn(services.networkManager, "initialize");
+		const runtime = await createAgentSessionFromServices({
+			services,
+			sessionManager: SessionManager.create(tempDir),
+			persistInitialState: false,
+		});
+
+		cleanups.push(async () => {
+			runtime.session.dispose();
+			await services.networkManager.dispose();
+			if (existsSync(tempDir)) rmSync(tempDir, { recursive: true, force: true });
+		});
+
+		expect(services.requestResourcesReady).toBe(true);
+		expect(runtime.session.requestResourcesReady).toBe(true);
+		await runtime.session.prepareForFirstRequest();
+		expect(loadPhase).not.toHaveBeenCalled();
+		expect(initialize).not.toHaveBeenCalled();
 	});
 
 	it("keeps deferred resource loading for replacement sessions", async () => {

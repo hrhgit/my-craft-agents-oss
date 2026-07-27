@@ -448,7 +448,6 @@ function planEvidence(
   sql: string[],
   bindings: Array<Array<string | number | null>>,
   expectedIndex: string | null,
-  scansFullCollection: boolean,
 ): QueryPlanEvidence {
   const details = sql.flatMap((statement, index) => explain(database, statement, bindings[index]!))
   return {
@@ -456,7 +455,7 @@ function planEvidence(
     details,
     expectedIndex,
     usesExpectedIndex: expectedIndex === null || details.some(detail => detail.includes(expectedIndex)),
-    scansFullCollection,
+    scansFullCollection: details.some(detail => /\bSCAN\b/.test(detail)),
   }
 }
 
@@ -469,11 +468,11 @@ function queryPlans(databasePath: string, strategy: Strategy): Record<OperationN
   const baselineRecordSql = `SELECT namespace, record_key, version, value_json, updated_at, writer_id
     FROM mortise_records WHERE namespace = ? AND record_key = ?`
   const baselineScan = (operationSql = baselineHistorySql, operationBindings: Array<string | number> = [historyStream]) =>
-    planEvidence(database, [operationSql, baselineRecordSql], [operationBindings, [runNamespace, 'representative-run-id']], null, true)
+    planEvidence(database, [operationSql, baselineRecordSql], [operationBindings, [runNamespace, 'representative-run-id']], null)
   try {
     if (strategy === 'baseline') {
       return {
-        'definitions-page': planEvidence(database, [baselineRecordSql], [[`automations-document:${WORKSPACE_ID}`, 'definitions']], 'sqlite_autoindex_mortise_records_1', false),
+        'definitions-page': planEvidence(database, [baselineRecordSql], [[`automations-document:${WORKSPACE_ID}`, 'definitions']], 'sqlite_autoindex_mortise_records_1'),
         'automation-runs-page': baselineScan(),
         'queued-runs-page': baselineScan(),
         'event-runs-page': baselineScan(),
@@ -487,41 +486,41 @@ function queryPlans(databasePath: string, strategy: Strategy): Record<OperationN
       'definitions-page': planEvidence(database, [`SELECT ordinal, automation_id, definition_json
         FROM automation_definition_index WHERE workspace_id = ?
         AND (? IS NULL OR ordinal > ? OR (ordinal = ? AND automation_id > ?))
-        ORDER BY ordinal, automation_id LIMIT ?`], [[WORKSPACE_ID, null, 0, 0, '', 101]], 'automation_definition_page', false),
+        ORDER BY ordinal, automation_id LIMIT ?`], [[WORKSPACE_ID, null, 0, 0, '', 101]], 'automation_definition_page'),
       'automation-runs-page': planEvidence(database, [`SELECT i.run_id, i.created_at_ms, r.value_json
         FROM automation_run_index i JOIN mortise_records r
         WHERE i.workspace_id = ? AND r.namespace = ? AND r.record_key = i.run_id
         AND r.version = i.record_version AND i.automation_id = ?
-        ORDER BY i.created_at_ms DESC, i.run_id DESC LIMIT ?`], [[WORKSPACE_ID, runNamespace, definition(10).id, 51]], 'automation_run_by_automation', false),
+        ORDER BY i.created_at_ms DESC, i.run_id DESC LIMIT ?`], [[WORKSPACE_ID, runNamespace, definition(10).id, 51]], 'automation_run_by_automation'),
       'queued-runs-page': planEvidence(database, [`SELECT i.run_id, i.created_at_ms, r.value_json
         FROM automation_run_index i JOIN mortise_records r
         WHERE i.workspace_id = ? AND r.namespace = ? AND r.record_key = i.run_id
         AND r.version = i.record_version AND i.state IN (?)
-        ORDER BY i.created_at_ms DESC, i.run_id DESC LIMIT ?`], [[WORKSPACE_ID, runNamespace, 'queued', 101]], 'automation_run_by_state', false),
+        ORDER BY i.created_at_ms DESC, i.run_id DESC LIMIT ?`], [[WORKSPACE_ID, runNamespace, 'queued', 101]], 'automation_run_by_state'),
       'event-runs-page': planEvidence(database, [`SELECT i.run_id, i.created_at_ms, r.value_json
         FROM automation_run_index i JOIN mortise_records r
         WHERE i.workspace_id = ? AND r.namespace = ? AND r.record_key = i.run_id
         AND r.version = i.record_version AND i.event_id = ?
-        ORDER BY i.created_at_ms DESC, i.run_id DESC LIMIT ?`], [[WORKSPACE_ID, runNamespace, 'event-benchmark-0010', 51]], 'automation_run_by_event', false),
+        ORDER BY i.created_at_ms DESC, i.run_id DESC LIMIT ?`], [[WORKSPACE_ID, runNamespace, 'event-benchmark-0010', 51]], 'automation_run_by_event'),
       'runs-time-range-page': planEvidence(database, [`SELECT i.run_id, i.created_at_ms, r.value_json
         FROM automation_run_index i JOIN mortise_records r
         WHERE i.workspace_id = ? AND r.namespace = ? AND r.record_key = i.run_id
         AND r.version = i.record_version AND i.created_at_ms >= ? AND i.created_at_ms < ?
         ORDER BY i.created_at_ms DESC, i.run_id DESC LIMIT ?`], [[WORKSPACE_ID, runNamespace,
-        Date.parse('2026-01-01T01:00:00.000Z'), Date.parse('2026-01-01T03:00:00.000Z'), 101]], 'automation_run_by_created', false),
+        Date.parse('2026-01-01T01:00:00.000Z'), Date.parse('2026-01-01T03:00:00.000Z'), 101]], 'automation_run_by_created'),
       'history-change-cursor-page': planEvidence(database, [`SELECT sequence, event_type AS kind, payload_json, occurred_at
         FROM mortise_events WHERE stream_id = ? AND sequence > ?
-        ORDER BY sequence LIMIT ?`], [[historyStream, 5_000, 101]], 'mortise_events_stream_sequence', false),
+        ORDER BY sequence LIMIT ?`], [[historyStream, 5_000, 101]], 'mortise_events_stream_sequence'),
       'expired-leases-page': planEvidence(database, [`SELECT i.run_id, i.record_version, i.lease_expires_at_ms,
         r.version AS canonical_version, r.value_json FROM automation_run_index i INDEXED BY automation_run_expired_lease
         LEFT JOIN mortise_records r ON r.namespace = ? AND r.record_key = i.run_id
         WHERE i.workspace_id = ? AND i.state = 'running' AND i.lease_expires_at_ms <= ?
-        ORDER BY i.lease_expires_at_ms, i.run_id LIMIT ?`], [[runNamespace, WORKSPACE_ID, Date.parse(FIXTURE_NOW), 100]], 'automation_run_expired_lease', false),
+        ORDER BY i.lease_expires_at_ms, i.run_id LIMIT ?`], [[runNamespace, WORKSPACE_ID, Date.parse(FIXTURE_NOW), 100]], 'automation_run_expired_lease'),
       'due-occurrences-page': planEvidence(database, [`SELECT s.definition_revision, d.definition_json, s.trigger_json,
         s.next_due_at_ms, s.last_claimed_at_ms FROM automation_schedule_index s INDEXED BY automation_schedule_due
         JOIN automation_definition_index d ON d.workspace_id = s.workspace_id AND d.automation_id = s.automation_id
         WHERE s.workspace_id = ? AND s.enabled = 1 AND s.next_due_at_ms <= ?
-        ORDER BY s.next_due_at_ms, s.automation_id, s.trigger_id LIMIT ?`], [[WORKSPACE_ID, Date.parse(FIXTURE_NOW), 100]], 'automation_schedule_due', false),
+        ORDER BY s.next_due_at_ms, s.automation_id, s.trigger_id LIMIT ?`], [[WORKSPACE_ID, Date.parse(FIXTURE_NOW), 100]], 'automation_schedule_due'),
     }
   } finally {
     database.close()
