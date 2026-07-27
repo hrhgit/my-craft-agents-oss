@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { impact, listModules, route, testModule, testModules, validationPlan } from '../core.ts'
+import { validationExecutionKey } from '../receipts.ts'
 import { loadRepository, refreshModule, validateRepository } from '../repository.ts'
 import { checkTaskPlan, closeTaskPlan, createTaskPlan, readTaskPlan } from '../task-plan.ts'
 
@@ -355,6 +356,36 @@ describe('module-owned validation', () => {
     selections = repo.modules.map(module => ({ module, level: 'fast' as const }))
     const third = await testModules(repo, selections, { reuseReceipts: true })
     expect(third.executions[0].receipt_status).toBe('stored')
+  })
+
+  it('invalidates receipts when the validation environment or configured tool changes', async () => {
+    const root = fixture([{ id: 'alpha', owns: ['src/alpha.ts'] }])
+    const repo = await loadRepository(root)
+    const entry = repo.modules[0]!.validation[0]!
+    const previousPython = process.env.PYTHON
+    const previousBuildRoot = process.env.MORTISE_BUILD_ROOT
+    try {
+      delete process.env.PYTHON
+      delete process.env.MORTISE_BUILD_ROOT
+      const baseline = validationExecutionKey(repo, entry, 'input-tree')
+      process.env.PYTHON = join(root, 'python-a')
+      expect(validationExecutionKey(repo, entry, 'input-tree')).not.toBe(baseline)
+      delete process.env.PYTHON
+      process.env.MORTISE_BUILD_ROOT = join(root, 'build-a')
+      expect(validationExecutionKey(repo, entry, 'input-tree')).not.toBe(baseline)
+      const python = join(root, 'python-tool')
+      writeFileSync(python, 'first-tool', 'utf8')
+      process.env.PYTHON = python
+      delete process.env.MORTISE_BUILD_ROOT
+      const firstTool = validationExecutionKey(repo, entry, 'input-tree')
+      writeFileSync(python, 'second-tool', 'utf8')
+      expect(validationExecutionKey(repo, entry, 'input-tree')).not.toBe(firstTool)
+    } finally {
+      if (previousPython === undefined) delete process.env.PYTHON
+      else process.env.PYTHON = previousPython
+      if (previousBuildRoot === undefined) delete process.env.MORTISE_BUILD_ROOT
+      else process.env.MORTISE_BUILD_ROOT = previousBuildRoot
+    }
   })
 
   it('never receipt-caches a shared command that is physical for any module', async () => {

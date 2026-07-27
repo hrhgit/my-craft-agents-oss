@@ -2,7 +2,7 @@
 
 状态：初始参考
 
-更新日期：2026-07-26
+更新日期：2026-07-27
 
 ## 用途
 
@@ -65,15 +65,22 @@ flowchart TD
 
 ### Workspace
 
-Workspace 是 Mortise 的顶层用户上下文，也是当前已确定的内容和布局归属边界。它可以绑定本地项目根或远程 Agent Server。
+Workspace 是 Mortise 的顶层用户上下文，也是内容和布局的长期归属边界。它不等同于文件夹，但始终有且只有一个主位置，并可以同时连接零个或多个附加位置；每个位置都指向一个本地或远程文件根。
 
 - Session、Files 工作台、Browser 实例、侧任务、Extension 完整工具和 Dock 布局都带有 Workspace 归属。
+- 主位置是 Agent 默认使用的工作位置，决定未明确指定位置时的命令行目录和相对路径起点。附加位置不会改变这个默认值。
+- 本地主位置可以由用户主动选择。用户未选择时，Mortise 在默认 Workspace 目录下为它创建独立、持久的根目录；该目录不是临时目录或能力受限的 fallback，Agent 可以正常使用文件工具和命令行。远程主位置由对应的远程 Agent Server 提供。
+- 附加位置不是只能查看的资料引用。在各自获得的权限范围内，Agent 可以像使用主位置一样读取、写入、搜索文件和运行命令；同一个 Workspace 可以同时包含本地与远程位置，并统一管理它们的访问权限。
+- 每个位置都有稳定、可辨认的名称和明确的执行端点。搜索等操作可以覆盖多个已授权位置，但命令必须在目标位置所在的本机或远程端点执行；跨端点移动数据是明确的传输操作，不能伪装成同一文件系统内的普通路径操作。
+- 每个已连接位置中都保存版本化的 Mortise Workspace 标记，其中包含稳定的 Workspace identity。创建 Workspace 或明确添加尚未标记的位置时，Mortise 写入该标记；之后重新连接时，只接受带有匹配标记的位置。
+- 同一个 Workspace 标记可以同时存在于多个本地或远程位置中。标记只说明该位置已获准连接到这个 Workspace，不区分本体、复制品或唯一原件；哪个位置是主位置、哪些是附加位置，由 Workspace 当前的连接关系决定。
+- 用户可以新增附加位置，而不必为每个文件根另建 Workspace，也不必因此中断已有任务。移除或替换位置前，Mortise 必须先中断仍可能继续使用该位置的 Session、子智能体、Automation run、工具或子进程，但不应无故中断与该位置无关的工作。
+- 用户可以将带有匹配标记的位置切换为新的主位置。切换主位置时，Mortise 统一中断该 Workspace 中正在运行、排队、等待输入或等待恢复的 Session、子智能体和 Automation run，并停止仍可能写入旧主位置的工具或子进程；完成中断后再原子切换。
+- 位置变更不会自动恢复被中断的任务。任务历史保留为 interrupted，之后可以由用户或 Agent 明确继续，并使用变更后的当前位置集合和主位置。未来尚未形成 run 的 Automation 调度定义不受影响。
 - 一个已渲染布局不得混合不同 Workspace 的内容。
 - 切换 Workspace 会替换整个活动布局，而不是只替换当前 Session 或左侧栏。
 - 主侧栏以 Workspace 为中心，每个可展开 Workspace 下直接显示最近 Session；非 Workspace 导航保持在底部。
 - 点击另一个 Workspace 下的 Session，语义上是切换 Workspace 并打开该 Session 的一次动作。
-
-Workspace 究竟首先是“项目/文件夹”还是可以独立于文件根的通用长期工作上下文，尚未形成明确产品定义。
 
 ### Universal dock
 
@@ -81,7 +88,12 @@ Workspace 究竟首先是“项目/文件夹”还是可以独立于文件根的
 
 - Conversation、Files、Browser、侧任务和 Extension 完整工具都是平等的 content tab。
 - 用户可以对 content tab 分组、拆分、移动和 detach；宿主拥有 tab 身份、标题、选择、关闭、焦点、权限和恢复语义。
+- 每个 Electron 应用身份只运行一个客户端实例；再次启动同一应用时聚焦已有实例。该限制不作为跨客户端或共享数据的全局锁。
+- 在一个 Electron 客户端实例中，同一 Workspace 只有一个主窗口和一套 canonical layout，但可以拥有多个可写的 detached 辅助窗口；再次打开该 Workspace 时聚焦已有主窗口，而不是创建另一份主窗口或布局。
 - Detached tab 或 group 仍属于原 Workspace 的同一布局，只是由辅助原生窗口承载。
+- WebUI 不提供 Mortise 管理的多窗口能力。打开带有 Electron detached 窗口状态的 Workspace 时，WebUI 只在当前页面中把这些内容投影为普通并列标签页；该投影不改写 Electron 保存的窗口归属、位置和尺寸，再次从 Electron 打开时仍恢复原有多窗口布局。
+- WebUI 对内容本身的新增、关闭和移动可以更新共享的 logical dock 状态，但仅仅打开或查看 Workspace 不得把 Electron detached 窗口永久 redock。浏览器自身的窗口和标签页不属于 Mortise Workspace 布局。
+- Electron、WebUI、不同版本的已安装客户端和源码开发客户端可以同时连接 Mortise。每个 Electron 应用身份各自遵守单实例规则，共享数据正确性仍由规范数据层的并发协议保证。
 - `right` 只能是用户布局后的一个结果，不是产品 surface、Extension API 或专用右面板架构。应用 shell 不存在第二侧栏。
 - 页面或 content surface 需要相邻导航时，使用该 surface 内部所有的 sidebar，不恢复全局右面板。
 - 紧凑状态信息，例如 TODO、plan、后台任务或子会话摘要，默认使用轻量 popover 或悬浮状态，不自动成为持久 content tab。
@@ -89,6 +101,10 @@ Workspace 究竟首先是“项目/文件夹”还是可以独立于文件根的
 ### 内置内容差异
 
 - Browser 新建 tab 是轻量空白页，不承载任务模板、Agent onboarding 或创建并发送 prompt 的操作。
+- Browser 实例是 Workspace 的长期内容资源，不由某个 Session 拥有。同一 Workspace 中的 Session 可以创建、打开和控制 Browser 实例，并在自己的历史中记录使用关系；Session 关闭、归档或结束时不自动销毁 Browser。
+- Session 的临时浏览需求复用同一种 Workspace Browser，不建立第二套 Session-scoped Browser 类型。临时实例可以在任务结束后由用户或发起它的任务关闭，但它在存在期间仍遵守 Workspace 的布局、权限和生命周期边界。
+- Browser 实例的布局和生命周期归属于 Workspace，但 Mortise 浏览器档案属于应用全局。不同 Workspace 共享 Mortise 自有的登录状态、cookie、站点存储、history 和其他浏览器档案数据，不为每个 Workspace 建立隔离档案。
+- 本地浏览器数据和 Chrome 浏览器扩展导入不属于当前已承诺能力。未来若提供浏览器扩展导入，只接受经过确定性兼容检查、确认其 manifest 和所用 API 均受当前 Electron Browser runtime 支持的扩展；不导入兼容性未知的扩展，不以 best-effort 加载或运行后碰运气作为支持方式，也不承诺 Chrome Web Store 或任意 Chrome/Edge 扩展兼容。
 - Files 是 Workspace-scoped content workbench：选中文件在主区域显示，Workspace 文件树是该 tab 内部的 navigator，对不支持、过大或不安全的格式提供安全 fallback。
 - 对有未保存编辑、正在运行或等待用户输入的 content，关闭或布局调整不应无提示丢失工作。
 
@@ -230,16 +246,13 @@ Electron 和 WebUI 是同一 Mortise 产品的不同平台投影，但不以功�
 
 本节只记录影响整体产品模型的真实缺口，不是已接受语义或默认实施方向。
 
-1. **Workspace 的核心定义**：Workspace 首先是项目/文件夹边界，还是能承载本地、远程和无文件资源的长期工作上下文？
-2. **Workspace 的多窗口与跨平台布局**：Electron 与 WebUI 是共享同一份布局投影还是分平台保存？应用重启时 detached 窗口是恢复还是 redock？同一 Workspace 是否允许多个可写主窗口？
-3. **Browser 的长期归属**：Browser 实例是 Workspace 长期资源，还是 Session 级资源？不同 Workspace 之间是否共享登录、cookie 和 history？
-4. **Logical run 的公开语义**：Native steer/follow-up、provider retry 和 compaction continuation 是否都明确属于同一 logical run？Attempt 是否需要成为用户可见概念？
-5. **Stop 与待处理投递**：用户 Stop 时，Pi native steer/follow-up queue 中的消息应全部丢弃，还是保留到下次继续？
-6. **中断历史**：Abort 前已产生的 partial assistant/tool/error entry 是正式 transcript 的一部分，还是只保留 interrupted 状态而不算最终消息？
-7. **Extension 的信任模型**：Backend 以用户权限运行是长期信任模型，还是未来需要收紧的过渡状态？
-8. **Extension 工具的生命周期**：`workspace.content` 是发布它的 Session runtime 的 UI 投影，还是安装后可脱离 Session 长期存活的 Workspace/Application 工具？
-9. **Automation 资源与授权**：Automation 定义是可随 Workspace 导出、同步或版本控制的共同资源，还是当前用户的本地配置？Agent/Extension 对创建、修改和启用的权限是否需要额外的用户确认？
-10. **Isolated Agent 的用户可见性**：结果是否只属于 Automation run history，还是应支持用户打开、追踪或提升为普通 Session？
+1. **Logical run 的公开语义**：Native steer/follow-up、provider retry 和 compaction continuation 是否都明确属于同一 logical run？Attempt 是否需要成为用户可见概念？
+2. **Stop 与待处理投递**：用户 Stop 时，Pi native steer/follow-up queue 中的消息应全部丢弃，还是保留到下次继续？
+3. **中断历史**：Abort 前已产生的 partial assistant/tool/error entry 是正式 transcript 的一部分，还是只保留 interrupted 状态而不算最终消息？
+4. **Extension 的信任模型**：Backend 以用户权限运行是长期信任模型，还是未来需要收紧的过渡状态？
+5. **Extension 工具的生命周期**：`workspace.content` 是发布它的 Session runtime 的 UI 投影，还是安装后可脱离 Session 长期存活的 Workspace/Application 工具？
+6. **Automation 资源与授权**：Automation 定义是可随 Workspace 导出、同步或版本控制的共同资源，还是当前用户的本地配置？Agent/Extension 对创建、修改和启用的权限是否需要额外的用户确认？
+7. **Isolated Agent 的用户可见性**：结果是否只属于 Automation run history，还是应支持用户打开、追踪或提升为普通 Session？
 
 ## 已接受的详细参考
 

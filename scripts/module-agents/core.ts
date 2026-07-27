@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { matches, ownedFiles, type ModuleRepository } from './repository.ts'
 import { changedFiles } from './git.ts'
-import { readValidationReceipt, validationExecutionKey, validationInputTree, writeValidationReceipt } from './receipts.ts'
+import { readValidationReceipt, validationExecutionKey, validationIdentityContext, validationInputTree, writeValidationReceipt } from './receipts.ts'
 import type { ImpactResultV1, ModuleDocumentV1, ModuleTestBatchResultV1, ModuleTestResultV1, RouteCandidateV1, RouteResultV1, ValidationEntryV1, ValidationLevelV1, ValidationRunV1 } from './types.ts'
 
 function normalizedFiles(files: string[]): string[] {
@@ -200,9 +200,10 @@ export async function testModules(
   const order = topologicalValidationOrder(nodes)
   const runs = new Map<string, ValidationRunV1>()
   const inputTree = options.reuseReceipts && !options.dryRun ? await validationInputTree(repo) : undefined
+  const identity = inputTree ? validationIdentityContext() : undefined
 
   if (!options.dryRun) for (const node of order) {
-    const receiptKey = inputTree ? validationExecutionKey(repo, node.entry, inputTree, options.sourceId, options.buildId) : undefined
+    const receiptKey = inputTree ? validationExecutionKey(repo, node.entry, inputTree, options.sourceId, options.buildId, identity) : undefined
     const receipt = receiptKey && !options.fresh && !node.kinds.has('physical')
       ? await readValidationReceipt(repo, receiptKey)
       : undefined

@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto'
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { delimiter, dirname, join, resolve } from 'node:path'
+import matter from 'gray-matter'
 import {
   createProductionBundleEnvironment,
   productionBundleCommand,
@@ -38,6 +39,27 @@ function packageScripts(): Record<string, string> {
     scripts?: Record<string, string>
   }
   return manifest.scripts ?? {}
+}
+
+function expandPackageScript(name: string, scripts: Record<string, string>, stack: string[] = []): string[] {
+  if (stack.includes(name)) throw new Error(`Package script cycle: ${[...stack, name].join(' -> ')}`)
+  const command = scripts[name]
+  if (!command) throw new Error(`Missing package script: ${name}`)
+  return command.split(/\s*&&\s*/).flatMap(part => {
+    const match = part.match(/^bun run ([a-zA-Z0-9:_-]+)(.*)$/)
+    const compositeScripts = new Set(['validate:ci', 'validate:dev', 'module:validate', 'module-agent', 'test:module-agents'])
+    if (!match || !scripts[match[1]!] || !compositeScripts.has(match[1]!)) return [part]
+    const expanded = expandPackageScript(match[1]!, scripts, [...stack, name])
+    const suffix = match[2]!
+    if (!suffix) return expanded
+    if (expanded.length !== 1) throw new Error(`Cannot append arguments to composite package script: ${match[1]}`)
+    return [`${expanded[0]}${suffix}`]
+  })
+}
+
+function moduleValidationCommands(path: string): string[] {
+  const parsed = matter(readSource(path)).data as { validation?: Array<{ command?: string }> }
+  return (parsed.validation ?? []).map(entry => entry.command).filter((command): command is string => Boolean(command))
 }
 
 function readSource(path: string): string {
@@ -92,6 +114,8 @@ describe('production bundle validation composition', () => {
 
   test('keeps the real production bundle build in the canonical CI gate', () => {
     const scripts = packageScripts()
+    const buildModulePath = resolve(repositoryRoot, '.agents/modules/build-release-observability.md')
+    const buildModule = readSource(buildModulePath)
     expect(scripts['bootstrap:ci']).toContain('bun run pi:build:binary')
     expect(scripts['electron:build']).toBe('bun run scripts/build/produce-electron-build.ts')
     expect(scripts['electron:build:source']).toContain('bun run electron:build:resources')
@@ -102,6 +126,37 @@ describe('production bundle validation composition', () => {
     expect(scripts['validate:production-bundles']).toBe('bun run scripts/build/validate-production-bundles.ts')
     expect(scripts['validate:ci']).toContain('bun run test:build-validation')
     expect(scripts['validate:ci']).toContain('bun run validate:production-bundles')
+    expect(buildModule).not.toContain('command: "bun run validate:dev"')
+    expect(buildModule).not.toContain('command: "bun run validate:ci"')
+    for (const command of [
+      'bun run validate:production-node-bundles',
+      'bun run scripts/module-agents/cli.ts validate --strict',
+      'bun test scripts/module-agents/__tests__',
+      'bun run typecheck:all',
+      'bun run test:shared:all',
+      'bun run test:doc-tools',
+      'bun run test:build-validation',
+      'bun run validate:production-bundles',
+      'bun run test:ui-validation:fast',
+      'bun run lint:i18n:parity',
+      'bun run lint:i18n:sorted',
+    ]) {
+      expect(buildModule).toContain(`command: "${command}"`)
+    }
+
+    const ciLeaves = expandPackageScript('validate:ci', scripts)
+    const moduleCommands = moduleValidationCommands(buildModulePath)
+    const moduleOnly = [
+      'git diff --check',
+      'bun run pi:build && bun run pi:check',
+      'bun run pi:test',
+    ]
+    expect(new Set(ciLeaves).size).toBe(ciLeaves.length)
+    expect(new Set(moduleCommands).size).toBe(moduleCommands.length)
+    expect(moduleCommands.filter(command => !moduleOnly.includes(command)).sort()).toEqual([...ciLeaves].sort())
+
+    const moduleAgentCommands = moduleValidationCommands(resolve(repositoryRoot, '.agents/modules/module-agent-system.md'))
+    expect(moduleCommands.filter(command => moduleAgentCommands.includes(command))).toEqual(moduleAgentCommands)
   })
 
   test('pins embedded build lifecycle tools to the producer Bun runtime', () => {

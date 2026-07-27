@@ -15,7 +15,7 @@ related: [package.json]
 depends_on: [build-release-observability]
 collaborates_with: [build-release-observability]
 validation:
-  - { id: protocol-regression, kind: unit, command: "bun test scripts/module-agents", description: "Run module protocol, routing, digest, and CLI regressions.", triggers: [owned-change], required: true, evidence: "Bun test exit status and output." }
+  - { id: protocol-regression, kind: unit, command: "bun test scripts/module-agents/__tests__", description: "Run module protocol, routing, digest, and CLI regressions.", triggers: [owned-change], required: true, evidence: "Bun test exit status and output." }
   - { id: repository-contract, kind: contract, command: "bun run scripts/module-agents/cli.ts validate --strict", description: "Verify repository ownership, relationships, schema, and digest contracts.", triggers: [module-document-change, ownership-change], required: true, evidence: "Structured strict validation result." }
 ---
 
@@ -47,6 +47,7 @@ Run module-agent unit tests, then strict repository validation and impact checks
 Broad globs can conceal new capabilities; overly broad frozen owner sets can hide scope expansion; validation receipts are unsafe if an input identity omits a material environment or build dimension.
 
 ## Semantic history
+- 2026-07-27: Bound reusable validation receipts to the complete hashed process environment and content fingerprints for the external command toolchain, and aligned shared leaf commands so cross-module validation can deduplicate without contradictory ordering.
 - 2026-07-27: Migrated the module protocol to v2: kept Markdown as the authoritative semantic and ownership record, moved generated scope digests into a single lock, added phase-frozen task plans, split structural from freshness validation, and introduced risk-tiered deduplicated validation with identity-bound receipts.
 - 2026-07-25: Removed the empty shared-runtime ownership pattern after sealed runtime authority moved to the session-tooling module, preserving strict one-owner coverage without a compatibility scope.
 - 2026-07-24: Removed empty ownership patterns for deleted legacy migration scripts so strict ownership validation describes only extant managed files.

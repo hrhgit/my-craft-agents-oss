@@ -71,3 +71,4 @@ The reference can drift if implementation details are copied into it, if open qu
 - 2026-07-27: Confirmed user-created and Extension-provided subagent templates, plus visible status and inspectable output for running background subagents while leaving exact UI placement open.
 - 2026-07-27: Corrected child retention semantics: subagents keep resumable task history under the parent Session, and the primary Agent can inspect state and send messages without creating a child Session.
 - 2026-07-27: Defined child resume as a control action that adds no synthetic continue message; only real new instructions enter child history before resumption.
+- 2026-07-27: Defined Workspace file access as one primary location plus optional fully capable local or remote attached locations under a shared permission boundary.

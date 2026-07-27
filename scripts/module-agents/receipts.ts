@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
+import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { scopeDigest } from './git.ts'
 import type { ModuleRepository } from './repository.ts'
 import type { ValidationEntryV1, ValidationRunV1 } from './types.ts'
@@ -14,17 +15,61 @@ interface ValidationReceiptV1 {
   result: ValidationRunV1
 }
 
-const environmentKeys = [
-  'NODE_ENV',
-  'MORTISE_BUILD_MODE',
-  'MORTISE_UI_VALIDATION_BUILD',
-  'MORTISE_DEV_HOST_BUILD',
-  'MORTISE_SOURCE_ID',
-  'MORTISE_BUILD_ID',
-] as const
+const externalToolNames = ['git', 'npm', 'node', 'python', 'python3', 'py', 'bash', 'sh', 'pwsh', 'powershell'] as const
 
-function hash(value: string): string {
+export interface ValidationIdentityContext {
+  environment: Array<[string, string]>
+  toolchain: Record<string, unknown>
+}
+
+function hash(value: string | Uint8Array): string {
   return createHash('sha256').update(value).digest('hex')
+}
+
+function environmentIdentity(environment: NodeJS.ProcessEnv): Array<[string, string]> {
+  const canonical = new Map<string, string>()
+  for (const [name, value] of Object.entries(environment)) canonical.set(name.toUpperCase(), hash(value ?? ''))
+  return [...canonical.entries()].sort(([left], [right]) => left.localeCompare(right))
+}
+
+function executableFingerprint(candidate: string): Record<string, unknown> {
+  const normalized = candidate.trim().replace(/^"|"$/g, '')
+  let path: string | null = null
+  try {
+    path = isAbsolute(normalized) && existsSync(normalized) ? normalized : Bun.which(normalized)
+  } catch { /* Missing or invalid tools remain explicit in the identity. */ }
+  if (!path) return { candidate, path: null }
+  const canonicalPath = realpathSync(path)
+  const stats = statSync(canonicalPath)
+  const fingerprint = {
+    candidate,
+    path: canonicalPath.replaceAll('\\', '/').toLocaleLowerCase('en-US'),
+    size: stats.size,
+    sha256: hash(readFileSync(canonicalPath)),
+  }
+  return fingerprint
+}
+
+function toolchainIdentity(environment: NodeJS.ProcessEnv): Record<string, unknown> {
+  const candidates = new Set<string>([process.execPath, ...externalToolNames])
+  for (const name of ['PYTHON', 'COMSPEC', 'SHELL']) {
+    const configured = environment[name]
+    if (configured?.trim()) candidates.add(configured)
+  }
+  return {
+    bun: Bun.version,
+    node: process.versions.node,
+    platform: process.platform,
+    arch: process.arch,
+    executables: [...candidates].sort().map(executableFingerprint),
+  }
+}
+
+export function validationIdentityContext(environment: NodeJS.ProcessEnv = process.env): ValidationIdentityContext {
+  return {
+    environment: environmentIdentity(environment),
+    toolchain: toolchainIdentity(environment),
+  }
 }
 
 export async function validationInputTree(repo: ModuleRepository): Promise<string> {
@@ -37,14 +82,14 @@ export function validationExecutionKey(
   inputTree: string,
   sourceId?: string,
   buildId?: string,
+  identity = validationIdentityContext(),
 ): string {
-  const environment = Object.fromEntries(environmentKeys.map(key => [key, process.env[key] ?? '']))
   return hash(JSON.stringify({
     command: entry.command,
     cwd: repo.root.replaceAll('\\', '/').toLocaleLowerCase('en-US'),
-    environment,
+    environment: identity.environment,
     input_tree: inputTree,
-    toolchain: { bun: Bun.version, node: process.versions.node, executable: process.execPath, platform: process.platform, arch: process.arch },
+    toolchain: identity.toolchain,
     build_mode: process.env.NODE_ENV ?? 'development',
     source_id: sourceId ?? process.env.MORTISE_SOURCE_ID ?? '',
     build_id: buildId ?? process.env.MORTISE_BUILD_ID ?? '',
