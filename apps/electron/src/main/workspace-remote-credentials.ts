@@ -1,12 +1,10 @@
-import { createHash } from 'node:crypto'
 import type { Workspace } from '@mortise/core/types'
-import type { CredentialId, StoredCredential } from '@mortise/shared/credentials'
 import type { WorkspaceLocationRuntimeConfig } from '../shared/workspace-runtime-config'
 
 export interface WorkspaceRemoteCredentialAuthority {
-  get(id: CredentialId): Promise<StoredCredential | null>
-  set(id: CredentialId, credential: StoredCredential): Promise<void>
-  delete(id: CredentialId): Promise<boolean>
+  getWorkspaceRemoteBearer(workspaceId: string, credentialRef: string): Promise<string | null>
+  setWorkspaceRemoteBearer(workspaceId: string, credentialRef: string, token: string): Promise<void>
+  deleteWorkspaceRemoteBearer(workspaceId: string, credentialRef: string): Promise<boolean>
 }
 
 export interface WorkspaceRemoteCredentialInput {
@@ -22,7 +20,7 @@ export async function setWorkspaceRemoteCredential(
   if (typeof input.token !== 'string' || !input.token || input.token.length > 65_536) {
     throw new Error('A bounded remote Workspace token is required')
   }
-  await authority.set(credentialId(input.workspaceId, input.credentialRef), { value: input.token })
+  await authority.setWorkspaceRemoteBearer(input.workspaceId, input.credentialRef, input.token)
 }
 
 export async function deleteWorkspaceRemoteCredential(
@@ -30,7 +28,7 @@ export async function deleteWorkspaceRemoteCredential(
   input: WorkspaceRemoteCredentialInput,
 ): Promise<void> {
   validateCredentialInput(input)
-  await authority.delete(credentialId(input.workspaceId, input.credentialRef))
+  await authority.deleteWorkspaceRemoteBearer(input.workspaceId, input.credentialRef)
 }
 
 export async function resolveWorkspaceLocationRuntime(
@@ -46,8 +44,8 @@ export async function resolveWorkspaceLocationRuntime(
   if (location.endpoint.kind === 'local') {
     return { kind: 'local', workspaceId: workspace.id, locationId }
   }
-  const credential = await authority.get(credentialId(workspace.id, location.endpoint.credentialRef))
-  if (!credential?.value) {
+  const token = await authority.getWorkspaceRemoteBearer(workspace.id, location.endpoint.credentialRef)
+  if (!token) {
     throw new Error(`Remote Workspace credential is unavailable for ${workspace.id}::${locationId}`)
   }
   return {
@@ -56,16 +54,11 @@ export async function resolveWorkspaceLocationRuntime(
     locationId,
     url: location.endpoint.url,
     remoteWorkspaceId: location.endpoint.remoteWorkspaceId,
-    token: credential.value,
+    token,
     ...(location.endpoint.allowInsecureTls === undefined
       ? {}
       : { allowInsecureTls: location.endpoint.allowInsecureTls }),
   }
-}
-
-function credentialId(workspaceId: string, credentialRef: string): CredentialId {
-  const digest = createHash('sha256').update(credentialRef).digest('hex')
-  return { type: 'automation_secret', workspaceId, name: `remote-location-${digest}` }
 }
 
 function validateCredentialInput(input: WorkspaceRemoteCredentialInput): void {

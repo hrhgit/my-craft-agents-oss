@@ -8,14 +8,14 @@ import {
 } from '../workspace-remote-credentials'
 
 function authority(): WorkspaceRemoteCredentialAuthority & {
-  get: ReturnType<typeof mock>
-  set: ReturnType<typeof mock>
-  delete: ReturnType<typeof mock>
+  getWorkspaceRemoteBearer: ReturnType<typeof mock>
+  setWorkspaceRemoteBearer: ReturnType<typeof mock>
+  deleteWorkspaceRemoteBearer: ReturnType<typeof mock>
 } {
   return {
-    get: mock(async () => null),
-    set: mock(async () => {}),
-    delete: mock(async () => true),
+    getWorkspaceRemoteBearer: mock(async () => null),
+    setWorkspaceRemoteBearer: mock(async () => {}),
+    deleteWorkspaceRemoteBearer: mock(async () => true),
   }
 }
 
@@ -46,23 +46,26 @@ function workspace(): Workspace {
 }
 
 describe('Workspace remote credential boundary', () => {
-  it('stores and deletes a namespaced opaque credential without exposing its ref in the key', async () => {
+  it('stores and deletes a dedicated Workspace remote bearer', async () => {
     const store = authority()
     const input = { workspaceId: 'workspace-a', credentialRef: 'credential-a', token: 'secret-token' }
     await setWorkspaceRemoteCredential(store, input)
     await deleteWorkspaceRemoteCredential(store, input)
 
-    const id = store.set.mock.calls[0][0]
-    expect(id).toMatchObject({ type: 'automation_secret', workspaceId: 'workspace-a' })
-    expect(id.name).toStartWith('remote-location-')
-    expect(JSON.stringify(id)).not.toContain(input.credentialRef)
-    expect(store.set.mock.calls[0][1]).toEqual({ value: input.token })
-    expect(store.delete).toHaveBeenCalledWith(id)
+    expect(store.setWorkspaceRemoteBearer).toHaveBeenCalledWith(
+      input.workspaceId,
+      input.credentialRef,
+      input.token,
+    )
+    expect(store.deleteWorkspaceRemoteBearer).toHaveBeenCalledWith(
+      input.workspaceId,
+      input.credentialRef,
+    )
   })
 
   it('resolves the private remote runtime while keeping local locations credential-free', async () => {
     const store = authority()
-    store.get.mockResolvedValue({ value: 'secret-token' })
+    store.getWorkspaceRemoteBearer.mockResolvedValue('secret-token')
     const topology = workspace()
 
     expect(await resolveWorkspaceLocationRuntime(store, topology, 'local')).toEqual({
@@ -77,7 +80,7 @@ describe('Workspace remote credential boundary', () => {
       token: 'secret-token',
       allowInsecureTls: true,
     })
-    expect(store.get).toHaveBeenCalledTimes(1)
+    expect(store.getWorkspaceRemoteBearer).toHaveBeenCalledTimes(1)
   })
 
   it('fails closed when the credential is missing and never includes credential material in the error', async () => {
