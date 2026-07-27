@@ -24,9 +24,14 @@ export type ContentKind =
   | 'navigation'
 
 export interface WorkspaceRoute {
+  /** Legacy layout metadata. Runtime authority comes from locationId. */
   serverId: string
   workspaceId: string
+  /** Omit only at a renderer/layout boundary to select the current primary location. */
+  locationId?: string
 }
+
+export type ResolvedWorkspaceRoute = WorkspaceRoute & { locationId: string }
 
 export interface ContentRef extends WorkspaceRoute {
   kind: ContentKind

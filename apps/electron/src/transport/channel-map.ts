@@ -71,10 +71,11 @@ export const CHANNEL_MAP = {
 
   // Workspace management
   getWorkspaces: invoke(RPC_CHANNELS.workspaces.GET),
+  getWorkspaceTopology: invoke(RPC_CHANNELS.workspaces.GET_TOPOLOGY),
+  workspaceTopologyCommand: invoke(RPC_CHANNELS.workspaces.TOPOLOGY_COMMAND),
+  onWorkspaceTopologyChanged: listener(RPC_CHANNELS.workspaces.TOPOLOGY_CHANGED),
   createWorkspace: invoke(RPC_CHANNELS.workspaces.CREATE),
   checkWorkspaceSlug: invoke(RPC_CHANNELS.workspaces.CHECK_SLUG),
-  updateWorkspaceRemoteServer: invoke(RPC_CHANNELS.workspaces.UPDATE_REMOTE),
-  onWorkspaceRemoteServerUpdated: listener(RPC_CHANNELS.workspaces.REMOTE_UPDATED),
   getWorkspaceCoordinationStatus: invoke(RPC_CHANNELS.workspaceCoordination.GET_STATUS),
   testRemoteConnection: invoke(RPC_CHANNELS.remote.TEST_CONNECTION),
 

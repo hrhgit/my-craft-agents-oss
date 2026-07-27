@@ -6,6 +6,9 @@ import type {
   AutomationChangedNotificationV1,
   BrowserHostDockNavigationCommand,
   WorkspaceCoordinationStatusV1,
+  WorkspaceTopologyChangedV1,
+  WorkspaceTopologyCommandV1,
+  WorkspaceTopologyResultV1,
 } from '@mortise/shared/protocol'
 
 // =============================================================================
@@ -19,8 +22,6 @@ import type {
   TypedError,
   TokenUsage as CoreTokenUsage,
   WorkspaceInfo as CoreWorkspaceInfo,
-  Workspace as CoreWorkspace,
-  RemoteServerConfig as CoreRemoteServerConfig,
   SessionMetadata as CoreSessionMetadata,
   StoredAttachment as CoreStoredAttachment,
   ContentBadge,
@@ -44,8 +45,6 @@ export type {
   TypedError,
   CoreTokenUsage as TokenUsage,
   CoreWorkspaceInfo as WorkspaceInfo,
-  CoreWorkspace as Workspace,
-  CoreRemoteServerConfig as RemoteServerConfig,
   CoreSessionMetadata as SessionMetadata,
   CoreStoredAttachment as StoredAttachment,
   ContentBadge,
@@ -161,7 +160,7 @@ export interface TransportConnectionState {
 // =============================================================================
 
 // Re-import types for ElectronAPI
-import type { WorkspaceInfo, Workspace, SessionMetadata, StoredAttachment as StoredAttachmentType } from '@mortise/core/types';
+import type { WorkspaceInfo, SessionMetadata, StoredAttachment as StoredAttachmentType } from '@mortise/core/types';
 
 // Import protocol types used by ElectronAPI (they come through the `export *` above,
 // but we need them in scope for the interface definition)
@@ -257,10 +256,6 @@ export interface ElectronAPI {
     callback: (...args: any[]) => void,
   ): () => void
 
-  // Remote session transfer (main-process orchestrated, supports chunked upload)
-  transferSessionToWorkspace(sessionId: string, targetWorkspaceId: string, sessionIndex?: number, sessionCount?: number): Promise<{ sessionId: string }>
-  onTransferProgress(callback: (progress: { sessionIndex: number; sessionCount: number; chunkSent: number; chunkTotal: number }) => void): () => void
-
   // Session export/import (cross-workspace transfer)
   exportSession(sessionId: string): Promise<unknown>
   importSession(targetWorkspaceId: string, bundle: unknown, mode: 'move' | 'fork'): Promise<{ sessionId: string; warnings?: string[] }>
@@ -273,11 +268,14 @@ export interface ElectronAPI {
   getSessionPermissionModeState(sessionId: string): Promise<PermissionModeState | null>
 
   // Workspace management
-  getWorkspaces(): Promise<Workspace[]>
-  createWorkspace(folderPath: string, name: string, remoteServer?: CoreRemoteServerConfig): Promise<Workspace>
+  getWorkspaces(): Promise<WorkspaceInfo[]>
+  getWorkspaceTopology(workspaceId?: string): Promise<WorkspaceInfo>
+  workspaceTopologyCommand(command: WorkspaceTopologyCommandV1): Promise<WorkspaceTopologyResultV1>
+  onWorkspaceTopologyChanged(callback: (change: WorkspaceTopologyChangedV1) => void): () => void
+  setWorkspaceRemoteCredential(input: { workspaceId: string; credentialRef: string; token: string }): Promise<void>
+  deleteWorkspaceRemoteCredential(input: { workspaceId: string; credentialRef: string }): Promise<void>
+  createWorkspace(folderPath: string, name: string): Promise<WorkspaceInfo>
   checkWorkspaceSlug(slug: string): Promise<{ exists: boolean; path: string }>
-  updateWorkspaceRemoteServer(workspaceId: string, remoteServer: CoreRemoteServerConfig): Promise<{ success: boolean }>
-  onWorkspaceRemoteServerUpdated(callback: (data: { workspaceId: string }) => void): () => void
   getWorkspaceCoordinationStatus(): Promise<WorkspaceCoordinationStatusV1>
 
   // Server-level workspace operations (for thin client / remote workspace discovery)

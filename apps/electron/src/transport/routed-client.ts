@@ -1,20 +1,19 @@
 /**
  * RoutedClient — client-side channel router.
  *
- * Wraps two WsRpcClient instances: localClient (always the embedded Electron
- * server) and workspaceClient (whichever server owns the active workspace).
+ * Keeps the embedded host client separate from concurrent location runtimes,
+ * with one registered location selected as the active Workspace client.
  *
  * - LOCAL_ONLY channels always route to localClient
  * - Everything else routes to workspaceClient
- * - On workspace switch, workspaceClient is swapped and REMOTE_ELIGIBLE
+ * - On Workspace or primary-location change, workspaceClient is swapped and REMOTE_ELIGIBLE
  *   listeners are re-subscribed transparently (make-before-break)
  */
 
 import type { WsRpcClient, TransportConnectionState } from '@mortise/server-core/transport'
 import type { RpcClient } from '@mortise/server-core/transport'
-import type { RemoteServerConfig } from '@mortise/core/types'
 import { isLocalOnly, RPC_CHANNELS } from '@mortise/shared/protocol'
-import type { WorkspaceRoute } from '../shared/app-layout'
+import type { ResolvedWorkspaceRoute } from '../shared/app-layout'
 import { WorkspaceRuntimeRegistry, type WorkspaceRuntimeRegistration } from './workspace-runtime-registry'
 
 // ---------------------------------------------------------------------------
@@ -29,11 +28,8 @@ interface ListenerEntry {
 /** Returned by the enhanced SWITCH_WORKSPACE handler. */
 export interface WorkspaceSwitchResult {
   workspaceId: string
-  remoteServer?: RemoteServerConfig | null
 }
 
-/** Factory to create a new WsRpcClient for a remote workspace. */
-export type WorkspaceClientFactory = (remoteServer: RemoteServerConfig) => WsRpcClient
 export type WorkspaceSwitchHandler = (result: WorkspaceSwitchResult) => void | Promise<void>
 
 export interface RoutedClientOptions {
@@ -58,9 +54,8 @@ export class RoutedClient implements RpcClient {
   private connectionStateListeners = new Set<(state: TransportConnectionState) => void>()
   private connectionStateUnsub: (() => void) | null = null
 
-  /** Factory for creating remote workspace clients on switch. */
-  private clientFactory: WorkspaceClientFactory | null = null
   private workspaceSwitchHandler: WorkspaceSwitchHandler | null = null
+  private workspaceReady: Promise<void> = Promise.resolve()
 
   /** Client used for local workspace-owned channels; may be a child-process server. */
   private readonly localWorkspaceClient: WsRpcClient
@@ -82,13 +77,12 @@ export class RoutedClient implements RpcClient {
     this.bindConnectionState()
   }
 
-  /** Set factory for creating remote workspace clients. */
-  setClientFactory(factory: WorkspaceClientFactory): void {
-    this.clientFactory = factory
-  }
-
   setWorkspaceSwitchHandler(handler: WorkspaceSwitchHandler): void {
     this.workspaceSwitchHandler = handler
+  }
+
+  setWorkspaceReady(ready: Promise<void>): void {
+    this.workspaceReady = ready
   }
 
   /** Register a long-lived runtime used by explicitly routed content tabs. */
@@ -102,35 +96,46 @@ export class RoutedClient implements RpcClient {
     return this.workspaceRuntimes.replace(registration)
   }
 
-  moveWorkspaceRuntime(fromRoute: WorkspaceRoute, registration: WorkspaceRuntimeRegistration): () => void {
-    this.registerCapabilitiesOnWorkspaceRuntime(registration)
-    return this.workspaceRuntimes.move(fromRoute, registration)
+  removeWorkspaceRuntime(route: ResolvedWorkspaceRoute): void {
+    this.workspaceRuntimes.remove(route)
   }
 
-  removeWorkspaceRuntimes(workspaceId: string, exceptRoute?: WorkspaceRoute): void {
-    this.workspaceRuntimes.removeWorkspace(workspaceId, exceptRoute)
-  }
-
-  getRegisteredWorkspaceRoutes(): WorkspaceRoute[] {
+  getRegisteredWorkspaceRoutes(): ResolvedWorkspaceRoute[] {
     return this.workspaceRuntimes.getRegisteredRoutes()
   }
 
   /** Invoke against a tab's trusted route without changing the active navigation workspace. */
-  invokeForWorkspace(route: WorkspaceRoute, channel: string, ...args: unknown[]): Promise<unknown> {
+  invokeForWorkspace(route: ResolvedWorkspaceRoute, channel: string, ...args: unknown[]): Promise<unknown> {
     return this.workspaceRuntimes.invoke(route, channel, ...args)
   }
 
   /** Subscribe to one workspace runtime without rebinding other tab subscriptions. */
-  onForWorkspace(route: WorkspaceRoute, channel: string, callback: (...args: any[]) => void): () => void {
+  onForWorkspace(route: ResolvedWorkspaceRoute, channel: string, callback: (...args: any[]) => void): () => void {
     return this.workspaceRuntimes.on(route, channel, callback)
   }
 
-  isChannelAvailableForWorkspace(route: WorkspaceRoute, channel: string): boolean {
+  isChannelAvailableForWorkspace(route: ResolvedWorkspaceRoute, channel: string): boolean {
     return this.workspaceRuntimes.isChannelAvailable(route, channel)
   }
 
-  hasWorkspaceRuntime(route: WorkspaceRoute): boolean {
+  hasWorkspaceRuntime(route: ResolvedWorkspaceRoute): boolean {
     return this.workspaceRuntimes.has(route)
+  }
+
+  /** Make one registered location the active Workspace transport. */
+  activateWorkspaceRuntime(route: ResolvedWorkspaceRoute): void {
+    const registration = this.workspaceRuntimes.get(route)
+    if (!registration) {
+      throw new Error(`Workspace runtime is not registered: ${route.workspaceId}::${route.locationId}`)
+    }
+    if (registration.targetWorkspaceId && registration.targetWorkspaceId !== route.workspaceId) {
+      this.setWorkspaceMapping(route.workspaceId, registration.targetWorkspaceId)
+    } else {
+      this.clearWorkspaceMapping()
+    }
+    if (this.workspaceClient !== registration.client) {
+      this.swapWorkspaceClient(registration.client)
+    }
   }
 
   /**
@@ -162,6 +167,7 @@ export class RoutedClient implements RpcClient {
     options?: { timeoutMs?: number },
   ): Promise<any> {
     const isLocal = isLocalOnly(channel)
+    if (!isLocal) await this.workspaceReady
     const target = isLocal ? this.localClient : this.workspaceClient
 
     // Translate local workspace IDs → remote workspace IDs for remote-routed calls.
@@ -256,39 +262,6 @@ export class RoutedClient implements RpcClient {
 
   private async handleWorkspaceSwitch(result: WorkspaceSwitchResult): Promise<void> {
     if (!result) return
-
-    if (result.remoteServer && this.clientFactory) {
-      // Do not commit the new ID mapping until the replacement transport has
-      // connected. A synchronous failure must leave the old workspace intact.
-      const newClient = this.clientFactory(result.remoteServer)
-      try {
-        newClient.connect()
-      } catch (error) {
-        try { newClient.destroy() } catch { /* preserve the connection error */ }
-        throw error
-      }
-      this.setWorkspaceMapping(result.workspaceId, result.remoteServer.remoteWorkspaceId)
-      this.swapWorkspaceClient(newClient)
-    } else if (!result.remoteServer) {
-      // SWITCH_WORKSPACE is LOCAL_ONLY, so the first invocation above updates
-      // the Electron GUI bridge. In isolated-runtime mode, workspace-scoped
-      // requests use a separate child-server connection whose handshake still
-      // carries the previous workspace until we update it explicitly.
-      if (this.localWorkspaceClient !== this.localClient) {
-        await this.localWorkspaceClient.invoke(
-          RPC_CHANNELS.window.SWITCH_WORKSPACE,
-          result.workspaceId,
-        )
-      }
-
-      // Switching to a local workspace — clear mapping and use the local
-      // workspace runtime. This can be distinct from the Electron GUI bridge.
-      this.clearWorkspaceMapping()
-      if (this.workspaceClient !== this.localWorkspaceClient) {
-        this.swapWorkspaceClient(this.localWorkspaceClient)
-      }
-    }
-
     await this.workspaceSwitchHandler?.(result)
   }
 
@@ -315,7 +288,12 @@ export class RoutedClient implements RpcClient {
     this.bindConnectionState()
 
     // Destroy old client unless it is one of the long-lived local clients.
-    if (old !== this.localClient && old !== this.localWorkspaceClient && old !== newClient) {
+    if (
+      old !== this.localClient
+      && old !== this.localWorkspaceClient
+      && old !== newClient
+      && !this.workspaceRuntimes.ownsClient(old)
+    ) {
       old.destroy()
     }
 

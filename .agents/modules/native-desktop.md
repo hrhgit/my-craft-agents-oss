@@ -34,6 +34,7 @@ owns:
   - apps/electron/src/main/window-manager.ts
   - apps/electron/src/main/window-renderer-query.ts
   - apps/electron/src/main/window-state.ts
+  - apps/electron/src/main/workspace-remote-credentials.ts
   - apps/electron/src/main/workspace-server-spawner.ts
   - apps/electron/src/preload/bootstrap.ts
   - apps/electron/src/runtime/**
@@ -83,6 +84,7 @@ Run main, IPC, transport parity, window lifecycle, close flushing, and Electron 
 Windows process and file semantics differ from Unix; IPC surface expansion can cross a privilege boundary.
 
 ## Semantic history
+- 2026-07-28: Made preload transport route concurrent Workspace locations by stable location identity, kept layout Workspace-scoped, and isolated remote credentials behind a private main-to-preload resolver boundary.
 - 2026-07-25: Made Electron and its workspace-server child consume one validated immutable runtime layout, propagate sealed resource/tool identities explicitly, strip inherited layout overrides, and reject mutable workspace-server entry fallbacks in immutable mode.
 - 2026-07-24: Registered renderer draft persistence with the committed window-close flush boundary and serialized shared draft-record writes without blocking composer input.
 - 2026-07-24: Consolidated renderer logging into the Mortise bootstrap preload, disabled electron-log's second preload registration, and locked desktop settings tests to reject retired thinking values.
@@ -99,7 +101,6 @@ Windows process and file semantics differ from Unix; IPC surface expansion can c
 - 2026-07-21: Published an immutable versioned Electron platform-capability snapshot through the preload `ElectronAPI` boundary for shared renderer feature gating.
 - 2026-07-21: Moved Electron Automation ingress and Messaging publisher, workspace initialization, and fan-out setup into the shared pre-listen runtime transaction with rollback cleanup.
 - 2026-07-21: Extended the Electron skill API and channel map for a local folder picker import action while keeping the privileged path out of WebUI.
-- 2026-07-18: Stabilized native window readiness and source-development validation.
 - 2026-07-19: Hardened Mortise UI process identity and concurrent run safety.
 - 2026-07-20: Updated handler registration coverage for workspace coordination and isolated Electron test files from cross-module mocks.
 - 2026-07-20: Preserved protected conversation tabs when opening workspace drafts, rejected malformed draft routes safely, and made current-workspace selection enter the requested draft view.

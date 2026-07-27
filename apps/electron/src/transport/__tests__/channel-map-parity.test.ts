@@ -22,11 +22,11 @@ type ApiToChannelMapKeys = Exclude<
   | 'getSystemWarnings' // reads env var set at startup — no IPC needed
   | 'relaunchApp' // direct IPC to main process — not through WS RPC
   | 'removeWorkspace' // direct IPC to main process — modifies local config
+  | 'setWorkspaceRemoteCredential' // direct private IPC to the host credential authority
+  | 'deleteWorkspaceRemoteCredential' // direct private IPC to the host credential authority
   | 'invokeOnServer' // direct IPC to main process — cross-server RPC
   | 'invokeWorkspaceApi' // preload-owned trusted workspace method router
   | 'onWorkspaceApiEvent' // preload-owned trusted workspace listener router
-  | 'transferSessionToWorkspace' // direct IPC to main process — orchestrated remote transfer
-  | 'onTransferProgress' // direct IPC listener — chunk upload progress
   | 'changeLanguage' // direct IPC to main process — syncs i18n language
   | 'getFilePath' // renderer-local — webUtils.getPathForFile, no IPC round-trip
 > | BrowserPaneKeys

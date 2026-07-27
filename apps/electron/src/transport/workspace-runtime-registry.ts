@@ -1,10 +1,10 @@
-import type { RpcClient } from '@mortise/server-core/transport'
+import type { WsRpcClient } from '@mortise/server-core/transport'
 import { isLocalOnly } from '@mortise/shared/protocol'
-import type { WorkspaceRoute } from '../shared/app-layout'
+import type { ResolvedWorkspaceRoute } from '../shared/app-layout'
 
 export interface WorkspaceRuntimeRegistration {
-  route: WorkspaceRoute
-  client: RpcClient
+  route: ResolvedWorkspaceRoute
+  client: WsRpcClient
   /** Workspace identifier understood by the target server. */
   targetWorkspaceId?: string
   /** Opaque in-memory identity for the runtime configuration. */
@@ -100,71 +100,31 @@ export class WorkspaceRuntimeRegistry {
     return this.addLease(key, replacement)
   }
 
-  /** Move a runtime to a new trusted route while preserving active subscriptions. */
-  move(fromRoute: WorkspaceRoute, registration: WorkspaceRuntimeRegistration): () => void {
-    validateRoute(fromRoute)
-    validateRoute(registration.route)
-    const fromKey = workspaceRouteKey(fromRoute)
-    const nextKey = workspaceRouteKey(registration.route)
-    if (fromKey === nextKey) return this.replace(registration)
-
-    const existing = this.runtimes.get(fromKey)
-    const target = this.runtimes.get(nextKey)
-    if (!existing) {
-      const generation = registration.generation ?? 'default'
-      if (!target) return this.register(registration)
-      if (target.generation !== generation) {
-        throw new Error(`Workspace runtime already registered for ${nextKey}`)
-      }
-      try { registration.dispose?.() } catch { /* redundant client is not authoritative */ }
-      return this.addLease(nextKey, target)
-    }
-    if (target) {
-      throw new Error(`Workspace runtime already registered for ${nextKey}`)
-    }
-
-    const rebound = new Map<RuntimeListener, () => void>()
-    try {
-      for (const listener of existing.listeners) {
-        rebound.set(listener, registration.client.on(listener.channel, listener.callback))
-      }
-    } catch (error) {
-      for (const unsubscribe of rebound.values()) {
-        try { unsubscribe() } catch { /* best-effort rollback */ }
-      }
-      throw error
-    }
-
-    const replacement: RuntimeEntry = {
-      ...registration,
-      generation: registration.generation ?? 'default',
-      entryId: this.nextEntryId++,
-      leases: new Set(),
-      listeners: existing.listeners,
-    }
-    this.runtimes.delete(fromKey)
-    this.runtimes.set(nextKey, replacement)
-
-    for (const [listener, unsubscribe] of rebound) {
-      const oldUnsubscribe = listener.unsubscribe
-      listener.key = nextKey
-      listener.unsubscribe = unsubscribe
-      try { oldUnsubscribe() } catch { /* moved runtime is already authoritative */ }
-    }
-    existing.listeners = new Set()
-    this.disposeEntry(existing)
-    return this.addLease(nextKey, replacement)
-  }
-
-  has(route: WorkspaceRoute): boolean {
+  has(route: ResolvedWorkspaceRoute): boolean {
     return this.runtimes.has(workspaceRouteKey(route))
   }
 
-  getRegisteredRoutes(): WorkspaceRoute[] {
+  getRegisteredRoutes(): ResolvedWorkspaceRoute[] {
     return [...this.runtimes.values()].map(entry => ({ ...entry.route }))
   }
 
-  remove(route: WorkspaceRoute): void {
+  get(route: ResolvedWorkspaceRoute): WorkspaceRuntimeRegistration | undefined {
+    const entry = this.runtimes.get(workspaceRouteKey(route))
+    if (!entry) return undefined
+    return {
+      route: { ...entry.route },
+      client: entry.client,
+      targetWorkspaceId: entry.targetWorkspaceId,
+      generation: entry.generation,
+      dispose: entry.dispose,
+    }
+  }
+
+  ownsClient(client: WsRpcClient): boolean {
+    return [...this.runtimes.values()].some(entry => entry.client === client)
+  }
+
+  remove(route: ResolvedWorkspaceRoute): void {
     const key = workspaceRouteKey(route)
     const existing = this.runtimes.get(key)
     if (!existing) return
@@ -172,16 +132,7 @@ export class WorkspaceRuntimeRegistry {
     this.disposeEntry(existing)
   }
 
-  removeWorkspace(workspaceId: string, exceptRoute?: WorkspaceRoute): void {
-    const exceptKey = exceptRoute ? workspaceRouteKey(exceptRoute) : null
-    for (const [key, entry] of this.runtimes) {
-      if (entry.route.workspaceId !== workspaceId || key === exceptKey) continue
-      this.runtimes.delete(key)
-      this.disposeEntry(entry)
-    }
-  }
-
-  async invoke(route: WorkspaceRoute, channel: string, ...args: unknown[]): Promise<unknown> {
+  async invoke(route: ResolvedWorkspaceRoute, channel: string, ...args: unknown[]): Promise<unknown> {
     if (isLocalOnly(channel)) {
       throw new Error(`Workspace-scoped invocation cannot use local-only channel: ${channel}`)
     }
@@ -190,7 +141,7 @@ export class WorkspaceRuntimeRegistry {
     return runtime.client.invoke(channel, ...translatedArgs)
   }
 
-  on(route: WorkspaceRoute, channel: string, callback: (...args: any[]) => void): () => void {
+  on(route: ResolvedWorkspaceRoute, channel: string, callback: (...args: any[]) => void): () => void {
     if (isLocalOnly(channel)) {
       throw new Error(`Workspace-scoped subscription cannot use local-only channel: ${channel}`)
     }
@@ -211,14 +162,13 @@ export class WorkspaceRuntimeRegistry {
     }
   }
 
-  isChannelAvailable(route: WorkspaceRoute, channel: string): boolean {
+  isChannelAvailable(route: ResolvedWorkspaceRoute, channel: string): boolean {
     if (isLocalOnly(channel)) return false
     const runtime = this.runtimes.get(workspaceRouteKey(route))
-    const client = runtime?.client as (RpcClient & { isChannelAvailable?: (channel: string) => boolean }) | undefined
-    return client?.isChannelAvailable?.(channel) ?? false
+    return runtime?.client.isChannelAvailable(channel) ?? false
   }
 
-  private requireRuntime(route: WorkspaceRoute): RuntimeEntry {
+  private requireRuntime(route: ResolvedWorkspaceRoute): RuntimeEntry {
     validateRoute(route)
     const key = workspaceRouteKey(route)
     const runtime = this.runtimes.get(key)
@@ -252,17 +202,17 @@ export class WorkspaceRuntimeRegistry {
   }
 }
 
-export function workspaceRouteKey(route: WorkspaceRoute): string {
+export function workspaceRouteKey(route: Pick<ResolvedWorkspaceRoute, 'workspaceId' | 'locationId'>): string {
   validateRoute(route)
-  return `${encodeURIComponent(route.serverId)}::${encodeURIComponent(route.workspaceId)}`
+  return `${encodeURIComponent(route.workspaceId)}::${encodeURIComponent(route.locationId)}`
 }
 
-function validateRoute(route: WorkspaceRoute): void {
-  if (!route || typeof route.serverId !== 'string' || !route.serverId.trim()) {
-    throw new Error('Workspace route requires a serverId')
-  }
+function validateRoute(route: Pick<ResolvedWorkspaceRoute, 'workspaceId' | 'locationId'>): void {
   if (typeof route.workspaceId !== 'string' || !route.workspaceId.trim()) {
     throw new Error('Workspace route requires a workspaceId')
+  }
+  if (typeof route.locationId !== 'string' || !route.locationId.trim()) {
+    throw new Error('Workspace route requires a locationId')
   }
 }
 

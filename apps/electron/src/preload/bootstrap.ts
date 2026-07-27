@@ -3,9 +3,8 @@
  *
  * Normal mode (local server):
  *   Creates a RoutedClient that routes LOCAL_ONLY channels to the local
- *   Electron server and REMOTE_ELIGIBLE channels to whichever server owns
- *   the active workspace (local or remote). Workspace switches swap the
- *   workspace client transparently.
+ *   Electron server and REMOTE_ELIGIBLE channels to the active Workspace's
+ *   primary location. Explicit location routes remain live concurrently.
  *
  * Thin-client mode (MORTISE_SERVER_URL):
  *   Creates a single WsRpcClient connected to the remote server.
@@ -26,6 +25,7 @@ import { CHANNEL_MAP } from '../transport/channel-map'
 import { buildWorkspaceClientApi, evictWorkspaceApiCache, resolveWorkspaceApiMethod } from '../transport/workspace-api'
 import { workspaceRouteKey } from '../transport/workspace-runtime-registry'
 import { WorkspaceRuntimeGenerationTracker, WorkspaceRuntimeUpdateQueue } from '../transport/workspace-runtime-generation'
+import { WorkspaceRuntimeTopologyState } from '../transport/workspace-runtime-topology'
 import {
   CLIENT_OPEN_EXTERNAL,
   CLIENT_OPEN_PATH,
@@ -37,13 +37,14 @@ import {
 } from '@mortise/server-core/transport'
 import type { ConfirmDialogSpec, FileDialogSpec, BrowserCapabilityRequest } from '@mortise/server-core/transport'
 import type { RpcClient } from '@mortise/server-core/transport'
-import type { RemoteServerConfig, Workspace } from '@mortise/core/types'
-import { RPC_CHANNELS } from '@mortise/shared/protocol'
+import type { WorkspaceInfo, WorkspaceLocationInfo } from '@mortise/core/types'
+import { RPC_CHANNELS, type WorkspaceTopologyChangedV1 } from '@mortise/shared/protocol'
 import type { ElectronAPI } from '../shared/types'
-import type { WorkspaceRoute } from '../shared/app-layout'
+import type { ResolvedWorkspaceRoute, WorkspaceRoute } from '../shared/app-layout'
 import { PRELOAD_LOCAL_CHANNELS } from '../shared/ipc-channels'
 import { publishElectronPlatformCapabilities } from '../shared/platform-capabilities'
 import type { UiValidationRendererStateBatch } from '../shared/ui-validation-state-bridge'
+import type { WorkspaceLocationRuntimeConfig } from '../shared/workspace-runtime-config'
 import { allowsInsecureTlsFromEnvironment, shouldRejectUnauthorizedTls } from '../shared/remote-tls'
 
 // ---------------------------------------------------------------------------
@@ -141,9 +142,6 @@ if (isClientOnly) {
     clientCapabilities: [...LOCAL_CLIENT_CAPABILITIES],
   })
 
-  // Check if the current workspace is remote (synchronous IPC during preload eval)
-  const remoteConfig: RemoteServerConfig | null = ipcRenderer.sendSync('__get-workspace-remote-config')
-
   const localWorkspaceClient = localWorkspaceServerUrl
     ? new WsRpcClient(localWorkspaceServerUrl, {
         token: localWorkspaceServerToken,
@@ -155,64 +153,21 @@ if (isClientOnly) {
       })
     : undefined
 
-  let initialWorkspaceClient: WsRpcClient
-  if (remoteConfig && typeof remoteConfig.url === 'string') {
-    // Workspace is remote — create a direct connection to the remote server
-    initialWorkspaceClient = new WsRpcClient(remoteConfig.url, {
-      token: remoteConfig.token,
-      workspaceId: remoteConfig.remoteWorkspaceId,
-      webContentsId,
-      autoReconnect: true,
-      mode: 'remote',
-      clientCapabilities: [...LOCAL_CLIENT_CAPABILITIES],
-      tlsRejectUnauthorized: shouldRejectUnauthorizedTls(remoteConfig),
-    })
-    initialWorkspaceClient.connect()
-  } else if (localWorkspaceClient) {
-    // Workspace is local, but the heavy workspace runtime is isolated in a
-    // child-process server so Electron's main process remains responsive.
-    initialWorkspaceClient = localWorkspaceClient
-    initialWorkspaceClient.connect()
-  } else {
-    // Workspace is local — workspace client IS the local client
-    initialWorkspaceClient = localClient
-  }
-
+  const initialWorkspaceClient = localWorkspaceClient ?? localClient
   const routedClient = new RoutedClient(localClient, initialWorkspaceClient, {
     localWorkspaceClient,
   })
-
-  // Set workspace ID mapping if initial workspace is remote
-  if (remoteConfig) {
-    routedClient.setWorkspaceMapping(workspaceId, remoteConfig.remoteWorkspaceId)
-  }
-
-  // Factory for creating remote workspace clients on switch
-  routedClient.setClientFactory((remoteServer: RemoteServerConfig) => {
-    return new WsRpcClient(remoteServer.url, {
-      token: remoteServer.token,
-      workspaceId: remoteServer.remoteWorkspaceId,
-      webContentsId,
-      autoReconnect: true,
-      mode: 'remote',
-      clientCapabilities: [...LOCAL_CLIENT_CAPABILITIES],
-      tlsRejectUnauthorized: shouldRejectUnauthorizedTls(remoteServer),
-    })
-  })
-
   localClient.connect()
-  if (localWorkspaceClient && localWorkspaceClient !== initialWorkspaceClient) {
-    localWorkspaceClient.connect()
-  }
+  localWorkspaceClient?.connect()
   client = routedClient
 
-  type RuntimeWorkspace = Pick<Workspace, 'id' | 'remoteServer'>
+  const topologyState = new WorkspaceRuntimeTopologyState()
   const runtimeGenerations = new WorkspaceRuntimeGenerationTracker()
-  const workspaceRuntimeUpdates = new WorkspaceRuntimeUpdateQueue()
-  const runtimeUpdates = new Map<string, Promise<void>>()
+  const topologyUpdates = new WorkspaceRuntimeUpdateQueue()
+  const runtimeUpdates = new Map<string, Promise<unknown>>()
   const runtimeLeases = new Map<string, { generation: string; release: () => void }>()
 
-  const queueRuntimeUpdate = (key: string, update: () => Promise<void>): Promise<void> => {
+  const queueRuntimeUpdate = <Result>(key: string, update: () => Promise<Result>): Promise<Result> => {
     const previous = runtimeUpdates.get(key) ?? Promise.resolve()
     const pending = previous.catch(() => {}).then(update).finally(() => {
       if (runtimeUpdates.get(key) === pending) runtimeUpdates.delete(key)
@@ -221,177 +176,217 @@ if (isClientOnly) {
     return pending
   }
 
-  const runtimeGeneration = (workspace: RuntimeWorkspace): string => workspace.remoteServer
-    ? runtimeGenerations.forRemote(workspace.id, workspace.remoteServer)
-    : runtimeGenerations.forLocal(workspace.id)
+  const loadWorkspaceTopology = async (requestedWorkspaceId: string): Promise<WorkspaceInfo> => {
+    const workspace = await localClient.invoke(
+      RPC_CHANNELS.workspaces.GET_TOPOLOGY,
+      requestedWorkspaceId,
+    ) as WorkspaceInfo
+    return topologyState.set(workspace)
+  }
 
-  const installWorkspaceRuntime = (
-    route: WorkspaceRoute,
-    workspace: RuntimeWorkspace,
-    mode: 'register' | 'replace' | 'move',
-    fromRoute?: WorkspaceRoute,
-  ): void => {
-    const key = workspaceRouteKey(route)
-    const generation = runtimeGeneration(workspace)
-    if (runtimeLeases.get(key)?.generation === generation && routedClient.hasWorkspaceRuntime(route)) return
-
-    let runtime: WsRpcClient
-    let targetWorkspaceId: string | undefined
-    if (workspace.remoteServer) {
-      const remote = workspace.remoteServer
-      targetWorkspaceId = remote.remoteWorkspaceId
-      runtime = new WsRpcClient(remote.url, {
-        token: remote.token,
-        workspaceId: remote.remoteWorkspaceId,
-        webContentsId,
-        autoReconnect: true,
-        mode: 'remote',
-        clientCapabilities: [...LOCAL_CLIENT_CAPABILITIES],
-        tlsRejectUnauthorized: shouldRejectUnauthorizedTls(remote),
-      })
-    } else {
-      const runtimeUrl = localWorkspaceServerUrl ?? `ws://127.0.0.1:${wsPort}`
-      runtime = new WsRpcClient(runtimeUrl, {
-        token: localWorkspaceServerUrl ? localWorkspaceServerToken : wsToken,
+  const resolveRuntimeConfig = async (
+    workspace: WorkspaceInfo,
+    location: WorkspaceLocationInfo,
+  ): Promise<WorkspaceLocationRuntimeConfig> => {
+    if (location.endpoint.kind === 'local') {
+      return {
+        kind: 'local',
         workspaceId: workspace.id,
-        webContentsId,
-        autoReconnect: true,
-        mode: localWorkspaceServerUrl ? 'remote' : 'local',
-        clientCapabilities: [...LOCAL_CLIENT_CAPABILITIES],
-      })
+        locationId: location.id,
+      }
     }
+    const config = await ipcRenderer.invoke(
+      PRELOAD_LOCAL_CHANNELS.WORKSPACE_RESOLVE_LOCATION_RUNTIME,
+      workspace.id,
+      location.id,
+    ) as WorkspaceLocationRuntimeConfig
+    if (
+      config.kind !== 'remote'
+      || config.workspaceId !== workspace.id
+      || config.locationId !== location.id
+      || config.url !== location.endpoint.url
+      || config.remoteWorkspaceId !== location.endpoint.remoteWorkspaceId
+      || !config.token
+    ) {
+      throw new Error(`Host returned an invalid runtime for ${workspace.id}::${location.id}`)
+    }
+    return config
+  }
+
+  const installWorkspaceRuntime = async (
+    workspace: WorkspaceInfo,
+    locationId: string,
+    mode: 'register' | 'replace',
+  ): Promise<ResolvedWorkspaceRoute> => {
+    const location = workspace.locations.find(candidate => candidate.id === locationId)
+    if (!location) throw new Error(`Workspace location is not authorized: ${workspace.id}::${locationId}`)
+    const route = topologyState.resolveRoute({
+      serverId: 'topology',
+      workspaceId: workspace.id,
+      locationId,
+    })
+    const key = workspaceRouteKey(route)
+    const config = await resolveRuntimeConfig(workspace, location)
+    const generation = config.kind === 'remote'
+      ? runtimeGenerations.forRemote(workspace.id, location.id, config)
+      : runtimeGenerations.forLocal(workspace.id, location.id)
+    if (runtimeLeases.get(key)?.generation === generation && routedClient.hasWorkspaceRuntime(route)) {
+      return route
+    }
+
+    const runtimeUrl = config.kind === 'remote'
+      ? config.url
+      : localWorkspaceServerUrl ?? `ws://127.0.0.1:${wsPort}`
+    const runtimeToken = config.kind === 'remote'
+      ? config.token
+      : localWorkspaceServerUrl ? localWorkspaceServerToken : wsToken
+    const targetWorkspaceId = config.kind === 'remote' ? config.remoteWorkspaceId : workspace.id
+    const runtime = new WsRpcClient(runtimeUrl, {
+      token: runtimeToken,
+      workspaceId: targetWorkspaceId,
+      webContentsId,
+      autoReconnect: true,
+      mode: config.kind === 'remote' || localWorkspaceServerUrl ? 'remote' : 'local',
+      clientCapabilities: [...LOCAL_CLIENT_CAPABILITIES],
+      ...(config.kind === 'remote'
+        ? { tlsRejectUnauthorized: shouldRejectUnauthorizedTls(config) }
+        : {}),
+    })
 
     try {
       runtime.connect()
       const registration = {
         route,
         client: runtime,
-        targetWorkspaceId,
+        targetWorkspaceId: config.kind === 'remote' ? config.remoteWorkspaceId : undefined,
         generation,
         dispose: () => runtime.destroy(),
       }
-      const release = mode === 'move'
-        ? routedClient.moveWorkspaceRuntime(fromRoute!, registration)
-        : mode === 'replace'
-          ? routedClient.replaceWorkspaceRuntime(registration)
-          : routedClient.registerWorkspaceRuntime(registration)
-      const previousKey = mode === 'move' ? workspaceRouteKey(fromRoute!) : key
-      const previous = runtimeLeases.get(previousKey)
-      const previousAtTarget = previousKey === key ? undefined : runtimeLeases.get(key)
-      if (previousKey !== key) runtimeLeases.delete(previousKey)
+      const release = mode === 'replace'
+        ? routedClient.replaceWorkspaceRuntime(registration)
+        : routedClient.registerWorkspaceRuntime(registration)
+      const previous = runtimeLeases.get(key)
       runtimeLeases.set(key, { generation, release })
       previous?.release()
-      previousAtTarget?.release()
+      return route
     } catch (error) {
       runtime.destroy()
       throw error
     }
   }
 
-  const ensureWorkspaceRuntime = (route: WorkspaceRoute): Promise<void> => {
+  const updateWorkspaceRuntime = (
+    workspace: WorkspaceInfo,
+    locationId: string,
+    mode: 'register' | 'replace',
+  ): Promise<ResolvedWorkspaceRoute> => {
+    const route = topologyState.resolveRoute({ serverId: 'topology', workspaceId: workspace.id, locationId })
+    return queueRuntimeUpdate(workspaceRouteKey(route), () => installWorkspaceRuntime(workspace, locationId, mode))
+  }
+
+  const removeWorkspaceRuntime = (route: ResolvedWorkspaceRoute): Promise<void> => {
     const key = workspaceRouteKey(route)
-    if (routedClient.hasWorkspaceRuntime(route)) return Promise.resolve()
-
     return queueRuntimeUpdate(key, async () => {
-      if (routedClient.hasWorkspaceRuntime(route)) return
-      const workspaces = await localClient.invoke(RPC_CHANNELS.workspaces.GET) as Workspace[]
-      const workspace = workspaces.find(candidate => candidate.id === route.workspaceId)
-      if (!workspace) throw new Error(`Workspace route is not authorized: ${key}`)
-      const expectedServerId = workspace.remoteServer?.url ?? 'local'
-      if (route.serverId !== expectedServerId) {
-        throw new Error(`Workspace route server mismatch for ${route.workspaceId}`)
-      }
-
-      for (const registeredRoute of routedClient.getRegisteredWorkspaceRoutes()) {
-        if (registeredRoute.workspaceId !== route.workspaceId || workspaceRouteKey(registeredRoute) === key) continue
-        runtimeLeases.get(workspaceRouteKey(registeredRoute))?.release()
-        runtimeLeases.delete(workspaceRouteKey(registeredRoute))
-      }
-      routedClient.removeWorkspaceRuntimes(route.workspaceId, route)
-      installWorkspaceRuntime(route, workspace, 'register')
+      runtimeLeases.get(key)?.release()
+      runtimeLeases.delete(key)
+      routedClient.removeWorkspaceRuntime(route)
     })
   }
 
-  const refreshWorkspaceRuntimes = (workspaceId: string): Promise<void> => workspaceRuntimeUpdates.run(
-    workspaceId,
-    async () => {
-      const workspaces = await localClient.invoke(RPC_CHANNELS.workspaces.GET) as Workspace[]
-      const workspace = workspaces.find(candidate => candidate.id === workspaceId)
-      if (!workspace) return
-      evictWorkspaceApiCache(workspaceApis, workspace.id, workspace.remoteServer?.url ?? 'local')
-      const initialRoutes = routedClient.getRegisteredWorkspaceRoutes()
-        .filter(route => route.workspaceId === workspace.id)
-      if (initialRoutes.length === 0) return
-      const nextRoute: WorkspaceRoute = {
-        serverId: workspace.remoteServer?.url ?? 'local',
-        workspaceId: workspace.id,
-      }
-      const nextKey = workspaceRouteKey(nextRoute)
-      await Promise.all(initialRoutes.map(route => runtimeUpdates.get(workspaceRouteKey(route))?.catch(() => {})))
-      await queueRuntimeUpdate(nextKey, async () => {
-        const routes = routedClient.getRegisteredWorkspaceRoutes()
-          .filter(route => route.workspaceId === workspace.id)
-        if (routes.length === 0) return
-        const exactRoute = routes.find(route => workspaceRouteKey(route) === nextKey)
-        const sourceRoute = exactRoute ?? routes[0]!
+  const reconcileWorkspaceRuntimes = (
+    workspace: WorkspaceInfo,
+    changedLocationIds: readonly string[] = [],
+  ): Promise<void> => topologyUpdates.run(workspace.id, async () => {
+    const locations = new Set(workspace.locations.map(location => location.id))
+    const registered = routedClient.getRegisteredWorkspaceRoutes()
+      .filter(route => route.workspaceId === workspace.id)
 
-        try {
-          installWorkspaceRuntime(
-            nextRoute,
-            workspace,
-            exactRoute ? 'replace' : 'move',
-            exactRoute ? undefined : sourceRoute,
-          )
-          for (const route of routes) {
-            const key = workspaceRouteKey(route)
-            if (key === nextKey || (!exactRoute && key === workspaceRouteKey(sourceRoute))) continue
-            runtimeLeases.get(key)?.release()
-            runtimeLeases.delete(key)
-          }
-          routedClient.removeWorkspaceRuntimes(workspace.id, nextRoute)
-        } catch (error) {
-          for (const route of [...routes, nextRoute]) {
-            const key = workspaceRouteKey(route)
-            runtimeLeases.get(key)?.release()
-            runtimeLeases.delete(key)
-          }
-          routedClient.removeWorkspaceRuntimes(workspace.id)
-          throw error
-        }
+    for (const route of registered) {
+      if (!locations.has(route.locationId)) await removeWorkspaceRuntime(route)
+    }
+
+    const changed = new Set(changedLocationIds)
+    for (const route of registered) {
+      if (locations.has(route.locationId) && changed.has(route.locationId)) {
+        await updateWorkspaceRuntime(workspace, route.locationId, 'replace')
+      }
+    }
+
+    const primaryRoute = await updateWorkspaceRuntime(
+      workspace,
+      workspace.primaryLocationId,
+      routedClient.hasWorkspaceRuntime(topologyState.resolveRoute({
+        serverId: 'topology',
+        workspaceId: workspace.id,
+        locationId: workspace.primaryLocationId,
+      })) ? 'replace' : 'register',
+    )
+    const activeWorkspaceId = await localClient.invoke(RPC_CHANNELS.window.GET_WORKSPACE) as string | null
+    if (activeWorkspaceId === workspace.id) routedClient.activateWorkspaceRuntime(primaryRoute)
+  })
+
+  const ensureWorkspaceRuntime = async (route: WorkspaceRoute): Promise<ResolvedWorkspaceRoute> => {
+    let workspace = topologyState.get(route.workspaceId)
+    if (!workspace) workspace = await loadWorkspaceTopology(route.workspaceId)
+    const resolved = topologyState.resolveRoute(route)
+    if (!routedClient.hasWorkspaceRuntime(resolved)) {
+      await updateWorkspaceRuntime(workspace, resolved.locationId, 'register')
+    }
+    return resolved
+  }
+
+  routedClient.setWorkspaceSwitchHandler((result) => {
+    const ready = (async () => {
+      const workspace = await loadWorkspaceTopology(result.workspaceId)
+      await reconcileWorkspaceRuntimes(workspace)
+      routedClient.activateWorkspaceRuntime(topologyState.resolveRoute({
+        serverId: 'topology',
+        workspaceId: workspace.id,
+        locationId: workspace.primaryLocationId,
+      }))
+    })()
+    routedClient.setWorkspaceReady(ready)
+    return ready
+  })
+
+  localClient.on(
+    RPC_CHANNELS.workspaces.TOPOLOGY_CHANGED,
+    (change: WorkspaceTopologyChangedV1) => {
+      void (async () => {
+        const decision = topologyState.apply(change)
+        if (decision.status === 'ignored') return
+        const workspace = decision.status === 'resync'
+          ? await loadWorkspaceTopology(decision.workspaceId)
+          : decision.workspace
+        const changedLocationIds = decision.status === 'applied'
+          ? decision.changedLocationIds
+          : workspace.locations.map(location => location.id)
+        evictWorkspaceApiCache(workspaceApis, workspace.id)
+        const ready = reconcileWorkspaceRuntimes(workspace, changedLocationIds)
+        routedClient.setWorkspaceReady(ready)
+        await ready
+      })().catch(error => {
+        console.error(`[WorkspaceRuntime] Failed to apply topology change for ${change.workspaceId}:`, error)
       })
     },
   )
 
-  routedClient.setWorkspaceSwitchHandler(async (result) => {
-    await refreshWorkspaceRuntimes(result.workspaceId)
-  })
-
-  localClient.on(RPC_CHANNELS.workspaces.REMOTE_UPDATED, ({ workspaceId: changedWorkspaceId }: { workspaceId: string }) => {
-    void (async () => {
-      const workspaces = await localClient.invoke(RPC_CHANNELS.workspaces.GET) as Workspace[]
-      const workspace = workspaces.find(candidate => candidate.id === changedWorkspaceId)
-      if (!workspace) return
-      const activeWorkspaceId = await localClient.invoke(RPC_CHANNELS.window.GET_WORKSPACE) as string | null
-      if (activeWorkspaceId === changedWorkspaceId) {
-        await routedClient.invoke(RPC_CHANNELS.window.SWITCH_WORKSPACE, changedWorkspaceId)
-      } else {
-        await refreshWorkspaceRuntimes(workspace.id)
-      }
-    })().catch(error => {
-      console.error(`[WorkspaceRuntime] Failed to refresh workspace ${changedWorkspaceId}:`, error)
-    })
-  })
+  const initialWorkspaceReady = (async () => {
+    const workspace = await loadWorkspaceTopology(workspaceId)
+    await reconcileWorkspaceRuntimes(workspace)
+  })()
+  routedClient.setWorkspaceReady(initialWorkspaceReady)
 
   workspaceApiTransport = {
     invoke: async (route, channel, ...args) => {
-      await ensureWorkspaceRuntime(route)
-      return routedClient.invokeForWorkspace(route, channel, ...args)
+      const resolved = await ensureWorkspaceRuntime(route)
+      return routedClient.invokeForWorkspace(resolved, channel, ...args)
     },
     on: (route, channel, callback) => {
       let disposed = false
       let unsubscribe: (() => void) | undefined
-      void ensureWorkspaceRuntime(route).then(() => {
-        if (!disposed) unsubscribe = routedClient.onForWorkspace(route, channel, callback)
+      void ensureWorkspaceRuntime(route).then((resolved) => {
+        if (!disposed) unsubscribe = routedClient.onForWorkspace(resolved, channel, callback)
       }).catch(error => {
         console.error(`[WorkspaceAPI] Failed to subscribe ${channel}:`, error)
       })
@@ -400,7 +395,13 @@ if (isClientOnly) {
         unsubscribe?.()
       }
     },
-    isChannelAvailable: (route, channel) => routedClient.isChannelAvailableForWorkspace(route, channel),
+    isChannelAvailable: (route, channel) => {
+      try {
+        return routedClient.isChannelAvailableForWorkspace(topologyState.resolveRoute(route), channel)
+      } catch {
+        return false
+      }
+    },
   }
 }
 
@@ -442,7 +443,7 @@ client.handleCapability(CLIENT_BROWSER_INVOKE, async (req: BrowserCapabilityRequ
 const api = buildClientApi(client, CHANNEL_MAP, (ch) => client.isChannelAvailable(ch))
 publishElectronPlatformCapabilities(api)
 function getWorkspaceApi(route: WorkspaceRoute): ElectronAPI {
-  const key = `${encodeURIComponent(route.serverId)}::${encodeURIComponent(route.workspaceId)}`
+  const key = `${encodeURIComponent(route.workspaceId)}::${encodeURIComponent(route.locationId ?? '@primary')}`
   const existing = workspaceApis.get(key)
   if (existing) return existing
   const scoped = buildWorkspaceClientApi(workspaceApiTransport, route, CHANNEL_MAP)
@@ -545,6 +546,10 @@ client.onConnectionStateChanged((state) => {
 // App lifecycle — direct IPC (not WS RPC) since it restarts the server itself
 ;(api as ElectronAPI).relaunchApp = () => ipcRenderer.invoke(PRELOAD_LOCAL_CHANNELS.APP_RELAUNCH)
 ;(api as ElectronAPI).removeWorkspace = (workspaceId: string) => ipcRenderer.invoke(PRELOAD_LOCAL_CHANNELS.WORKSPACE_REMOVE, workspaceId)
+;(api as ElectronAPI).setWorkspaceRemoteCredential = (input) =>
+  ipcRenderer.invoke(PRELOAD_LOCAL_CHANNELS.WORKSPACE_SET_REMOTE_CREDENTIAL, input)
+;(api as ElectronAPI).deleteWorkspaceRemoteCredential = (input) =>
+  ipcRenderer.invoke(PRELOAD_LOCAL_CHANNELS.WORKSPACE_DELETE_REMOTE_CREDENTIAL, input)
 ;(api as ElectronAPI).invokeOnServer = (
   url: string,
   token: string,
@@ -556,13 +561,6 @@ client.onConnectionStateChanged((state) => {
   getWorkspaceMethod(route, method, 'invoke')(...args)
 ;(api as ElectronAPI).onWorkspaceApiEvent = (route: WorkspaceRoute, method: string, callback: (...args: any[]) => void) =>
   getWorkspaceMethod(route, method, 'listener')(callback)
-;(api as ElectronAPI).transferSessionToWorkspace = (sessionId: string, targetWorkspaceId: string, sessionIndex?: number, sessionCount?: number) =>
-  ipcRenderer.invoke(PRELOAD_LOCAL_CHANNELS.SESSION_TRANSFER_TO_REMOTE_WORKSPACE, sessionId, targetWorkspaceId, sessionIndex, sessionCount)
-;(api as ElectronAPI).onTransferProgress = (cb: (progress: { sessionIndex: number; sessionCount: number; chunkSent: number; chunkTotal: number }) => void) => {
-  const handler = (_e: any, progress: { sessionIndex: number; sessionCount: number; chunkSent: number; chunkTotal: number }) => cb(progress)
-  ipcRenderer.on('transfer:progress', handler)
-  return () => { ipcRenderer.removeListener('transfer:progress', handler) }
-}
 
 // System warnings — expose env-based flags set during main process startup
 // (preload-only: reads env var directly, no IPC round-trip needed)
