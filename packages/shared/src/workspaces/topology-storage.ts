@@ -24,6 +24,7 @@ import { ensureWorkspaceMarker, readWorkspaceMarker, WorkspaceTopologyError } fr
 import {
   getWorkspaceTopologyOperationIdentity,
   getWorkspaceTopologyRecordIdentity,
+  getWorkspaceTopologyRegistryIdentity,
   getWorkspaceTransferOperationIdentity,
 } from './state-contract.ts'
 
@@ -54,6 +55,11 @@ interface WorkspaceTopologyReceipt {
   command: WorkspaceTopologyCommandV1
   workspace: Workspace
   previousRevision: number
+}
+
+interface WorkspaceTopologyRegistry {
+  schemaVersion: 1
+  workspaceIds: string[]
 }
 
 export interface ApplyWorkspaceTopologyResult extends WorkspaceTopologyResultV1 {
@@ -107,14 +113,27 @@ export class WorkspaceTopologyStore {
   }
 
   get(workspaceId: string): Workspace | null {
-    const identity = getWorkspaceTopologyRecordIdentity(workspaceId)
-    const record = this.store.getRecord(identity.namespace, identity.key)
-    return record ? parseWorkspaceV2(structuredClone(record.value)) : null
+    return this.store.readTransaction((transaction) => {
+      if (!readRegistry(transaction).workspaceIds.includes(workspaceId)) return null
+      return readWorkspaceInTransaction(transaction, workspaceId)
+    })
   }
 
   getInfo(workspaceId: string): WorkspaceInfo | null {
     const workspace = this.get(workspaceId)
     return workspace ? this.project(workspace) : null
+  }
+
+  list(): Workspace[] {
+    return this.store.readTransaction((transaction) => readRegistry(transaction).workspaceIds.map((workspaceId) => {
+      const workspace = readWorkspaceInTransaction(transaction, workspaceId)
+      if (!workspace) throw new Error(`Workspace registry points to missing topology: ${workspaceId}`)
+      return workspace
+    }))
+  }
+
+  listInfo(): WorkspaceInfo[] {
+    return this.list().map(workspace => this.project(workspace))
   }
 
   create(workspaceValue: Workspace, operationId = `workspace-create-${workspaceValue.id}`): Workspace {
@@ -123,21 +142,66 @@ export class WorkspaceTopologyStore {
     for (const location of workspace.locations) {
       if (location.endpoint.kind === 'local') ensureWorkspaceMarker(location.endpoint.rootPath, workspace.id)
     }
-    const identity = getWorkspaceTopologyRecordIdentity(workspace.id)
-    const result = this.store.mutateRecord({
-      capability: TOPOLOGY_CAPABILITY,
-      namespace: identity.namespace,
-      key: identity.key,
-      value: workspace as unknown as JsonValue,
-      expectedVersion: null,
-      operationId,
+    return this.store.writeTransaction({ requiredCapabilities: [TOPOLOGY_CAPABILITY] }, (transaction) => {
+      const identity = getWorkspaceTopologyRecordIdentity(workspace.id)
+      const currentRecord = transaction.getRecord(identity.namespace, identity.key)
+      if (currentRecord) {
+        const current = parseWorkspaceV2(structuredClone(currentRecord.value))
+        const registered = readRegistry(transaction).workspaceIds.includes(workspace.id)
+        if (registered && isDeepStrictEqual(current, workspace)) return current
+        throw new Error(`Workspace topology already exists for ${workspace.id}`)
+      }
+
+      const result = transaction.mutateRecord({
+        capability: TOPOLOGY_CAPABILITY,
+        namespace: identity.namespace,
+        key: identity.key,
+        value: workspace as unknown as JsonValue,
+        expectedVersion: null,
+        operationId,
+      })
+      if (result.status !== 'applied') throw new Error(`Workspace topology already exists for ${workspace.id}`)
+
+      const registryIdentity = getWorkspaceTopologyRegistryIdentity()
+      const registryRecord = transaction.getRecord(registryIdentity.namespace, registryIdentity.key)
+      const registry = registryRecord ? parseRegistry(registryRecord.value) : emptyRegistry()
+      const registryWrite = transaction.mutateRecord({
+        capability: TOPOLOGY_CAPABILITY,
+        namespace: registryIdentity.namespace,
+        key: registryIdentity.key,
+        value: {
+          ...registry,
+          workspaceIds: [...registry.workspaceIds, workspace.id],
+        } as unknown as JsonValue,
+        expectedVersion: registryRecord?.version ?? null,
+        operationId: `${operationId}:registry`,
+      })
+      if (registryWrite.status !== 'applied') throw new Error('Workspace registry changed while creating a Workspace')
+      return parseWorkspaceV2(structuredClone(result.value))
     })
-    if (result.status === 'conflict') {
-      const current = this.get(workspace.id)
-      if (current && isDeepStrictEqual(current, workspace)) return current
-      throw new Error(`Workspace topology already exists for ${workspace.id}`)
-    }
-    return parseWorkspaceV2(structuredClone(result.value))
+  }
+
+  remove(workspaceId: string, operationId = `workspace-remove-${workspaceId}`): boolean {
+    return this.store.writeTransaction({ requiredCapabilities: [TOPOLOGY_CAPABILITY] }, (transaction) => {
+      const identity = getWorkspaceTopologyRegistryIdentity()
+      const record = transaction.getRecord(identity.namespace, identity.key)
+      if (!record) return false
+      const registry = parseRegistry(record.value)
+      if (!registry.workspaceIds.includes(workspaceId)) return false
+      const write = transaction.mutateRecord({
+        capability: TOPOLOGY_CAPABILITY,
+        namespace: identity.namespace,
+        key: identity.key,
+        value: {
+          ...registry,
+          workspaceIds: registry.workspaceIds.filter(candidate => candidate !== workspaceId),
+        } as unknown as JsonValue,
+        expectedVersion: record.version,
+        operationId,
+      })
+      if (write.status !== 'applied') throw new Error('Workspace registry changed while removing a Workspace')
+      return true
+    })
   }
 
   migrateLegacy(legacy: LegacyWorkspaceV1): Workspace {
@@ -192,6 +256,10 @@ export class WorkspaceTopologyStore {
       const duplicate = readReceiptInTransaction(transaction, command)
       if (duplicate) return receiptResult(command.operationId, duplicate, 'duplicate', this.project(duplicate.workspace))
 
+      if (!readRegistry(transaction).workspaceIds.includes(command.workspaceId)) {
+        throw new Error(`Workspace topology not found: ${command.workspaceId}`)
+      }
+
       const identity = getWorkspaceTopologyRecordIdentity(command.workspaceId)
       const stored = transaction.getRecord(identity.namespace, identity.key)
       if (!stored) throw new Error(`Workspace topology not found: ${command.workspaceId}`)
@@ -229,6 +297,7 @@ export class WorkspaceTopologyStore {
 
   getAppliedResult(commandValue: unknown): ApplyWorkspaceTopologyResult | null {
     const command = parseWorkspaceTopologyCommandV1(commandValue)
+    if (!this.get(command.workspaceId)) throw new Error(`Workspace topology not found: ${command.workspaceId}`)
     const receipt = this.readReceipt(command)
     return receipt
       ? receiptResult(command.operationId, receipt, 'duplicate', this.project(receipt.workspace))
@@ -237,12 +306,14 @@ export class WorkspaceTopologyStore {
 
   getTransferResult(requestValue: unknown): WorkspaceTransferResultV1 | null {
     const request = parseWorkspaceTransferRequestV1(requestValue)
+    if (!this.get(request.workspaceId)) throw new Error(`Workspace topology not found: ${request.workspaceId}`)
     const receipt = this.readTransferReceipt(request)
     return receipt ? { ...receipt.result, status: 'duplicate' } : null
   }
 
   recordTransferResult(requestValue: unknown, resultValue: unknown): WorkspaceTransferResultV1 {
     const request = parseWorkspaceTransferRequestV1(requestValue)
+    if (!this.get(request.workspaceId)) throw new Error(`Workspace topology not found: ${request.workspaceId}`)
     const result = parseWorkspaceTransferResultV1(resultValue)
     if (result.status !== 'applied') throw new Error('Only an applied Workspace transfer can be recorded')
     assertTransferResultMatchesRequest(request, result)
@@ -401,6 +472,45 @@ function applyPreparedCommand(
   })
   assertUniqueEndpoints(next.locations, current.id)
   return next
+}
+
+function emptyRegistry(): WorkspaceTopologyRegistry {
+  return { schemaVersion: 1, workspaceIds: [] }
+}
+
+function parseRegistry(value: JsonValue): WorkspaceTopologyRegistry {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Workspace topology registry is invalid')
+  }
+  const candidate = value as Record<string, JsonValue>
+  if (candidate.schemaVersion !== 1 || !Array.isArray(candidate.workspaceIds)) {
+    throw new Error('Workspace topology registry is invalid')
+  }
+  const workspaceIds = candidate.workspaceIds.map((workspaceId) => {
+    if (typeof workspaceId !== 'string' || !workspaceId.trim()) {
+      throw new Error('Workspace topology registry contains an invalid identity')
+    }
+    return workspaceId
+  })
+  if (new Set(workspaceIds).size !== workspaceIds.length) {
+    throw new Error('Workspace topology registry contains duplicate identities')
+  }
+  return { schemaVersion: 1, workspaceIds }
+}
+
+function readRegistry(transaction: MultiWriterTransaction): WorkspaceTopologyRegistry {
+  const identity = getWorkspaceTopologyRegistryIdentity()
+  const record = transaction.getRecord(identity.namespace, identity.key)
+  return record ? parseRegistry(record.value) : emptyRegistry()
+}
+
+function readWorkspaceInTransaction(
+  transaction: MultiWriterTransaction,
+  workspaceId: string,
+): Workspace | null {
+  const identity = getWorkspaceTopologyRecordIdentity(workspaceId)
+  const record = transaction.getRecord(identity.namespace, identity.key)
+  return record ? parseWorkspaceV2(structuredClone(record.value)) : null
 }
 
 function readReceiptInTransaction(

@@ -97,6 +97,31 @@ describe('WorkspaceTopologyStore', () => {
     expect(readFileSync(join(workspaceRoot, 'keep.txt'), 'utf8')).toBe('user data')
   })
 
+  it('atomically maintains the canonical Workspace registry across create and remove', () => {
+    const { root, store } = harness()
+    const firstRoot = join(root, 'first')
+    const secondRoot = join(root, 'second')
+    writeFixture(join(firstRoot, 'keep.txt'), 'first')
+    writeFixture(join(secondRoot, 'keep.txt'), 'second')
+
+    const first = store.create(localWorkspace(firstRoot, 'workspace-1'))
+    const second = store.create(localWorkspace(secondRoot, 'workspace-2'))
+
+    expect(store.list().map(workspace => workspace.id)).toEqual([first.id, second.id])
+    expect(store.listInfo().map(workspace => workspace.id)).toEqual([first.id, second.id])
+    expect(store.remove(first.id, 'remove-first')).toBeTrue()
+    expect(store.get(first.id)).toBeNull()
+    expect(store.list().map(workspace => workspace.id)).toEqual([second.id])
+    expect(store.remove(first.id, 'remove-first-again')).toBeFalse()
+    expect(() => store.create(first, 'recreate-first')).toThrow('already exists')
+    expect(() => store.apply(command({
+      operation: 'rename',
+      locationId: 'primary',
+      name: 'Removed',
+    }))).toThrow('not found')
+    expect(readFileSync(join(firstRoot, 'keep.txt'), 'utf8')).toBe('first')
+  })
+
   it('rejects an invalid or mismatched marker without replacing it', () => {
     const { root, store } = harness()
     const workspaceRoot = join(root, 'project')
@@ -108,6 +133,7 @@ describe('WorkspaceTopologyStore', () => {
     }))
 
     expect(() => store.create(localWorkspace(workspaceRoot))).toThrow('belongs to another-workspace')
+    expect(store.list()).toEqual([])
     expect(JSON.parse(readFileSync(markerPath, 'utf8')).workspaceId).toBe('another-workspace')
 
     writeFileSync(markerPath, '{ invalid marker', 'utf8')

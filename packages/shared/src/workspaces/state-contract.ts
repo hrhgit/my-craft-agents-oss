@@ -2,6 +2,8 @@ export const WORKSPACE_CONFIG_RECORD_KEY = 'root'
 
 export const WORKSPACE_TOPOLOGY_RECORD_NAMESPACE = 'workspace-topology'
 export const WORKSPACE_TOPOLOGY_RECORD_KEY = 'root'
+export const WORKSPACE_TOPOLOGY_REGISTRY_NAMESPACE = 'workspace-topology-registry'
+export const WORKSPACE_TOPOLOGY_REGISTRY_KEY = 'root'
 export const WORKSPACE_TOPOLOGY_OPERATION_NAMESPACE = 'workspace-topology-operation'
 export const WORKSPACE_TRANSFER_OPERATION_NAMESPACE = 'workspace-transfer-operation'
 
@@ -13,6 +15,17 @@ export function getWorkspaceTopologyRecordIdentity(workspaceId: string): Readonl
   const id = workspaceId.trim()
   if (!id) throw new TypeError('workspaceId must not be empty')
   return { namespace: WORKSPACE_TOPOLOGY_RECORD_NAMESPACE, key: id }
+}
+
+/** Return the canonical Workspace membership registry identity. */
+export function getWorkspaceTopologyRegistryIdentity(): Readonly<{
+  namespace: typeof WORKSPACE_TOPOLOGY_REGISTRY_NAMESPACE
+  key: typeof WORKSPACE_TOPOLOGY_REGISTRY_KEY
+}> {
+  return {
+    namespace: WORKSPACE_TOPOLOGY_REGISTRY_NAMESPACE,
+    key: WORKSPACE_TOPOLOGY_REGISTRY_KEY,
+  }
 }
 
 /** Return the durable receipt identity for an idempotent topology command. */

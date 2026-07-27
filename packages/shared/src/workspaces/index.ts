@@ -18,10 +18,13 @@ export {
   WORKSPACE_CONFIG_RECORD_KEY,
   getWorkspaceTopologyOperationIdentity,
   getWorkspaceTopologyRecordIdentity,
+  getWorkspaceTopologyRegistryIdentity,
   getWorkspaceTransferOperationIdentity,
   WORKSPACE_TOPOLOGY_OPERATION_NAMESPACE,
   WORKSPACE_TOPOLOGY_RECORD_KEY,
   WORKSPACE_TOPOLOGY_RECORD_NAMESPACE,
+  WORKSPACE_TOPOLOGY_REGISTRY_KEY,
+  WORKSPACE_TOPOLOGY_REGISTRY_NAMESPACE,
   WORKSPACE_TRANSFER_OPERATION_NAMESPACE,
 } from './state-contract.ts';
 
