@@ -14,6 +14,7 @@ owns:
   - packages/shared/src/branding.ts
   - packages/shared/src/feature-flags.ts
   - packages/shared/src/protocol/__tests__/routing.test.ts
+  - packages/shared/src/protocol/__tests__/workspace-topology.test.ts
   - packages/shared/src/protocol/__tests__/automation-capability.test.ts
   - packages/shared/src/protocol/__tests__/session-settlement.test.ts
   - packages/shared/src/protocol/automation-capability.ts
@@ -27,6 +28,7 @@ owns:
   - packages/shared/src/protocol/routing.ts
   - packages/shared/src/protocol/types.ts
   - packages/shared/src/protocol/workspace-coordination.ts
+  - packages/shared/src/protocol/workspace-topology.ts
   - packages/shared/src/types/**
   - packages/shared/src/utils/**
   - packages/shared/src/validation/**
