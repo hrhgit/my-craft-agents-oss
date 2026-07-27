@@ -9,6 +9,17 @@ function readRepoFile(path: string): string {
 }
 
 describe('offline Developer Kit installer contract', () => {
+  test('pins one Bun version across packaged runtime and CI producers', () => {
+    const common = readRepoFile('scripts/build/common.ts')
+    const validationWorkflow = readRepoFile('.github/workflows/validate.yml')
+    const serverWorkflow = readRepoFile('.github/workflows/validate-server.yml')
+
+    expect(common).toContain("export const BUN_VERSION = 'bun-v1.3.14'")
+    expect(validationWorkflow.match(/bun-version: "1\.3\.14"/g)?.length).toBe(3)
+    expect(serverWorkflow.match(/bun-version: "1\.3\.14"/g)?.length).toBe(1)
+    expect(`${common}\n${validationWorkflow}\n${serverWorkflow}`).not.toMatch(/bun-v1\.3\.(?:9|10)|bun-version: "1\.3\.(?:9|10)"/)
+  })
+
   test('stages a matching kit before every Windows installer entrypoint', () => {
     const rootPackage = readRepoFile('package.json')
     const powershellBuild = readRepoFile('apps/electron/scripts/build-win.ps1')
@@ -49,12 +60,17 @@ describe('offline Developer Kit installer contract', () => {
 
   test('keeps the kit optional at install time and discoverable when selected', () => {
     const config = readRepoFile('apps/electron/electron-builder.yml')
+    const developerHostConfig = readRepoFile('apps/electron/electron-builder.devhost.yml')
     const installer = readRepoFile('apps/electron/resources/installer.nsh')
     const discovery = readRepoFile('packages/shared/src/config/developer-kit.ts')
 
     expect(config).toContain('from: dist/installer-developer-kit')
     expect(config).toContain('to: developer-kit')
     expect(config).toContain('include: dist/resources/installer.nsh')
+    expect(config).toContain('deleteAppDataOnUninstall: false')
+    expect(config).not.toContain('deleteAppDataOnUninstall: true')
+    expect(developerHostConfig).toContain('deleteAppDataOnUninstall: false')
+    expect(developerHostConfig).not.toContain('deleteAppDataOnUninstall: true')
     expect(installer).toContain('Install Mortise Developer Kit (recommended for developers)')
     expect(installer).toContain('IfSilent 0 +2')
     expect(installer).toContain('!ifndef BUILD_UNINSTALLER')

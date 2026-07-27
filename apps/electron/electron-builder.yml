@@ -189,7 +189,8 @@ nsis:
   # Per-user install remains the default. The workspace bundle is executed from
   # a versioned user-data cache, so custom protected install directories work too.
   perMachine: false
-  deleteAppDataOnUninstall: true
+  # User-owned Electron state survives uninstall; explicit reset owns deletion.
+  deleteAppDataOnUninstall: false
   include: dist/resources/installer.nsh
 
 linux:

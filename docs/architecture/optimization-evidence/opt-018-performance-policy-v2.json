@@ -1,0 +1,48 @@
+{
+  "schema": "mortise/headless-runtime-performance-policy/v1",
+  "policyRevision": 2,
+  "supersedes": "opt-018-performance-policy.json",
+  "frozenAt": "2026-07-27",
+  "correctionReason": "The original baseline artifact was reclaimed and an exact source-id rebuild produced different artifact bytes. No headless base or final performance samples had run. This policy freezes the recovered v2 measurement harness and rebuilt baseline identities before fresh base/final sampling without changing workload, sampling, budgets, or noise rules.",
+  "baselineRevision": "f4b1ec1c2d200c82fe03db70c689df430e9b8c1e",
+  "baselineBuildRevision": "f398a42eeaff1fc21a23f1f9a6622ec4f141fb23",
+  "baselineSourceId": "359a866884d4177b56a286ba66fb6e3bf880e881e86e1d7401a8133e33e7f887",
+  "baselineBuildId": "69749cd07860b61f868dcded45bcc17c232edcf4c79f08a245bdc7c18a707e42",
+  "baselineExecutableSha256": "411d596b0f7a95062617567ad5eac23888d0df76b11fe55396b761b9a2369c5b",
+  "baselineInvocation": { "modeArg": "--mode rpc", "legacyProfileEnv": true },
+  "environment": {
+    "platform": "win32",
+    "arch": "x64",
+    "runtime": "OPT-017 immutable Bun-compiled executable",
+    "profile": "isolated temporary MORTISE_CONFIG_DIR",
+    "network": "loopback deterministic OpenAI-compatible fixture server"
+  },
+  "fixture": {
+    "schema": "mortise/headless-first-turn-fixture/v1",
+    "prompt": "Return the exact text: headless fixture complete",
+    "assistantText": "headless fixture complete",
+    "completionEvent": "agent_settled",
+    "externalNetwork": false
+  },
+  "metrics": [
+    "compiledExecutableBytes",
+    "completeStagedRuntimeBytes",
+    "coldProcessToCapabilitiesHandshakeMs",
+    "idleProcessTreeRssBytes",
+    "activeProcessTreeRssBytes",
+    "promptToAgentSettledMs"
+  ],
+  "sampling": {
+    "warmup": 1,
+    "baseSamples": 10,
+    "finalSamples": 10,
+    "statistics": ["median", "p95"],
+    "timeoutMsPerSample": 60000,
+    "noisePolicy": "Do not discard individual samples. Any timeout, identity mismatch, fixture mismatch, orphan process, or foreign-process interference invalidates the complete base/final set and requires a fresh rerun."
+  },
+  "budgets": {
+    "relativeRegressionCeilingPercent": 5,
+    "requiredBehavior": "Every sample must complete the capabilities handshake and the deterministic first turn through agent_settled, then leave no child process.",
+    "identity": "Executable and staged-runtime hashes must match the selected OPT-017 build manifest exactly."
+  }
+}

@@ -24,4 +24,5 @@ nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
   perMachine: false
-  deleteAppDataOnUninstall: true
+  # CLI-owned run cleanup removes disposable profiles without broad AppData deletion.
+  deleteAppDataOnUninstall: false

@@ -43,6 +43,7 @@ Run coding-runtime and workspace contract tests plus downstream Agent Loop, Sess
 Future changes can accidentally reintroduce terminal dependencies through exports, package metadata, extension types, assets, or resolver candidates, or alter event ordering, cancellation, durability, compaction, and extension cleanup semantics while changing the headless boundary. Production import, metafile, staged-artifact, and runtime-resolution guards must therefore remain fail-closed. External-Pi compatibility pressure must not reintroduce aliases or fallbacks into the Mortise runtime.
 
 ## Semantic history
+- 2026-07-27: Made fully initialized services publish request-resource readiness so the first prompt skips duplicate resource and network initialization while deferred runtimes preserve staged loading, and restored sandbox environment state before evaluating the headless runtime graph.
 - 2026-07-26: Made the canonical clean boundary remove generated `dist` only and preserve the six tracked network-sidecar binaries, so clean validation cannot delete source inputs and turn retry tests into sidecar-start timeouts.
 - 2026-07-26: Bound embedded runtime build lifecycle scripts to the producer's exact Bun executable and removed their undeclared Node command dependency, so immutable source builds do not depend on ambient PATH ordering.
 - 2026-07-26: Converged the embedded product on one compiled headless entrypoint, closed its direct runtime/type dependency declarations, and removed TUI, interactive/standalone CLI, launcher, updater, terminal extension APIs, and JavaScript fallback source and artifact paths while retaining Agent Loop, Session, tools, compaction, extension lifecycle, and RPC contracts.
@@ -62,4 +63,3 @@ Future changes can accidentally reintroduce terminal dependencies through export
 - 2026-07-21: Made RPC completion helpers wait for logical `agent_settled` after retry and compaction recovery rather than stopping at an intermediate `agent_end`.
 - 2026-07-20: Removed Mortise Data Sources host events and session activation plumbing from the Pi RPC contract while preserving generic extension and MCP capabilities.
 - 2026-07-18: Integrated the Pi coding runtime into the Mortise monorepo.
-- 2026-07-20: Added explicit host system-prompt clear/append semantics and strict capability route identity validation.

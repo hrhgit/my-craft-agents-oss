@@ -236,6 +236,114 @@ describe('mortise-ui immutable Electron build cache', () => {
     releaseElectronBuild(after)
   }, 20_000)
 
+  it('retains and upgrades a valid Bun A build while Bun B is also cached', () => {
+    const root = tempRoot('mortise-ui-build-cross-bun-cleanup-')
+    const repoRoot = join(root, 'repo')
+    const buildRoot = join(root, 'cache')
+    initGitRepo(repoRoot)
+    const lease = acquireElectronBuild({
+      repoRoot,
+      buildRoot,
+      runId: 'bun-a',
+      runDir: createRun(root, 'bun-a'),
+      build: sourceRoot => seedBuildOutputs(sourceRoot),
+      retainCount: 1,
+    })
+    releaseElectronBuild(lease, { retainCount: 1 })
+
+    const manifestPath = join(lease.buildDir, 'build.json')
+    const legacyManifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as Record<string, unknown>
+    delete legacyManifest.producerBunVersion
+    delete legacyManifest.producerBunExecutableSha256
+    writeFileSync(manifestPath, `${JSON.stringify(legacyManifest, null, 2)}\n`, 'utf8')
+
+    const bunB = join(root, process.platform === 'win32' ? 'bun-b.exe' : 'bun-b')
+    writeFileSync(bunB, 'different producer bytes', 'utf8')
+    publishBuildBunToolchain(buildRoot, bunB)
+
+    const cleanup = cleanupElectronBuildCache({ buildRoot, retainCount: 1, maxBytes: 1_000_000 })
+    expect(cleanup.removedBuildIds).not.toContain(lease.buildId)
+    const pinned = acquireElectronBuild({
+      repoRoot,
+      buildRoot,
+      runId: 'pinned-bun-a',
+      runDir: createRun(root, 'pinned-bun-a'),
+      expectedBuildId: lease.buildId,
+      skipBuild: true,
+    })
+    const upgraded = JSON.parse(readFileSync(manifestPath, 'utf8')) as Record<string, unknown>
+    expect(upgraded.producerBunVersion).toBe(process.versions.bun)
+    expect(upgraded.producerBunExecutableSha256).toMatch(/^[0-9a-f]{64}$/)
+    releaseElectronBuild(pinned)
+  }, 30_000)
+
+  it('does not accept different producer bytes as an exact expected artifact', () => {
+    const sourceId = 'a'.repeat(64)
+    const producerA = { bunVersion: '1.0.0', bunExecutableSha256: '1'.repeat(64) }
+    const producerB = { bunVersion: '1.0.0', bunExecutableSha256: '2'.repeat(64) }
+    expect(computeElectronBuildId(sourceId, 'production', producerA))
+      .not.toBe(computeElectronBuildId(sourceId, 'production', producerB))
+
+    const root = tempRoot('mortise-ui-build-producer-tamper-')
+    const repoRoot = join(root, 'repo')
+    const buildRoot = join(root, 'cache')
+    initGitRepo(repoRoot)
+    const lease = acquireElectronBuild({
+      repoRoot,
+      buildRoot,
+      runId: 'producer-a',
+      runDir: createRun(root, 'producer-a'),
+      build: sourceRoot => seedBuildOutputs(sourceRoot),
+      retainCount: 1,
+    })
+    releaseElectronBuild(lease, { retainCount: 1 })
+    const manifestPath = join(lease.buildDir, 'build.json')
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as Record<string, unknown>
+    manifest.producerBunExecutableSha256 = '2'.repeat(64)
+    writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8')
+
+    expect(() => acquireElectronBuild({
+      repoRoot,
+      buildRoot,
+      runId: 'expected-producer-a',
+      runDir: createRun(root, 'expected-producer-a'),
+      expectedBuildId: lease.buildId,
+      skipBuild: true,
+    })).toThrow('pinned acquisition will not rebuild')
+  }, 30_000)
+
+  it('fails closed instead of rebuilding an invalid pinned package build', () => {
+    const root = tempRoot('mortise-ui-build-pinned-no-rebuild-')
+    const repoRoot = join(root, 'repo')
+    const buildRoot = join(root, 'cache')
+    initGitRepo(repoRoot)
+    let buildCount = 0
+    const lease = acquireElectronBuild({
+      repoRoot,
+      buildRoot,
+      runId: 'original',
+      runDir: createRun(root, 'original'),
+      build: sourceRoot => {
+        buildCount += 1
+        seedBuildOutputs(sourceRoot)
+      },
+      retainCount: 1,
+    })
+    releaseElectronBuild(lease, { retainCount: 1 })
+    rmSync(join(lease.appDir, 'dist', 'main.cjs'), { force: true })
+
+    expect(() => acquireElectronBuild({
+      repoRoot,
+      buildRoot,
+      runId: 'pinned-invalid',
+      runDir: createRun(root, 'pinned-invalid'),
+      expectedBuildId: lease.buildId,
+      skipBuild: true,
+    })).toThrow('pinned acquisition will not rebuild')
+    expect(buildCount).toBe(1)
+    expect(existsSync(join(lease.appDir, 'dist', 'main.cjs'))).toBe(false)
+  }, 30_000)
+
   it('reuses one immutable build and removes it after the final lease is released', () => {
     const root = tempRoot('mortise-ui-build-reuse-')
     const repoRoot = join(root, 'repo')

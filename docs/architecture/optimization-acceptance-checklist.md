@@ -41,23 +41,17 @@ Hard reject any submission that starts from an unverified/shared/dirty worktree,
 
 | ID | Priority | Status | Canonical authority and required outcome | Remaining proof / exit condition |
 |---|---|---|---|---|
-| OPT-011 | P1 | blocked | The runtime resolver is the sole binary-selection authority; the build pipeline is the sole producer/stager. Packaged/runtime resolution accepts exactly one compiled, version-compatible Mortise Pi binary and rejects legacy JS candidates and runtime-selection escape hatches. | Resolver/afterPack implementation and 12/12 focused tests exist, but installer proof is blocked by OPT-017's stale/ignored binary input risk. After OPT-017, run `EXT-BR-03` with isolated installer smoke, `runtime.log` path/version evidence, retired-variable rejection, and missing/tampered-binary failure. JS staging and TUI ownership belong to OPT-018. |
-| OPT-014 | P1 | needs-fix | Workspace manifests are the sole dependency declarations and the canonical graph validator enforces manifest, build, and source-import DAGs. `session-tools-core` is intentionally host-neutral and may be consumed by `shared`; the forbidden edge is `session-tools-core -> shared`. Do not extract another package. | Manifest, lockfile, and bounded graph changes are present but prior delivery evidence was mixed or baseline-inadmissible; complete `EXT-BR-04` from the frozen clean base and retain the reverse-edge guard, production bundle/metafile, monorepo, and source-development initialization evidence. Installer evidence remains separately blocked by OPT-017. |
-| OPT-015 | P1 | needs-fix | `automations`: V3 host/store/protocol is the sole scheduler, occurrence, history, idempotency, import, and dispatch authority. | Primary completes `AUT-P1..P4`; delegates complete `AUT-E1-MSG`, then the atomically integrated `AUT-E1-HSC` + `AUT-E1-SL`, plus `AUT-E2` and final `AUT-E3`. Pass protocol, fault, restart/replay, production-only legacy scan, runtime delivery, and indexed-query performance evidence. |
-| OPT-017 | P0 | needs-fix | `build-release-observability`: one canonical producer owns the compiled Pi binary and immutable source/build identity; every production gate builds what packaging consumes. | Repair `bootstrap:ci`/build composition so `copyPiRuntime` cannot consume ignored `pi/packages/coding-agent/dist/pi(.exe)`. Prove disposable-checkout production bundles, full artifact hash provenance, stale-input rejection, concurrent source/build isolation, equivalent-build deduplication, per-run build pinning, bounded retention/GC, packaged smoke, and platform installer generation. |
-| OPT-018 | P1 | needs-fix | `pi-coding-runtime` owns a UI-neutral Agent/RPC core; packaging stages only that headless runtime. No TUI, interactive mode, standalone CLI, terminal extension surface, updater, JS fallback, or separate Pi product artifact remains. | Primary completes `HEAD-P1..P3`; delegates run `HEAD-E1..E3`. Preserve Agent Loop, Session, tools, compaction, extension lifecycle, and RPC contract tests; pass import/metafile/staged-artifact guards and before/after performance budgets. |
+| _None_ | | | R11 items were accepted and moved to [`optimization-completed-archive.md`](./optimization-completed-archive.md). | Reopen only when a changed contract or failing current gate invalidates a recorded invariant. |
 
-## Primary-only architecture decisions
+## Frozen architecture decisions
 
-- `OPT-017`: choose the canonical Pi binary producer, immutable source snapshot, build identity, concurrent isolation, equivalent-build cache/deduplication, per-run pinning, and bounded retention/GC model.
-- `OPT-014`: review the existing contract direction and graph guard. Do not solve it by re-extracting host-neutral contracts from `session-tools-core`.
-- `AUT-P1`: make V3 host injection mandatory; no dispatcher-created or fallback host.
-- `AUT-P2`: make resource import a host-owned atomic store operation.
-- `AUT-P3`: define one canonical V3 renderer DTO and bounded batch protocol.
-- `AUT-P4`: define the scheduler/store indexed-query boundary and its complexity budget.
-- `HEAD-P1`: define the headless entrypoint and split core from TUI/interactive presentation.
-- `HEAD-P2`: separate extension core contracts from terminal APIs and route GUI contributions through versioned host/RPC contracts.
-- `HEAD-P3`: integrate the new headless artifact into production staging and removal sequencing.
+The following choices are integrated and are not open for redesign during r11 closeout. Reopen the smallest owning packet
+only when a retained gate demonstrates a concrete defect.
+
+- `OPT-017`: one source-pinned compiled Pi producer, immutable source/build identity, per-run pinning, and bounded retention/GC.
+- `OPT-014`: `session-tools-core` remains host-neutral; `shared -> session-tools-core` is allowed and the reverse edge is forbidden.
+- `OPT-015`: one mandatory V3 host/store, atomic import authority, canonical renderer DTO/batch protocol, and indexed query boundary.
+- `OPT-018`: one UI-neutral Agent/RPC entrypoint and one headless production artifact; terminal/TUI and standalone Pi product surfaces remain absent.
 
 ## Architecture comparison record
 
