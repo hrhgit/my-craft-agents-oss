@@ -1,17 +1,72 @@
 import { createHash, randomUUID } from 'node:crypto'
+import { isDeepStrictEqual } from 'node:util'
 import { constants, createReadStream } from 'node:fs'
 import { copyFile, link, lstat, open, realpath, stat, unlink } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative, sep } from 'node:path'
 import {
   parseWorkspacePathRefV1,
+  parseWorkspaceTransferRequestV1,
+  RPC_CHANNELS,
   type WorkspacePathRefV1,
+  type WorkspaceTransferRequestV1,
+  type WorkspaceTransferResultV1,
 } from '@mortise/shared/protocol'
 import {
+  getDefaultWorkspaceTopologyStore,
   readWorkspaceMarker,
   WorkspaceTopologyError,
   type WorkspaceTopologyStore,
 } from '@mortise/shared/workspaces'
 import { WORKSPACE_TOPOLOGY_ERROR_CODES } from '@mortise/shared/protocol'
+import type { RpcServer } from '../../transport'
+
+export const WORKSPACE_TRANSFER_HANDLED_CHANNELS = [RPC_CHANNELS.workspaces.TRANSFER] as const
+
+export function registerWorkspaceTransferHandlers(
+  server: RpcServer,
+  store: WorkspaceTopologyStore = getDefaultWorkspaceTopologyStore(),
+): void {
+  const inFlight = new Map<string, {
+    request: WorkspaceTransferRequestV1
+    result: Promise<WorkspaceTransferResultV1>
+  }>()
+
+  server.handle(RPC_CHANNELS.workspaces.TRANSFER, async (ctx, requestValue: unknown) => {
+    const request = parseWorkspaceTransferRequestV1(requestValue)
+    if (ctx.workspaceId && ctx.workspaceId !== request.workspaceId) {
+      throw new Error(
+        `Workspace mismatch: authenticated workspace (${ctx.workspaceId}) does not match requested (${request.workspaceId})`,
+      )
+    }
+    const replay = store.getTransferResult(request)
+    if (replay) return replay
+
+    const key = `${request.workspaceId}\0${request.operationId}`
+    const running = inFlight.get(key)
+    if (running) {
+      if (!isDeepStrictEqual(running.request, request)) {
+        throw new Error(`operationId was already used for a different Workspace transfer: ${request.operationId}`)
+      }
+      return running.result.then(result => ({ ...result, status: 'duplicate' as const }))
+    }
+
+    const result = (async (): Promise<WorkspaceTransferResultV1> => {
+      const transferred = await transferWorkspaceFile(store, request)
+      return store.recordTransferResult(request, {
+        schemaVersion: 1,
+        operationId: request.operationId,
+        status: 'applied',
+        ...transferred,
+      })
+    })()
+    inFlight.set(key, { request, result })
+    try {
+      return await result
+    } finally {
+      if (inFlight.get(key)?.result === result) inFlight.delete(key)
+    }
+  })
+}
 
 export interface WorkspaceLocalTransferRequest {
   source: WorkspacePathRefV1

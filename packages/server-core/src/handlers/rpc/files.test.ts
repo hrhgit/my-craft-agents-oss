@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 import { lstat, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, truncate, unlink, writeFile } from 'fs/promises'
 import { homedir, tmpdir } from 'os'
-import { dirname, join } from 'path'
+import { basename, dirname, join } from 'path'
 import { pathToFileURL } from 'url'
 import { EventEmitter } from 'events'
 import { RPC_CHANNELS } from '@mortise/shared/protocol'
@@ -56,16 +56,27 @@ function createTestHarness(options?: {
           id: 'ws-1',
           revision: 0,
           name: 'Workspace',
+          nameSource: 'custom' as const,
           slug: 'workspace',
           primaryLocationId: 'primary',
           locations: [
-            { id: 'primary', name: 'Primary', endpoint: { kind: 'local' as const, rootPath: options.workspaceRoot } },
+            {
+              id: 'primary',
+              name: 'Primary',
+              rootName: basename(options.workspaceRoot),
+              endpoint: { kind: 'local' as const, rootPath: options.workspaceRoot },
+            },
             ...(options.attachedWorkspaceRoot
-              ? [{ id: 'attached', name: 'Attached', endpoint: { kind: 'local' as const, rootPath: options.attachedWorkspaceRoot } }]
+              ? [{
+                  id: 'attached',
+                  name: 'Attached',
+                  rootName: basename(options.attachedWorkspaceRoot),
+                  endpoint: { kind: 'local' as const, rootPath: options.attachedWorkspaceRoot },
+                }]
               : []),
           ] as [
-            { id: string; name: string; endpoint: { kind: 'local'; rootPath: string } },
-            ...Array<{ id: string; name: string; endpoint: { kind: 'local'; rootPath: string } }>,
+            { id: string; name: string; rootName: string; endpoint: { kind: 'local'; rootPath: string } },
+            ...Array<{ id: string; name: string; rootName: string; endpoint: { kind: 'local'; rootPath: string } }>,
           ],
           createdAt: Date.now(),
         }] : []),
@@ -74,13 +85,15 @@ function createTestHarness(options?: {
           id: 'ws-2',
           revision: 0,
           name: 'Second Workspace',
+          nameSource: 'custom' as const,
           slug: 'second-workspace',
           primaryLocationId: 'primary',
           locations: [{
             id: 'primary',
             name: 'Primary',
+            rootName: basename(options.secondWorkspaceRoot),
             endpoint: { kind: 'local' as const, rootPath: options.secondWorkspaceRoot },
-          }] as [{ id: string; name: string; endpoint: { kind: 'local'; rootPath: string } }],
+          }] as [{ id: string; name: string; rootName: string; endpoint: { kind: 'local'; rootPath: string } }],
           createdAt: Date.now(),
         }] : []),
       ],
@@ -385,6 +398,7 @@ describe('registerFilesHandlers workspace file browser', () => {
         expectedRevision: 0,
         operation: 'replace-endpoint',
         locationId: 'attached',
+        rootName: 'remote-attached',
         endpoint: {
           kind: 'remote',
           url: 'wss://agent.example.test',
@@ -1099,9 +1113,9 @@ describe('registerFilesHandlers STORE_ATTACHMENT', () => {
         saveConfig({
           workspaces: [{
             schemaVersion: 2, id: 'ws-1', revision: 0,
-            name: 'Workspace', slug: 'workspace', primaryLocationId: 'primary',
+            name: 'Workspace', nameSource: 'custom', slug: 'workspace', primaryLocationId: 'primary',
             locations: [{
-              id: 'primary', name: 'Primary',
+              id: 'primary', name: 'Primary', rootName: 'workspace',
               endpoint: { kind: 'local', rootPath: process.env.TEST_WORKSPACE_ROOT },
             }],
             createdAt: Date.now(),

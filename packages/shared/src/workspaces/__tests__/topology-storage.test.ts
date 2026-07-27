@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, it } from 'bun:test'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { WORKSPACE_SCHEMA_VERSION, type Workspace } from '@mortise/core/types'
 import {
   WORKSPACE_MARKER_KIND,
   WORKSPACE_MARKER_SCHEMA_VERSION,
+  type WorkspaceLocationProjectionV1,
   type WorkspaceTopologyCommandV1,
 } from '../../protocol/workspace-topology.ts'
 import { getWorkspaceMarkerPath, readWorkspaceMarker } from '../marker.ts'
@@ -13,30 +14,44 @@ import { getWorkspaceTopologyRecordIdentity } from '../state-contract.ts'
 import { WorkspaceTopologyStore } from '../topology-storage.ts'
 
 const cleanup: string[] = []
+const stores: WorkspaceTopologyStore[] = []
 
 afterEach(() => {
+  for (const store of stores.splice(0)) store.close()
   for (const path of cleanup.splice(0)) rmSync(path, { recursive: true, force: true })
 })
 
-function harness() {
+function harness(projectionProvider?: (workspace: Workspace) => readonly WorkspaceLocationProjectionV1[]) {
   const root = mkdtempSync(join(tmpdir(), 'mortise-topology-'))
   cleanup.push(root)
   const store = new WorkspaceTopologyStore({
     databasePath: join(root, 'state.sqlite'),
     writerId: `test-${Math.random()}`,
+    ...(projectionProvider ? { projectionProvider } : {}),
   })
+  stores.push(store)
   return { root, store }
 }
 
-function localWorkspace(workspaceRoot: string, id = 'workspace-1'): Workspace {
+function localWorkspace(
+  workspaceRoot: string,
+  id = 'workspace-1',
+  display: Pick<Workspace, 'name' | 'nameSource'> = { name: 'Ignored derived name', nameSource: 'derived' },
+): Workspace {
   return {
     schemaVersion: WORKSPACE_SCHEMA_VERSION,
     id,
     revision: 0,
-    name: 'Workspace',
+    name: display.name,
+    nameSource: display.nameSource,
     slug: 'workspace',
     primaryLocationId: 'primary',
-    locations: [{ id: 'primary', name: 'Primary', endpoint: { kind: 'local', rootPath: workspaceRoot } }],
+    locations: [{
+      id: 'primary',
+      name: 'Primary',
+      rootName: basename(workspaceRoot),
+      endpoint: { kind: 'local', rootPath: workspaceRoot },
+    }],
     createdAt: 1,
   }
 }
@@ -71,6 +86,7 @@ describe('WorkspaceTopologyStore', () => {
       namespace: 'workspace-topology',
       key: created.id,
     })
+    expect(created.name).toBe('project')
     expect(store.get(created.id)).toEqual(created)
     expect(store.get(workspaceRoot)).toBeNull()
     expect(readWorkspaceMarker(workspaceRoot, created.id)).toEqual({
@@ -79,7 +95,6 @@ describe('WorkspaceTopologyStore', () => {
       workspaceId: created.id,
     })
     expect(readFileSync(join(workspaceRoot, 'keep.txt'), 'utf8')).toBe('user data')
-    store.close()
   })
 
   it('rejects an invalid or mismatched marker without replacing it', () => {
@@ -98,7 +113,6 @@ describe('WorkspaceTopologyStore', () => {
     writeFileSync(markerPath, '{ invalid marker', 'utf8')
     expect(() => store.create(localWorkspace(workspaceRoot))).toThrow('marker is invalid')
     expect(readFileSync(markerPath, 'utf8')).toBe('{ invalid marker')
-    store.close()
   })
 
   it('performs one-time local and remote legacy migrations without a read fallback', () => {
@@ -112,6 +126,8 @@ describe('WorkspaceTopologyStore', () => {
       id: 'legacy-local', name: 'Ignored Legacy Change', rootPath: join(root, 'missing'),
     })
     expect(localAgain).toEqual(local)
+    expect(local.nameSource).toBe('custom')
+    expect(local.locations[0].rootName).toBe('local')
     expect(local.locations[0].endpoint).toMatchObject({ kind: 'local' })
     expect(readWorkspaceMarker(localRoot, 'legacy-local').workspaceId).toBe('legacy-local')
 
@@ -124,6 +140,7 @@ describe('WorkspaceTopologyStore', () => {
     expect(remote.locations).toEqual([{
       id: 'primary',
       name: 'Primary',
+      rootName: 'Legacy Remote',
       endpoint: {
         kind: 'remote',
         url: 'wss://agent.example.test',
@@ -133,7 +150,6 @@ describe('WorkspaceTopologyStore', () => {
     }])
     expect(existsSync(getWorkspaceMarkerPath(shadowRoot))).toBe(false)
     expect(store.get('missing-workspace')).toBeNull()
-    store.close()
   })
 
   it('applies and replays topology commands with stable historical receipts', () => {
@@ -162,7 +178,6 @@ describe('WorkspaceTopologyStore', () => {
     expect(store.get('workspace-1')?.revision).toBe(2)
 
     expect(() => store.apply({ ...attach, name: 'Different' })).toThrow('already used for a different')
-    store.close()
   })
 
   it('rejects stale revisions, duplicate endpoint identities, IDs, and names', () => {
@@ -187,13 +202,12 @@ describe('WorkspaceTopologyStore', () => {
 
     expect(() => store.apply(command({
       operation: 'attach-remote', locationId: 'assets', name: 'Remote', url: 'wss://host.test',
-      remoteWorkspaceId: 'remote', credentialRef: 'credential',
+      rootName: 'remote-root', remoteWorkspaceId: 'remote', credentialRef: 'credential',
     }, { expectedRevision: 1 }))).toThrow('ID already exists')
     expect(() => store.apply(command({
       operation: 'attach-remote', locationId: 'remote', name: 'assets', url: 'wss://host.test',
-      remoteWorkspaceId: 'remote', credentialRef: 'credential',
+      rootName: 'remote-root', remoteWorkspaceId: 'remote', credentialRef: 'credential',
     }, { expectedRevision: 1 }))).toThrow('name already exists')
-    store.close()
   })
 
   it('supports replace, set-primary, rename, and detach without deleting marker or user data', () => {
@@ -209,7 +223,8 @@ describe('WorkspaceTopologyStore', () => {
       operation: 'attach-local', locationId: 'assets', name: 'Assets', rootPath: attachedRoot,
     }, { operationId: 'attach', expectedRevision: 0 }))
     store.apply(command({
-      operation: 'replace-endpoint', locationId: 'assets', endpoint: { kind: 'local', rootPath: replacementRoot },
+      operation: 'replace-endpoint', locationId: 'assets', rootName: 'ignored-for-local',
+      endpoint: { kind: 'local', rootPath: replacementRoot },
     }, { operationId: 'replace', expectedRevision: 1 }))
     store.apply(command({
       operation: 'rename', locationId: 'assets', name: 'Reference',
@@ -222,6 +237,9 @@ describe('WorkspaceTopologyStore', () => {
     }, { operationId: 'detach', expectedRevision: 4 }))
 
     expect(detached.workspace.primaryLocationId).toBe('assets')
+    expect(detached.workspace.name).toBe('replacement')
+    expect(detached.workspace.nameSource).toBe('derived')
+    expect(detached.workspace.locations[0].rootName).toBe('replacement')
     expect(detached.workspace.locations.map(location => location.id)).toEqual(['assets'])
     expect(existsSync(join(primaryRoot, 'primary.txt'))).toBe(true)
     expect(existsSync(getWorkspaceMarkerPath(primaryRoot))).toBe(true)
@@ -229,6 +247,146 @@ describe('WorkspaceTopologyStore', () => {
     expect(existsSync(getWorkspaceMarkerPath(attachedRoot))).toBe(true)
     expect(existsSync(join(replacementRoot, 'replacement.txt'))).toBe(true)
     expect(existsSync(getWorkspaceMarkerPath(replacementRoot))).toBe(true)
-    store.close()
+  })
+
+  it('keeps a custom Workspace name stable when the primary location changes', () => {
+    const { root, store } = harness()
+    const primaryRoot = join(root, 'primary')
+    const attachedRoot = join(root, 'attached')
+    mkdirSync(primaryRoot)
+    mkdirSync(attachedRoot)
+    const created = store.create(localWorkspace(primaryRoot, 'workspace-1', {
+      name: 'My custom label',
+      nameSource: 'custom',
+    }))
+    expect(created.name).toBe('My custom label')
+
+    store.apply(command({
+      operation: 'attach-local', locationId: 'attached', name: 'Attached', rootPath: attachedRoot,
+    }, { operationId: 'attach-custom' }))
+    const changed = store.apply(command({
+      operation: 'set-primary', locationId: 'attached',
+    }, { operationId: 'primary-custom', expectedRevision: 1 }))
+
+    expect(changed.workspace.name).toBe('My custom label')
+    expect(changed.workspace.nameSource).toBe('custom')
+  })
+
+  it('projects observed local marker state and fails closed when membership disappears', () => {
+    const { root, store } = harness()
+    const workspaceRoot = join(root, 'project')
+    mkdirSync(workspaceRoot)
+    store.create(localWorkspace(workspaceRoot))
+
+    const available = store.getInfo('workspace-1')!
+    expect(available.locations[0].availability.status).toBe('available')
+    expect(available.locations[0].permissions).toEqual({
+      read: true,
+      write: true,
+      search: true,
+      runCommands: true,
+    })
+
+    rmSync(getWorkspaceMarkerPath(workspaceRoot))
+    const unavailable = store.getInfo('workspace-1')!
+    expect(unavailable.locations[0].availability).toMatchObject({
+      status: 'unavailable',
+      reason: 'marker-missing',
+    })
+    expect(unavailable.locations[0].permissions).toEqual({
+      read: false,
+      write: false,
+      search: false,
+      runCommands: false,
+    })
+  })
+
+  it('defaults unobserved remote locations to unknown with no fabricated permissions', () => {
+    const { store } = harness()
+    store.create({
+      schemaVersion: WORKSPACE_SCHEMA_VERSION,
+      id: 'workspace-1',
+      revision: 0,
+      name: 'Ignored derived name',
+      nameSource: 'derived',
+      slug: 'remote',
+      primaryLocationId: 'primary',
+      locations: [{
+        id: 'primary',
+        name: 'Primary',
+        rootName: 'verified-remote-root',
+        endpoint: {
+          kind: 'remote',
+          url: 'wss://agent.example.test/path?transient=value',
+          remoteWorkspaceId: 'remote-1',
+          credentialRef: 'secret-credential-ref',
+        },
+      }],
+      createdAt: 1,
+    })
+
+    const info = store.getInfo('workspace-1')!
+    expect(info.name).toBe('verified-remote-root')
+    expect(info.locations[0].availability).toEqual({ status: 'unknown', reason: 'not-observed' })
+    expect(info.locations[0].permissions).toEqual({
+      read: false,
+      write: false,
+      search: false,
+      runCommands: false,
+    })
+    expect(info.locations[0].endpoint).toEqual({
+      kind: 'remote',
+      url: 'wss://agent.example.test/path',
+      remoteWorkspaceId: 'remote-1',
+    })
+  })
+
+  it('reprojects stored topology and historical receipts without leaking authority fields', () => {
+    const projectedRevisions: number[] = []
+    const { root, store } = harness(workspace => {
+      projectedRevisions.push(workspace.revision)
+      return workspace.locations.map(location => ({
+        schemaVersion: 1,
+        locationId: location.id,
+        availability: { status: 'unknown', reason: 'checking' },
+        permissions: { read: false, write: false, search: false, runCommands: false },
+      }))
+    })
+    const primaryRoot = join(root, 'primary-secret-path')
+    mkdirSync(primaryRoot)
+    store.create(localWorkspace(primaryRoot))
+
+    const attach = command({
+      operation: 'attach-remote',
+      locationId: 'remote',
+      name: 'Remote',
+      rootName: 'remote-root',
+      url: 'wss://agent.example.test',
+      remoteWorkspaceId: 'remote-1',
+      credentialRef: 'secret-credential-ref',
+    }, { operationId: 'attach-remote' })
+    const first = store.apply(attach)
+    store.setProjectionProvider(workspace => workspace.locations.map(location => ({
+      schemaVersion: 1,
+      locationId: location.id,
+      availability: { status: 'unavailable', observedAt: 42, reason: 'offline' },
+      permissions: { read: true, write: false, search: true, runCommands: false },
+    })))
+    const replay = store.apply(attach)
+
+    expect(first.workspace.locations.every(location => location.availability.status === 'unknown')).toBe(true)
+    expect(projectedRevisions).toEqual([1])
+    expect(replay.status).toBe('duplicate')
+    expect(replay.workspace.revision).toBe(1)
+    expect(replay.workspace.locations.every(location => location.availability.status === 'unavailable')).toBe(true)
+
+    const clientJson = JSON.stringify(replay.workspace)
+    const storedJson = JSON.stringify(store.get('workspace-1'))
+    expect(clientJson).not.toContain(primaryRoot)
+    expect(clientJson).not.toContain('secret-credential-ref')
+    expect(clientJson).not.toContain('rootPath')
+    expect(clientJson).not.toContain('credentialRef')
+    expect(storedJson).not.toContain('availability')
+    expect(storedJson).not.toContain('permissions')
   })
 })

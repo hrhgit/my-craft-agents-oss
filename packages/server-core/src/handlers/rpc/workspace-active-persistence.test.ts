@@ -18,9 +18,15 @@ const workspaceB: Workspace = {
   id: 'workspace-b',
   revision: 0,
   name: 'Workspace B',
+  nameSource: 'custom',
   slug: 'workspace-b',
   primaryLocationId: 'primary',
-  locations: [{ id: 'primary', name: 'Primary', endpoint: { kind: 'local', rootPath: workspaceRoot } }],
+  locations: [{
+    id: 'primary',
+    name: 'Primary',
+    rootName: 'mortise-workspace-switch',
+    endpoint: { kind: 'local', rootPath: workspaceRoot },
+  }],
   createdAt: 1,
 }
 const getWorkspaceByNameOrId = mock((workspaceId: string) => workspaceId === 'workspace-b'
@@ -69,6 +75,11 @@ function createHarness(options: { failRouting?: boolean } = {}) {
       getWorkspaces: () => [workspaceB],
       setupConfigWatcher: () => sequence.push('watcher'),
       clearActiveViewingSession: () => {},
+      interruptWorkspaceSessionsForTopologyChange: async () => ({
+        selectedSessionIds: [],
+        interruptedSessionIds: [],
+      }),
+      updateWorkspaceTopology: () => {},
     },
     windowManager: {
       getWorkspaceForWindow: () => 'workspace-a',

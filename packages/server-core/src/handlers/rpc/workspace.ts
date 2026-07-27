@@ -1,8 +1,8 @@
 import { existsSync } from 'fs'
 import { isAbsolute, join, relative, sep } from 'path'
 import { RPC_CHANNELS } from '@mortise/shared/protocol'
-import { CONFIG_DIR, getWorkspaceByNameOrId, addWorkspace, setActiveWorkspace } from '@mortise/shared/config'
-import type { Workspace, WorkspaceLocationInfo } from '@mortise/core/types'
+import { CONFIG_DIR, addWorkspace, setActiveWorkspace } from '@mortise/shared/config'
+import type { Workspace } from '@mortise/core/types'
 import {
   getDefaultWorkspaceTopologyStore,
   readWorkspaceMarker,
@@ -13,30 +13,15 @@ import { perf } from '@mortise/shared/utils'
 import { pushTyped, type RpcServer } from '@mortise/server-core/transport'
 import type { HandlerDeps } from '../handler-deps'
 import { isValidWorkspaceRootPath } from '../../utils/path-validation'
-import { getWorkspaceOrThrow } from '../utils'
 import {
   ensureWorkspaceTopology,
   registerWorkspaceTopologyHandlers,
   WORKSPACE_TOPOLOGY_HANDLED_CHANNELS,
 } from './workspace-topology'
-
-function redactPrimaryLocation(workspace: Workspace): WorkspaceLocationInfo {
-  const primary = workspace.locations.find(location => location.id === workspace.primaryLocationId)!
-  return {
-    id: primary.id,
-    name: primary.name,
-    endpoint: primary.endpoint.kind === 'local'
-      ? { kind: 'local' }
-      : {
-          kind: 'remote',
-          url: primary.endpoint.url,
-          remoteWorkspaceId: primary.endpoint.remoteWorkspaceId,
-          ...(primary.endpoint.allowInsecureTls === undefined
-            ? {}
-            : { allowInsecureTls: primary.endpoint.allowInsecureTls }),
-        },
-  }
-}
+import {
+  registerWorkspaceTransferHandlers,
+  WORKSPACE_TRANSFER_HANDLED_CHANNELS,
+} from './workspace-transfer'
 
 function isInsideRoot(rootPath: string, candidatePath: string): boolean {
   const nested = relative(rootPath, candidatePath)
@@ -48,7 +33,6 @@ export const CORE_HANDLED_CHANNELS = [
   RPC_CHANNELS.workspaces.GET,
   RPC_CHANNELS.workspaces.CREATE,
   RPC_CHANNELS.workspaces.CHECK_SLUG,
-  RPC_CHANNELS.workspaces.UPDATE_REMOTE,
   RPC_CHANNELS.window.GET_WORKSPACE,
   RPC_CHANNELS.window.GET_MODE,
   RPC_CHANNELS.window.SWITCH_WORKSPACE,
@@ -66,6 +50,7 @@ export const CORE_HANDLED_CHANNELS = [
   RPC_CHANNELS.theme.BROADCAST_WORKSPACE_THEME,
   RPC_CHANNELS.toolIcons.GET_MAPPINGS,
   ...WORKSPACE_TOPOLOGY_HANDLED_CHANNELS,
+  ...WORKSPACE_TRANSFER_HANDLED_CHANNELS,
 ] as const
 
 export function registerWorkspaceCoreHandlers(
@@ -76,10 +61,13 @@ export function registerWorkspaceCoreHandlers(
   const { sessionManager } = deps
   const windowManager = deps.windowManager
   registerWorkspaceTopologyHandlers(server, deps, topologyStore)
+  registerWorkspaceTransferHandlers(server, topologyStore)
 
   const resolveWorkspace = (workspaceId: string): Workspace => {
+    const current = topologyStore.get(workspaceId)
+    if (current) return current
     const candidate = sessionManager.getWorkspaces().find(workspace => workspace.id === workspaceId)
-      ?? getWorkspaceOrThrow(workspaceId)
+    if (!candidate) throw new Error(`Workspace not found: ${workspaceId}`)
     ensureWorkspaceTopology(topologyStore, candidate)
     const workspace = topologyStore.get(workspaceId)
     if (!workspace) throw new Error(`Workspace topology not found: ${workspaceId}`)
@@ -131,23 +119,15 @@ export function registerWorkspaceCoreHandlers(
     return { exists, path: workspacePath }
   })
 
-  // Update remote server config for an existing workspace (reconnect flow)
-  server.handle(RPC_CHANNELS.workspaces.UPDATE_REMOTE, async () => {
-    throw new Error('workspaces:updateRemote is retired; use a revisioned Workspace topology command')
-  })
-
   // Get workspace ID for the calling window
   server.handle(RPC_CHANNELS.window.GET_WORKSPACE, (ctx) => {
     const workspaceId = ctx.workspaceId ?? windowManager?.getWorkspaceForWindow(ctx.webContentsId!)
     // Set up ConfigWatcher for live workspace updates.
     if (workspaceId) {
-      const workspace = getWorkspaceByNameOrId(workspaceId)
-      if (workspace) {
-        const topology = resolveWorkspace(workspaceId)
-        const primary = topology.locations.find(location => location.id === topology.primaryLocationId)
-        if (primary?.endpoint.kind === 'local') {
-          sessionManager.setupConfigWatcher(primary.endpoint.rootPath, workspaceId)
-        }
+      const topology = resolveWorkspace(workspaceId)
+      const primary = topology.locations.find(location => location.id === topology.primaryLocationId)
+      if (primary?.endpoint.kind === 'local') {
+        sessionManager.setupConfigWatcher(primary.endpoint.rootPath, workspaceId)
       }
     }
     return workspaceId
@@ -213,7 +193,9 @@ export function registerWorkspaceCoreHandlers(
     // whether to connect directly to a remote server for this workspace.
     return {
       workspaceId,
-      primaryLocation: redactPrimaryLocation(workspace),
+      primaryLocation: topologyStore.getInfo(workspaceId)!.locations.find(
+        location => location.id === workspace.primaryLocationId,
+      )!,
     }
   })
 

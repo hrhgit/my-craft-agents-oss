@@ -14,6 +14,14 @@ import {
 import { pushTyped, type RpcServer } from '../../transport'
 import type { HandlerDeps } from '../handler-deps'
 
+interface WorkspaceTopologySessionCoordinator {
+  interruptWorkspaceSessionsForTopologyChange(target:
+    | { workspaceId: string; scope: 'workspace' }
+    | { workspaceId: string; scope: 'location'; locationId: string }
+  ): Promise<unknown>
+  updateWorkspaceTopology(workspace: Workspace): void
+}
+
 export const WORKSPACE_TOPOLOGY_HANDLED_CHANNELS = [
   RPC_CHANNELS.workspaces.GET_TOPOLOGY,
   RPC_CHANNELS.workspaces.TOPOLOGY_COMMAND,
@@ -32,6 +40,8 @@ export function registerWorkspaceTopologyHandlers(
     }
     const workspaceId = requestedWorkspaceId ?? ctx.workspaceId
     if (!workspaceId) throw new Error('A Workspace identity is required')
+    const current = store.getInfo(workspaceId)
+    if (current) return current
     const candidate = deps.sessionManager.getWorkspaces().find(workspace => workspace.id === workspaceId)
     if (!candidate) throw new Error(`Workspace not found: ${workspaceId}`)
     return ensureWorkspaceTopology(store, candidate)
@@ -44,11 +54,30 @@ export function registerWorkspaceTopologyHandlers(
         `Workspace mismatch: authenticated workspace (${ctx.workspaceId}) does not match requested (${command.workspaceId})`,
       )
     }
-    const candidate = deps.sessionManager.getWorkspaces().find(workspace => workspace.id === command.workspaceId)
-    if (!candidate) throw new Error(`Workspace not found: ${command.workspaceId}`)
-    ensureWorkspaceTopology(store, candidate)
+    if (!store.get(command.workspaceId)) {
+      const candidate = deps.sessionManager.getWorkspaces().find(workspace => workspace.id === command.workspaceId)
+      if (!candidate) throw new Error(`Workspace not found: ${command.workspaceId}`)
+      ensureWorkspaceTopology(store, candidate)
+    }
+    const replay = store.getAppliedResult(command)
+    if (replay) return replay
+
+    const interruption = topologyInterruption(command)
+    const coordinator = deps.sessionManager as unknown as Partial<WorkspaceTopologySessionCoordinator>
+    if (typeof coordinator.updateWorkspaceTopology !== 'function') {
+      throw new Error('Workspace topology Session projection coordinator is unavailable')
+    }
+    if (interruption) {
+      if (typeof coordinator.interruptWorkspaceSessionsForTopologyChange !== 'function') {
+        throw new Error('Workspace topology interruption coordinator is unavailable')
+      }
+      await coordinator.interruptWorkspaceSessionsForTopologyChange(interruption)
+    }
     const result = store.apply(command)
     if (result.status === 'applied') {
+      const persisted = store.get(command.workspaceId)
+      if (!persisted) throw new Error(`Workspace topology not found after mutation: ${command.workspaceId}`)
+      coordinator.updateWorkspaceTopology(persisted)
       const change: WorkspaceTopologyChangedV1 = {
         schemaVersion: WORKSPACE_TOPOLOGY_CHANGE_SCHEMA_VERSION,
         workspaceId: command.workspaceId,
@@ -63,6 +92,20 @@ export function registerWorkspaceTopologyHandlers(
     }
     return result
   })
+}
+
+function topologyInterruption(command: ReturnType<typeof parseWorkspaceTopologyCommandV1>) {
+  if (command.operation === 'set-primary') {
+    return { workspaceId: command.workspaceId, scope: 'workspace' as const }
+  }
+  if (command.operation === 'detach' || command.operation === 'replace-endpoint') {
+    return {
+      workspaceId: command.workspaceId,
+      scope: 'location' as const,
+      locationId: command.locationId,
+    }
+  }
+  return null
 }
 
 /** Persist one V2 record once; ordinary topology reads never consult the legacy candidate. */
