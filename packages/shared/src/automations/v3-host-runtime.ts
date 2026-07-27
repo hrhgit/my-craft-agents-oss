@@ -16,6 +16,11 @@ export interface AutomationWorkspaceHostV3Options extends AutomationV3StoreOptio
   onError?: (error: Error) => void
 }
 
+export interface AutomationWorkspaceInterruptionResultV1 {
+  selectedRunIds: string[]
+  cancelledRunIds: string[]
+}
+
 /** Owns the canonical store, scheduler, claims, execution queue, and run ledger for one workspace. */
 export class AutomationWorkspaceHostV3 {
   readonly store: AutomationV3Store
@@ -24,10 +29,14 @@ export class AutomationWorkspaceHostV3 {
   private readonly validateSession?: AutomationWorkspaceHostV3Options['validateSession']
   private readonly onChanged?: AutomationWorkspaceHostV3Options['onChanged']
   private readonly onError?: (error: Error) => void
-  private readonly abortController = new AbortController()
   private readonly pending: string[] = []
   private readonly pendingIds = new Set<string>()
+  private executionController = new AbortController()
+  private executionGeneration = 0
   private processing: Promise<void> | null = null
+  private topologyInterruption: Promise<AutomationWorkspaceInterruptionResultV1> | null = null
+  private topologyInterruptionFailure: Error | null = null
+  private resumeSchedulerAfterTopologyChange = false
   private started = false
   private stopped = false
   private schedulerStarted = false
@@ -42,6 +51,7 @@ export class AutomationWorkspaceHostV3 {
       listDueOccurrences: now => this.store.listDueOccurrences(now),
       getNextDueAt: () => this.store.getNextDueAt(),
       onOccurrence: async due => {
+        this.assertAcceptingRuns()
         this.enqueueAcceptedRun(this.runtime.acceptTimeTrigger(
           due.definition,
           due.trigger,
@@ -75,7 +85,7 @@ export class AutomationWorkspaceHostV3 {
   }
 
   acceptManual(automationId: string, operationId: string, triggerId?: string): { run: AutomationRunV1; duplicate: boolean } {
-    this.assertRunning()
+    this.assertAcceptingRuns()
     const result = this.runtime.acceptManual(automationId, operationId, triggerId)
     if (!result.duplicate) {
       this.enqueueAcceptedRun(result.run)
@@ -88,7 +98,7 @@ export class AutomationWorkspaceHostV3 {
     event: CloudEventV1,
     options: { sourceKind: TrustedAutomationEventV1['sourceKind']; matchValue?: string },
   ): Promise<AutomationEventDispatchResultV1> {
-    this.assertRunning()
+    this.assertAcceptingRuns()
     const result = await this.runtime.acceptEvent(event, {
       ...options,
       ...(this.validateSession ? { validateSession: this.validateSession } : {}),
@@ -105,9 +115,59 @@ export class AutomationWorkspaceHostV3 {
     if (this.stopped) return
     this.stopped = true
     this.scheduler.stop()
-    this.abortController.abort(new Error('Automation workspace host stopped'))
+    this.schedulerStarted = false
+    this.executionController.abort(new Error('Automation workspace host stopped'))
+    await this.topologyInterruption?.catch(() => {})
     await this.processing?.catch(() => {})
     this.store.close()
+  }
+
+  interruptForWorkspaceTopologyChange(): Promise<AutomationWorkspaceInterruptionResultV1> {
+    this.assertRunning()
+    if (this.topologyInterruptionFailure) return Promise.reject(this.topologyInterruptionFailure)
+    if (this.topologyInterruption) return this.topologyInterruption
+
+    const interruptedGeneration = this.executionGeneration
+    this.resumeSchedulerAfterTopologyChange = this.schedulerStarted
+    this.executionGeneration++
+    this.scheduler.stop()
+    this.schedulerStarted = false
+    this.pending.length = 0
+    this.pendingIds.clear()
+    this.executionController.abort(new Error('Automation workspace topology changed'))
+
+    let interruption!: Promise<AutomationWorkspaceInterruptionResultV1>
+    interruption = this.performWorkspaceTopologyInterruption(interruptedGeneration)
+      .catch(error => {
+        const failure = error instanceof Error ? error : new Error(String(error))
+        this.topologyInterruptionFailure = failure
+        this.report(failure)
+        throw failure
+      })
+    this.topologyInterruption = interruption
+    return interruption
+  }
+
+  /**
+   * Release the pause only after the coordinating topology mutation has either
+   * committed or definitively failed. This keeps old-topology runs out of the
+   * interruption-to-commit window.
+   */
+  async resumeAfterWorkspaceTopologyChange(): Promise<void> {
+    this.assertRunning()
+    if (this.topologyInterruptionFailure) throw this.topologyInterruptionFailure
+    const interruption = this.topologyInterruption
+    if (!interruption) return
+    await interruption
+    if (this.topologyInterruption !== interruption || this.stopped) return
+
+    this.topologyInterruption = null
+    this.executionController = new AbortController()
+    if (this.resumeSchedulerAfterTopologyChange) {
+      this.scheduler.start()
+      this.schedulerStarted = true
+    }
+    this.resumeSchedulerAfterTopologyChange = false
   }
 
   isReadOnly(): boolean {
@@ -163,11 +223,25 @@ export class AutomationWorkspaceHostV3 {
     if (!this.started || this.stopped) throw new Error('Automation workspace host is not running')
   }
 
+  private assertAcceptingRuns(): void {
+    this.assertRunning()
+    if (this.topologyInterruptionFailure) {
+      throw new Error('Automation workspace host is blocked after topology interruption failed', {
+        cause: this.topologyInterruptionFailure,
+      })
+    }
+    if (this.topologyInterruption) throw new Error('Automation workspace topology interruption is in progress')
+  }
+
   private enqueueAcceptedRun(run: AutomationRunV1): void {
     if (run.state !== 'queued' || run.reason === 'overlap-queued' || this.stopped || this.pendingIds.has(run.runId)) return
     this.pendingIds.add(run.runId)
     this.pending.push(run.runId)
-    if (!this.processing) this.processing = this.drain().finally(() => { this.processing = null })
+    if (!this.processing) {
+      const generation = this.executionGeneration
+      const signal = this.executionController.signal
+      this.processing = this.drain(generation, signal).finally(() => { this.processing = null })
+    }
   }
 
   private recoverQueuedRuns(): void {
@@ -204,17 +278,33 @@ export class AutomationWorkspaceHostV3 {
     }
   }
 
-  private async drain(): Promise<void> {
-    while (!this.stopped) {
+  private async drain(generation: number, signal: AbortSignal): Promise<void> {
+    while (!this.stopped && generation === this.executionGeneration && !signal.aborted) {
       const runId = this.pending.shift()
       if (!runId) break
       this.pendingIds.delete(runId)
       try {
-        await this.runtime.executeClaimedRun(runId, this.abortController.signal)
+        await this.runtime.executeClaimedRun(runId, signal)
         this.publishChanged()
       } catch (error) {
         this.report(error instanceof Error ? error : new Error(String(error)))
       }
+    }
+  }
+
+  private async performWorkspaceTopologyInterruption(
+    interruptedGeneration: number,
+  ): Promise<AutomationWorkspaceInterruptionResultV1> {
+    const firstPass = this.store.cancelNonTerminalRuns('workspace-topology-interrupted')
+    await this.processing
+    const residual = this.store.cancelNonTerminalRuns('workspace-topology-interrupted')
+    if (this.executionGeneration !== interruptedGeneration + 1) {
+      throw new Error('Automation workspace topology interruption generation changed unexpectedly')
+    }
+    this.publishChanged()
+    return {
+      selectedRunIds: [...new Set([...firstPass.selectedRunIds, ...residual.selectedRunIds])],
+      cancelledRunIds: [...new Set([...firstPass.cancelledRunIds, ...residual.cancelledRunIds])],
     }
   }
 

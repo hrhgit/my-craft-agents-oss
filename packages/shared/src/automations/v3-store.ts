@@ -169,6 +169,11 @@ export interface AcceptCloudEventOptions {
   validateSession?: (sessionId: string, workspaceId: string) => boolean
 }
 
+export interface AutomationRunInterruptionResultV1 {
+  selectedRunIds: string[]
+  cancelledRunIds: string[]
+}
+
 export class AutomationV3Store {
   readonly workspaceId: string
   readonly workspaceRootPath: string
@@ -525,6 +530,59 @@ export class AutomationV3Store {
       }
     }
     return recovered
+  }
+
+  cancelNonTerminalRuns(reason: string, now = new Date()): AutomationRunInterruptionResultV1 {
+    const selectedRunIds = new Set<string>()
+    const cancelledRunIds = new Set<string>()
+    for (;;) {
+      const runs = this.listRunsPage({ states: ['queued', 'running'], limit: 500 }).items
+      if (runs.length === 0) break
+      for (const run of runs) {
+        selectedRunIds.add(run.runId)
+        const result = this.cancelRunIfNonTerminal(run.runId, reason, now)
+        if (result.cancelled) cancelledRunIds.add(run.runId)
+      }
+    }
+    return {
+      selectedRunIds: [...selectedRunIds],
+      cancelledRunIds: [...cancelledRunIds],
+    }
+  }
+
+  cancelRunIfNonTerminal(
+    runId: string,
+    reason: string,
+    now = new Date(),
+  ): { run: AutomationRunV1; cancelled: boolean } {
+    for (let retry = 0; retry < 3; retry++) {
+      const current = this.store.getRecord(this.runNamespace(), runId)
+      if (!current) throw new Error(`Automation run not found: ${runId}`)
+      const run = parseRun(current.value)
+      if (run.state !== 'queued' && run.state !== 'running') return { run, cancelled: false }
+      const completedAt = now.toISOString()
+      const { executor: _executor, ...withoutExecutor } = run
+      const next: AutomationRunV1 = {
+        ...withoutExecutor,
+        state: 'cancelled',
+        reason,
+        completedAt,
+        actions: run.actions.map(action => (
+          action.state === 'queued' || action.state === 'running'
+            ? { ...action, state: 'cancelled' as const, completedAt }
+            : action
+        )),
+      }
+      const result = this.mutateRun({
+        run: next,
+        expectedVersion: current.version,
+        operationId: automationIdentity('op_run_cancel', runId, reason, current.version),
+        historyType: 'run.transition',
+      })
+      if (result.status === 'conflict') continue
+      return { run: parseRun(result.value), cancelled: !result.replayed }
+    }
+    throw new Error(`Automation run cancellation could not make CAS progress: ${runId}`)
   }
 
   updateRun(run: AutomationRunV1, operationId: string): AutomationRunV1 {
