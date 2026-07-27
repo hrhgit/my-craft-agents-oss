@@ -9,6 +9,17 @@ function readRepoFile(path: string): string {
 }
 
 describe('offline Developer Kit installer contract', () => {
+  test('pins one Bun version across packaged runtime and CI producers', () => {
+    const common = readRepoFile('scripts/build/common.ts')
+    const validationWorkflow = readRepoFile('.github/workflows/validate.yml')
+    const serverWorkflow = readRepoFile('.github/workflows/validate-server.yml')
+
+    expect(common).toContain("export const BUN_VERSION = 'bun-v1.3.14'")
+    expect(validationWorkflow.match(/bun-version: "1\.3\.14"/g)?.length).toBe(3)
+    expect(serverWorkflow.match(/bun-version: "1\.3\.14"/g)?.length).toBe(1)
+    expect(`${common}\n${validationWorkflow}\n${serverWorkflow}`).not.toMatch(/bun-v1\.3\.(?:9|10)|bun-version: "1\.3\.(?:9|10)"/)
+  })
+
   test('stages a matching kit before every Windows installer entrypoint', () => {
     const rootPackage = readRepoFile('package.json')
     const powershellBuild = readRepoFile('apps/electron/scripts/build-win.ps1')
