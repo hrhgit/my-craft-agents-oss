@@ -5,6 +5,7 @@
  *
  * Settings:
  * - Identity (Name, Icon)
+ * - Locations (Primary, local, remote)
  * - Permissions (Default mode, Mode cycling)
  *
  * Note: AI settings (model, thinking, connection) have been moved to AiSettingsPage.
@@ -26,6 +27,7 @@ import type { PermissionMode, WorkspaceSettings } from '../../../shared/types'
 import { PERMISSION_MODE_CONFIG } from '@mortise/shared/agent/mode-types'
 import type { DetailsPageMeta } from '@/lib/navigation-registry'
 import { toast } from 'sonner'
+import { WorkspaceLocationsSection } from './WorkspaceLocationsSection'
 
 import {
   SettingsSection,
@@ -324,10 +326,6 @@ export default function WorkspaceSettingsPage() {
                     )}
                   </div>
                 </SettingsRow>
-                <SettingsRow
-                  label={t("settings.workspace.rootPath")}
-                  description={activeWorkspace?.rootPath || t("settings.workspace.noWorkspaceSelected")}
-                />
               </SettingsCard>
 
               <RenameDialog
@@ -348,6 +346,14 @@ export default function WorkspaceSettingsPage() {
                 placeholder={t("settings.workspace.enterWorkspaceName")}
               />
             </SettingsSection>
+
+            {activeWorkspace && (
+              <WorkspaceLocationsSection
+                key={activeWorkspace.id}
+                workspace={activeWorkspace}
+                onWorkspaceChanged={onRefreshWorkspaces}
+              />
+            )}
 
             {/* Permissions */}
             <SettingsSection title={t("settings.workspace.permissionsSection")}>
