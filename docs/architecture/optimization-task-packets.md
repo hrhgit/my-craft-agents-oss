@@ -4,9 +4,7 @@ These packets isolate externally executable work whose scope, architecture direc
 
 ## R11 final closeout packets
 
-The implementation packets below remain the requirement history, but they must not be redispatched merely because their
-epic is still active. At the `7100b7a5d` handoff, the remaining work is organized by shared evidence boundary so a new
-session can finish without repeating the same build or installer workflow per OPT ID.
+The implementation packets below remain requirement history and must not be redispatched. R11 completed at accepted implementation revision `7f905fa17`. Product behavior was accepted through source-development and Developer Host evidence. Installer evidence was narrowed to immutable provenance, payload/component layout, package-time subprocess handshake, uninstall policy, and cleanup; no ordinary installed-app UI or model-backed message is claimed.
 
 | Packet | Covers | Prerequisite | Execution and evidence | Concurrency rule |
 |---|---|---|---|---|
@@ -14,11 +12,11 @@ session can finish without repeating the same build or installer workflow per OP
 | `R11-C1` canonical green | All five OPT IDs | `CODE_CANDIDATE` frozen | Run strict module validation and complete `bun run validate:monorepo`; retain command, environment, exit status, full log, and SHA-256. A failure returns to the sole owning module and creates a new candidate. | May prepare manifests in parallel; do not run performance sampling concurrently. |
 | `R11-C2A` automation performance | `OPT-015` | `R11-C1` green and the pre-approved automation workload/policy unchanged | Run base/final indexed-query samples under the frozen workload, environment, sample count, statistics, baseline, budgets, and noise policy. Retain raw JSON/logs and hashes. | Run alone; no builds, packaging, or other benchmarks. |
 | `R11-C2B` headless performance | `OPT-018` | `R11-C2A` complete and the pre-approved headless workload/policy unchanged | Run base/final process-to-handshake, RSS, first-turn, and artifact measurements; retain raw samples, teardown/process proof, budget result, and hashes. | Run alone; intentionally serial after `R11-C2A`. |
-| `R11-C3` joint Windows installer acceptance | `OPT-011`, `OPT-014`, `OPT-017`, `OPT-018` | `R11-C1` green; performance sampling not active | Run `electron:dist:win` once from `CODE_CANDIDATE`. In one isolated install, prove manifest/hash provenance, runtime selection and tamper failures, clean dependency/build graph, optional Developer Kit selected/deselected behavior, one headless staged runtime, zero legacy artifacts, installed-app start/restart, logs/processes, uninstall, and cleanup. | One packaging owner and one isolated profile; evidence may be reviewed by each affected owner after collection. |
+| `R11-C3` joint Windows package acceptance | `OPT-011`, `OPT-014`, `OPT-017`, `OPT-018` | `R11-C1` green; performance sampling not active | Build the pinned Windows installer once; prove manifest/hash provenance, clean graph, optional Developer Kit payload, one headless runtime, zero legacy artifacts, package-time subprocess handshake, uninstall policy, and isolated cleanup. Product behavior remains owned by source/Developer Host evidence. | One packaging owner; no duplicate installed-app functional workflow. |
 | `R11-C4` evidence and integration | All five OPT IDs | `R11-C1..C3` green | Generate raw-evidence SHA-256 manifests, perform affected-owner review, archive accepted items, remove all five from the active ledger, refresh named module digests, and integrate the scoped r11 commit range without overwriting user-owned primary-worktree changes. | Documentation/module updates may be prepared in parallel, but only the primary accepts and integrates. |
 
-The critical path is `R11-C0 -> C1 -> C2A -> C2B -> C3 -> C4`. `C3` is one joint physical workflow, not four
-independent installer runs. If `C1`, `C2A`, or `C2B` changes tracked implementation, discard all later candidate-bound
+The critical path was `R11-C0 -> C1 -> C2A -> C2B -> C3 -> C4`. `C3` was one shared package boundary, not four
+independent installer runs. If a future equivalent of `C1`, `C2A`, or `C2B` changes tracked implementation, discard later candidate-bound
 evidence and restart at `C1`; a documentation-only archive/digest commit after acceptance does not redefine
 `CODE_CANDIDATE`.
 
