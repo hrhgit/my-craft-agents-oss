@@ -368,13 +368,11 @@ function createExtensionPackage(root: string, id: string): string {
       extensions: [{
         id,
         path: './index.ts',
-        targets: ['mortise'],
         manifest: {
           schemaVersion: 1,
           name: id,
           version: '1.0.0',
           author: { name: 'CLI Test' },
-          engines: { mortise: '^0.1.0' },
           capabilities: [],
           permissions: [],
         },

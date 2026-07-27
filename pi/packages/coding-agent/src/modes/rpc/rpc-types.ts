@@ -39,6 +39,7 @@ export const PI_RPC_COMMANDS = [
 	"steer",
 	"follow_up",
 	"abort",
+	"continue",
 	"new_session",
 	"run_mini_completion",
 	"query_llm",
@@ -133,7 +134,6 @@ export interface RpcExtensionUIValidationEvent extends RpcEnvelope {
 export interface RpcRuntimeOpenOptions {
 	runtimeId?: string;
 	cwd: string;
-	extensionTarget: "pi" | "mortise";
 	extensionPaths?: string[];
 	agentDir?: string;
 	/** Project-local config directory name. Standalone Pi defaults to `.pi`. */
@@ -143,11 +143,15 @@ export interface RpcRuntimeOpenOptions {
 	sessionDir?: string;
 	sessionId?: string;
 	parentSession?: string;
+	/** Parent Agent Session ID for a Mortise-owned child task. */
+	spawnedFrom?: string;
+	/** Host-selected execution overrides retained in the child task header. */
+	spawnConfig?: SessionHeader["spawnConfig"];
 	deferResourceLoad?: boolean;
 	persistInitialState?: boolean;
 	/** Keep the runtime transcript entirely in memory and never create a Session file. */
 	inMemory?: boolean;
-	/** Omit to expose no host UI. Extension target selection does not imply UI support. */
+	/** Omit to expose no host UI. Extension loading does not imply UI support. */
 	uiCapabilities?: RpcHostUICapabilities;
 }
 
@@ -158,6 +162,7 @@ export interface RpcRuntimeSummary {
 	sessionId: string;
 	sessionFile?: string;
 	isStreaming: boolean;
+	lastOutput?: string;
 }
 
 export type RpcCommand = RpcEnvelope &
@@ -190,6 +195,7 @@ export type RpcCommand = RpcEnvelope &
 				attachments?: UserAttachmentMetadata[];
 		  }
 		| { id?: string; type: "abort" }
+		| { id?: string; type: "continue"; systemPrompt?: string }
 		| { id?: string; type: "new_session"; parentSession?: string }
 		| { id?: string; type: "run_mini_completion"; prompt: string }
 		| { id?: string; type: "query_llm"; request: RpcLLMQueryRequest }
@@ -237,7 +243,7 @@ export type RpcCommand = RpcEnvelope &
 		| { id?: string; type: "get_fork_messages" }
 		| { id?: string; type: "get_last_assistant_text" }
 		| { id?: string; type: "set_session_name"; name: string }
-		| { id?: string; type: "list_child_sessions"; parentSessionId: string }
+		| { id?: string; type: "list_child_sessions"; parentSessionId: string; sessionDir?: string }
 
 		// Messages
 		| { id?: string; type: "get_messages" }
@@ -339,6 +345,16 @@ export interface RpcChildSessionInfo {
 	modified: string;
 	messageCount: number;
 	firstMessage: string;
+	status: "running" | "completed" | "interrupted" | "failed";
+	lastOutput?: string;
+	persistedClientMutationIds: string[];
+	history: Array<{
+		role: string;
+		text: string;
+		timestamp?: number;
+		stopReason?: string;
+		clientMutationId?: string;
+	}>;
 }
 
 export interface RpcCapabilities {
@@ -550,6 +566,7 @@ export type RpcResponse = RpcEnvelope &
 				data: { text: string | null };
 		  }
 		| { id?: string; type: "response"; command: "set_session_name"; success: true }
+		| { id?: string; type: "response"; command: "continue"; success: true }
 		| {
 				id?: string;
 				type: "response";

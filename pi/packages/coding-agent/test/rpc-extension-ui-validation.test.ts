@@ -94,7 +94,7 @@ describe("extension UI validation capability", () => {
 		writeFileSync(
 			join(root, "settings.json"),
 			JSON.stringify({
-				extensions: [{ id: "validation", path: extensionPath, activation: "startup", targets: ["mortise"] }],
+				extensions: [{ id: "validation", path: extensionPath, activation: "startup" }],
 			}),
 			"utf8",
 		);
@@ -181,9 +181,7 @@ describe("extension UI validation capability", () => {
 		writeFileSync(
 			join(root, "settings.json"),
 			JSON.stringify({
-				extensions: [
-					{ id: "mortise-gui-example", path: extensionPath, activation: "startup", targets: ["mortise"] },
-				],
+				extensions: [{ id: "mortise-gui-example", path: extensionPath, activation: "startup" }],
 			}),
 			"utf8",
 		);

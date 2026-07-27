@@ -777,8 +777,8 @@ export class RpcClient {
 	/**
 	 * List child sessions whose Pi session header has spawnedFrom=parentSessionId.
 	 */
-	async listChildSessions(parentSessionId: string): Promise<RpcChildSessionInfo[]> {
-		const response = await this.send({ type: "list_child_sessions", parentSessionId });
+	async listChildSessions(parentSessionId: string, sessionDir?: string): Promise<RpcChildSessionInfo[]> {
+		const response = await this.send({ type: "list_child_sessions", parentSessionId, sessionDir });
 		return this.getData<{ sessions: RpcChildSessionInfo[] }>(response).sessions;
 	}
 
@@ -1550,6 +1550,10 @@ export class PiRuntimeHandle {
 		return this.requestVoid({ type: "abort" });
 	}
 
+	continue(options?: { systemPrompt?: string }): Promise<void> {
+		return this.requestVoid({ type: "continue", systemPrompt: options?.systemPrompt });
+	}
+
 	setAutoCompaction(enabled: boolean): Promise<void> {
 		return this.requestVoid({ type: "set_auto_compaction", enabled });
 	}
@@ -1605,10 +1609,11 @@ export class PiRuntimeHandle {
 		return this.requestData({ type: "query_llm", request }, SECONDARY_LLM_TIMEOUT_MS);
 	}
 
-	listChildSessions(parentSessionId: string): Promise<RpcChildSessionInfo[]> {
+	listChildSessions(parentSessionId: string, sessionDir?: string): Promise<RpcChildSessionInfo[]> {
 		return this.requestData<{ sessions: RpcChildSessionInfo[] }>({
 			type: "list_child_sessions",
 			parentSessionId,
+			sessionDir,
 		}).then((result) => result.sessions);
 	}
 

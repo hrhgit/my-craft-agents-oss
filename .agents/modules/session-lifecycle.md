@@ -32,7 +32,7 @@ Maintain create/send/interrupt lifecycle, transcript durability, sidecar handlin
 Do not own agent loop internals, message rendering, or tool implementations.
 
 ## Contracts and invariants
-A normal UI draft and its provisional first-turn runtime are not a Session until Pi atomically persists the first assistant message; failures before that boundary leave no stored Session. Hidden internal sessions retain their invisible persisted semantics until separately migrated.
+A normal UI draft and its provisional first-turn runtime are not a Session until Pi atomically persists the first assistant message; failures before that boundary leave no stored Session. Core subagent tasks persist below the owning parent Session sidecar, never enter the ordinary Session list, and use durable inbox and completion-delivery records so accepted messages and background results survive runtime replacement without duplicate delivery. Hidden internal sessions retain their invisible persisted semantics until separately migrated.
 
 ## Architecture and entry points
 Shared session storage is consumed by server `SessionManager`; ordinary first turns enter through the combined `createAndSendFirstTurn` transaction, while projection and Mortise metadata remain memory-only until Pi's first-assistant JSONL publication gate.
@@ -47,6 +47,7 @@ Run session storage, persistence queue, projection, send durability, and draft t
 Publishing metadata or projection before Pi's assistant-backed JSONL exists can create visible phantom sessions; event ordering can make a running session appear terminated.
 
 ## Semantic history
+- 2026-07-27: Made core subagents parent-owned persistent child tasks with sidecar JSONL history, durable adjustment inboxes, idempotent background completion delivery, and explicit deletion failure semantics.
 - 2026-07-25: Propagated the host-validated immutable runtime layout through Session backend construction so Session execution uses the same sealed runtime authority as the owning Electron or headless host.
 - 2026-07-24: Made explicit Session-create thinking levels reject retired or invalid values instead of silently falling back, and removed the retired namespaced session-tool display reader from current projections.
 - 2026-07-24: Rejected invalid or retired thinking metadata at Session restore and JSONL ingress, and separated pristine unconfigured authentication from configured-but-missing provider errors.
@@ -66,4 +67,3 @@ Publishing metadata or projection before Pi's assistant-backed JSONL exists can 
 - 2026-07-21: Made first-turn metadata/projection durability failures typed, retryable request outcomes with an explicit terminal unpublished attempt, routed provisional shutdown through abandonment, and covered real directory/rename faults.
 - 2026-07-21: Rejected retired Session metadata at the tree JSONL boundary, removed header-scan filename fallback and provider-lock migration, and removed the old metadata-picker alias.
 - 2026-07-21: Removed legacy plan-role, id-only Session bundle, and thinking-level restore compatibility; file-backed plan submissions now expose canonical assistant messages carrying `PlanArtifactV1` while retaining `planPath` as the active execution target.
-- 2026-07-21: Routed Session `showInFinder` through an advertised requesting-client capability or the injected platform, with a typed unavailable error instead of false success.

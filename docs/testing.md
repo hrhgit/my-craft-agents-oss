@@ -81,7 +81,7 @@ bun run mortise-ui -- start --label extension-package --surface electron --profi
   --extension /absolute/path/to/extension --json
 ```
 
-The directory must contain Manifest V1 `pi.extensions` entries targeting `mortise`. The controller writes their resolved absolute entry paths into the disposable Pi settings file; it does not copy extension source, dependencies, or global user configuration. Mounted command-line entries replace cloned settings entries with the same ID for that run, and duplicate mounted IDs fail before the host starts.
+The directory must contain host-neutral Manifest V1 `pi.extensions` entries. The controller writes their resolved absolute entry paths into the disposable Pi settings file; it does not copy extension source, dependencies, or global user configuration. Mounted command-line entries replace cloned settings entries with the same ID for that run, and duplicate mounted IDs fail before the host starts.
 
 An agent may build a broader disposable data scene before launch. The schema is available without starting the app, so callers do not need to inspect implementation source:
 

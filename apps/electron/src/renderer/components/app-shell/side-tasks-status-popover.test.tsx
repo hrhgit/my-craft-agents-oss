@@ -50,6 +50,9 @@ function task(sessionId: string, name: string): PiChildSessionInfo {
     modified: '2026-07-18T00:00:00.000Z',
     messageCount: 3,
     firstMessage: `Prompt for ${sessionId}`,
+    status: 'completed',
+    persistedClientMutationIds: [],
+    history: [],
   }
 }
 
@@ -102,5 +105,19 @@ describe('SideTasksStatusContent', () => {
     expect(error).toContain('RPC unavailable')
 
     expect(renderContent()).toContain('No side tasks')
+  })
+
+  it('renders bounded child-task history in the inspect view', () => {
+    const selected = {
+      ...task('child/session', 'Child task'),
+      history: [
+        { role: 'user', text: 'Inspect the boundary.' },
+        { role: 'assistant', text: 'Boundary verified.' },
+      ],
+    }
+    const markup = renderContent({ selectedTask: selected })
+    expect(markup).toContain('Inspect the boundary.')
+    expect(markup).toContain('Boundary verified.')
+    expect(markup).toContain(`session.side-task.output.${sideTaskSemanticPart(selected.sessionId)}`)
   })
 })

@@ -4,7 +4,6 @@
  * Task 7 瘦身后：本文件只保留 mortise GUI 专属的开关类字段。
  * 以下字段位于 Mortise Agent root 的 `settings.json.extensionConfig.<id>.*` 命名空间：
  * - `extensionConfig.<id>.enabled`（扩展启停）
- * - `extensionConfig.subagent.defaultModel`
  * - `extensionConfig.trace-audit.model` / `extensionConfig.trace-audit.concurrency`
  * - `extensionConfig.yourself.model`
  * - `extensionConfig.repo-memory.model`
@@ -14,8 +13,7 @@
  * 保留字段均为 mortise GUI 专属概念，pi settings.json 无对应项：
  * - `enabled`：控制 pi 扩展相关 UI 组件的可见性（不影响子进程扩展加载）
  * - `managedAgentDir`：测试覆盖用的 agentDir
- * - `subagent.reviewEnabled` / `subagent.reviewModel`：mortise 专属 review 流
- * - `traceAudit.reviewSubagentEnabled` / `traceAudit.showStatusBadge`：mortise GUI 状态展示
+ * - `traceAudit.showStatusBadge`：mortise GUI 状态展示
  * - `yourself.showStatusBadge` / `repoMemory.showStatusBadge`：mortise GUI 状态展示
  */
 
@@ -76,12 +74,19 @@ export interface PiExtensionManifestV1 {
   homepage?: string;
   repository?: string;
   license?: string;
-  engines: Partial<Record<'pi' | 'mortise', string>>;
   dependencies?: Record<string, string>;
   optionalDependencies?: Record<string, string>;
   conflicts?: Record<string, string>;
   capabilities?: string[];
   permissions?: string[];
+  subagents?: Array<{
+    id: string;
+    name: string;
+    description: string;
+    systemPrompt: string;
+    tools?: string[];
+    model?: string;
+  }>;
   loadOrder?: { priority?: number; after?: string[]; before?: string[] };
 }
 export type PiExtensionManifestStatus = 'compatible' | 'warning' | 'blocked' | 'legacy';
@@ -110,7 +115,6 @@ export interface PiExtensionConfigPatchResult {
  */
 export interface PiExtensionCatalogEntry {
   id: string;
-  target: 'pi' | 'mortise';
   loaded: boolean;
   title: string;
   description: string;
@@ -119,7 +123,6 @@ export interface PiExtensionCatalogEntry {
   manifest?: PiExtensionManifestV1;
   manifestStatus: PiExtensionManifestStatus;
   manifestDiagnostics: PiExtensionManifestDiagnostic[];
-  hostVersion: string;
   loadable: boolean;
   ui?: PiExtensionManifestUI;
   enabled: boolean;
@@ -133,7 +136,6 @@ export interface PiExtensionCatalogEntry {
 export interface PiExtensionCatalogError {
   path: string;
   error: string;
-  target: 'pi' | 'mortise';
 }
 
 export interface PiExtensionCatalogResult {
@@ -170,14 +172,7 @@ export interface PiExtensionSettings {
   enabled: boolean;
   /** 测试覆盖用的 agentDir；生产路径永不传入。 */
   managedAgentDir?: string;
-  subagent: {
-    /** mortise 专属 review 流程开关（非 pi subagent 默认模型）。 */
-    reviewEnabled: boolean;
-    reviewModel: string;
-  };
   traceAudit: {
-    /** mortise 专属：是否对 trace-audit 启用 review subagent。 */
-    reviewSubagentEnabled: boolean;
     /** mortise GUI 状态徽章可见性。 */
     showStatusBadge: boolean;
   };
@@ -195,7 +190,6 @@ export interface PiExtensionSettings {
 export type StoredPiExtensionSettings = {
   enabled?: boolean;
   managedAgentDir?: string;
-  subagent?: Partial<PiExtensionSettings['subagent']>;
   traceAudit?: Partial<PiExtensionSettings['traceAudit']>;
   yourself?: Partial<PiExtensionSettings['yourself']>;
   repoMemory?: Partial<PiExtensionSettings['repoMemory']>;
@@ -203,12 +197,7 @@ export type StoredPiExtensionSettings = {
 
 export const DEFAULT_PI_EXTENSION_SETTINGS: PiExtensionSettings = {
   enabled: true,
-  subagent: {
-    reviewEnabled: true,
-    reviewModel: 'stepfun/step-3.7-flash',
-  },
   traceAudit: {
-    reviewSubagentEnabled: true,
     showStatusBadge: true,
   },
   yourself: {
@@ -222,15 +211,10 @@ export const DEFAULT_PI_EXTENSION_SETTINGS: PiExtensionSettings = {
 function cloneSettings(settings: PiExtensionSettings): PiExtensionSettings {
   return {
     ...settings,
-    subagent: { ...settings.subagent },
     traceAudit: { ...settings.traceAudit },
     yourself: { ...settings.yourself },
     repoMemory: { ...settings.repoMemory },
   };
-}
-
-function nonEmptyString(value: unknown, fallback: string): string {
-  return typeof value === 'string' && value.trim() ? value.trim() : fallback;
 }
 
 function bool(value: unknown, fallback: boolean): boolean {
@@ -255,12 +239,7 @@ export function normalizePiExtensionSettings(
     managedAgentDir: typeof raw.managedAgentDir === 'string' && raw.managedAgentDir.trim()
       ? raw.managedAgentDir.trim()
       : defaults.managedAgentDir,
-    subagent: {
-      reviewEnabled: bool(raw.subagent?.reviewEnabled, defaults.subagent.reviewEnabled),
-      reviewModel: nonEmptyString(raw.subagent?.reviewModel, defaults.subagent.reviewModel),
-    },
     traceAudit: {
-      reviewSubagentEnabled: bool(raw.traceAudit?.reviewSubagentEnabled, defaults.traceAudit.reviewSubagentEnabled),
       showStatusBadge: bool(raw.traceAudit?.showStatusBadge, defaults.traceAudit.showStatusBadge),
     },
     yourself: {
@@ -279,7 +258,6 @@ export function mergePiExtensionSettings(
   const merged: StoredPiExtensionSettings = {
     ...current,
     ...patch,
-    subagent: { ...current.subagent, ...(patch.subagent ?? {}) },
     traceAudit: { ...current.traceAudit, ...(patch.traceAudit ?? {}) },
     yourself: { ...current.yourself, ...(patch.yourself ?? {}) },
     repoMemory: { ...current.repoMemory, ...(patch.repoMemory ?? {}) },

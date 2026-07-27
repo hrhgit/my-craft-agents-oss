@@ -28,7 +28,7 @@ To load an extension directly from its development directory without copying its
 bin\mortise-ui.exe start --surface electron --profile fixture --extension C:\path\to\my-extension
 ```
 
-Repeat `--extension <directory>` to mount more than one package. Each directory must contain `package.json` with Manifest V1 `pi.extensions` entries targeting `mortise`. The CLI registers absolute entry paths only inside the disposable profile, so extension-local dependencies and **Settings > Extensions > Reload extensions** continue to resolve from the development directory.
+Repeat `--extension <directory>` to mount more than one package. Each directory must contain `package.json` with host-neutral Manifest V1 `pi.extensions` entries. The CLI registers absolute entry paths only inside the disposable profile, so extension-local dependencies and **Settings > Extensions > Reload extensions** continue to resolve from the development directory.
 
 The Developer Host uses an isolated profile, a per-run random authentication token, and a loopback-only endpoint. It has a separate application identity and does not register the production `mortise://` protocol.
 

@@ -4,7 +4,7 @@
   "title": "Mortise Extension Manifest V1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "name", "version", "author", "engines"],
+  "required": ["schemaVersion", "name", "version", "author"],
   "properties": {
     "schemaVersion": { "const": 1 },
     "name": { "type": "string", "minLength": 1, "maxLength": 256 },
@@ -26,20 +26,16 @@
     "homepage": { "type": "string", "format": "uri", "pattern": "^https?://", "maxLength": 2048 },
     "repository": { "type": "string", "format": "uri", "pattern": "^https?://", "maxLength": 2048 },
     "license": { "type": "string", "minLength": 1, "maxLength": 128 },
-    "engines": {
-      "type": "object",
-      "additionalProperties": false,
-      "minProperties": 1,
-      "properties": {
-        "pi": { "$ref": "#/$defs/semverRange" },
-        "mortise": { "$ref": "#/$defs/semverRange" }
-      }
-    },
     "dependencies": { "$ref": "#/$defs/dependencyMap" },
     "optionalDependencies": { "$ref": "#/$defs/dependencyMap" },
     "conflicts": { "$ref": "#/$defs/dependencyMap" },
     "capabilities": { "$ref": "#/$defs/declarationList" },
     "permissions": { "$ref": "#/$defs/declarationList" },
+    "subagents": {
+      "type": "array",
+      "maxItems": 64,
+      "items": { "$ref": "#/$defs/subagentTemplate" }
+    },
     "loadOrder": {
       "type": "object",
       "additionalProperties": false,
@@ -77,6 +73,28 @@
       "maxItems": 128,
       "uniqueItems": true,
       "items": { "$ref": "#/$defs/stableId" }
+    },
+    "subagentTemplate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "description", "systemPrompt"],
+      "properties": {
+        "id": { "$ref": "#/$defs/declarationId" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 16000 },
+        "description": { "type": "string", "minLength": 1, "maxLength": 16000 },
+        "systemPrompt": { "type": "string", "minLength": 1, "maxLength": 16000 },
+        "tools": { "$ref": "#/$defs/toolList" },
+        "model": { "type": "string", "minLength": 1, "maxLength": 512 }
+      }
+    },
+    "toolList": {
+      "type": "array",
+      "maxItems": 128,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9._-]{0,255}$"
+      }
     }
   }
 }

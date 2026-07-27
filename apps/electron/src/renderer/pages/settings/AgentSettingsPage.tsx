@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-import { Bot, Loader2, Pencil, Plus, RotateCcw, Trash2 } from 'lucide-react'
+import { Bot, Loader2, LockKeyhole, Pencil, Plus, RotateCcw, Trash2 } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@mortise/ui'
 import type {
   AgentSettingsSnapshot,
@@ -521,7 +521,7 @@ export default function AgentSettingsPage() {
         ...current,
         subagents: [
           ...current.subagents.filter((agent) => agent.id !== selectedSubagent?.id && agent.id !== result.agent.id),
-          result.agent,
+          { ...result.agent, source: 'user' as const, editable: true as const },
         ].sort((left, right) => left.name.localeCompare(right.name)),
       } : current)
       clearDraft(KEYS.agentSubagentDraft, subagentDraftScope(selectedSubagent?.id ?? 'new'))
@@ -622,21 +622,50 @@ export default function AgentSettingsPage() {
                           <Bot className="size-5" />
                           <div className="text-sm">{t('settings.agents.emptySubagents')}</div>
                         </div>
-                      ) : snapshot.subagents.map((agent) => (
-                        <button
-                          key={agent.id}
-                          type="button"
-                          data-mortise-semantic-id={`settings.agents.subagent.${agent.id}`}
-                          className="flex w-full items-center justify-between gap-4 px-4 py-3.5 text-left transition-colors hover:bg-foreground/3"
-                          onClick={() => openSubagent(agent)}
-                        >
-                          <div className="min-w-0">
-                            <div className="truncate text-sm font-medium">{agent.name}</div>
-                            <div className="mt-0.5 truncate text-xs text-muted-foreground">{agent.description}</div>
+                      ) : snapshot.subagents.map((agent) => {
+                        const content = (
+                          <>
+                            <div className="min-w-0">
+                              <div className="truncate text-sm font-medium">{agent.name}</div>
+                              <div className="mt-0.5 truncate text-xs text-muted-foreground">{agent.description}</div>
+                            </div>
+                            <div className="flex shrink-0 items-center gap-2">
+                              {agent.source === 'extension' && (
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Badge variant="outline" className="max-w-40 gap-1.5 font-mono font-normal">
+                                      <LockKeyhole className="size-3" />
+                                      <span className="truncate">{agent.extensionId}</span>
+                                    </Badge>
+                                  </TooltipTrigger>
+                                  <TooltipContent>{agent.extensionId}</TooltipContent>
+                                </Tooltip>
+                              )}
+                              <Badge variant="secondary" className="font-mono font-normal">{agent.tools.length}</Badge>
+                            </div>
+                          </>
+                        )
+                        const className = 'flex w-full items-center justify-between gap-4 px-4 py-3.5 text-left'
+                        return agent.editable ? (
+                          <button
+                            key={agent.id}
+                            type="button"
+                            data-mortise-semantic-id={`settings.agents.subagent.${agent.id}`}
+                            className={`${className} transition-colors hover:bg-foreground/3`}
+                            onClick={() => openSubagent(agent)}
+                          >
+                            {content}
+                          </button>
+                        ) : (
+                          <div
+                            key={agent.id}
+                            data-mortise-semantic-id={`settings.agents.subagent.${agent.id}`}
+                            className={className}
+                          >
+                            {content}
                           </div>
-                          <Badge variant="secondary" className="shrink-0 font-mono font-normal">{agent.tools.length}</Badge>
-                        </button>
-                      ))}
+                        )
+                      })}
                     </SettingsCard>
                   </SettingsSection>
                 </TabsContent>

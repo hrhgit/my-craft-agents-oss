@@ -30,9 +30,74 @@ function runEval(code: string): { output: string; piAgentDir: string } {
 }
 
 describe('agent settings storage', () => {
+  it('normalizes user and extension templates into one core template type', () => {
+    const { output } = runEval(`
+      const templates = settings.normalizeSubagentTemplates(
+        [{
+          id: 'reviewer',
+          name: 'Reviewer',
+          description: 'User reviewer',
+          systemPrompt: 'Review user changes.',
+          tools: ['read'],
+        }],
+        [{
+          id: 'quality-suite',
+          loaded: false,
+          title: 'Quality Suite',
+          description: '',
+          category: 'agent',
+          configurable: false,
+          manifestStatus: 'compatible',
+          manifestDiagnostics: [],
+          loadable: true,
+          enabled: true,
+          path: 'quality-suite.ts',
+          resolvedPath: 'quality-suite.ts',
+          commands: [],
+          tools: [],
+          manifest: {
+            schemaVersion: 1,
+            name: 'Quality Suite',
+            version: '1.0.0',
+            author: { name: 'Mortise' },
+            subagents: [{
+              id: 'reviewer',
+              name: 'Extension Reviewer',
+              description: 'Extension reviewer',
+              systemPrompt: 'Review extension changes.',
+              tools: ['read', 'grep'],
+            }],
+          },
+        }],
+      );
+      console.log(JSON.stringify(templates));
+    `)
+    expect(JSON.parse(output)).toEqual([
+      {
+        id: 'quality-suite:reviewer',
+        name: 'Extension Reviewer',
+        description: 'Extension reviewer',
+        systemPrompt: 'Review extension changes.',
+        tools: ['read', 'grep'],
+        source: 'extension',
+        editable: false,
+        extensionId: 'quality-suite',
+      },
+      {
+        id: 'reviewer',
+        name: 'Reviewer',
+        description: 'User reviewer',
+        systemPrompt: 'Review user changes.',
+        tools: ['read'],
+        source: 'user',
+        editable: true,
+      },
+    ])
+  }, 15_000)
+
   it('returns Mortise defaults without freezing them into override files', () => {
     const { output, piAgentDir } = runEval(`
-      const snapshot = settings.getAgentSettingsSnapshot();
+      const snapshot = await settings.getAgentSettingsSnapshot();
       console.log(JSON.stringify({
         systemSource: snapshot.mainAgent.systemPromptSource,
         compactionSource: snapshot.mainAgent.compactionPromptSource,
@@ -60,7 +125,7 @@ describe('agent settings storage', () => {
         compactionPrompt: 'Custom compaction',
         disabledTools: ['write', 'write', 'pwsh'],
       });
-      const snapshot = settings.getAgentSettingsSnapshot();
+      const snapshot = await settings.getAgentSettingsSnapshot();
       console.log(JSON.stringify({
         systemPrompt: snapshot.mainAgent.systemPrompt,
         runtimeSystemPrompt: settings.resolveMainAgentSystemPrompt('Mortise default'),
@@ -86,7 +151,7 @@ describe('agent settings storage', () => {
         compactionPrompt: null,
         disabledTools: ['mcp__session__config_validate'],
       });
-      const snapshot = settings.getAgentSettingsSnapshot();
+      const snapshot = await settings.getAgentSettingsSnapshot();
       console.log(JSON.stringify(snapshot.mainAgent.tools
         .filter((tool) => !tool.enabled)
         .map((tool) => tool.name)));
@@ -175,7 +240,7 @@ describe('agent settings storage', () => {
         compactionPrompt: null,
         disabledTools: [],
       });
-      const snapshot = settings.getAgentSettingsSnapshot();
+      const snapshot = await settings.getAgentSettingsSnapshot();
       console.log(JSON.stringify([
         snapshot.mainAgent.systemPromptSource,
         snapshot.mainAgent.compactionPromptSource,

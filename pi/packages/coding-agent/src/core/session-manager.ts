@@ -1,4 +1,4 @@
-import { type AgentMessage, type ThinkingLevel, uuidv7 } from "@mortise/pi-agent-core";
+import { type AgentMessage, uuidv7 } from "@mortise/pi-agent-core";
 import type { ImageContent, Message, TextContent, Usage } from "@mortise/pi-ai/types";
 import { createHash, randomUUID } from "crypto";
 import {
@@ -41,7 +41,7 @@ export interface SessionHeader {
 	cwd: string;
 	parentSession?: string;
 	/**
-	 * Parent session ID for child sessions created via spawnChildSession().
+	 * Parent session ID for Mortise-owned child tasks created through RPC runtime opening.
 	 * Unlike parentSession (which stores a file path), this stores the parent's
 	 * session ID so the mortise shell can read back the spawn lineage.
 	 */
@@ -57,6 +57,11 @@ export interface SessionHeader {
 		enabledSources?: string[];
 		permissionMode?: string;
 		thinkingLevel?: string;
+		template?: string;
+		systemPrompt?: string;
+		tools?: string[];
+		background?: boolean;
+		backgroundOperationId?: string;
 	};
 	/**
 	 * Opaque host-shell metadata. Pi preserves this object but does not interpret
@@ -69,25 +74,12 @@ export interface SessionHeader {
 export interface NewSessionOptions {
 	id?: string;
 	parentSession?: string;
+	/** Parent Agent Session ID for a Mortise-owned subagent task. */
+	spawnedFrom?: string;
+	/** Host-selected execution overrides retained with a subagent task. */
+	spawnConfig?: SessionHeader["spawnConfig"];
 	/** Stable creation time for explicit import/fixture materialization. */
 	timestamp?: string;
-}
-
-export interface SpawnChildSessionOptions {
-	/** Initial user message (optional; if omitted, an empty session is created) */
-	prompt?: string;
-	/** LLM connection slug (overrides parent session) */
-	connection?: string;
-	/** Model ID (overrides parent session) */
-	model?: string;
-	/** Enabled source slugs (overrides parent session) */
-	enabledSources?: string[];
-	/** Permission mode (overrides parent session) */
-	permissionMode?: "safe" | "ask" | "allow-all";
-	/** Reasoning level (overrides parent session) */
-	thinkingLevel?: ThinkingLevel;
-	/** Session display name */
-	name?: string;
 }
 
 export interface SessionEntryBase {
@@ -243,6 +235,16 @@ export interface ChildSessionInfo extends SessionInfo {
 	spawnedFrom: string;
 	spawnConfig?: SessionHeader["spawnConfig"];
 	parentSessionPath?: string;
+	status: "completed" | "interrupted" | "failed";
+	lastOutput?: string;
+	persistedClientMutationIds: string[];
+	history: Array<{
+		role: string;
+		text: string;
+		timestamp?: number;
+		stopReason?: string;
+		clientMutationId?: string;
+	}>;
 }
 
 export type ReadonlySessionManager = Pick<
@@ -1357,6 +1359,8 @@ export class SessionManager {
 			timestamp,
 			cwd: this.cwd,
 			parentSession: options?.parentSession,
+			spawnedFrom: options?.spawnedFrom,
+			spawnConfig: options?.spawnConfig,
 		};
 		this.fileEntries = [header];
 		this.byId.clear();
@@ -2128,109 +2132,6 @@ export class SessionManager {
 	}
 
 	/**
-	 * Spawn a child session with custom configuration.
-	 *
-	 * This method is intended for mortise shell's spawn_session tool to delegate
-	 * child session creation to pi's session tree mechanism, rather than
-	 * implementing session creation independently.
-	 *
-	 * The child session:
-	 * - Inherits the parent session's cwd
-	 * - Records lineage via parentSession (file path, consistent with forkFrom/createBranchedSession)
-	 *   and spawnedFrom (parent session ID) in the header
-	 * - Does NOT affect the parent session's leaf pointer (key difference from branch())
-	 * - Creates an independent session file under ~/.pi/agent/sessions/{encoded-cwd}/
-	 *
-	 * pi CLI running standalone generally does not call this method.
-	 *
-	 * @param parentSessionId The parent session's ID (recorded in spawnedFrom)
-	 * @param options Spawn configuration overrides
-	 * @returns The new session ID and file path
-	 */
-	async spawnChildSession(
-		parentSessionId: string,
-		options: SpawnChildSessionOptions,
-	): Promise<{ sessionId: string; sessionPath: string }> {
-		const resolvedWorkingDir = resolvePath(this.cwd);
-
-		// Determine session directory for the child (default: ~/.pi/agent/sessions/{encoded-cwd}/)
-		const childSessionDir = getDefaultSessionDir(resolvedWorkingDir);
-
-		// Generate new session ID
-		const newSessionId = createSessionId();
-		const timestamp = new Date().toISOString();
-		const fileTimestamp = timestamp.replace(/[:.]/g, "-");
-		const newSessionFile = join(childSessionDir, `${fileTimestamp}_${newSessionId}.jsonl`);
-
-		// Build spawn config (records overrides for mortise shell to read back)
-		const spawnConfig: NonNullable<SessionHeader["spawnConfig"]> = {};
-		if (options.connection !== undefined) spawnConfig.connection = options.connection;
-		if (options.model !== undefined) spawnConfig.model = options.model;
-		if (options.enabledSources !== undefined) spawnConfig.enabledSources = options.enabledSources;
-		if (options.permissionMode !== undefined) spawnConfig.permissionMode = options.permissionMode;
-		if (options.thinkingLevel !== undefined) spawnConfig.thinkingLevel = options.thinkingLevel;
-
-		// Build new header.
-		// parentSession stores the parent session FILE PATH (consistent with forkFrom/createBranchedSession).
-		// spawnedFrom stores the parent session ID (for mortise shell to read back).
-		const header: SessionHeader = {
-			type: "session",
-			version: CURRENT_SESSION_VERSION,
-			id: newSessionId,
-			timestamp,
-			cwd: resolvedWorkingDir,
-			parentSession: this.sessionFile,
-			spawnedFrom: parentSessionId,
-			spawnConfig: Object.keys(spawnConfig).length > 0 ? spawnConfig : undefined,
-		};
-
-		// Build entries to write (header + optional initial user message + optional session name)
-		const entries: FileEntry[] = [header];
-		const idSet = new Set<string>();
-		let lastEntryId: string | null = null;
-
-		// If prompt provided, write initial user message as root entry
-		if (options.prompt !== undefined && options.prompt.length > 0) {
-			const userMessage: Message = {
-				role: "user",
-				content: [{ type: "text", text: options.prompt }],
-				timestamp: Date.now(),
-			};
-			const messageId = generateId(idSet);
-			idSet.add(messageId);
-			entries.push({
-				type: "message",
-				id: messageId,
-				parentId: null,
-				timestamp: new Date().toISOString(),
-				message: userMessage,
-			});
-			lastEntryId = messageId;
-		}
-
-		// If name provided, write session_info entry
-		if (options.name !== undefined && options.name.trim().length > 0) {
-			const infoId = generateId(idSet);
-			idSet.add(infoId);
-			entries.push({
-				type: "session_info",
-				id: infoId,
-				parentId: lastEntryId,
-				timestamp: new Date().toISOString(),
-				name: options.name.trim(),
-			});
-		}
-
-		// Write the new session file atomically (temp file + rename)
-		writeEntriesAtomically(newSessionFile, entries);
-
-		// IMPORTANT: Do NOT modify this.leafId or any parent session state.
-		// This is the key difference from branch() / createBranchedSession().
-
-		return { sessionId: newSessionId, sessionPath: newSessionFile };
-	}
-
-	/**
 	 * Create a new session.
 	 * @param cwd Working directory (stored in session header)
 	 * @param sessionDir Optional session directory. If omitted, uses default (~/.pi/agent/sessions/<encoded-cwd>/).
@@ -2419,11 +2320,10 @@ export class SessionManager {
 	}
 
 	/**
-	 * List child sessions created by spawnChildSession(), filtered by the
-	 * parent session ID recorded in the JSONL session header's spawnedFrom field.
+	 * List Mortise-owned child tasks by the parent session ID recorded in spawnedFrom.
 	 */
-	static async listChildrenBySpawnedFrom(parentSessionId: string): Promise<ChildSessionInfo[]> {
-		const sessions = await SessionManager.listAll();
+	static async listChildrenBySpawnedFrom(parentSessionId: string, sessionDir?: string): Promise<ChildSessionInfo[]> {
+		const sessions = await SessionManager.listAll(sessionDir);
 		const children: ChildSessionInfo[] = [];
 
 		for (const info of sessions) {
@@ -2431,11 +2331,77 @@ export class SessionManager {
 			if (!header || header.spawnedFrom !== parentSessionId) {
 				continue;
 			}
+			const branch = SessionManager.open(info.path).getBranch();
+			const messages = branch
+				.filter((entry): entry is SessionMessageEntry => entry.type === "message")
+				.map((entry) => entry.message);
+			const lastMessage = messages.at(-1);
+			const persistedClientMutationIds = messages.flatMap((message) =>
+				message.role === "user" && typeof message.clientMutationId === "string" ? [message.clientMutationId] : [],
+			);
+			let lastAssistant: Extract<AgentMessage, { role: "assistant" }> | undefined;
+			for (let index = messages.length - 1; index >= 0; index--) {
+				const message = messages[index];
+				if (message?.role === "assistant") {
+					lastAssistant = message;
+					break;
+				}
+			}
+			const lastOutput = lastAssistant
+				? (typeof lastAssistant.content === "string"
+						? lastAssistant.content
+						: lastAssistant.content
+								.filter((part): part is TextContent => part.type === "text")
+								.map((part) => part.text)
+								.join("\n")
+					).trim() || undefined
+				: undefined;
+			const history = messages.slice(-50).flatMap((message) => {
+				const record = message as unknown as Record<string, unknown>;
+				const content = record.content;
+				const text = (
+					typeof content === "string"
+						? content
+						: Array.isArray(content)
+							? content
+									.flatMap((part) => {
+										if (!part || typeof part !== "object") return [];
+										const candidate = part as Record<string, unknown>;
+										return candidate.type === "text" && typeof candidate.text === "string"
+											? [candidate.text]
+											: [];
+									})
+									.join("\n")
+							: ""
+				).trim();
+				if (!text) return [];
+				return [
+					{
+						role: message.role,
+						text: text.slice(0, 4000),
+						...(typeof record.timestamp === "number" ? { timestamp: record.timestamp } : {}),
+						...(typeof record.stopReason === "string" ? { stopReason: record.stopReason } : {}),
+						...(typeof record.clientMutationId === "string" ? { clientMutationId: record.clientMutationId } : {}),
+					},
+				];
+			});
+			const status =
+				lastMessage?.role === "assistant"
+					? lastMessage.stopReason === "error"
+						? "failed"
+						: lastMessage.stopReason === "aborted" || lastMessage.stopReason === "toolUse"
+							? "interrupted"
+							: "completed"
+					: "interrupted";
 			children.push({
 				...info,
 				spawnedFrom: header.spawnedFrom,
 				spawnConfig: header.spawnConfig,
 				parentSessionPath: header.parentSession,
+				status,
+				lastOutput,
+				persistedClientMutationIds,
+				history,
 			});
 		}
 

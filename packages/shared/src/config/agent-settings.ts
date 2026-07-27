@@ -13,9 +13,11 @@ import { getSystemPrompt } from '../prompts/system.ts';
 import { atomicWriteFileSync } from '../utils/files.ts';
 import { MORTISE_AGENT_DIR } from './paths.ts';
 import {
+  getPiExtensionCatalog,
   readPiMortiseSetting,
   writePiMortiseSettingsBulk,
 } from './pi-global-config.ts';
+import type { PiExtensionCatalogEntry } from './pi-extension-settings.ts';
 
 export interface AgentToolDescriptor {
   name: string;
@@ -49,10 +51,15 @@ export interface SubagentDefinition {
   model?: string;
 }
 
+export type SubagentTemplate = SubagentDefinition & (
+  | { source: 'user'; editable: true }
+  | { source: 'extension'; editable: false; extensionId: string }
+);
+
 export interface AgentSettingsSnapshot {
   schemaVersion: 1;
   mainAgent: MainAgentSettings;
-  subagents: SubagentDefinition[];
+  subagents: SubagentTemplate[];
 }
 
 export interface MainAgentSettingsUpdate {
@@ -154,14 +161,25 @@ function parseSubagentFile(filePath: string): SubagentDefinition | null {
   try {
     const content = readFileSync(filePath, 'utf8');
     const { frontmatter, body } = parseFrontmatter<Record<string, unknown>>(content);
-    if (typeof frontmatter.name !== 'string' || typeof frontmatter.description !== 'string') return null;
+    const id = basename(filePath, extname(filePath));
+    if (!SUBAGENT_ID_PATTERN.test(id)) return null;
+    if (
+      typeof frontmatter.name !== 'string'
+      || !frontmatter.name.trim()
+      || frontmatter.name.length > 16_000
+      || typeof frontmatter.description !== 'string'
+      || !frontmatter.description.trim()
+      || frontmatter.description.length > 16_000
+      || !body.trim()
+      || body.length > 16_000
+    ) return null;
     const tools = typeof frontmatter.tools === 'string'
       ? frontmatter.tools.trim() === 'none'
         ? []
         : normalizeToolNames(frontmatter.tools.split(',').map((tool) => tool.trim()).filter(Boolean))
       : [];
     return {
-      id: basename(filePath, extname(filePath)),
+      id,
       name: frontmatter.name.trim(),
       description: frontmatter.description.trim(),
       systemPrompt: body.trim(),
@@ -182,7 +200,45 @@ export function listSubagents(): SubagentDefinition[] {
     .sort((left, right) => left.name.localeCompare(right.name));
 }
 
-export function getAgentSettingsSnapshot(runtimeProfile?: AgentRuntimeProfile | null): AgentSettingsSnapshot {
+export function normalizeSubagentTemplates(
+  userTemplates: SubagentDefinition[],
+  extensionCatalog: PiExtensionCatalogEntry[],
+): SubagentTemplate[] {
+  const templates: SubagentTemplate[] = userTemplates.map((template) => ({
+    ...template,
+    source: 'user',
+    editable: true,
+  }));
+
+  for (const extension of extensionCatalog) {
+    if (!extension.loadable || extension.manifestStatus === 'blocked') continue;
+    for (const template of extension.manifest?.subagents ?? []) {
+      templates.push({
+        ...template,
+        id: `${extension.id}:${template.id}`,
+        tools: normalizeToolNames(template.tools),
+        source: 'extension',
+        editable: false,
+        extensionId: extension.id,
+      });
+    }
+  }
+
+  return templates.sort((left, right) =>
+    left.name.localeCompare(right.name) || left.id.localeCompare(right.id));
+}
+
+export async function listSubagentTemplates(
+  options: { cwd?: string; agentDir?: string } = {},
+): Promise<SubagentTemplate[]> {
+  const catalog = await getPiExtensionCatalog(options);
+  return normalizeSubagentTemplates(listSubagents(), catalog.extensions);
+}
+
+export async function getAgentSettingsSnapshot(
+  runtimeProfile?: AgentRuntimeProfile | null,
+  options: { cwd?: string; agentDir?: string } = {},
+): Promise<AgentSettingsSnapshot> {
   const fallback = fallbackRuntimeProfile();
   const runtime = runtimeProfile ?? fallback;
   const customSystemPrompt = readTextFile(SYSTEM_PROMPT_FILE);
@@ -204,7 +260,7 @@ export function getAgentSettingsSnapshot(runtimeProfile?: AgentRuntimeProfile | 
       compactionPromptSource: customCompactionPrompt === null ? 'default' : 'custom',
       tools: mergeToolCatalog(runtime, disabledTools),
     },
-    subagents: listSubagents(),
+    subagents: await listSubagentTemplates(options),
   };
 }
 

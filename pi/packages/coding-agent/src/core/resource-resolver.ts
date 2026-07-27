@@ -6,7 +6,7 @@ import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import ignore from "ignore";
 import { minimatch } from "minimatch";
 import { satisfies } from "semver";
-import { getProjectConfigDir, VERSION } from "../config.ts";
+import { getProjectConfigDir } from "../config.ts";
 import { canonicalizePath, resolvePath } from "../utils/paths.ts";
 import {
 	assertValidExtensionManifest,
@@ -15,8 +15,7 @@ import {
 	type ExtensionManifestV1,
 	isExtensionManifestId,
 } from "./extension-manifest.ts";
-import { parseExtensionTargets } from "./extension-targets.ts";
-import type { ExtensionActivation, ExtensionManifestUIV1, ExtensionTarget } from "./extensions/types.ts";
+import type { ExtensionActivation, ExtensionManifestUIV1 } from "./extensions/types.ts";
 import type { SettingsManager } from "./settings-manager.ts";
 
 export interface PathMetadata {
@@ -25,13 +24,11 @@ export interface PathMetadata {
 	origin: "package" | "top-level";
 	baseDir?: string;
 	activation?: ExtensionActivation;
-	targets?: ExtensionTarget[];
 	extensionId?: string;
 	extensionUI?: ExtensionManifestUIV1;
 	extensionManifest?: ExtensionManifestV1;
 	extensionManifestStatus?: ExtensionManifestStatus;
 	extensionManifestDiagnostics?: ExtensionManifestDiagnostic[];
-	extensionHostVersion?: string;
 	extensionLoadable?: boolean;
 }
 
@@ -52,8 +49,6 @@ export interface ResourceResolverOptions {
 	agentDir: string;
 	projectConfigDir?: string;
 	settingsManager: SettingsManager;
-	extensionTarget?: ExtensionTarget;
-	hostVersions?: Partial<Record<ExtensionTarget, string>>;
 }
 
 type SourceScope = "user" | "project" | "temporary";
@@ -62,7 +57,6 @@ export interface ExtensionManifestEntry {
 	id: string;
 	path: string;
 	activation?: ExtensionActivation;
-	targets: ExtensionTarget[];
 	manifest?: ExtensionManifestV1;
 	ui?: ExtensionManifestUIV1;
 }
@@ -117,7 +111,6 @@ export type ResourcePathEntry =
 			id?: string;
 			path: string;
 			activation?: ExtensionActivation;
-			targets?: ExtensionTarget[];
 			manifest?: ExtensionManifestV1;
 			ui?: ExtensionManifestUIV1;
 	  };
@@ -126,20 +119,17 @@ interface ResolvedResourcePathEntry {
 	id?: string;
 	path: string;
 	activation?: ExtensionActivation;
-	targets?: ExtensionTarget[];
 	manifest?: ExtensionManifestV1;
 	ui?: ExtensionManifestUIV1;
 }
 
 interface ExtensionDiscoveryEntry extends ResolvedResourcePathEntry {
 	id: string;
-	targets: ExtensionTarget[];
 	manifest?: ExtensionManifestV1;
 	ui?: ExtensionManifestUIV1;
 }
 
 const EXTENSION_ACTIVATIONS: ExtensionActivation[] = ["startup", "beforeFirstRequest", "lazy"];
-const DEFAULT_EXTENSION_TARGET: ExtensionTarget = "pi";
 
 function parseExtensionActivation(value: unknown): ExtensionActivation | undefined {
 	if (typeof value !== "string") return undefined;
@@ -152,10 +142,6 @@ function getResourceEntryPath(entry: ResourcePathEntry): string {
 
 function getResourceEntryActivation(entry: ResourcePathEntry): ExtensionActivation | undefined {
 	return typeof entry === "string" ? undefined : parseExtensionActivation(entry.activation);
-}
-
-function getResourceEntryTargets(entry: ResourcePathEntry): ExtensionTarget[] | undefined {
-	return typeof entry === "string" ? undefined : parseExtensionTargets(entry.targets);
 }
 
 function getResourceEntryUI(entry: ResourcePathEntry): ExtensionManifestUIV1 | undefined {
@@ -311,13 +297,13 @@ function assertStrictExtensionEntry(
 	context: string,
 ): asserts entry is ExtensionManifestEntry {
 	if (typeof entry === "string") {
-		throw new Error(`${context}: extension entries must be objects with id, path, and targets`);
+		throw new Error(`${context}: extension entries must be objects with id and path`);
 	}
 	const extensionId = getResourceEntryId(entry);
 	if (!extensionId) {
 		throw new Error(`${context}: extension id must be a lowercase stable identifier`);
 	}
-	if (!hasOnlyKeys(entry as Record<string, unknown>, ["id", "path", "activation", "targets", "manifest", "ui"])) {
+	if (!hasOnlyKeys(entry as Record<string, unknown>, ["id", "path", "activation", "manifest", "ui"])) {
 		throw new Error(`${context}: extension entry contains unknown fields`);
 	}
 	if (typeof entry.path !== "string" || !entry.path.trim()) {
@@ -326,11 +312,7 @@ function assertStrictExtensionEntry(
 	if (entry.activation !== undefined && parseExtensionActivation(entry.activation) === undefined) {
 		throw new Error(`${context}: extension activation is invalid`);
 	}
-	const targets = parseExtensionTargets(entry.targets);
-	if (!targets || targets.length === 0) {
-		throw new Error(`${context}: extension targets must explicitly contain pi, mortise, or both`);
-	}
-	if (entry.manifest !== undefined) assertValidExtensionManifest(entry.manifest, extensionId, targets, context);
+	if (entry.manifest !== undefined) assertValidExtensionManifest(entry.manifest, extensionId, context);
 	if (entry.ui !== undefined) assertValidExtensionUI(entry.ui, context);
 }
 
@@ -353,7 +335,6 @@ function getSettingsStringEntries(
 function withExtensionMetadata(
 	metadata: PathMetadata,
 	activation: ExtensionActivation | undefined,
-	targets: ExtensionTarget[] | undefined,
 	extensionId?: string,
 	extensionUI?: ExtensionManifestUIV1,
 	extensionManifest?: ExtensionManifestV1,
@@ -362,19 +343,12 @@ function withExtensionMetadata(
 	if (activation) {
 		next.activation = activation;
 	}
-	if (targets !== undefined) {
-		next.targets = targets;
-	}
 	if (extensionId) {
 		next.extensionId = extensionId;
 	}
 	if (extensionUI) next.extensionUI = extensionUI;
 	if (extensionManifest) next.extensionManifest = extensionManifest;
 	return next;
-}
-
-function extensionTargetsMatch(metadata: PathMetadata, target: ExtensionTarget): boolean {
-	return (metadata.targets ?? [DEFAULT_EXTENSION_TARGET]).includes(target);
 }
 
 function toPosixPath(p: string): string {
@@ -656,7 +630,6 @@ function resolveExtensionEntries(dir: string): ExtensionDiscoveryEntry[] | null 
 						id: entry.id,
 						path: resolvedExtPath,
 						activation: getResourceEntryActivation(entry),
-						targets: getResourceEntryTargets(entry)!,
 						manifest: getResourceEntryManifest(entry),
 						ui: getResourceEntryUI(entry),
 					});
@@ -870,19 +843,12 @@ export class ResourceResolver {
 	private readonly agentDir: string;
 	private readonly projectConfigDir: string;
 	private readonly settingsManager: SettingsManager;
-	private readonly extensionTarget: ExtensionTarget;
-	private readonly hostVersions: Record<ExtensionTarget, string>;
 
 	constructor(options: ResourceResolverOptions) {
 		this.cwd = resolvePath(options.cwd);
 		this.agentDir = resolvePath(options.agentDir);
 		this.projectConfigDir = options.projectConfigDir ?? getProjectConfigDir();
 		this.settingsManager = options.settingsManager;
-		this.extensionTarget = options.extensionTarget ?? DEFAULT_EXTENSION_TARGET;
-		this.hostVersions = {
-			pi: options.hostVersions?.pi ?? VERSION,
-			mortise: options.hostVersions?.mortise ?? process.env.MORTISE_AGENT_VERSION ?? VERSION,
-		};
 	}
 
 	async resolve(): Promise<ResolvedPaths> {
@@ -962,15 +928,7 @@ export class ResourceResolver {
 	): void {
 		const resolvedPath = resolvePath(entry.path, baseDir, { homeDir: getHomeDir(), trim: true });
 		if (!existsSync(resolvedPath)) return;
-		const targets = parseExtensionTargets(entry.targets)!;
-		const directMetadata = withExtensionMetadata(
-			metadata,
-			entry.activation,
-			targets,
-			entry.id,
-			entry.ui,
-			entry.manifest,
-		);
+		const directMetadata = withExtensionMetadata(metadata, entry.activation, entry.id, entry.ui, entry.manifest);
 		if (!statSync(resolvedPath).isDirectory()) {
 			this.addResource(target, resolvedPath, directMetadata);
 			return;
@@ -983,7 +941,6 @@ export class ResourceResolver {
 				withExtensionMetadata(
 					metadata,
 					entry.activation ?? discovered.activation,
-					targets,
 					discovered.id,
 					discovered.ui,
 					discovered.manifest,
@@ -1085,7 +1042,7 @@ export class ResourceResolver {
 			this.addResource(
 				target,
 				entry.path,
-				withExtensionMetadata(metadata, entry.activation, entry.targets, entry.id, entry.ui, entry.manifest),
+				withExtensionMetadata(metadata, entry.activation, entry.id, entry.ui, entry.manifest),
 			);
 		}
 	}
@@ -1110,7 +1067,6 @@ export class ResourceResolver {
 	}
 
 	private resolveExtensionManifestGraph(entries: ResolvedResource[]): ResolvedResource[] {
-		const hostVersion = this.hostVersions[this.extensionTarget];
 		const originalIndex = new Map(entries.map((entry, index) => [entry, index]));
 		const byId = new Map<string, ResolvedResource>();
 		const addDiagnostic = (entry: ResolvedResource, diagnostic: ExtensionManifestDiagnostic): void => {
@@ -1130,7 +1086,6 @@ export class ResourceResolver {
 		};
 
 		for (const entry of entries) {
-			entry.metadata.extensionHostVersion = hostVersion;
 			entry.metadata.extensionManifestDiagnostics = [];
 			const id = entry.metadata.extensionId;
 			if (!id) continue;
@@ -1149,22 +1104,11 @@ export class ResourceResolver {
 
 		for (const entry of entries) {
 			const id = entry.metadata.extensionId;
-			const manifest = entry.metadata.extensionManifest;
-			if (!id || !manifest) {
-				if (id)
-					addDiagnostic(entry, {
-						code: "legacy-manifest",
-						severity: "warning",
-						message: "Extension has no versioned manifest",
-					});
-				continue;
-			}
-			const range = manifest.engines[this.extensionTarget]!;
-			if (!satisfies(hostVersion, range, { includePrerelease: true })) {
-				block(entry, {
-					code: "host-incompatible",
-					severity: "error",
-					message: `${manifest.name} ${manifest.version} requires ${this.extensionTarget} ${range}; current version is ${hostVersion}`,
+			if (id && !entry.metadata.extensionManifest) {
+				addDiagnostic(entry, {
+					code: "legacy-manifest",
+					severity: "warning",
+					message: "Extension has no versioned manifest",
 				});
 			}
 		}
@@ -1310,9 +1254,9 @@ export class ResourceResolver {
 	private toResolvedPaths(accumulator: ResourceAccumulator): ResolvedPaths {
 		const convert = (entries: Map<string, { metadata: PathMetadata; enabled: boolean }>): ResolvedResource[] =>
 			Array.from(entries.entries()).map(([path, value]) => ({ path, ...value }));
-		const extensions = convert(accumulator.extensions)
-			.filter((entry) => extensionTargetsMatch(entry.metadata, this.extensionTarget))
-			.sort((a, b) => resourcePrecedenceRank(a.metadata) - resourcePrecedenceRank(b.metadata));
+		const extensions = convert(accumulator.extensions).sort(
+			(a, b) => resourcePrecedenceRank(a.metadata) - resourcePrecedenceRank(b.metadata),
+		);
 		return {
 			extensions: this.resolveExtensionManifestGraph(extensions),
 			skills: convert(accumulator.skills),

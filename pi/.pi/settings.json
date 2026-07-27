@@ -2,18 +2,15 @@
   "extensions": [
     {
       "id": "prompt-url-widget",
-      "path": "./extensions/prompt-url-widget.ts",
-      "targets": ["pi"]
+      "path": "./extensions/prompt-url-widget.ts"
     },
     {
       "id": "redraws",
-      "path": "./extensions/redraws.ts",
-      "targets": ["pi"]
+      "path": "./extensions/redraws.ts"
     },
     {
       "id": "tps",
-      "path": "./extensions/tps.ts",
-      "targets": ["pi"]
+      "path": "./extensions/tps.ts"
     }
   ]
 }

@@ -74,7 +74,6 @@ describe.skipIf(!API_KEY)("Compaction extensions", () => {
 
 		return {
 			id: "test-extension",
-			target: "pi",
 			path: "test-extension",
 			resolvedPath: "/test/test-extension.ts",
 			sourceInfo: createSyntheticSourceInfo("<test:test-extension>", { source: "test" }),
@@ -229,7 +228,6 @@ describe.skipIf(!API_KEY)("Compaction extensions", () => {
 	it("should continue with default compaction if extension throws error", async () => {
 		const throwingExtension: Extension = {
 			id: "throwing-extension",
-			target: "pi",
 			path: "throwing-extension",
 			resolvedPath: "/test/throwing-extension.ts",
 			sourceInfo: createSyntheticSourceInfo("<test:throwing-extension>", { source: "test" }),
@@ -278,7 +276,6 @@ describe.skipIf(!API_KEY)("Compaction extensions", () => {
 
 		const extension1: Extension = {
 			id: "extension1",
-			target: "pi",
 			path: "extension1",
 			resolvedPath: "/test/extension1.ts",
 			sourceInfo: createSyntheticSourceInfo("<test:extension1>", { source: "test" }),
@@ -309,7 +306,6 @@ describe.skipIf(!API_KEY)("Compaction extensions", () => {
 
 		const extension2: Extension = {
 			id: "extension2",
-			target: "pi",
 			path: "extension2",
 			resolvedPath: "/test/extension2.ts",
 			sourceInfo: createSyntheticSourceInfo("<test:extension2>", { source: "test" }),

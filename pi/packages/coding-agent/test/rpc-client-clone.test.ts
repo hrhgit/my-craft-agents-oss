@@ -277,6 +277,32 @@ describe("RpcClient Pi shell API methods", () => {
 });
 
 describe("PiRuntimeHandle", () => {
+	it("sends resume as a control command with the persisted system prompt", async () => {
+		const client = new RpcClient();
+		const requestRuntime = vi.spyOn(client, "requestRuntime").mockResolvedValue({
+			type: "response",
+			command: "continue",
+			success: true,
+		});
+		const handle = new PiRuntimeHandle(client, {
+			runtimeId: "runtime-a",
+			cwd: "E:/project",
+			sessionId: "session-a",
+			isStreaming: false,
+		});
+
+		await handle.continue({ systemPrompt: "persisted child template" });
+
+		expect(requestRuntime).toHaveBeenCalledWith(
+			"runtime-a",
+			{
+				type: "continue",
+				systemPrompt: "persisted child template",
+			},
+			undefined,
+		);
+	});
+
 	it("waitForIdle ignores retrying agent_end and resolves on runtime agent_settled", async () => {
 		const client = new RpcClient();
 		const internals = client as unknown as RpcClientInternals;
@@ -434,7 +460,6 @@ describe("PiRuntimeHandle", () => {
 		const handle = await client.openRuntime({
 			runtimeId: "runtime-a",
 			cwd: "E:/project",
-			extensionTarget: "pi",
 			inMemory: true,
 		});
 		await handle.getState();
@@ -444,7 +469,6 @@ describe("PiRuntimeHandle", () => {
 			type: "open_runtime",
 			runtimeId: "runtime-a",
 			cwd: "E:/project",
-			extensionTarget: "pi",
 			inMemory: true,
 		});
 		expect(send).toHaveBeenNthCalledWith(2, { type: "get_state", runtimeId: "runtime-a" }, undefined);

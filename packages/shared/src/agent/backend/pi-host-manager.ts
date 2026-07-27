@@ -17,6 +17,7 @@ export interface PiHostLease {
   runtime: PiRuntimeHandle;
   capabilities: RpcCapabilities;
   startupEvents: RpcClientEvent[];
+  acquireRuntime(options: RpcRuntimeOpenOptions): Promise<PiHostLease>;
   release(): Promise<void>;
 }
 
@@ -34,6 +35,7 @@ interface HostRecord {
   capabilities?: RpcCapabilities;
   runtimeCount: number;
   runtimes: Map<string, { handle: PiRuntimeHandle; refCount: number }>;
+  pendingRuntimeOpens: Map<string, Promise<{ handle: PiRuntimeHandle; startupEvents: RpcClientEvent[] }>>;
   pendingStartupEvents: Map<string, RpcClientEvent[]>;
   idleTimer?: ReturnType<typeof setTimeout>;
   unsubscribeLifecycle?: () => void;
@@ -100,26 +102,34 @@ export class PiHostManager {
       );
     }
 
-    const requestedRuntimeId = options.runtime.runtimeId;
+    return this.acquireRuntimeLease(record, capabilities, options.runtime);
+  }
+
+  private async acquireRuntimeLease(
+    record: HostRecord,
+    capabilities: RpcCapabilities,
+    options: RpcRuntimeOpenOptions,
+  ): Promise<PiHostLease> {
+    const requestedRuntimeId = options.runtimeId;
     let runtimeRecord = requestedRuntimeId ? record.runtimes.get(requestedRuntimeId) : undefined;
     let startupEvents: RpcClientEvent[] = [];
     if (!runtimeRecord) {
-      const captureId = requestedRuntimeId;
-      if (captureId) record.pendingStartupEvents.set(captureId, startupEvents);
-      let handle: PiRuntimeHandle;
+      let pending = requestedRuntimeId ? record.pendingRuntimeOpens.get(requestedRuntimeId) : undefined;
+      if (!pending) {
+        pending = this.openRuntime(record, options);
+        if (requestedRuntimeId) record.pendingRuntimeOpens.set(requestedRuntimeId, pending);
+      }
       try {
-        handle = await record.client.openRuntime(options.runtime);
-      } catch (error) {
-        if (record.runtimeCount === 0) await this.stopRecord(record, 'runtime-open-failed');
-        throw error;
+        const opened = await pending;
+        startupEvents = opened.startupEvents;
+        runtimeRecord = record.runtimes.get(opened.handle.runtimeId)
+          ?? { handle: opened.handle, refCount: 0 };
+        record.runtimes.set(opened.handle.runtimeId, runtimeRecord);
       } finally {
-        if (captureId) {
-          startupEvents = record.pendingStartupEvents.get(captureId) ?? startupEvents;
-          record.pendingStartupEvents.delete(captureId);
+        if (requestedRuntimeId && record.pendingRuntimeOpens.get(requestedRuntimeId) === pending) {
+          record.pendingRuntimeOpens.delete(requestedRuntimeId);
         }
       }
-      runtimeRecord = { handle, refCount: 0 };
-      record.runtimes.set(handle.runtimeId, runtimeRecord);
     }
     runtimeRecord.refCount++;
     const runtime = runtimeRecord.handle;
@@ -130,28 +140,49 @@ export class PiHostManager {
       workspaceRootPath: runtime.runtimeSummary.cwd,
     });
 
-    let released = false;
+    let releasePromise: Promise<void> | null = null;
     return {
       client: record.client,
       runtime,
       capabilities,
       startupEvents,
-      release: async () => {
-        if (released) return;
-        released = true;
-        try {
-          runtimeRecord.refCount = Math.max(0, runtimeRecord.refCount - 1);
-          record.runtimeCount = Math.max(0, record.runtimeCount - 1);
-          if (runtimeRecord.refCount === 0) {
-            record.runtimes.delete(runtime.runtimeId);
-            await runtime.close();
-            this.log('info', 'runtime.close', record, { runtimeId: runtime.runtimeId });
+      acquireRuntime: runtimeOptions => this.acquireRuntimeLease(record, capabilities, runtimeOptions),
+      release: () => {
+        if (releasePromise) return releasePromise;
+        releasePromise = (async () => {
+          try {
+            runtimeRecord.refCount = Math.max(0, runtimeRecord.refCount - 1);
+            record.runtimeCount = Math.max(0, record.runtimeCount - 1);
+            if (runtimeRecord.refCount === 0) {
+              record.runtimes.delete(runtime.runtimeId);
+              await runtime.close();
+              this.log('info', 'runtime.close', record, { runtimeId: runtime.runtimeId });
+            }
+          } finally {
+            this.scheduleIdleStop(record);
           }
-        } finally {
-          this.scheduleIdleStop(record);
-        }
+        })();
+        return releasePromise;
       },
     };
+  }
+
+  private async openRuntime(
+    record: HostRecord,
+    options: RpcRuntimeOpenOptions,
+  ): Promise<{ handle: PiRuntimeHandle; startupEvents: RpcClientEvent[] }> {
+    const captureId = options.runtimeId;
+    let startupEvents: RpcClientEvent[] = [];
+    if (captureId) record.pendingStartupEvents.set(captureId, startupEvents);
+    try {
+      const handle = await record.client.openRuntime(options);
+      return { handle, startupEvents: captureId ? record.pendingStartupEvents.get(captureId) ?? startupEvents : startupEvents };
+    } catch (error) {
+      if (record.runtimeCount === 0) await this.stopRecord(record, 'runtime-open-failed');
+      throw error;
+    } finally {
+      if (captureId) record.pendingStartupEvents.delete(captureId);
+    }
   }
 
   async dispose(): Promise<void> {
@@ -198,6 +229,7 @@ export class PiHostManager {
       ready: Promise.resolve(undefined as never),
       runtimeCount: 0,
       runtimes: new Map(),
+      pendingRuntimeOpens: new Map(),
       pendingStartupEvents: new Map(),
     };
     this.log('info', 'host.start', record, { cwd: options.cwd, runtimePath: options.runtimePath });

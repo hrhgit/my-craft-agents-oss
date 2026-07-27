@@ -595,7 +595,7 @@ export async function deleteSession(workspaceRootPath: string, sessionId: string
     // 1. Delete the Pi tree JSONL session file (the authoritative transcript)
     const sessionFile = getSessionFilePath(workspaceRootPath, sessionId);
     if (existsSync(sessionFile)) {
-      try { rmSync(sessionFile); } catch { /* ignore */ }
+      rmSync(sessionFile);
     }
 
     // 2. Delete the sidecar directory (.mortise/{sessionId}/ with attachments, plans, etc.)
@@ -605,7 +605,8 @@ export async function deleteSession(workspaceRootPath: string, sessionId: string
     }
 
     return true;
-  } catch {
+  } catch (error) {
+    debug(`[sessions] Failed to delete session "${sessionId}":`, error);
     return false;
   }
 }

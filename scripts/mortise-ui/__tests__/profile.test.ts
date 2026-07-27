@@ -246,7 +246,6 @@ describe('mortise-ui profiles', () => {
     expect(settings.extensions).toEqual([expect.objectContaining({
       id: 'dev-extension',
       path: resolve(extensionRoot, 'index.ts'),
-      targets: ['mortise'],
       manifest: expect.objectContaining({ schemaVersion: 1, version: '1.2.3' }),
     })])
     expect(profile.mountedExtensions).toEqual([{
@@ -256,7 +255,6 @@ describe('mortise-ui profiles', () => {
         id: 'dev-extension',
         path: resolve(extensionRoot, 'index.ts'),
         version: '1.2.3',
-        targets: ['mortise'],
         overrodeExisting: false,
       }],
     }])
@@ -271,8 +269,8 @@ describe('mortise-ui profiles', () => {
     writeFileSync(join(mortise, 'agent', 'settings.json'), JSON.stringify({
       provider: 'test',
       extensions: [
-        { id: 'keep-extension', path: 'C:\\keep.ts', targets: ['mortise'] },
-        { id: 'dev-extension', path: 'C:\\old.ts', targets: ['mortise'] },
+        { id: 'keep-extension', path: 'C:\\keep.ts' },
+        { id: 'dev-extension', path: 'C:\\old.ts' },
       ],
     }))
     const extensionRoot = createExtensionPackage(root, 'dev-extension')
@@ -291,7 +289,7 @@ describe('mortise-ui profiles', () => {
     expect(profile.mountedExtensions?.[0]?.entries[0]?.overrodeExisting).toBe(true)
   })
 
-  it('rejects duplicate mounted IDs and non-Mortise packages before startup', async () => {
+  it('rejects duplicate mounted IDs and removed target fields before startup', async () => {
     const root = mkdtempSync(join(tmpdir(), 'mortise-ui-profile-')); roots.push(root)
     const first = createExtensionPackage(root, 'duplicate', 'first')
     const second = createExtensionPackage(root, 'duplicate', 'second')
@@ -299,10 +297,10 @@ describe('mortise-ui profiles', () => {
       profileDir: join(root, 'duplicate-profile'), mode: 'isolated', extensionPaths: [first, second],
     })).rejects.toThrow('Mounted extension id is duplicated: duplicate')
 
-    const piOnly = createExtensionPackage(root, 'pi-only', 'pi-only', ['pi'])
+    const targeted = createExtensionPackage(root, 'targeted', 'targeted', { targets: ['pi'] })
     await expect(prepareProfile({
-      profileDir: join(root, 'pi-only-profile'), mode: 'isolated', extensionPaths: [piOnly],
-    })).rejects.toThrow('targets must include mortise')
+      profileDir: join(root, 'targeted-profile'), mode: 'isolated', extensionPaths: [targeted],
+    })).rejects.toThrow('contains unknown field targets')
   })
 })
 
@@ -349,7 +347,12 @@ function readStateRecord(mortiseConfigDir: string, namespace: string): JsonValue
   }
 }
 
-function createExtensionPackage(root: string, id: string, directory = id, targets = ['mortise']): string {
+function createExtensionPackage(
+  root: string,
+  id: string,
+  directory = id,
+  entryOverrides: Record<string, unknown> = {},
+): string {
   const extensionRoot = join(root, directory)
   mkdirSync(extensionRoot, { recursive: true })
   writeFileSync(join(extensionRoot, 'index.ts'), `export default function ${id.replaceAll('-', '_')}() {}\n`)
@@ -360,13 +363,12 @@ function createExtensionPackage(root: string, id: string, directory = id, target
       extensions: [{
         id,
         path: './index.ts',
-        targets,
+        ...entryOverrides,
         manifest: {
           schemaVersion: 1,
           name: id,
           version: '1.2.3',
           author: { name: 'Test Author' },
-          engines: { mortise: '^0.1.0' },
           capabilities: [],
           permissions: [],
         },

@@ -31,7 +31,7 @@ Maintain the Pi host manager, driver boundary, extension settings, reload interr
 Do not own extension-rendered GUI, Pi's internal extension API, or provider transport implementations.
 
 ## Contracts and invariants
-Targets accept only `pi` and `mortise`; Mortise GlobalHost discovery and child processes are pinned to the runtime's explicit Mortise Agent root rather than inherited Pi defaults; reload interrupts running sessions only after confirmation; capability negotiation precedes use.
+Extension manifests have one Mortise runtime contract and do not accept `targets` or `engines`; Mortise GlobalHost discovery and child processes are pinned to the runtime's explicit Mortise Agent root rather than inherited Pi defaults; reload interrupts running sessions only after confirmation; capability negotiation precedes use; parent runtime teardown owns every foreground and background child-task lease.
 
 ## Architecture and entry points
 Shared agent backends manage Pi hosts; server-core bridges extension contributions and interactions to connected clients.
@@ -46,6 +46,7 @@ Run host recovery, routing, extension bridge, reload, and capability tests.
 Subprocess failure can be misreported as session failure; extensions can evolve faster than a packaged host facade.
 
 ## Semantic history
+- 2026-07-27: Removed Pi/Mortise target and engine selection in favor of one host-neutral Extension declaration, and made parent runtime teardown own all foreground and background child-task leases.
 - 2026-07-25: Made immutable host mode an explicit validated runtime contract for backend startup, resolving Pi, Bun/Node, ripgrep, Session services, and tool environments only from the sealed capsule instead of packaged flags, PATH, or live-tree fallbacks.
 - 2026-07-23: Pinned Mortise GlobalHost startup, session runtimes, isolated runtimes, and in-process skill resolution to the Mortise project root, eliminating workspace `.pi` fallback at the embedded Pi boundary.
 - 2026-07-23: Bound shared Pi GlobalHost discovery and child process configuration to each Mortise runtime's explicit Agent root, preventing Electron-like callers from falling back to independent Pi storage.

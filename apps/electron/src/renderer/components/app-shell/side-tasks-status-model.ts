@@ -26,11 +26,11 @@ export function sideTaskTitle(
 
 export function partitionSideTasks(
   tasks: PiChildSessionInfo[],
-  runningSessionIds: ReadonlySet<string>,
+  runningSessionIds: ReadonlySet<string> = new Set(),
 ): SideTaskSections {
   const sections: SideTaskSections = { running: [], completed: [] }
   for (const task of tasks) {
-    sections[runningSessionIds.has(task.sessionId) ? 'running' : 'completed'].push(task)
+    sections[task.status === 'running' || runningSessionIds.has(task.sessionId) ? 'running' : 'completed'].push(task)
   }
   return sections
 }

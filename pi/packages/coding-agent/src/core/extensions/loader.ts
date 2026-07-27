@@ -38,7 +38,6 @@ import type {
 	ExtensionFactoryV2,
 	ExtensionManifestUIV1,
 	ExtensionRuntime,
-	ExtensionTarget,
 	LoadExtensionsResult,
 	ProviderConfig,
 	RegisteredCommand,
@@ -47,12 +46,10 @@ import type {
 
 export interface ExtensionLoadMetadata {
 	id: string;
-	target: ExtensionTarget;
 	agentDir: string;
 	manifest?: ExtensionManifestV1;
 	manifestStatus?: ExtensionManifestStatus;
 	manifestDiagnostics?: ExtensionManifestDiagnostic[];
-	hostVersion?: string;
 	manifestUI?: ExtensionManifestUIV1;
 }
 
@@ -196,7 +193,6 @@ function createExtensionAPI(
 	const api = {
 		environment: Object.freeze({
 			id: environment.id,
-			target: environment.target,
 			sourcePath: extension.resolvedPath,
 			dataDir,
 		}),
@@ -372,10 +368,7 @@ async function loadExtensionModule(extensionPath: string) {
 function createExtension(
 	extensionPath: string,
 	resolvedPath: string,
-	identity: Pick<
-		ExtensionLoadMetadata,
-		"id" | "target" | "manifest" | "manifestStatus" | "manifestDiagnostics" | "hostVersion" | "manifestUI"
-	>,
+	identity: Pick<ExtensionLoadMetadata, "id" | "manifest" | "manifestStatus" | "manifestDiagnostics" | "manifestUI">,
 	activation: ExtensionActivation = "beforeFirstRequest",
 ): Extension {
 	const source =
@@ -386,7 +379,6 @@ function createExtension(
 
 	return {
 		id: identity.id,
-		target: identity.target,
 		path: extensionPath,
 		resolvedPath,
 		sourceInfo: createSyntheticSourceInfo(extensionPath, { source, baseDir }),
@@ -394,7 +386,6 @@ function createExtension(
 		manifest: identity.manifest,
 		manifestStatus: identity.manifestStatus ?? "legacy",
 		manifestDiagnostics: [...(identity.manifestDiagnostics ?? [])],
-		hostVersion: identity.hostVersion ?? "0.0.0",
 		manifestUI: identity.manifestUI,
 		hostCapabilities: [],
 		handlers: new Map(),
@@ -440,7 +431,7 @@ export async function loadExtensionFromFactory(
 	runtime: ExtensionRuntime,
 	extensionPath = "<inline>",
 	activation: ExtensionActivation = "beforeFirstRequest",
-	metadata: ExtensionLoadMetadata = { id: "inline", target: "pi", agentDir: getAgentDir() },
+	metadata: ExtensionLoadMetadata = { id: "inline", agentDir: getAgentDir() },
 ): Promise<Extension> {
 	const extension = createExtension(extensionPath, extensionPath, metadata, activation);
 	const resolvedCwd = resolvePath(cwd);
@@ -466,7 +457,7 @@ export async function loadExtensionsIntoRuntime(
 		const activation = activationByPath?.get(extPath) ?? activationByPath?.get(resolvedPath);
 		const metadata = metadataByPath?.get(extPath) ?? metadataByPath?.get(resolvedPath);
 		if (!metadata) {
-			errors.push({ path: extPath, error: "Missing strict extension metadata (id, target, agentDir)" });
+			errors.push({ path: extPath, error: "Missing strict extension metadata (id, agentDir)" });
 			continue;
 		}
 		const { extension, error } = await loadExtension(extPath, resolvedCwd, eventBus, runtime, metadata, activation);

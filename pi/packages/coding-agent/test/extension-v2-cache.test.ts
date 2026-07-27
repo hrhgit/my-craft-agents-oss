@@ -28,7 +28,7 @@ export default defineExtensionV2({ isolation: "session", session(pi) { pi.regist
 			"utf8",
 		);
 
-		const metadataByPath = new Map([[extensionPath, { id: "cache-test", target: "pi" as const, agentDir: root }]]);
+		const metadataByPath = new Map([[extensionPath, { id: "cache-test", agentDir: root }]]);
 		const first = await loadExtensionsIntoRuntime(
 			[extensionPath],
 			root,

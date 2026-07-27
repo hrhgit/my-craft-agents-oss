@@ -13,7 +13,7 @@ import type { Skill } from "../src/core/skills.ts";
 import { createSyntheticSourceInfo } from "../src/core/source-info.ts";
 
 function extensionEntry(id: string, path: string, activation?: "startup" | "beforeFirstRequest") {
-	return { id, path, targets: ["pi" as const], ...(activation ? { activation } : {}) };
+	return { id, path, ...(activation ? { activation } : {}) };
 }
 
 describe("DefaultResourceLoader", () => {

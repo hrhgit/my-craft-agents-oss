@@ -47,6 +47,9 @@ export interface TreeSessionSpawnConfig {
   enabledSources?: string[];
   permissionMode?: string;
   thinkingLevel?: string;
+  template?: string;
+  tools?: string[];
+  background?: boolean;
 }
 
 /** On-disk Pi tree JSONL v3 header (file 第一行). */

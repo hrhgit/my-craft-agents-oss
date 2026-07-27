@@ -1215,7 +1215,6 @@ export interface ExtensionHostAPI {
 
 export interface ExtensionEnvironment {
 	id: string;
-	target: ExtensionTarget;
 	sourcePath: string;
 	dataDir: string;
 }
@@ -1521,7 +1520,6 @@ export function defineExtensionV2(definition: ExtensionV2Definition): ExtensionF
 // ============================================================================
 
 export type ExtensionActivation = "startup" | "beforeFirstRequest" | "lazy";
-export type ExtensionTarget = "pi" | "mortise";
 
 export type ExtensionUICategory =
 	| "ui"
@@ -1713,7 +1711,6 @@ export interface ExtensionRuntime extends ExtensionRuntimeState, ExtensionAction
 /** Loaded extension with all registered items. */
 export interface Extension {
 	id: string;
-	target: ExtensionTarget;
 	path: string;
 	resolvedPath: string;
 	sourceInfo: SourceInfo;
@@ -1721,7 +1718,6 @@ export interface Extension {
 	manifest?: ExtensionManifestV1;
 	manifestStatus?: ExtensionManifestStatus;
 	manifestDiagnostics?: ExtensionManifestDiagnostic[];
-	hostVersion?: string;
 	manifestUI?: ExtensionManifestUIV1;
 	hostCapabilities?: HostCapabilityDeclaration[];
 	handlers: Map<string, HandlerFn[]>;

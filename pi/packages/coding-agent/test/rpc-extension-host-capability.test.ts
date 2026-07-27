@@ -41,9 +41,7 @@ describe("Pi RPC extension host capabilities", () => {
 		writeFileSync(
 			join(root, "settings.json"),
 			JSON.stringify({
-				extensions: [
-					{ id: "notification-integration", path: extensionPath, activation: "startup", targets: ["mortise"] },
-				],
+				extensions: [{ id: "notification-integration", path: extensionPath, activation: "startup" }],
 			}),
 			"utf8",
 		);

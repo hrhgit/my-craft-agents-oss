@@ -1161,6 +1161,11 @@ export class AgentSession {
 		return this.sessionManager.getSessionFile();
 	}
 
+	/** Directory containing this session and its Mortise-owned child tasks. */
+	get sessionDir(): string | undefined {
+		return this.sessionManager.getSessionDir();
+	}
+
 	/** Current session ID */
 	get sessionId(): string {
 		return this.sessionManager.getSessionId();
@@ -1283,6 +1288,63 @@ export class AgentSession {
 				this._resolveLogicalRun();
 			}
 		}
+	}
+
+	/** Resume an interrupted run from persisted history without appending a synthetic user message. */
+	async continueFromHistory(preflightResult?: (success: boolean) => void, systemPrompt?: string): Promise<void> {
+		try {
+			await this.prepareForFirstRequest();
+			if (systemPrompt !== undefined) {
+				this._hostSystemPromptOverride = systemPrompt;
+				this.refreshSystemPrompt();
+			}
+			if (this.isStreaming) {
+				throw new Error("Agent is already processing. Wait for completion before continuing.");
+			}
+			if (!this.model) throw new Error(formatNoModelSelectedMessage());
+			if (!this._modelRegistry.hasConfiguredAuth(this.model)) {
+				throw new Error(formatNoApiKeyFoundMessage(this.model.provider));
+			}
+			const lastMessage = this.messages.at(-1);
+			if (!lastMessage) throw new Error("No history to resume");
+			if (lastMessage.role === "assistant") {
+				if (
+					lastMessage.stopReason !== "aborted" &&
+					lastMessage.stopReason !== "error" &&
+					lastMessage.stopReason !== "toolUse"
+				) {
+					throw new Error("Completed history cannot be resumed without a new message");
+				}
+				// Keep the interrupted branch in JSONL for audit, but move both the
+				// persistent tree leaf and live context back to the preceding real input.
+				const interruptedEntry = [...this.sessionManager.getBranch()]
+					.reverse()
+					.find((entry) => entry.type === "message" && entry.message.role === "assistant");
+				if (interruptedEntry?.type === "message") {
+					if (interruptedEntry.parentId) this.sessionManager.branch(interruptedEntry.parentId);
+					else this.sessionManager.resetLeaf();
+					this.agent.state.messages = this.sessionManager.buildSessionContext().messages;
+				} else {
+					throw new Error("Interrupted history leaf is unavailable");
+				}
+			}
+		} catch (error) {
+			preflightResult?.(false);
+			throw error;
+		}
+		preflightResult?.(true);
+		try {
+			await this.agent.continue();
+			while (await this._handlePostAgentRun()) await this.agent.continue();
+		} finally {
+			try {
+				await this._emitAgentSettled();
+			} finally {
+				this._flushPendingBashMessages();
+				this._resolveLogicalRun();
+			}
+		}
+		await this.waitForRetry();
 	}
 
 	private async _convertMessagesForCompaction(messages: AgentMessage[]): Promise<Message[]> {

@@ -10,7 +10,6 @@
 - Added built-in active session/workspace tracking for `/switch`, with workspace-first selection and path browsing.
 - Added `/network-reset` to clear in-process network routing state and restart the sidecar without starting a new session.
 - Added extension activation stages so extensions can load at startup, before the first model request, or lazily.
-- Added extension target declarations so Pi and Mortise hosts can load only compatible extensions.
 - Added the development-only `ctx.ui.validation` contract for extensions to publish host-validated UI readiness, actions, scenarios, and semantic state over RPC.
 
 ### Changed
@@ -25,7 +24,6 @@
 
 ### Fixed
 
-- Fixed Mortise extension target validation to reject legacy or unknown targets instead of loading them as current Mortise extensions.
 - Fixed Windows clipboard image paste to fall back to the Windows Clipboard API via PowerShell when the native clipboard addon does not expose copied screenshot or browser image data.
 - Fixed sidecar-backed HTTP fetches to stream `text/event-stream` responses incrementally instead of buffering until the upstream response completes.
 - Fixed extension access to the shared session activity registry so background agents use the active runtime `agentDir` instead of falling back to the global config directory, and updated the subagent example to publish logical agent activity while delegated tasks run.
@@ -36,5 +34,6 @@
 
 ### Removed
 
+- Removed extension host targets, engine compatibility fields, and host-specific catalog branches in favor of one Mortise extension contract.
 - Removed the experimental `pi mux` terminal multiplexer mode.
 - Removed the experimental built-in tool result deduplication short-circuiting.

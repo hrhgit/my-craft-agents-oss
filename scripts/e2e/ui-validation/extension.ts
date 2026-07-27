@@ -56,13 +56,11 @@ await writeFile(join(extensionPackageRoot, 'package.json'), `${JSON.stringify({
       id: 'mortise-gui-example',
       path: './index.ts',
       activation: 'startup',
-      targets: ['mortise'],
       manifest: {
         schemaVersion: 1,
         name: 'Mortise GUI Example',
         version: '1.0.0',
         author: { name: 'Mortise Contributors' },
-        engines: { mortise: '^0.1.0' },
         capabilities: ['ui.contributions'],
         permissions: [],
       },

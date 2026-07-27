@@ -22,6 +22,9 @@ describe('SessionManager child session listing', () => {
       modified: '2026-01-01T00:00:00.000Z',
       messageCount: 1,
       firstMessage: 'Check the child task.',
+      status: 'completed' as const,
+      persistedClientMutationIds: [],
+      history: [],
     }]
     const agent = {
       getSessionId: mock(() => null),

@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { AgentSessionRuntime } from "./agent-session-runtime.ts";
 import type { SessionStartEvent } from "./extensions/index.ts";
-import type { ExtensionTarget } from "./extensions/types.ts";
 import {
 	GlobalBackgroundTaskCoordinator,
 	type GlobalBackgroundTaskEventListener,
@@ -18,7 +17,6 @@ export interface PiGlobalHostRuntimeOpenOptions {
 	sessionStartEvent?: SessionStartEvent;
 	deferResourceLoad?: boolean;
 	persistInitialState?: boolean;
-	extensionTarget: ExtensionTarget;
 }
 
 export interface PiGlobalHostRuntimeSnapshot {

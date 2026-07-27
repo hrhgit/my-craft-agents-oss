@@ -1,7 +1,5 @@
 import { valid, validRange } from "semver";
 
-export type ExtensionManifestHost = "pi" | "mortise";
-
 export interface ExtensionManifestAuthorV1 {
 	name: string;
 	url?: string;
@@ -11,6 +9,15 @@ export interface ExtensionManifestLoadOrderV1 {
 	priority?: number;
 	after?: string[];
 	before?: string[];
+}
+
+export interface ExtensionSubagentTemplateV1 {
+	id: string;
+	name: string;
+	description: string;
+	systemPrompt: string;
+	tools?: string[];
+	model?: string;
 }
 
 export interface ExtensionManifestV1 {
@@ -23,19 +30,18 @@ export interface ExtensionManifestV1 {
 	homepage?: string;
 	repository?: string;
 	license?: string;
-	engines: Partial<Record<ExtensionManifestHost, string>>;
 	dependencies?: Record<string, string>;
 	optionalDependencies?: Record<string, string>;
 	conflicts?: Record<string, string>;
 	capabilities?: string[];
 	permissions?: string[];
+	subagents?: ExtensionSubagentTemplateV1[];
 	loadOrder?: ExtensionManifestLoadOrderV1;
 }
 
 export type ExtensionManifestDiagnosticCode =
 	| "legacy-manifest"
 	| "duplicate-id"
-	| "host-incompatible"
 	| "missing-dependency"
 	| "dependency-version-mismatch"
 	| "optional-dependency-missing"
@@ -55,6 +61,7 @@ export type ExtensionManifestStatus = "compatible" | "warning" | "blocked" | "le
 
 const EXTENSION_ID_PATTERN = /^[a-z0-9](?:[a-z0-9.-]{0,126}[a-z0-9])?$/;
 const DECLARATION_ID_PATTERN = /^[a-z][a-z0-9.-]{0,127}$/;
+const TOOL_ID_PATTERN = /^[a-z][a-z0-9._-]{0,255}$/;
 
 function hasOnlyKeys(value: Record<string, unknown>, allowed: readonly string[]): boolean {
 	return Object.keys(value).every((key) => allowed.includes(key));
@@ -114,6 +121,56 @@ function assertDeclarationList(value: unknown, field: string, context: string): 
 	}
 }
 
+function assertToolList(value: unknown, context: string): asserts value is string[] | undefined {
+	if (value === undefined) return;
+	if (!Array.isArray(value) || value.length > 128) {
+		throw new Error(`${context}: extension manifest subagents.tools must be an array with at most 128 entries`);
+	}
+	const seen = new Set<string>();
+	for (const entry of value) {
+		if (typeof entry !== "string" || !TOOL_ID_PATTERN.test(entry) || seen.has(entry)) {
+			throw new Error(`${context}: extension manifest subagents.tools must contain unique tool identifiers`);
+		}
+		seen.add(entry);
+	}
+}
+
+function assertSubagentTemplates(
+	value: unknown,
+	context: string,
+): asserts value is ExtensionSubagentTemplateV1[] | undefined {
+	if (value === undefined) return;
+	if (!Array.isArray(value) || value.length > 64) {
+		throw new Error(`${context}: extension manifest subagents must be an array with at most 64 entries`);
+	}
+	const ids = new Set<string>();
+	for (const item of value) {
+		if (!item || typeof item !== "object" || Array.isArray(item)) {
+			throw new Error(`${context}: extension manifest subagents contains an invalid template`);
+		}
+		const template = item as Record<string, unknown>;
+		if (!hasOnlyKeys(template, ["id", "name", "description", "systemPrompt", "tools", "model"])) {
+			throw new Error(`${context}: extension manifest subagent contains unknown fields`);
+		}
+		if (typeof template.id !== "string" || !DECLARATION_ID_PATTERN.test(template.id) || ids.has(template.id)) {
+			throw new Error(`${context}: extension manifest subagent id is invalid or duplicated`);
+		}
+		ids.add(template.id);
+		for (const field of ["name", "description", "systemPrompt"] as const) {
+			if (typeof template[field] !== "string" || !template[field].trim() || template[field].length > 16_000) {
+				throw new Error(`${context}: extension manifest subagent ${field} is invalid`);
+			}
+		}
+		assertToolList(template.tools, context);
+		if (
+			template.model !== undefined &&
+			(typeof template.model !== "string" || !template.model.trim() || template.model.length > 512)
+		) {
+			throw new Error(`${context}: extension manifest subagent model is invalid`);
+		}
+	}
+}
+
 function assertOrderList(
 	value: unknown,
 	field: string,
@@ -140,7 +197,6 @@ export function isExtensionManifestId(value: string): boolean {
 export function assertValidExtensionManifest(
 	value: unknown,
 	extensionId: string,
-	targets: readonly ExtensionManifestHost[],
 	context: string,
 ): asserts value is ExtensionManifestV1 {
 	if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -157,12 +213,12 @@ export function assertValidExtensionManifest(
 		"homepage",
 		"repository",
 		"license",
-		"engines",
 		"dependencies",
 		"optionalDependencies",
 		"conflicts",
 		"capabilities",
 		"permissions",
+		"subagents",
 		"loadOrder",
 	];
 	if (!hasOnlyKeys(manifest, allowedKeys)) {
@@ -208,19 +264,6 @@ export function assertValidExtensionManifest(
 	) {
 		throw new Error(`${context}: extension manifest license is invalid`);
 	}
-	if (!manifest.engines || typeof manifest.engines !== "object" || Array.isArray(manifest.engines)) {
-		throw new Error(`${context}: extension manifest engines must be an object`);
-	}
-	const engines = manifest.engines as Record<string, unknown>;
-	if (!hasOnlyKeys(engines, ["pi", "mortise"])) {
-		throw new Error(`${context}: extension manifest engines contains unknown hosts`);
-	}
-	for (const target of targets) {
-		const range = engines[target];
-		if (typeof range !== "string" || validRange(range) === null) {
-			throw new Error(`${context}: extension manifest engines.${target} must be a valid semver range`);
-		}
-	}
 	assertStringMap(manifest.dependencies, "dependencies", context, { selfId: extensionId });
 	assertStringMap(manifest.optionalDependencies, "optionalDependencies", context, { selfId: extensionId });
 	assertStringMap(manifest.conflicts, "conflicts", context, { selfId: extensionId });
@@ -240,6 +283,7 @@ export function assertValidExtensionManifest(
 	}
 	assertDeclarationList(manifest.capabilities, "capabilities", context);
 	assertDeclarationList(manifest.permissions, "permissions", context);
+	assertSubagentTemplates(manifest.subagents, context);
 	if (manifest.loadOrder !== undefined) {
 		if (!manifest.loadOrder || typeof manifest.loadOrder !== "object" || Array.isArray(manifest.loadOrder)) {
 			throw new Error(`${context}: extension manifest loadOrder must be an object`);

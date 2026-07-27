@@ -57,7 +57,7 @@ describe("Mortise project config isolation", () => {
 		writeFileSync(
 			join(mortiseRoot, "settings.json"),
 			JSON.stringify({
-				extensions: [{ id: "mortise-only", path: "extensions/mortise-only.ts", targets: ["mortise"] }],
+				extensions: [{ id: "mortise-only", path: "extensions/mortise-only.ts" }],
 			}),
 		);
 
@@ -66,7 +66,6 @@ describe("Mortise project config isolation", () => {
 			cwd,
 			agentDir,
 			settingsManager: manager,
-			extensionTarget: "mortise",
 			noPromptTemplates: true,
 			noContextFiles: true,
 		});

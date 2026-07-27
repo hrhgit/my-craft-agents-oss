@@ -1,23 +1,21 @@
 import * as React from 'react'
-import { useAtomValue } from 'jotai'
 import { useTranslation } from 'react-i18next'
 import {
   AlertCircle,
+  ArrowLeft,
   CheckCircle2,
-  ExternalLink,
+  ChevronRight,
   GitBranch,
   Loader2,
   RefreshCw,
 } from 'lucide-react'
 import { Spinner } from '@mortise/ui'
 import type { PiChildSessionInfo } from '@mortise/shared/agent'
-import { sessionMetaMapAtom } from '@/atoms/sessions'
 import { PanelHeaderCenterButton } from '@/components/ui/PanelHeaderCenterButton'
 import { HeaderIconButton } from '@/components/ui/HeaderIconButton'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { useWorkspaceElectronApi } from '@/context/WorkspaceElectronApiContext'
 import {
-  applySideTaskSessionNames,
   partitionSideTasks,
   shouldRefreshSideTasks,
   shouldShowSideTasksTrigger,
@@ -29,13 +27,11 @@ import { createSingleFlightLoader } from './single-flight-loader'
 
 interface SideTasksStatusPopoverProps {
   parentSessionId: string
-  onOpenSession: (sessionId: string, title: string) => void
 }
 
-export function SideTasksStatusPopover({ parentSessionId, onOpenSession }: SideTasksStatusPopoverProps) {
+export function SideTasksStatusPopover({ parentSessionId }: SideTasksStatusPopoverProps) {
   const { t } = useTranslation()
   const electronApi = useWorkspaceElectronApi()
-  const sessionMetaMap = useAtomValue(sessionMetaMapAtom)
   const loader = React.useMemo(
     () => createSingleFlightLoader(
       sessionId => electronApi.listChildSessions(sessionId),
@@ -48,6 +44,7 @@ export function SideTasksStatusPopover({ parentSessionId, onOpenSession }: SideT
   const [loading, setLoading] = React.useState(true)
   const [error, setError] = React.useState<string | null>(null)
   const [loadedForSessionId, setLoadedForSessionId] = React.useState(parentSessionId)
+  const [selectedTaskId, setSelectedTaskId] = React.useState<string | null>(null)
   const requestGeneration = React.useRef(0)
 
   const refresh = React.useCallback(async (force = false) => {
@@ -57,6 +54,7 @@ export function SideTasksStatusPopover({ parentSessionId, onOpenSession }: SideT
       const next = await loader.load(parentSessionId, { force })
       if (generation !== requestGeneration.current) return
       setTasks(next)
+      setSelectedTaskId(current => current && next.some(task => task.sessionId === current) ? current : null)
       setError(null)
       setLoadedForSessionId(parentSessionId)
       if (next.length === 0) setOpen(false)
@@ -72,6 +70,7 @@ export function SideTasksStatusPopover({ parentSessionId, onOpenSession }: SideT
   React.useEffect(() => {
     setOpen(false)
     setTasks([])
+    setSelectedTaskId(null)
     setError(null)
     setLoading(true)
     void refresh()
@@ -85,13 +84,7 @@ export function SideTasksStatusPopover({ parentSessionId, onOpenSession }: SideT
     () => hasCurrentResult ? tasks : [],
     [hasCurrentResult, tasks],
   )
-  const displayTasks = React.useMemo(
-    () => applySideTaskSessionNames(
-      visibleTasks,
-      new Map(visibleTasks.map(task => [task.sessionId, sessionMetaMap.get(task.sessionId)?.name])),
-    ),
-    [sessionMetaMap, visibleTasks],
-  )
+  const displayTasks = visibleTasks
   const visibleError = hasCurrentResult ? error : null
   const visibleLoading = !hasCurrentResult || loading
   const knownChildSessionIds = React.useMemo(
@@ -106,15 +99,16 @@ export function SideTasksStatusPopover({ parentSessionId, onOpenSession }: SideT
     })
   }, [electronApi, knownChildSessionIds, parentSessionId, refresh])
 
-  const runningSessionIds = React.useMemo(() => new Set(
-    displayTasks
-      .filter(task => sessionMetaMap.get(task.sessionId)?.isProcessing === true)
-      .map(task => task.sessionId),
-  ), [displayTasks, sessionMetaMap])
   const sections = React.useMemo(
-    () => partitionSideTasks(displayTasks, runningSessionIds),
-    [displayTasks, runningSessionIds],
+    () => partitionSideTasks(displayTasks),
+    [displayTasks],
   )
+
+  React.useEffect(() => {
+    if (!displayTasks.some(task => task.status === 'running')) return
+    const timer = window.setInterval(() => void refresh(true), 1_500)
+    return () => window.clearInterval(timer)
+  }, [displayTasks, refresh])
   const completedCount = sections.completed.length
   const runningCount = sections.running.length
   const semanticSessionId = sideTaskSemanticPart(parentSessionId)
@@ -126,10 +120,8 @@ export function SideTasksStatusPopover({ parentSessionId, onOpenSession }: SideT
   const countBadge = visibleTasks.length > 99 ? '99+' : String(visibleTasks.length)
 
   const openTask = React.useCallback((task: PiChildSessionInfo) => {
-    const title = sideTaskTitle(task, t('workbench.untitledSideTask'))
-    setOpen(false)
-    onOpenSession(task.sessionId, title)
-  }, [onOpenSession, t])
+    setSelectedTaskId(task.sessionId)
+  }, [])
 
   const handleOpenChange = React.useCallback((nextOpen: boolean) => {
     setOpen(nextOpen)
@@ -175,6 +167,8 @@ export function SideTasksStatusPopover({ parentSessionId, onOpenSession }: SideT
           sections={sections}
           loading={visibleLoading}
           error={visibleError}
+          selectedTask={displayTasks.find(task => task.sessionId === selectedTaskId) ?? null}
+          onBack={() => setSelectedTaskId(null)}
           onRefresh={() => void refresh(true)}
           onOpenTask={openTask}
         />
@@ -188,6 +182,8 @@ export interface SideTasksStatusContentProps {
   sections: SideTaskSections
   loading: boolean
   error: string | null
+  selectedTask?: PiChildSessionInfo | null
+  onBack?: () => void
   onRefresh: () => void
   onOpenTask: (task: PiChildSessionInfo) => void
 }
@@ -197,12 +193,59 @@ export function SideTasksStatusContent({
   sections,
   loading,
   error,
+  selectedTask,
+  onBack,
   onRefresh,
   onOpenTask,
 }: SideTasksStatusContentProps) {
   const { t } = useTranslation()
   const semanticSessionId = sideTaskSemanticPart(parentSessionId)
   const tasks = [...sections.running, ...sections.completed]
+
+  if (selectedTask) {
+    const title = sideTaskTitle(selectedTask, t('workbench.untitledSideTask'))
+    const history = selectedTask.history ?? []
+    const hasLiveTail = Boolean(selectedTask.lastOutput)
+      && history.at(-1)?.text !== selectedTask.lastOutput
+    return (
+      <section
+        aria-label={title}
+        data-mortise-semantic-id={`session.side-task.output.${sideTaskSemanticPart(selectedTask.sessionId)}`}
+        className="flex min-h-0 flex-col bg-popover text-popover-foreground"
+      >
+        <header className="flex h-11 shrink-0 items-center gap-2 border-b border-border/50 px-2">
+          <HeaderIconButton
+            icon={<ArrowLeft className="size-3.5" />}
+            tooltip={t('common.back')}
+            aria-label={t('common.back')}
+            onClick={onBack}
+          />
+          <span className="min-w-0 flex-1 truncate text-xs font-semibold">{title}</span>
+          {selectedTask.status === 'running' && <Loader2 className="size-3.5 animate-spin text-muted-foreground" aria-hidden="true" />}
+        </header>
+        <div className="max-h-[min(28rem,calc(100vh-8rem))] min-h-28 overflow-y-auto overscroll-contain p-3">
+          {history.length === 0 && !selectedTask.lastOutput ? (
+            <p className="text-xs text-muted-foreground">{t('chat.noOutputYet')}</p>
+          ) : (
+            <div className="space-y-3">
+              {history.map((entry, index) => (
+                <section key={`${entry.timestamp ?? 'message'}-${index}`} aria-label={entry.role}>
+                  <div className="mb-1 text-[10px] font-semibold uppercase text-muted-foreground">{entry.role}</div>
+                  <pre className="whitespace-pre-wrap break-words font-sans text-xs leading-5 text-foreground">{entry.text}</pre>
+                </section>
+              ))}
+              {hasLiveTail && (
+                <section aria-label="assistant">
+                  <div className="mb-1 text-[10px] font-semibold uppercase text-muted-foreground">assistant</div>
+                  <pre className="whitespace-pre-wrap break-words font-sans text-xs leading-5 text-foreground">{selectedTask.lastOutput}</pre>
+                </section>
+              )}
+            </div>
+          )}
+        </div>
+      </section>
+    )
+  }
 
   return (
     <section
@@ -336,7 +379,7 @@ function SideTaskGroup({
                       : formatSideTaskTimestamp(task.modified)}
                   </span>
                 </span>
-                <ExternalLink className="size-3.5 shrink-0 text-muted-foreground opacity-60 transition-opacity group-hover:opacity-100" aria-hidden="true" />
+                <ChevronRight className="size-3.5 shrink-0 text-muted-foreground opacity-60 transition-opacity group-hover:opacity-100" aria-hidden="true" />
               </button>
             </li>
           )

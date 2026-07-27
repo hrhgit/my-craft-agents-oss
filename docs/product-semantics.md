@@ -268,5 +268,3 @@ Electron 和 WebUI 是同一 Mortise 产品的不同平台投影，但不以功�
 - `README.md` 和 `docs/cli.md` 仍将 `session create` 描述为普通空 Session 创建入口。当前普通 New 必须经过首轮 publication，直接 create 仅存在 hidden/branch 等显式例外。
 - `README.md` 仍展示旧 Automations V2 格式，并将 prompt action 简化为始终创建新 Session。现行语义由 Automations V3 规范定义。
 - `architecture/pi-extension-gui-style-placement.md` 同时包含已发布的 `workspace.content` 语义和尚未实现的 V2 提案，不应被整篇当作当前产品语义。
-- 现有 Extension 配置和 UI 文案仍可能将子智能体描述为 Extension-owned；在核心能力迁移完成前，这类描述不应覆盖本文确定的产品归属。
-- 当前 Extension 类型、manifest、catalog 和作者指南仍包含 `pi`/`mortise` target 与 engine 字段，并残留 Pi Extension、TUI 和 headless mode 的旧表述。这是尚待迁移的实现与文档，不代表产品仍有两种 Extension target。

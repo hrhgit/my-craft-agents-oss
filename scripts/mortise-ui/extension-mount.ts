@@ -3,19 +3,17 @@ import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import {
   assertValidExtensionManifest,
   isExtensionManifestId,
-  type ExtensionManifestHost,
   type ExtensionManifestV1,
 } from '../../pi/packages/coding-agent/src/core/extension-manifest.ts'
 import type { MortiseUiMountedExtension } from './protocol.ts'
 
-const EXTENSION_ENTRY_KEYS = ['id', 'path', 'activation', 'targets', 'manifest', 'ui'] as const
+const EXTENSION_ENTRY_KEYS = ['id', 'path', 'activation', 'manifest', 'ui'] as const
 const EXTENSION_ACTIVATIONS = ['startup', 'beforeFirstRequest', 'lazy'] as const
 
 interface ExtensionEntry {
   id: string
   path: string
   activation?: unknown
-  targets: ExtensionManifestHost[]
   manifest: ExtensionManifestV1
   ui?: unknown
 }
@@ -60,7 +58,6 @@ export function mountMortiseUiExtensions(mortiseAgentDir: string, sourcePaths: s
       id: entry.id,
       path: entry.path,
       version: String(entry.manifest.version),
-      targets: [...entry.targets],
       overrodeExisting: existingIds.has(entry.id),
     })),
   }))
@@ -70,7 +67,6 @@ export function mountMortiseUiExtensions(mortiseAgentDir: string, sourcePaths: s
       id: entry.id,
       path: entry.path,
       ...(entry.activation === undefined ? {} : { activation: entry.activation }),
-      targets: entry.targets,
       manifest: entry.manifest,
       ...(entry.ui === undefined ? {} : { ui: entry.ui }),
     }))),
@@ -127,20 +123,14 @@ function parseEntry(value: unknown, packageRoot: string, context: string): Exten
   if (!existsSync(absoluteEntryPath) || !statSync(absoluteEntryPath).isFile()) {
     throw new Error(`${context}.path does not resolve to a file: ${absoluteEntryPath}`)
   }
-  if (!Array.isArray(value.targets) || value.targets.length === 0 || !value.targets.every(target => target === 'pi' || target === 'mortise')) {
-    throw new Error(`${context}.targets must contain only pi or mortise`)
-  }
-  const targets = [...new Set(value.targets as ExtensionManifestHost[])]
-  if (!targets.includes('mortise')) throw new Error(`${context}.targets must include mortise`)
   if (value.activation !== undefined && !EXTENSION_ACTIVATIONS.includes(value.activation as typeof EXTENSION_ACTIVATIONS[number])) {
     throw new Error(`${context}.activation is invalid`)
   }
-  assertValidExtensionManifest(value.manifest, id, targets, context)
+  assertValidExtensionManifest(value.manifest, id, context)
   return {
     id,
     path: absoluteEntryPath,
     ...(value.activation === undefined ? {} : { activation: value.activation }),
-    targets,
     manifest: value.manifest,
     ...(value.ui === undefined ? {} : { ui: value.ui }),
   }

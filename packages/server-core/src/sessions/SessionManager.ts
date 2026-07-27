@@ -20,12 +20,14 @@ import {
   type CoreBackendConfig,
   type BackendHostRuntimeContext,
   type HostRuntimeErrorProjection,
+  type ChildTaskBackgroundOperation,
+  type ChildTaskSettledOperation,
   type PostInitResult,
   buildPiProjectionSnapshotFromHostProjection,
   PiProjectionBuilder,
   piHostManager,
 } from '@mortise/shared/agent/backend'
-import { alternateMidStreamBehavior, readPiGlobalProviders, readPiGlobalSettings, getDefaultThinkingLevel, getMidStreamBehavior, resetManagedAnthropicAuthEnvVars, getPersistedUiLanguage, resolveTitleLanguageName, type PiExtensionReloadActiveSession, type PiExtensionReloadResult } from '@mortise/shared/config'
+import { alternateMidStreamBehavior, readPiGlobalProviders, readPiGlobalSettings, getDefaultThinkingLevel, getMidStreamBehavior, resetManagedAnthropicAuthEnvVars, getPersistedUiLanguage, resolveTitleLanguageName, listSubagentTemplates, type PiExtensionReloadActiveSession, type PiExtensionReloadResult } from '@mortise/shared/config'
 import { PrivilegedExecutionBroker, SessionShareTransferService } from '@mortise/server-core/services'
 import { InitGate } from '@mortise/server-core/domain'
 import { i18n } from '@mortise/shared/i18n'
@@ -91,7 +93,7 @@ import {
 } from '../projection'
 import { CapabilityRouter, ELECTRON_CAPABILITY_POLICY_V1, createCapabilityAuthorizationPolicy, type CapabilityProvider } from '../capabilities'
 import { messageToStored, storedToMessage, type Message, type StoredAttachment, type ToolDisplayMeta } from '@mortise/core/types'
-import { ATTACHMENT_MESSAGE_TOTAL_LIMIT_BYTES, ATTACHMENT_SINGLE_FILE_LIMIT_BYTES, formatToolInputPaths, perf, encodeIconToDataUrlAsync, getEmojiIcon, resolveToolIcon, readFileAttachment, selectSpreadMessages, normalizePath, writeRuntimeLog } from '@mortise/shared/utils'
+import { ATTACHMENT_MESSAGE_TOTAL_LIMIT_BYTES, ATTACHMENT_SINGLE_FILE_LIMIT_BYTES, atomicWriteFile, formatToolInputPaths, perf, encodeIconToDataUrlAsync, getEmojiIcon, resolveToolIcon, readFileAttachment, selectSpreadMessages, normalizePath, writeRuntimeLog } from '@mortise/shared/utils'
 import { loadAllSkills } from '@mortise/shared/skills'
 import { getToolIconsDir } from '@mortise/shared/config'
 import { getDefaultSummarizationModel } from '@mortise/shared/config/models'
@@ -715,12 +717,27 @@ export interface SessionManagerOptions {
   createSessionBackend?: SessionBackendFactory
 }
 
+interface SubagentDeliveryRecord extends ChildTaskBackgroundOperation {
+  state: 'running' | 'ready' | 'delivered'
+  status?: ChildTaskSettledOperation['status']
+  output?: string
+  modified?: string
+  messageId: string
+  updatedAt: string
+}
+
+interface SubagentDeliveryLedger {
+  schemaVersion: 1
+  operations: Record<string, SubagentDeliveryRecord>
+}
+
 interface ManagedSession {
   id: string
   workspace: Workspace
   agent: AgentInstance | null  // Lazy-loaded - null until first message
   messages: Message[]
   isProcessing: boolean
+  deleting?: boolean
   /** Set when user requests stop - allows event loop to drain before clearing isProcessing */
   stopRequested?: boolean
   lastMessageAt: number
@@ -1202,6 +1219,9 @@ export class SessionManager implements ISessionManager {
   private piProjectionWrites = new Map<string, Promise<void>>()
   private piProjectionPendingSnapshots = new Map<string, PiProjectionSnapshotV1>()
   private piProjectionWriteErrors = new Map<string, unknown>()
+  private subagentDeliveryWrites = new Map<string, Promise<void>>()
+  private subagentDeliveryTasks = new Map<string, Promise<void>>()
+  private subagentLifecycleTasks = new Map<string, Set<Promise<void>>>()
   private capabilityPrompt?: (request: import('@mortise/shared/protocol').CapabilityRequestV1) => Promise<boolean>
   private readonly capabilityRouter = new CapabilityRouter({
     requireDeclarations: true,
@@ -2507,6 +2527,196 @@ export class SessionManager implements ISessionManager {
     return getSessionStoragePath(managed.workspace.rootPath, sessionId)
   }
 
+  private getSubagentDeliveryLedgerPath(managed: ManagedSession): string {
+    return join(getSessionStoragePath(managed.workspace.rootPath, managed.id), 'subagent-deliveries.json')
+  }
+
+  private async readSubagentDeliveryLedger(managed: ManagedSession): Promise<SubagentDeliveryLedger> {
+    try {
+      const parsed = JSON.parse(await readFile(this.getSubagentDeliveryLedgerPath(managed), 'utf8')) as Partial<SubagentDeliveryLedger>
+      if (parsed.schemaVersion === 1 && parsed.operations && typeof parsed.operations === 'object') {
+        return { schemaVersion: 1, operations: parsed.operations }
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    }
+    return { schemaVersion: 1, operations: {} }
+  }
+
+  private mutateSubagentDeliveryLedger(
+    managed: ManagedSession,
+    mutate: (ledger: SubagentDeliveryLedger) => void,
+  ): Promise<void> {
+    const previous = this.subagentDeliveryWrites.get(managed.id) ?? Promise.resolve()
+    const next = previous.catch(() => undefined).then(async () => {
+      const ledger = await this.readSubagentDeliveryLedger(managed)
+      mutate(ledger)
+      await atomicWriteFile(this.getSubagentDeliveryLedgerPath(managed), `${JSON.stringify(ledger, null, 2)}\n`)
+    })
+    this.subagentDeliveryWrites.set(managed.id, next)
+    void next.then(
+      () => {
+        if (this.subagentDeliveryWrites.get(managed.id) === next) this.subagentDeliveryWrites.delete(managed.id)
+      },
+      () => {
+        if (this.subagentDeliveryWrites.get(managed.id) === next) this.subagentDeliveryWrites.delete(managed.id)
+      },
+    )
+    return next
+  }
+
+  private async recordBackgroundChildOperation(
+    managed: ManagedSession,
+    operation: ChildTaskBackgroundOperation,
+  ): Promise<void> {
+    await this.mutateSubagentDeliveryLedger(managed, (ledger) => {
+      const existing = ledger.operations[operation.operationId]
+      if (existing?.state === 'delivered') return
+      ledger.operations[operation.operationId] = {
+        ...operation,
+        state: existing?.state ?? 'running',
+        messageId: existing?.messageId ?? `subagent-completion-${operation.operationId}`,
+        updatedAt: new Date().toISOString(),
+      }
+    })
+  }
+
+  private async settleBackgroundChildOperation(
+    managed: ManagedSession,
+    operation: ChildTaskSettledOperation,
+  ): Promise<void> {
+    await this.mutateSubagentDeliveryLedger(managed, (ledger) => {
+      const existing = ledger.operations[operation.operationId]
+      if (existing?.state === 'delivered') return
+      ledger.operations[operation.operationId] = {
+        ...operation,
+        state: 'ready',
+        messageId: existing?.messageId ?? `subagent-completion-${operation.operationId}`,
+        updatedAt: new Date().toISOString(),
+      }
+    })
+    await this.deliverBackgroundChildOperation(managed, operation.operationId)
+  }
+
+  private deliverBackgroundChildOperation(managed: ManagedSession, operationId: string): Promise<void> {
+    const key = `${managed.id}:${operationId}`
+    const existing = this.subagentDeliveryTasks.get(key)
+    if (existing) return existing
+    const task = this.performBackgroundChildDelivery(managed, operationId)
+    this.subagentDeliveryTasks.set(key, task)
+    void task.then(
+      () => {
+        if (this.subagentDeliveryTasks.get(key) === task) this.subagentDeliveryTasks.delete(key)
+      },
+      () => {
+        if (this.subagentDeliveryTasks.get(key) === task) this.subagentDeliveryTasks.delete(key)
+      },
+    )
+    return task
+  }
+
+  private async performBackgroundChildDelivery(managed: ManagedSession, operationId: string): Promise<void> {
+    if (managed.deleting || this.sessions.get(managed.id) !== managed) return
+    await this.subagentDeliveryWrites.get(managed.id)?.catch(() => undefined)
+    if (managed.deleting || this.sessions.get(managed.id) !== managed) return
+    const record = (await this.readSubagentDeliveryLedger(managed)).operations[operationId]
+    if (!record || record.state !== 'ready' || !record.status) return
+
+    await this.ensureMessagesLoaded(managed)
+    if (managed.deleting || this.sessions.get(managed.id) !== managed) return
+    if (!managed.messages.some(message => message.id === record.messageId)) {
+      const output = record.output?.trim() || '(No final text output)'
+      const message = [
+        `<subagent_completion operation_id="${record.operationId}" child_task_id="${record.childSessionId}" status="${record.status}">`,
+        output,
+        '</subagent_completion>',
+      ].join('\n')
+      await new Promise<void>((resolve, reject) => {
+        let acknowledged = false
+        const acknowledge = () => {
+          if (acknowledged) return
+          acknowledged = true
+          resolve()
+        }
+        void this.sendMessage(
+          managed.id,
+          message,
+          undefined,
+          undefined,
+          { optimisticMessageId: record.messageId },
+          undefined,
+          undefined,
+          acknowledge,
+        ).then(acknowledge, reject)
+      })
+    }
+
+    await this.mutateSubagentDeliveryLedger(managed, (ledger) => {
+      const current = ledger.operations[operationId]
+      if (!current) return
+      ledger.operations[operationId] = {
+        ...current,
+        state: 'delivered',
+        updatedAt: new Date().toISOString(),
+      }
+    })
+  }
+
+  private trackSubagentLifecycleTask(managed: ManagedSession, task: Promise<void>): Promise<void> {
+    const tasks = this.subagentLifecycleTasks.get(managed.id) ?? new Set<Promise<void>>()
+    tasks.add(task)
+    this.subagentLifecycleTasks.set(managed.id, tasks)
+    void task.then(
+      () => {
+        tasks.delete(task)
+        if (tasks.size === 0) this.subagentLifecycleTasks.delete(managed.id)
+      },
+      () => {
+        tasks.delete(task)
+        if (tasks.size === 0) this.subagentLifecycleTasks.delete(managed.id)
+      },
+    )
+    return task
+  }
+
+  private async drainSubagentLifecycle(managed: ManagedSession): Promise<void> {
+    while (true) {
+      const lifecycle = [...(this.subagentLifecycleTasks.get(managed.id) ?? [])]
+      const deliveries = [...this.subagentDeliveryTasks.entries()]
+        .filter(([key]) => key.startsWith(`${managed.id}:`))
+        .map(([, task]) => task)
+      if (lifecycle.length === 0 && deliveries.length === 0) break
+      await Promise.all([...lifecycle, ...deliveries])
+    }
+    await this.subagentDeliveryWrites.get(managed.id)
+  }
+
+  private async recoverBackgroundChildOperations(managed: ManagedSession): Promise<void> {
+    const ledger = await this.readSubagentDeliveryLedger(managed)
+    const pending = Object.values(ledger.operations).filter(operation => operation.state !== 'delivered')
+    if (pending.length === 0 || !managed.agent?.listChildSessions) return
+    const parentSessionId = managed.agent.getSessionId()
+    if (!parentSessionId) return
+    const children = await managed.agent.listChildSessions(parentSessionId)
+
+    for (const operation of pending) {
+      if (operation.state === 'running') {
+        const child = children.find(candidate => candidate.sessionId === operation.childSessionId)
+        if (!child || child.status === 'running') continue
+        await this.settleBackgroundChildOperation(managed, {
+          operationId: operation.operationId,
+          childSessionId: operation.childSessionId,
+          sessionPath: operation.sessionPath,
+          status: child.status,
+          output: child.lastOutput,
+          modified: child.modified,
+        })
+      } else {
+        await this.deliverBackgroundChildOperation(managed, operation.operationId)
+      }
+    }
+  }
+
   async createAndSendFirstTurn(
     input: CreateAndSendFirstTurnInput,
     prepareProvisional?: (managed: ManagedSession) => void | Promise<void>,
@@ -3077,8 +3287,13 @@ export class SessionManager implements ISessionManager {
     return managedToSession(managed, isBranch ? { messages: managed.messages } : undefined)
   }
 
-  private async disposeManagedAgentRuntime(managed: ManagedSession, reason: string): Promise<void> {
+  private async disposeManagedAgentRuntime(
+    managed: ManagedSession,
+    reason: string,
+    options: { propagateFailure?: boolean } = {},
+  ): Promise<void> {
     const sessionId = managed.id
+    let disposalError: unknown
 
     if (managed.agent) {
       try {
@@ -3089,6 +3304,7 @@ export class SessionManager implements ISessionManager {
         }
       } catch (error) {
         sessionLog.warn(`Failed to dispose agent for ${sessionId} during ${reason}: ${error instanceof Error ? error.message : error}`)
+        disposalError = error
       }
     }
 
@@ -3099,6 +3315,7 @@ export class SessionManager implements ISessionManager {
     managed.backendRuntimeSignature = undefined
     managed.backendRestartSignature = undefined
     unregisterSessionScopedToolCallbacks(sessionId)
+    if (disposalError && options.propagateFailure) throw disposalError
   }
 
   /**
@@ -3442,6 +3659,14 @@ export class SessionManager implements ISessionManager {
       const getPiProjectionSnapshot = () => (
         this.piProjectionBySession.get(managed.id)?.createSnapshot()
       )
+      const onChildTaskBackgroundStarted = async (operation: ChildTaskBackgroundOperation) => {
+        if (managed.deleting || this.sessions.get(managed.id) !== managed) return
+        await this.trackSubagentLifecycleTask(managed, this.recordBackgroundChildOperation(managed, operation))
+      }
+      const onChildTaskSettled = async (operation: ChildTaskSettledOperation) => {
+        if (managed.deleting || this.sessions.get(managed.id) !== managed) return
+        await this.trackSubagentLifecycleTask(managed, this.settleBackgroundChildOperation(managed, operation))
+      }
 
       const getBranchFallbackMessages = () => {
         if (!managed.branchFromMessageId) return []
@@ -3553,6 +3778,8 @@ export class SessionManager implements ISessionManager {
         // 扩展事件桥接回调：将 Pi RpcClient的扩展事件转发到渲染进程
         onExtensionEvent,
         onPiProjectionEvent,
+        onChildTaskBackgroundStarted,
+        onChildTaskSettled,
         onHostCapabilityRequest,
         onHostCapabilityDeclaration,
         onHostCapabilityCancel,
@@ -3782,7 +4009,7 @@ export class SessionManager implements ISessionManager {
       // children via listChildSessions(spawnedFrom filter).
       // Backends without spawnChildSession are unsupported — onSpawnSession throws.
       managed.agent.onSpawnSession = async (request) => {
-        sessionLog.info(`Spawn session request from session ${managed.id}:`, request.name || '(unnamed)')
+        sessionLog.info(`Child task ${request.action} request from session ${managed.id}:`, request.name || request.sessionId || '(unnamed)')
 
         // Thin-wrapper path: delegate to pi's session tree.
         const agent = managed.agent
@@ -3795,14 +4022,89 @@ export class SessionManager implements ISessionManager {
           throw new Error('Cannot spawn child session: parent pi session ID is not available yet')
         }
 
+        if (request.action === 'list') {
+          return { children: await agent.listChildSessions?.(parentSessionId) ?? [] }
+        }
+
+        if (request.action === 'inspect') {
+          const child = (await agent.listChildSessions?.(parentSessionId) ?? [])
+            .find(candidate => candidate.sessionId === request.sessionId)
+          if (!child) throw new Error(`Child task not found: ${request.sessionId}`)
+          return { child }
+        }
+
+        if (request.action === 'message') {
+          if (!agent.sendChildSessionMessage || !request.sessionId || !request.prompt) {
+            throw new Error('Child task messaging is not supported by the current agent backend')
+          }
+          const result = await agent.sendChildSessionMessage(parentSessionId, request.sessionId, request.prompt, {
+            background: request.background,
+          })
+          return {
+            sessionId: result.sessionId,
+            name: request.name || result.sessionId,
+            status: result.status,
+            connection: request.provider ?? managed.provider,
+            model: request.model ?? managed.model,
+            output: result.output,
+          }
+        }
+
+        if (request.action === 'resume') {
+          if (!agent.resumeChildSession || !request.sessionId) {
+            throw new Error('Child task resume is not supported by the current agent backend')
+          }
+          const result = await agent.resumeChildSession(parentSessionId, request.sessionId, {
+            background: request.background,
+          })
+          return {
+            sessionId: result.sessionId,
+            name: request.name || result.sessionId,
+            status: result.status,
+            connection: request.provider ?? managed.provider,
+            model: request.model ?? managed.model,
+            output: result.output,
+          }
+        }
+
+        if (request.action === 'interrupt') {
+          if (!agent.interruptChildSession || !request.sessionId) {
+            throw new Error('Child task interruption is not supported by the current agent backend')
+          }
+          const result = await agent.interruptChildSession(parentSessionId, request.sessionId)
+          return {
+            sessionId: result.sessionId,
+            name: request.name || result.sessionId,
+            status: result.status,
+            connection: request.provider ?? managed.provider,
+            model: request.model ?? managed.model,
+            output: result.output,
+          }
+        }
+
+        const templates = await listSubagentTemplates({ cwd: managed.workspace.rootPath })
+        const template = request.template
+          ? templates.find(candidate => candidate.id === request.template)
+          : undefined
+        if (request.template && !template) {
+          throw new Error(`Child task template not found: ${request.template}`)
+        }
+        if (request.attachments?.length && template && !template.tools.includes('read')) {
+          throw new Error(`Child task template cannot receive file paths without the read tool: ${template.id}`)
+        }
+
         const result = await agent.spawnChildSession(parentSessionId, {
-          prompt: request.prompt,
+          prompt: request.prompt!,
           connection: request.provider ?? managed.provider,
-          model: request.model ?? managed.model,
+          model: request.model ?? template?.model ?? managed.model,
           permissionMode: request.permissionMode,
           thinkingLevel: request.thinkingLevel,
           name: request.name,
           attachments: request.attachments,
+          template: template?.id,
+          systemPrompt: template?.systemPrompt,
+          tools: template?.tools,
+          background: request.background,
         })
 
         sessionLog.info(
@@ -3812,11 +4114,15 @@ export class SessionManager implements ISessionManager {
         return {
           sessionId: result.sessionId,
           name: request.name || result.sessionId,
-          status: 'started' as const,
+          status: result.status,
           connection: request.provider ?? managed.provider,
-          model: request.model ?? managed.model,
+          model: request.model ?? template?.model ?? managed.model,
+          output: result.output,
         }
       }
+      void this.recoverBackgroundChildOperations(managed).catch(error => {
+        sessionLog.error(`Failed to recover child task deliveries for ${managed.id}:`, error)
+      })
 
       // Wire up session query and messaging tools.
       mergeSessionScopedToolCallbacks(managed.id, {
@@ -4761,6 +5067,9 @@ export class SessionManager implements ISessionManager {
 
     // Get workspace slug before deleting
     const workspaceRootPath = managed.workspace.rootPath
+    managed.deleting = true
+
+    try {
 
     // If processing is in progress, force-abort via Query.close() and wait for cleanup
     if (managed.isProcessing && managed.agent) {
@@ -4787,10 +5096,6 @@ export class SessionManager implements ISessionManager {
     this.clearAdminRememberApprovalsForSession(sessionId)
     this.clearPendingPermissionRequestsForSession(sessionId)
 
-    // Cancel pending/in-flight persistence before deleting files so a late
-    // metadata write cannot recreate the session after deletion.
-    await sessionPersistenceQueue.cancel(sessionId, { preventFutureEnqueue: true })
-
     // Destroy browser instances bound to this session
     const sessionBpm = this.getBrowserPaneManagerForSession(sessionId)
     if (sessionBpm) {
@@ -4802,8 +5107,19 @@ export class SessionManager implements ISessionManager {
 
     // Dispose agent, pool server, MCP pool, and session-scoped callbacks via
     // the same runtime teardown path used for config-driven restarts.
-    await this.disposeManagedAgentRuntime(managed, 'session deleted')
+    await this.disposeManagedAgentRuntime(managed, 'session deleted', { propagateFailure: true })
+    await this.drainSubagentLifecycle(managed)
     await this.flushPiProjectionWrites(managed)
+
+    // Cancel pending/in-flight persistence only after child completion delivery
+    // has drained, then prevent any later Session write from recreating the path.
+    await sessionPersistenceQueue.cancel(sessionId, { preventFutureEnqueue: true })
+
+    // Delete from disk too
+    if (!await deleteStoredSession(workspaceRootPath, sessionId)) {
+      managed.deleting = false
+      throw new Error(`Failed to delete Session data: ${sessionId}`)
+    }
 
     this.sessions.delete(sessionId)
     this.automationSessionMetadata.delete(sessionId)
@@ -4813,15 +5129,16 @@ export class SessionManager implements ISessionManager {
     this.piProjectionPendingSnapshots.delete(sessionId)
     this.piProjectionWriteErrors.delete(sessionId)
 
-    // Delete from disk too
-    await deleteStoredSession(workspaceRootPath, sessionId)
-
     // Notify all windows for this workspace that the session was deleted
     this.sendEvent({ type: 'session_deleted', sessionId }, managed.workspace.id)
     this.emitUnreadSummaryChanged()
 
     // Clean up attachments directory (handled by deleteStoredSession for workspace-scoped storage)
     sessionLog.info(`Deleted session ${sessionId}`)
+    } catch (error) {
+      if (this.sessions.get(sessionId) === managed) managed.deleting = false
+      throw error
+    }
   }
 
   async sendMessage(
@@ -4856,6 +5173,7 @@ export class SessionManager implements ISessionManager {
     if (!managed) {
       throw new Error(`Session ${sessionId} not found`)
     }
+    if (managed.deleting) throw new Error(`Session ${sessionId} is being deleted`)
 
     // A backend turn may already be terminal while its Mortise metadata or Pi
     // projection is still pending durability. Recover that accepted turn first;

@@ -242,6 +242,7 @@ async function completeWithoutTranscript(
 
 function toRpcChildSessionInfo(
 	session: Awaited<ReturnType<typeof SessionManager.listChildrenBySpawnedFrom>>[number],
+	runtime?: RpcRuntimeSummary,
 ): RpcChildSessionInfo {
 	return {
 		id: session.id,
@@ -255,6 +256,10 @@ function toRpcChildSessionInfo(
 		modified: session.modified.toISOString(),
 		messageCount: session.messageCount,
 		firstMessage: session.firstMessage,
+		status: runtime?.isStreaming ? "running" : session.status,
+		lastOutput: runtime?.lastOutput ?? session.lastOutput,
+		persistedClientMutationIds: session.persistedClientMutationIds,
+		history: session.history,
 	};
 }
 
@@ -318,7 +323,6 @@ export interface RpcGlobalHostRuntimeFactory {
 	defaultRuntime: {
 		cwd: string;
 		sessionManager: SessionManager;
-		extensionTarget: "pi" | "mortise";
 		deferResourceLoad?: boolean;
 		persistInitialState?: boolean;
 		uiCapabilities?: RpcHostUICapabilities;
@@ -405,7 +409,6 @@ export async function runRpcMode(
 		clientId?: string;
 		runtime: AgentSessionRuntime;
 		session: AgentSession;
-		extensionTarget: "pi" | "mortise";
 		uiCapabilities: RpcHostUICapabilities;
 		toolPermissionsEnabled: boolean;
 		toolResultsEnabled: boolean;
@@ -427,7 +430,6 @@ export async function runRpcMode(
 				runtimeId: defaultRuntimeId,
 				runtime: runtimeHost,
 				session: runtimeHost.session,
-				extensionTarget: runtimeHost.extensionTarget,
 				uiCapabilities: normalizeRpcHostUICapabilities(options.uiCapabilities),
 				toolPermissionsEnabled: false,
 				toolResultsEnabled: false,
@@ -1582,7 +1584,6 @@ export async function runRpcMode(
 				clientId,
 				runtime,
 				session: runtime.session,
-				extensionTarget: globalHostFactory.defaultRuntime.extensionTarget,
 				uiCapabilities: normalizeRpcHostUICapabilities(globalHostFactory.defaultRuntime.uiCapabilities),
 				toolPermissionsEnabled: false,
 				toolResultsEnabled: false,
@@ -1610,6 +1611,7 @@ export async function runRpcMode(
 		sessionId: binding.session.sessionId,
 		sessionFile: binding.session.sessionFile,
 		isStreaming: binding.session.isStreaming,
+		lastOutput: binding.session.getLastAssistantText(),
 	});
 
 	const sessionState = (session: AgentSession): RpcSessionState => ({
@@ -1682,6 +1684,8 @@ export async function runRpcMode(
 					: SessionManager.create(command.cwd, command.sessionDir, {
 							id: command.sessionId,
 							parentSession: command.parentSession,
+							spawnedFrom: command.spawnedFrom,
+							spawnConfig: command.spawnConfig,
 						});
 			}
 			const runtime = runtimeHost
@@ -1700,7 +1704,6 @@ export async function runRpcMode(
 						},
 						deferResourceLoad: command.deferResourceLoad,
 						persistInitialState: command.persistInitialState,
-						extensionTarget: command.extensionTarget,
 						extensionPaths: command.extensionPaths,
 					})
 				: await createAgentSessionRuntime(globalHostFactory!.createRuntime, {
@@ -1718,7 +1721,6 @@ export async function runRpcMode(
 						},
 						deferResourceLoad: command.deferResourceLoad,
 						persistInitialState: command.persistInitialState,
-						extensionTarget: command.extensionTarget,
 						extensionPaths: command.extensionPaths,
 					});
 			binding = {
@@ -1726,7 +1728,6 @@ export async function runRpcMode(
 				clientId: command.clientId,
 				runtime,
 				session: runtime.session,
-				extensionTarget: command.extensionTarget,
 				uiCapabilities: normalizeRpcHostUICapabilities(command.uiCapabilities),
 				toolPermissionsEnabled: false,
 				toolResultsEnabled: false,
@@ -1822,6 +1823,20 @@ export async function runRpcMode(
 						if (!preflightSucceeded) {
 							output(error(id, "prompt", e.message), binding);
 						}
+					});
+				return undefined;
+			}
+
+			case "continue": {
+				let preflightSucceeded = false;
+				void session
+					.continueFromHistory((didSucceed) => {
+						if (!didSucceed) return;
+						preflightSucceeded = true;
+						output(success(id, "continue"), binding);
+					}, command.systemPrompt)
+					.catch((cause) => {
+						if (!preflightSucceeded) output(error(id, "continue", cause.message), binding);
 					});
 				return undefined;
 			}
@@ -2031,8 +2046,19 @@ export async function runRpcMode(
 			}
 
 			case "list_child_sessions": {
-				const children = await SessionManager.listChildrenBySpawnedFrom(command.parentSessionId);
-				return success(id, "list_child_sessions", { sessions: children.map(toRpcChildSessionInfo) });
+				const children = await SessionManager.listChildrenBySpawnedFrom(
+					command.parentSessionId,
+					command.sessionDir ?? session.sessionDir,
+				);
+				const childRuntimes = new Map(
+					Array.from(runtimeBindings.values()).map((candidate) => [
+						candidate.session.sessionId,
+						runtimeSummary(candidate),
+					]),
+				);
+				return success(id, "list_child_sessions", {
+					sessions: children.map((child) => toRpcChildSessionInfo(child, childRuntimes.get(child.id))),
+				});
 			}
 
 			// =================================================================
@@ -2236,7 +2262,6 @@ export async function runRpcMode(
 						cwd: command.cwd,
 						agentDir: command.agentDir,
 						projectConfigDir: command.projectConfigDir,
-						extensionTarget: binding.extensionTarget,
 					}),
 				);
 			}

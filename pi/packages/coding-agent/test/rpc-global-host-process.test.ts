@@ -84,13 +84,11 @@ describe("Pi RPC GlobalHost process", () => {
 			runtimeId: "runtime-a",
 			cwd,
 			sessionId: "session-a",
-			extensionTarget: "pi",
 		});
 		const secondRuntime = await second.openRuntime({
 			runtimeId: "runtime-b",
 			cwd,
 			sessionId: "session-b",
-			extensionTarget: "pi",
 		});
 
 		const runtimes = await second.listRuntimes();
@@ -108,7 +106,6 @@ describe("Pi RPC GlobalHost process", () => {
 					runtimeId: `perf-${index}`,
 					cwd,
 					sessionId: `perf-session-${index}`,
-					extensionTarget: "pi",
 				}),
 			);
 			durations.push(performance.now() - startedAt);
@@ -190,7 +187,6 @@ describe("Pi RPC GlobalHost process", () => {
 			runtimeId: "runtime-a",
 			cwd,
 			sessionId: "session-a",
-			extensionTarget: "pi",
 		});
 
 		const second = new RpcClient({
@@ -257,7 +253,6 @@ describe("Pi RPC GlobalHost process", () => {
 			runtimeId: "extension-runtime",
 			cwd: root,
 			sessionId: "extension-session",
-			extensionTarget: "mortise",
 			extensionPaths: [extensionPath],
 		});
 		await expect(runtime.invokeExtensionCommandResult("runtime-extension-loaded")).resolves.toEqual({

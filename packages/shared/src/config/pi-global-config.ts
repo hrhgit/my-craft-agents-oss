@@ -611,7 +611,6 @@ export async function getPiExtensionCatalog(options: { cwd?: string; agentDir?: 
       agentDir,
       projectConfigDir: MORTISE_PROJECT_DIR,
       settingsManager,
-      extensionTarget: 'mortise',
     });
     const result = await resourceResolver.resolve();
     return {
@@ -625,7 +624,6 @@ export async function getPiExtensionCatalog(options: { cwd?: string; agentDir?: 
             extensionManifest?: PiExtensionCatalogEntry['manifest'];
             extensionManifestStatus?: PiExtensionCatalogEntry['manifestStatus'];
             extensionManifestDiagnostics?: PiExtensionCatalogEntry['manifestDiagnostics'];
-            extensionHostVersion?: string;
             extensionLoadable?: boolean;
           };
           const ui = metadata.extensionUI as PiExtensionCatalogEntry['ui'];
@@ -633,7 +631,6 @@ export async function getPiExtensionCatalog(options: { cwd?: string; agentDir?: 
           const config = settingsManager.getExtensionConfig(id) as Record<string, unknown> | undefined;
           return {
             id,
-            target: 'mortise',
             loaded: false,
             title: ui?.title ?? manifest?.name ?? id,
             description: ui?.description ?? manifest?.description ?? '',
@@ -642,7 +639,6 @@ export async function getPiExtensionCatalog(options: { cwd?: string; agentDir?: 
             manifest,
             manifestStatus: metadata.extensionManifestStatus ?? 'legacy',
             manifestDiagnostics: metadata.extensionManifestDiagnostics ?? [],
-            hostVersion: metadata.extensionHostVersion ?? '0.0.0',
             loadable: metadata.extensionLoadable ?? resource.enabled,
             ui,
             enabled: config?.enabled === undefined ? true : config.enabled !== false,
@@ -658,7 +654,7 @@ export async function getPiExtensionCatalog(options: { cwd?: string; agentDir?: 
   } catch (error) {
     return {
       extensions: [],
-      errors: [{ path: '', error: error instanceof Error ? error.message : String(error), target: 'mortise' }],
+      errors: [{ path: '', error: error instanceof Error ? error.message : String(error) }],
     };
   }
 }

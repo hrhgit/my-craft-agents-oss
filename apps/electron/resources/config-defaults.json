@@ -13,12 +13,7 @@
     "allowRemoteEvaluate": true,
     "piExtensions": {
       "enabled": true,
-      "subagent": {
-        "reviewEnabled": true,
-        "reviewModel": "stepfun/step-3.7-flash"
-      },
       "traceAudit": {
-        "reviewSubagentEnabled": true,
         "showStatusBadge": true
       },
       "yourself": {

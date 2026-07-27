@@ -42,6 +42,8 @@ export type {
   PiExtensionCommand,
   HostRuntimeErrorProjection,
   HostQueuedUserProjection,
+  ChildTaskBackgroundOperation,
+  ChildTaskSettledOperation,
 } from './types.ts';
 
 // Enums need to be exported as values, not just types

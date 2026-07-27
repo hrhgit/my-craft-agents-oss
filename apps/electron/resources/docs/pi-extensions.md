@@ -4,7 +4,7 @@
 
 Pi extensions can add persistent GUI to Mortise without shipping extension-specific code inside Mortise. Extensions publish serializable contributions; Mortise owns rendering, layout, validation, permissions, recovery, and fallback.
 
-> **Placement and reload:** Mortise extensions must be declared with `targets: ["mortise"]` in a Pi package manifest. Put the package under `~/.mortise/agent/extensions/` (global) or `.mortise/extensions/` (project-local), then use **Settings > Extensions > Reload extensions**. Mortise reloads immediately when sessions are idle and asks before interrupting running sessions.
+> **Placement and reload:** Declare each Mortise extension once in the package's `pi.extensions` array. Put the package under `~/.mortise/agent/extensions/` (global) or `.mortise/extensions/` (project-local), then use **Settings > Extensions > Reload extensions**. Mortise reloads immediately when sessions are idle and asks before interrupting running sessions.
 
 **Key capabilities:**
 - **Host-rendered UI** - Compose text, Markdown, icons, badges, buttons, rows, and stacks with `ctx.ui.upsertContribution()`
@@ -56,7 +56,6 @@ Create `~/.mortise/agent/extensions/my-mortise-ui/package.json`:
        {
          "id": "my-mortise-ui",
          "path": "./index.ts",
-         "targets": ["mortise"],
          "manifest": {
            "schemaVersion": 1,
            "name": "My Mortise UI",
@@ -68,9 +67,6 @@ Create `~/.mortise/agent/extensions/my-mortise-ui/package.json`:
            "publisher": "example-author",
            "description": "Example Mortise GUI contribution.",
            "license": "MIT",
-           "engines": {
-             "mortise": "^0.1.0"
-           },
            "capabilities": ["ui.contributions"],
            "permissions": []
          },
@@ -138,7 +134,7 @@ Open **Settings > Extensions** in Mortise and choose **Reload extensions**. The 
 
 > **Security:** Extension backend code runs in Pi's child process with your system permissions. Only install extensions from sources you trust. A sandbox UI App restricts its iframe; it does not sandbox the extension backend.
 
-Mortise-target extensions use the same discovery locations as other Pi extensions:
+Mortise extensions use these discovery locations:
 
 | Location | Scope |
 |----------|-------|
@@ -146,27 +142,18 @@ Mortise-target extensions use the same discovery locations as other Pi extension
 | `.mortise/extensions/` | Project-local |
 | A package listed in Pi `settings.json` | Global or project-local, depending on the settings file |
 
-Manifest target values:
-
-- `mortise`: load in Mortise hosts.
-- `pi`: load in Pi CLI hosts.
-- `pi` and `mortise`: load in both; always check host capabilities before publishing GUI.
-
-Package manifest entries require explicit `targets`. A GUI extension intended for Mortise must include `"mortise"`; use `["pi", "mortise"]` only when the same backend also supports Pi CLI hosts.
-
 Use a stable lowercase package entry `id`, such as `repo-memory` or `build-status`. Mortise uses this ID for settings, command ownership, diagnostics, and contribution routing.
 
 ## Package Manifest V1
 
 Published and shared extensions should include a versioned `manifest` on every `pi.extensions` entry. A loose local script without `manifest` remains loadable for development, but Mortise marks it as legacy and cannot use it to satisfy a versioned dependency.
 
-Manifest V1 is strict: unknown fields, invalid identifiers, invalid SemVer versions or ranges, and a missing engine range for any declared target reject the package entry before extension code runs.
+Manifest V1 is strict: unknown fields, invalid identifiers, and invalid SemVer versions or dependency ranges reject the package entry before extension code runs. `targets` and `engines` are not accepted fields.
 
 ```json
 {
   "id": "deployment-tools",
   "path": "./index.ts",
-  "targets": ["pi", "mortise"],
   "activation": "beforeFirstRequest",
   "manifest": {
     "schemaVersion": 1,
@@ -181,10 +168,6 @@ Manifest V1 is strict: unknown fields, invalid identifiers, invalid SemVer versi
     "homepage": "https://example.com/deployment-tools",
     "repository": "https://example.com/deployment-tools/source",
     "license": "MIT",
-    "engines": {
-      "pi": "^0.1.0",
-      "mortise": "^0.1.0"
-    },
     "dependencies": {
       "deployment-core": "^2.0.0"
     },
@@ -214,7 +197,6 @@ Manifest V1 is strict: unknown fields, invalid identifiers, invalid SemVer versi
 | `publisher` | Optional stable lowercase publisher identifier. Keep it unchanged when the display author name changes. |
 | `description` | Optional catalog description, up to 2,000 characters. |
 | `homepage`, `repository`, `license` | Optional provenance and license metadata. URLs must use HTTP(S). |
-| `engines` | Required object. Every value in `targets` requires a matching valid SemVer range. |
 | `dependencies` | Required extension IDs and compatible version ranges. Missing, disabled, blocked, or incompatible dependencies block this extension. Dependencies always load first. |
 | `optionalDependencies` | Optional integration ranges. Missing or incompatible entries produce a warning but do not block loading. |
 | `conflicts` | Extension IDs and version ranges that cannot load with this extension. A matching active conflict blocks the declaring extension. |
@@ -566,7 +548,7 @@ Responsive capacity changes and explicit cross-contribution focus arbitration ar
 
 ## Manifest Settings
 
-Declare extension settings on the Mortise-target manifest entry:
+Declare extension settings on the extension entry:
 
 ```json
 {
@@ -575,7 +557,6 @@ Declare extension settings on the Mortise-target manifest entry:
       {
         "id": "my-mortise-ui",
         "path": "./index.ts",
-        "targets": ["mortise"],
         "ui": {
           "schemaVersion": 1,
           "title": "My Mortise UI",
@@ -707,7 +688,7 @@ For runtime failures, check `%USERPROFILE%\.mortise\logs\runtime.log` and filter
 | Pi TUI | No | Yes | Use Pi TUI APIs instead of Mortise contributions |
 | Headless or print mode | No | No | Keep non-UI behavior functional |
 
-For extensions targeting both Pi and Mortise, check `ctx.ui.capabilities.contributions` rather than inferring the host from `ctx.hasUI`.
+Check `ctx.ui.capabilities.contributions` before publishing GUI instead of inferring capability from the presence of a UI object.
 
 ## AI-Operable Validation
 
@@ -930,11 +911,11 @@ From an installed Mortise Developer Kit on Windows:
   --extension D:\Projects\my-mortise-extension --json
 ```
 
-`--extension` is repeatable. Each directory must contain `package.json` with Manifest V1 `pi.extensions` entries targeting `mortise`. Mounted entries override cloned profile entries with the same extension ID for that run, while duplicate mounted IDs fail before the host starts. Use **Settings > Extensions > Reload extensions** after editing extension code; the next runtime is loaded from the same development directory.
+`--extension` is repeatable. Each directory must contain `package.json` with host-neutral Manifest V1 `pi.extensions` entries. Mounted entries override cloned profile entries with the same extension ID for that run, while duplicate mounted IDs fail before the host starts. Use **Settings > Extensions > Reload extensions** after editing extension code; the next runtime is loaded from the same development directory.
 
 Before publishing a Mortise GUI extension, verify:
 
-1. The extension entry includes a stable `id`, `targets: ["mortise"]`, and Manifest V1 with version, author, and `engines.mortise`.
+1. The extension entry includes a stable `id`, path, and Manifest V1 with version and author, without `targets` or `engines`.
 2. Initial GUI is published from `session_start`.
 3. Repeated upserts use stable contribution IDs.
 4. Buttons reference commands owned by the same extension.
@@ -943,7 +924,7 @@ Before publishing a Mortise GUI extension, verify:
 7. Narrow viewports keep core controls usable; do not assume the current fixed capacity is a responsive placement API.
 8. Replace surfaces restore built-in UI when the contribution fails or disappears.
 9. Reload removes old GUI and republishes the new version.
-10. TUI and headless modes continue without Mortise contribution support.
+10. The backend continues when optional GUI capabilities are unavailable.
 11. Structured snapshots expose stable semantic IDs, labels, actions, and current state without relying on private DOM selectors.
 12. Ready, busy, completion, and failure transitions are observable without fixed sleeps.
 13. Registered scenarios use typed, production-valid state primitives and cannot mutate arbitrary renderer internals.
@@ -981,7 +962,7 @@ TUI component factories never cross the Pi RPC boundary.
 
 | Example | Description | Key APIs |
 |---------|-------------|----------|
-| Quick Start above | Mortise-target package manifest and update lifecycle | `targets`, `session_start`, `session_shutdown` |
+| Quick Start above | Mortise package manifest and update lifecycle | `manifest`, `session_start`, `session_shutdown` |
 | Sandbox example above | Self-contained interactive iframe | `sandbox-app`, `mortise.storage`, `mortise.resize` |
 | Manifest settings above | Generic settings UI | `ui.settings`, `SettingsManager` |
 | [`mortise-gui.ts` example](https://github.com/hrhgit/mortise/blob/main/pi/packages/coding-agent/examples/extensions/mortise-gui.ts) | Complete contribution, validation contract, scenario teardown, and sandbox bridge | `ctx.ui.validation`, `upsertContribution` |

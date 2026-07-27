@@ -38,7 +38,7 @@ bin\mortise-ui.exe start --label native-dialog --surface electron --profile fixt
 ## Validate An Extension
 
 Mount an extension directly from its development directory. Its `package.json`
-must contain Manifest V1 `pi.extensions` entries targeting `mortise`.
+must contain host-neutral Manifest V1 `pi.extensions` entries.
 
 ```powershell
 bin\mortise-ui.exe start --label package-check --surface electron --profile fixture --extension C:\path\to\my-extension --json

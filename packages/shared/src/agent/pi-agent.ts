@@ -10,10 +10,12 @@
  */
 
 import { existsSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import { createHash, randomUUID } from 'node:crypto';
-import { basename, join } from 'node:path';
+import { basename, isAbsolute, join } from 'node:path';
 import type { AgentEvent } from '@mortise/core/types';
 import type { FileAttachment } from '../utils/files.ts';
+import { atomicWriteFile } from '../utils/files.ts';
 import { createSanitizedEnv } from '../utils/env.ts';
 import { getProxyEnvVars } from '../config/proxy-env.ts';
 import { MORTISE_AGENT_DIR, MORTISE_PROJECT_DIR } from '../config/paths.ts';
@@ -244,12 +246,18 @@ export interface PiSpawnChildSessionOptions {
   thinkingLevel?: ThinkingLevel;
   name?: string;
   attachments?: Array<{ path: string; name?: string }>;
+  template?: string;
+  systemPrompt?: string;
+  tools?: string[];
+  background?: boolean;
 }
 
 /** Result of spawning a child session in the pi session tree. */
 export interface PiSpawnChildSessionResult {
   sessionId: string;
   sessionPath: string;
+  status: 'running' | 'completed' | 'interrupted' | 'failed';
+  output?: string;
 }
 
 /** Info about a child session in the pi session tree (filtered by spawnedFrom). */
@@ -262,13 +270,42 @@ export interface PiChildSessionInfo {
   modified: string;
   messageCount: number;
   firstMessage: string;
+  status: 'running' | 'completed' | 'interrupted' | 'failed';
+  lastOutput?: string;
+  persistedClientMutationIds: string[];
+  history: Array<{
+    role: string;
+    text: string;
+    timestamp?: number;
+    stopReason?: string;
+    clientMutationId?: string;
+  }>;
   spawnConfig?: {
     connection?: string;
     model?: string;
     permissionMode?: string;
     thinkingLevel?: string;
+    template?: string;
+    systemPrompt?: string;
+    tools?: string[];
+    background?: boolean;
+    backgroundOperationId?: string;
   };
 }
+
+interface ChildInboxMessage {
+  id: string;
+  message: string;
+  state: 'pending' | 'delivered';
+  createdAt: string;
+}
+
+interface ChildInbox {
+  schemaVersion: 1;
+  messages: ChildInboxMessage[];
+}
+
+const MAX_PENDING_CHILD_INBOX_MESSAGES = 100;
 
 /**
  * Backend implementation using the Pi coding agent SDK via RpcClient.
@@ -285,6 +322,12 @@ export class PiAgent extends BaseAgent {
 
   private rpcClient: PiSessionRpcClient | null = null;
   private rpcHostLease: PiHostLease | null = null;
+  private readonly childRuntimeLeases = new Set<PiHostLease>();
+  private readonly childRuntimeAcquisitions = new Set<Promise<void>>();
+  private readonly childInboxWrites = new Map<string, Promise<void>>();
+  private childRuntimeEpoch = 0;
+  private childRuntimeDisposed = false;
+  private childRuntimeTeardown: Promise<void> | null = null;
   private rpcClientReady: Promise<void> | null = null;
   private rpcCapabilities: PiRpcCapabilities | null = null;
   private unsubscribePiEvent: (() => void) | null = null;
@@ -601,7 +644,6 @@ export class PiAgent extends BaseAgent {
         ...getProxyEnvVars(),
         ...awsEnv,
         ...this.config.envOverrides,
-        PI_EXTENSION_TARGET: 'mortise',
         MORTISE_DEBUG: (process.argv.includes('--debug') || process.env.MORTISE_DEBUG === '1') ? '1' : '0',
       },
       pipeStderr,
@@ -619,7 +661,6 @@ export class PiAgent extends BaseAgent {
         cwd,
         agentDir: MORTISE_AGENT_DIR,
         projectConfigDir: MORTISE_PROJECT_DIR,
-        extensionTarget: 'mortise',
         extensionPaths: this.getMortiseExtensionPaths(),
         sessionDir,
         sessionId: this.config.session?.mortiseId,
@@ -1464,7 +1505,7 @@ export class PiAgent extends BaseAgent {
   /**
    * Runs the centralized permission pipeline for Pi RpcClient tool calls.
    */
-  private async handleToolPermissionRequest(req: PiRpcToolPermissionRequest): Promise<
+  private async handleToolPermissionRequest(req: PiRpcToolPermissionRequest, permissionModeOverride?: PermissionMode): Promise<
     { action: 'allow' } | { action: 'block'; reason?: string } | { action: 'modify'; input: Record<string, unknown> }
   > {
     const { toolName, toolCallId, input } = req;
@@ -1507,11 +1548,12 @@ export class PiAgent extends BaseAgent {
       ? { enabled: true, path: getRtkPath(), exclude: [] }
       : undefined;
 
+    const effectivePermissionMode = permissionModeOverride ?? this.permissionManager.getPermissionMode();
     const checkResult = runPreToolUseChecks({
       toolName,
       input,
       sessionId,
-      permissionMode: this.permissionManager.getPermissionMode(),
+      permissionMode: effectivePermissionMode,
       workspaceRootPath: rootPath,
       workspaceId: workspaceSlug,
       plansFolderPath,
@@ -1534,7 +1576,7 @@ export class PiAgent extends BaseAgent {
         this.debug(`__PERMISSION_BLOCK__${JSON.stringify({
           sessionId,
           toolName,
-          effectiveMode: diagnostics.permissionMode,
+          effectiveMode: permissionModeOverride ?? diagnostics.permissionMode,
           modeVersion: diagnostics.modeVersion,
           changedBy: diagnostics.lastChangedBy,
           changedAt: diagnostics.lastChangedAt,
@@ -1739,6 +1781,40 @@ export class PiAgent extends BaseAgent {
     return state.sessionId ?? null;
   }
 
+  private assertChildRuntimeActive(epoch?: number): void {
+    if (
+      this.childRuntimeDisposed
+      || this.childRuntimeTeardown
+      || (epoch !== undefined && epoch !== this.childRuntimeEpoch)
+    ) {
+      throw new Error('Parent runtime is unavailable for child task execution');
+    }
+  }
+
+  private async acquireChildRuntimeLease(
+    acquire: () => Promise<PiHostLease>,
+  ): Promise<{ lease: PiHostLease; epoch: number }> {
+    this.assertChildRuntimeActive();
+    const epoch = this.childRuntimeEpoch;
+    let releaseBarrier!: () => void;
+    const barrier = new Promise<void>(resolve => { releaseBarrier = resolve; });
+    this.childRuntimeAcquisitions.add(barrier);
+    try {
+      const lease = await acquire();
+      try {
+        this.assertChildRuntimeActive(epoch);
+      } catch (error) {
+        await lease.release();
+        throw error;
+      }
+      this.childRuntimeLeases.add(lease);
+      return { lease, epoch };
+    } finally {
+      this.childRuntimeAcquisitions.delete(barrier);
+      releaseBarrier();
+    }
+  }
+
   /**
    * Spawn a child session in the pi session tree via Pi RpcClient.
    *
@@ -1757,62 +1833,187 @@ export class PiAgent extends BaseAgent {
     parentSessionId: string,
     options: PiSpawnChildSessionOptions,
   ): Promise<PiSpawnChildSessionResult> {
-    const client = await this.ensureRpcClient();
-    const previous = await client.getState();
-    const previousSessionFile = previous.sessionFile;
-    const parentSession = previousSessionFile ?? parentSessionId;
-
-    try {
-      await client.newSession(parentSession);
-      if (options.name) {
-        await client.setSessionName(options.name);
-      }
-      let semanticModel: ReturnType<typeof resolvePiModelReference>;
-      if (options.model) {
-        semanticModel = isPiModelReference(options.model)
-          ? resolvePiModelReference(options.model, {
-              current: previous.model ? {
-                provider: previous.model.provider,
-                model: previous.model.id,
-                thinkingLevel: previous.thinkingLevel,
-              } : undefined,
-            })
-          : undefined;
-        if (isPiModelReference(options.model) && !semanticModel) {
-          throw new Error(`Model reference is unavailable: ${options.model}`);
-        }
-        const provider = semanticModel?.provider || options.connection || getBackendRuntime(this.config).piAuthProvider || previous.model?.provider;
-        const model = semanticModel?.model ?? options.model;
-        if (provider) {
-          await client.setModel(provider, model);
-        }
-      }
-      const thinkingLevel = options.thinkingLevel ?? semanticModel?.thinkingLevel;
-      if (thinkingLevel) {
-        await client.setThinkingLevel(thinkingLevel as any);
-      }
-      if (options.prompt) {
-        await client.prompt(options.prompt);
-        await client.waitForIdle(120_000);
-      }
-
-      const state = await client.getState();
-      return {
-        sessionId: state.sessionId,
-        sessionPath: state.sessionFile ?? '',
-      };
-    } finally {
-      // 恢复 previous session，避免 prompt 抛错时 RpcClient 停留在 child session
-      // 导致下一次主 chat() 打到 child session 而非 parent session。
-      if (previousSessionFile) {
-        try {
-          await client.switchSession(previousSessionFile);
-        } catch (switchError) {
-          this.debug(`spawnChildSession: failed to restore previous session: ${switchError instanceof Error ? switchError.message : String(switchError)}`);
-          await this.stopRpcClient();
-        }
+    for (const attachment of options.attachments ?? []) {
+      if (!isAbsolute(attachment.path) || !existsSync(attachment.path)) {
+        throw new Error(`Child task attachment must be an existing absolute path: ${attachment.path}`);
       }
     }
+    const parent = await this.ensureRpcClient();
+    const parentLease = this.rpcHostLease;
+    if (!parentLease) throw new Error('Pi multi-runtime host is unavailable for child task execution');
+    const previous = await parent.getState();
+    const resolvedOptions = this.resolveChildRuntimeOptions(options, previous);
+    const backgroundOperationId = options.background && options.prompt?.trim() ? randomUUID() : undefined;
+    const spawnConfig = {
+      connection: resolvedOptions.connection,
+      model: resolvedOptions.model,
+      permissionMode: resolvedOptions.permissionMode,
+      thinkingLevel: resolvedOptions.thinkingLevel,
+      template: options.template,
+      systemPrompt: options.systemPrompt,
+      tools: options.tools,
+      background: options.background,
+      backgroundOperationId,
+    };
+    const childSessionId = randomUUID();
+    const { lease, epoch } = await this.acquireChildRuntimeLease(() => parentLease.acquireRuntime({
+      runtimeId: `subagent-${childSessionId}`,
+      cwd: this.resolvedWorkspaceRoot(),
+      agentDir: MORTISE_AGENT_DIR,
+      projectConfigDir: MORTISE_PROJECT_DIR,
+      extensionPaths: this.getMortiseExtensionPaths(),
+      sessionDir: this.getChildSessionDir(),
+      sessionId: childSessionId,
+      parentSession: previous.sessionFile,
+      spawnedFrom: parentSessionId,
+      spawnConfig,
+      persistInitialState: true,
+      uiCapabilities: {
+        kind: 'none',
+        dialogs: false,
+        contributions: false,
+        interactionSchemas: [],
+      },
+    }));
+    const runtime = lease.runtime;
+    let releaseHere = true;
+    let settlement: { promise: Promise<void>; cancel: () => void } | undefined;
+    try {
+      await this.configureChildRuntime(runtime, resolvedOptions, previous);
+      this.assertChildRuntimeActive(epoch);
+      const state = await runtime.getState();
+      const sessionId = state.sessionId;
+      const sessionPath = state.sessionFile ?? runtime.runtimeSummary.sessionFile ?? '';
+      if (!options.prompt?.trim()) {
+        return { sessionId, sessionPath, status: 'interrupted' };
+      }
+
+      const attachmentContext = options.attachments?.map(attachment =>
+        `[Attached file: ${attachment.name ?? basename(attachment.path)}]\n[Path: ${attachment.path}]`,
+      ) ?? [];
+      const childPrompt = [...attachmentContext, options.prompt].join('\n\n');
+      this.assertChildRuntimeActive(epoch);
+      settlement = this.watchChildSettlement(runtime);
+      await runtime.prompt(childPrompt, undefined, {
+        systemPrompt: options.systemPrompt,
+        attachments: options.attachments?.map(attachment => ({
+          id: randomUUID(),
+          name: attachment.name ?? basename(attachment.path),
+        })),
+      });
+      this.assertChildRuntimeActive(epoch);
+      if (backgroundOperationId) {
+        await this.config.onChildTaskBackgroundStarted?.({
+          operationId: backgroundOperationId,
+          childSessionId: sessionId,
+          sessionPath,
+        });
+      }
+      if (options.background) {
+        releaseHere = false;
+        void settlement.promise
+          .catch(error => this.debug(`Child task ${sessionId} failed: ${error instanceof Error ? error.message : String(error)}`))
+          .then(() => this.childRuntimeDisposed
+            ? undefined
+            : this.notifyChildTaskSettled(parentSessionId, sessionId, sessionPath, backgroundOperationId))
+          .catch(error => this.debug(`Child task ${sessionId} delivery failed: ${error instanceof Error ? error.message : String(error)}`))
+          .finally(async () => {
+            await this.releaseChildRuntimeLease(lease);
+          })
+          .catch(error => this.debug(`Child task ${sessionId} release failed: ${error instanceof Error ? error.message : String(error)}`));
+        return { sessionId, sessionPath, status: 'running' };
+      }
+
+      await settlement.promise;
+      const output = await runtime.getLastAssistantText();
+      const persisted = (await this.listChildSessions(parentSessionId)).find(child => child.sessionId === sessionId);
+      return {
+        sessionId,
+        sessionPath,
+        status: persisted?.status ?? 'interrupted',
+        ...(output ? { output } : {}),
+      };
+    } catch (error) {
+      settlement?.cancel();
+      throw error;
+    } finally {
+      if (releaseHere) await this.releaseChildRuntimeLease(lease);
+    }
+  }
+
+  private async configureChildRuntime(
+    runtime: PiRuntimeHandle,
+    options: PiSpawnChildSessionOptions,
+    parentState: Awaited<ReturnType<PiRuntimeHandle['getState']>>,
+  ): Promise<void> {
+    if (options.name) await runtime.setSessionName(options.name);
+    let semanticModel: ReturnType<typeof resolvePiModelReference>;
+    if (options.model) {
+      semanticModel = isPiModelReference(options.model)
+        ? resolvePiModelReference(options.model, {
+            current: parentState.model ? {
+              provider: parentState.model.provider,
+              model: parentState.model.id,
+              thinkingLevel: parentState.thinkingLevel,
+            } : undefined,
+          })
+        : undefined;
+      if (isPiModelReference(options.model) && !semanticModel) {
+        throw new Error(`Model reference is unavailable: ${options.model}`);
+      }
+    }
+    const provider = semanticModel?.provider || options.connection || getBackendRuntime(this.config).piAuthProvider || parentState.model?.provider;
+    const model = semanticModel?.model ?? options.model ?? parentState.model?.id;
+    if (provider && model) await runtime.setModel(provider, model);
+    const thinkingLevel = options.thinkingLevel ?? semanticModel?.thinkingLevel ?? parentState.thinkingLevel;
+    if (thinkingLevel) await runtime.setThinkingLevel(thinkingLevel);
+
+    await runtime.setToolPermissionHandler(request => this.handleToolPermissionRequest(request, options.permissionMode));
+    await runtime.setToolResultHandler(result => this.handleCoordinatedToolResult(result));
+    this.assertBackendSessionToolParity();
+    const sessionToolDefs = getSessionHostToolDefs()
+      .filter(definition => !PI_EXTENSION_OWNED_SESSION_TOOL_NAMES.has(definition.name));
+    await runtime.registerTools(
+      sessionToolDefs as PiRpcHostToolDefinition[],
+      request => this.executeHostTool(request),
+    );
+    const profile = await runtime.getState();
+    const disabledTools = new Set(getDisabledAgentTools());
+    const requestedTools = options.tools ? new Set(options.tools) : undefined;
+    await runtime.setActiveTools(profile.activeTools.filter(name =>
+      !disabledTools.has(name) && (!requestedTools || requestedTools.has(name)),
+    ));
+    await runtime.setCompactionPrompt(getCustomCompactionPrompt());
+  }
+
+  private resolveChildRuntimeOptions(
+    options: PiSpawnChildSessionOptions,
+    parentState: Awaited<ReturnType<PiRuntimeHandle['getState']>>,
+  ): PiSpawnChildSessionOptions {
+    let semanticModel: ReturnType<typeof resolvePiModelReference>;
+    if (options.model && isPiModelReference(options.model)) {
+      semanticModel = resolvePiModelReference(options.model, {
+        current: parentState.model ? {
+          provider: parentState.model.provider,
+          model: parentState.model.id,
+          thinkingLevel: parentState.thinkingLevel,
+        } : undefined,
+      });
+      if (!semanticModel) throw new Error(`Model reference is unavailable: ${options.model}`);
+    }
+    return {
+      ...options,
+      connection: semanticModel?.provider || options.connection || getBackendRuntime(this.config).piAuthProvider || parentState.model?.provider,
+      model: semanticModel?.model ?? options.model ?? parentState.model?.id,
+      thinkingLevel: options.thinkingLevel ?? semanticModel?.thinkingLevel ?? parentState.thinkingLevel,
+      permissionMode: options.permissionMode ?? this.permissionManager.getPermissionMode(),
+    };
+  }
+
+  private getChildSessionDir(): string {
+    const parentSessionId = this.config.session?.mortiseId;
+    if (!parentSessionId) throw new Error('Child tasks require a persisted parent Session');
+    return join(getSessionPath(this.config.workspace.rootPath, parentSessionId), 'subagents');
   }
 
   private emitPiProjectionEvents(event: AgentEvent): void {
@@ -1874,7 +2075,7 @@ export class PiAgent extends BaseAgent {
       this.requirePiRpcCommand('list_child_sessions', 'child session listing');
       // ensureRpcClient() hydrates piSessionId from getState(). Prefer that
       // authoritative runtime identity over a pre-readiness Mortise ID hint.
-      const sessions = await client.listChildSessions(this.piSessionId ?? parentSessionId);
+      const sessions = await client.listChildSessions(this.piSessionId ?? parentSessionId, this.getChildSessionDir());
       return sessions.map(session => ({
         sessionId: session.id,
         sessionPath: session.path,
@@ -1884,12 +2085,454 @@ export class PiAgent extends BaseAgent {
         modified: session.modified,
         messageCount: session.messageCount,
         firstMessage: session.firstMessage,
+        status: session.status,
+        lastOutput: session.lastOutput,
+        persistedClientMutationIds: session.persistedClientMutationIds,
+        history: session.history,
         spawnConfig: session.spawnConfig,
       }));
     } catch (error) {
       this.debug(`[listChildSessions] Failed: ${error instanceof Error ? error.message : String(error)}`);
       return [];
     }
+  }
+
+  async sendChildSessionMessage(
+    parentSessionId: string,
+    childSessionId: string,
+    message: string,
+    options: { background?: boolean; systemPrompt?: string; tools?: string[] } = {},
+  ): Promise<PiSpawnChildSessionResult> {
+    const opened = await this.acquireChildRuntime(parentSessionId, childSessionId, options);
+    let persistence: { promise: Promise<boolean>; cancel: () => void } | undefined;
+    let settlement: { promise: Promise<void>; cancel: () => void } | undefined;
+    let accepted = false;
+    const messageId = randomUUID();
+    try {
+      const isStreaming = (await opened.runtime.getState()).isStreaming;
+      const backgroundOperationId = options.background || isStreaming ? randomUUID() : undefined;
+      await this.queueChildInboxMessage(opened.child, messageId, message, opened.epoch);
+      persistence = this.watchChildMessagePersistence(opened.runtime, [messageId]);
+      this.assertChildRuntimeActive(opened.epoch);
+      if (isStreaming) {
+        settlement = this.watchChildSettlement(opened.runtime);
+        await opened.runtime.followUp(message, undefined, { clientMutationId: messageId });
+        accepted = true;
+        await this.config.onChildTaskBackgroundStarted?.({
+          operationId: backgroundOperationId!,
+          childSessionId: opened.child.sessionId,
+          sessionPath: opened.child.sessionPath,
+        });
+        return await this.finishChildOperation(
+          parentSessionId,
+          opened,
+          settlement.promise,
+          true,
+          backgroundOperationId,
+          [messageId],
+          persistence,
+        );
+      }
+      settlement = this.watchChildSettlement(opened.runtime);
+      await opened.runtime.prompt(message, undefined, {
+        systemPrompt: options.systemPrompt ?? opened.child.spawnConfig?.systemPrompt,
+        clientMutationId: messageId,
+      });
+      accepted = true;
+      if (backgroundOperationId) {
+        await this.config.onChildTaskBackgroundStarted?.({
+          operationId: backgroundOperationId,
+          childSessionId: opened.child.sessionId,
+          sessionPath: opened.child.sessionPath,
+        });
+      }
+      return await this.finishChildOperation(
+        parentSessionId,
+        opened,
+        settlement.promise,
+        options.background === true,
+        backgroundOperationId,
+        [messageId],
+        persistence,
+      );
+    } catch (error) {
+      settlement?.cancel();
+      persistence?.cancel();
+      if (!accepted) {
+        await this.removeChildInboxMessages(opened.child, [messageId], opened.epoch).catch(() => undefined);
+      }
+      await this.releaseChildRuntimeLease(opened.lease);
+      throw error;
+    }
+  }
+
+  async resumeChildSession(
+    parentSessionId: string,
+    childSessionId: string,
+    options: { background?: boolean; systemPrompt?: string; tools?: string[] } = {},
+  ): Promise<PiSpawnChildSessionResult> {
+    const opened = await this.acquireChildRuntime(parentSessionId, childSessionId, options);
+    const backgroundOperationId = options.background ? randomUUID() : undefined;
+    let persistence: { promise: Promise<boolean>; cancel: () => void } | undefined;
+    let settlement: { promise: Promise<void>; cancel: () => void } | undefined;
+    try {
+      if ((await opened.runtime.getState()).isStreaming) {
+        await this.releaseChildRuntimeLease(opened.lease);
+        return { sessionId: opened.child.sessionId, sessionPath: opened.child.sessionPath, status: 'running' };
+      }
+      const pendingMessages = await this.getPendingChildInboxMessages(opened.child, opened.epoch);
+      persistence = this.watchChildMessagePersistence(opened.runtime, pendingMessages.map(item => item.id));
+      settlement = this.watchChildSettlement(opened.runtime);
+      if (pendingMessages.length > 0) {
+        const [first, ...rest] = pendingMessages;
+        await opened.runtime.prompt(
+          first!.message,
+          undefined,
+          {
+            systemPrompt: options.systemPrompt ?? opened.child.spawnConfig?.systemPrompt,
+            clientMutationId: first!.id,
+          },
+        );
+        if (backgroundOperationId) {
+          await this.config.onChildTaskBackgroundStarted?.({
+            operationId: backgroundOperationId,
+            childSessionId: opened.child.sessionId,
+            sessionPath: opened.child.sessionPath,
+          });
+        }
+        for (const pending of rest) {
+          await opened.runtime.followUp(pending.message, undefined, { clientMutationId: pending.id });
+        }
+      } else {
+        await opened.runtime.continue({
+          systemPrompt: options.systemPrompt ?? opened.child.spawnConfig?.systemPrompt,
+        });
+        if (backgroundOperationId) {
+          await this.config.onChildTaskBackgroundStarted?.({
+            operationId: backgroundOperationId,
+            childSessionId: opened.child.sessionId,
+            sessionPath: opened.child.sessionPath,
+          });
+        }
+      }
+      return await this.finishChildOperation(
+        parentSessionId,
+        opened,
+        settlement.promise,
+        options.background === true,
+        backgroundOperationId,
+        pendingMessages.map(item => item.id),
+        persistence,
+      );
+    } catch (error) {
+      settlement?.cancel();
+      persistence?.cancel();
+      await this.releaseChildRuntimeLease(opened.lease);
+      throw error;
+    }
+  }
+
+  async interruptChildSession(
+    parentSessionId: string,
+    childSessionId: string,
+  ): Promise<PiSpawnChildSessionResult> {
+    await this.ensureRpcClient();
+    const parentLease = this.rpcHostLease;
+    if (!parentLease) throw new Error('Pi multi-runtime host is unavailable for child task execution');
+    const child = (await this.listChildSessions(parentSessionId)).find(item => item.sessionId === childSessionId);
+    if (!child) throw new Error(`Child task not found: ${childSessionId}`);
+    const active = (await parentLease.client.listRuntimes()).find(item => item.sessionId === childSessionId);
+    if (!active) {
+      return { sessionId: child.sessionId, sessionPath: child.sessionPath, status: child.status, output: child.lastOutput };
+    }
+    const { lease, epoch } = await this.acquireChildRuntimeLease(() => parentLease.acquireRuntime({
+      runtimeId: active.runtimeId,
+      cwd: active.cwd,
+      agentDir: MORTISE_AGENT_DIR,
+      projectConfigDir: MORTISE_PROJECT_DIR,
+    }));
+    try {
+      this.assertChildRuntimeActive(epoch);
+      await lease.runtime.abort();
+      await lease.runtime.waitForIdle(60_000).catch(() => undefined);
+      return { sessionId: child.sessionId, sessionPath: child.sessionPath, status: 'interrupted' };
+    } finally {
+      await this.releaseChildRuntimeLease(lease);
+    }
+  }
+
+  private async acquireChildRuntime(
+    parentSessionId: string,
+    childSessionId: string,
+    options: { systemPrompt?: string; tools?: string[] },
+  ): Promise<{ lease: PiHostLease; runtime: PiRuntimeHandle; child: PiChildSessionInfo; epoch: number }> {
+    const parent = await this.ensureRpcClient();
+    const parentLease = this.rpcHostLease;
+    if (!parentLease) throw new Error('Pi multi-runtime host is unavailable for child task execution');
+    const child = (await this.listChildSessions(parentSessionId)).find(item => item.sessionId === childSessionId);
+    if (!child) throw new Error(`Child task not found: ${childSessionId}`);
+    const active = (await parentLease.client.listRuntimes()).find(item => item.sessionId === childSessionId);
+    const { lease, epoch } = await this.acquireChildRuntimeLease(() => parentLease.acquireRuntime(active ? {
+      runtimeId: active.runtimeId,
+      cwd: active.cwd,
+      agentDir: MORTISE_AGENT_DIR,
+      projectConfigDir: MORTISE_PROJECT_DIR,
+    } : {
+      runtimeId: `subagent-${childSessionId}`,
+      cwd: this.resolvedWorkspaceRoot(),
+      agentDir: MORTISE_AGENT_DIR,
+      projectConfigDir: MORTISE_PROJECT_DIR,
+      extensionPaths: this.getMortiseExtensionPaths(),
+      sessionPath: child.sessionPath,
+      uiCapabilities: {
+        kind: 'none',
+        dialogs: false,
+        contributions: false,
+        interactionSchemas: [],
+      },
+    }));
+    try {
+      if (!active) {
+        const parentState = await parent.getState();
+        await this.configureChildRuntime(lease.runtime, {
+          connection: child.spawnConfig?.connection,
+          model: child.spawnConfig?.model,
+          permissionMode: child.spawnConfig?.permissionMode as PermissionMode | undefined,
+          thinkingLevel: child.spawnConfig?.thinkingLevel as ThinkingLevel | undefined,
+          template: child.spawnConfig?.template,
+          background: child.spawnConfig?.background,
+          tools: options.tools ?? child.spawnConfig?.tools,
+          systemPrompt: options.systemPrompt ?? child.spawnConfig?.systemPrompt,
+        }, parentState);
+      }
+      this.assertChildRuntimeActive(epoch);
+      return { lease, runtime: lease.runtime, child, epoch };
+    } catch (error) {
+      await this.releaseChildRuntimeLease(lease);
+      throw error;
+    }
+  }
+
+  private async finishChildOperation(
+    parentSessionId: string,
+    opened: { lease: PiHostLease; runtime: PiRuntimeHandle; child: PiChildSessionInfo; epoch: number },
+    settled: Promise<void>,
+    background: boolean,
+    backgroundOperationId?: string,
+    inboxMessageIds: string[] = [],
+    persistence?: { promise: Promise<boolean>; cancel: () => void },
+  ): Promise<PiSpawnChildSessionResult> {
+    if (background) {
+      void settled
+        .then(async () => {
+          if (await (persistence?.promise ?? Promise.resolve(true))) {
+            await this.completeChildInboxMessages(opened.child, inboxMessageIds, opened.epoch);
+          }
+        }, error => {
+          persistence?.cancel();
+          this.debug(`Child task ${opened.child.sessionId} failed: ${error instanceof Error ? error.message : String(error)}`);
+        })
+        .then(() => this.childRuntimeDisposed ? undefined : this.notifyChildTaskSettled(
+          parentSessionId,
+          opened.child.sessionId,
+          opened.child.sessionPath,
+          backgroundOperationId,
+        ))
+        .catch(error => this.debug(`Child task ${opened.child.sessionId} delivery failed: ${error instanceof Error ? error.message : String(error)}`))
+        .finally(async () => {
+          await this.releaseChildRuntimeLease(opened.lease);
+        });
+      return { sessionId: opened.child.sessionId, sessionPath: opened.child.sessionPath, status: 'running' };
+    }
+    try {
+      await settled;
+    } catch (error) {
+      persistence?.cancel();
+      throw error;
+    }
+    if (await (persistence?.promise ?? Promise.resolve(true))) {
+      await this.completeChildInboxMessages(opened.child, inboxMessageIds, opened.epoch);
+    }
+    const output = await opened.runtime.getLastAssistantText();
+    const persisted = (await this.listChildSessions(parentSessionId))
+      .find(child => child.sessionId === opened.child.sessionId);
+    await this.releaseChildRuntimeLease(opened.lease);
+    return {
+      sessionId: opened.child.sessionId,
+      sessionPath: opened.child.sessionPath,
+      status: persisted?.status ?? 'interrupted',
+      ...(output ? { output } : {}),
+    };
+  }
+
+  private getChildInboxPath(child: PiChildSessionInfo): string {
+    return `${child.sessionPath}.inbox.json`;
+  }
+
+  private async readChildInbox(child: PiChildSessionInfo): Promise<ChildInbox> {
+    try {
+      const parsed = JSON.parse(await readFile(this.getChildInboxPath(child), 'utf8')) as Partial<ChildInbox>;
+      if (parsed.schemaVersion === 1 && Array.isArray(parsed.messages)) {
+        return { schemaVersion: 1, messages: parsed.messages };
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+    return { schemaVersion: 1, messages: [] };
+  }
+
+  private mutateChildInbox(
+    child: PiChildSessionInfo,
+    mutate: (inbox: ChildInbox) => void,
+    epoch?: number,
+  ): Promise<void> {
+    const path = this.getChildInboxPath(child);
+    const previous = this.childInboxWrites.get(path) ?? Promise.resolve();
+    const next = previous.catch(() => undefined).then(async () => {
+      if (epoch !== undefined) this.assertChildRuntimeActive(epoch);
+      const inbox = await this.readChildInbox(child);
+      if (epoch !== undefined) this.assertChildRuntimeActive(epoch);
+      mutate(inbox);
+      await atomicWriteFile(path, `${JSON.stringify(inbox, null, 2)}\n`);
+    });
+    this.childInboxWrites.set(path, next);
+    void next.then(
+      () => {
+        if (this.childInboxWrites.get(path) === next) this.childInboxWrites.delete(path);
+      },
+      () => {
+        if (this.childInboxWrites.get(path) === next) this.childInboxWrites.delete(path);
+      },
+    );
+    return next;
+  }
+
+  private async queueChildInboxMessage(
+    child: PiChildSessionInfo,
+    id: string,
+    message: string,
+    epoch?: number,
+  ): Promise<void> {
+    await this.mutateChildInbox(child, (inbox) => {
+      if (inbox.messages.some(item => item.id === id)) return;
+      inbox.messages = inbox.messages.filter(item => item.state === 'pending');
+      if (inbox.messages.length >= MAX_PENDING_CHILD_INBOX_MESSAGES) {
+        throw new Error(`Child task inbox is full (${MAX_PENDING_CHILD_INBOX_MESSAGES} pending messages)`);
+      }
+      inbox.messages.push({
+        id,
+        message,
+        state: 'pending',
+        createdAt: new Date().toISOString(),
+      });
+    }, epoch);
+  }
+
+  private async completeChildInboxMessages(child: PiChildSessionInfo, ids: string[], epoch?: number): Promise<void> {
+    if (ids.length === 0) return;
+    const completed = new Set(ids);
+    await this.mutateChildInbox(child, (inbox) => {
+      inbox.messages = inbox.messages.filter(item => !completed.has(item.id));
+    }, epoch);
+  }
+
+  private async removeChildInboxMessages(child: PiChildSessionInfo, ids: string[], epoch?: number): Promise<void> {
+    if (ids.length === 0) return;
+    const removed = new Set(ids);
+    await this.mutateChildInbox(child, (inbox) => {
+      inbox.messages = inbox.messages.filter(item => !removed.has(item.id));
+    }, epoch);
+  }
+
+  private watchChildMessagePersistence(
+    runtime: PiRuntimeHandle,
+    ids: string[],
+  ): { promise: Promise<boolean>; cancel: () => void } {
+    if (ids.length === 0) return { promise: Promise.resolve(true), cancel: () => undefined };
+    const pending = new Set(ids);
+    let finish!: (persisted: boolean) => void;
+    let unsubscribe: () => void = () => undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let finished = false;
+    const settle = (persisted: boolean) => {
+      if (finished) return;
+      finished = true;
+      if (timer) clearTimeout(timer);
+      unsubscribe();
+      finish(persisted);
+    };
+    const promise = new Promise<boolean>(resolve => { finish = resolve; });
+    unsubscribe = runtime.onEvent(event => {
+      if (event.type !== 'pi_user_message_persisted') return;
+      const clientMutationId = (event as { clientMutationId?: unknown }).clientMutationId;
+      if (typeof clientMutationId !== 'string') return;
+      pending.delete(clientMutationId);
+      if (pending.size === 0) settle(true);
+    });
+    timer = setTimeout(() => settle(false), 600_000);
+    timer.unref?.();
+    return { promise, cancel: () => settle(false) };
+  }
+
+  private watchChildSettlement(runtime: PiRuntimeHandle): { promise: Promise<void>; cancel: () => void } {
+    let resolvePromise!: () => void;
+    let rejectPromise!: (error: Error) => void;
+    let unsubscribe: () => void = () => undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let finished = false;
+    const finish = (error?: Error) => {
+      if (finished) return;
+      finished = true;
+      if (timer) clearTimeout(timer);
+      unsubscribe();
+      if (error) rejectPromise(error);
+      else resolvePromise();
+    };
+    const promise = new Promise<void>((resolve, reject) => {
+      resolvePromise = resolve;
+      rejectPromise = reject;
+    });
+    unsubscribe = runtime.onEvent(event => {
+      if (event.type === 'agent_settled') finish();
+    });
+    timer = setTimeout(() => {
+      finish(new Error(`Timeout waiting for child runtime ${runtime.runtimeId} to become idle`));
+    }, 600_000);
+    timer.unref?.();
+    return { promise, cancel: () => finish() };
+  }
+
+  private async getPendingChildInboxMessages(child: PiChildSessionInfo, epoch?: number): Promise<ChildInboxMessage[]> {
+    await this.childInboxWrites.get(this.getChildInboxPath(child));
+    if (epoch !== undefined) this.assertChildRuntimeActive(epoch);
+    const inbox = await this.readChildInbox(child);
+    const persistedMutationIds = new Set(child.persistedClientMutationIds);
+    const alreadyPersisted = inbox.messages
+      .filter(item => item.state === 'pending' && persistedMutationIds.has(item.id))
+      .map(item => item.id);
+    if (alreadyPersisted.length > 0) {
+      await this.completeChildInboxMessages(child, alreadyPersisted, epoch);
+    }
+    return inbox.messages.filter(item => item.state === 'pending' && !alreadyPersisted.includes(item.id));
+  }
+
+  private async notifyChildTaskSettled(
+    parentSessionId: string,
+    childSessionId: string,
+    sessionPath: string,
+    operationId?: string,
+  ): Promise<void> {
+    if (!operationId || !this.config.onChildTaskSettled) return;
+    const child = (await this.listChildSessions(parentSessionId))
+      .find(candidate => candidate.sessionId === childSessionId);
+    await this.config.onChildTaskSettled({
+      operationId,
+      childSessionId,
+      sessionPath,
+      status: child?.status === 'running' || !child ? 'interrupted' : child.status,
+      output: child?.lastOutput,
+      modified: child?.modified ?? new Date().toISOString(),
+    });
   }
 
   /**
@@ -2567,6 +3210,7 @@ export class PiAgent extends BaseAgent {
   }
 
   destroy(): void {
+    this.childRuntimeDisposed = true;
     this.settleTurnForRuntimeReplacement();
     this.coordinationBridge?.close();
     this.coordinationBridge = null;
@@ -2578,12 +3222,16 @@ export class PiAgent extends BaseAgent {
     }
 
     this._sessionToolContext = null;
+    void this.stopChildRuntimes('agent destroyed').catch(error => {
+      this.writePiRuntimeLog('error', 'child_runtime.teardown_failed', { error });
+    });
     // Pool clients are owned by the main process — don't close them here.
     this.stopRpcClientDetached('agent-destroyed');
     this.debug('PiAgent destroyed');
   }
 
   async disposeForRestart(): Promise<void> {
+    this.childRuntimeDisposed = true;
     this.stopConfigWatcher();
 
     if (this.config.session?.mortiseId) {
@@ -2592,7 +3240,7 @@ export class PiAgent extends BaseAgent {
 
     this._sessionToolContext = null;
     try {
-      await this.stopRpcClient();
+      await this.stopParentAndChildRuntimes('parent runtime disposed');
     } finally {
       this.settleTurnForRuntimeReplacement();
       this.coordinationBridge?.close();
@@ -2606,11 +3254,61 @@ export class PiAgent extends BaseAgent {
    */
   async reconnect(): Promise<void> {
     try {
-      await this.stopRpcClient();
+      await this.stopParentAndChildRuntimes('parent runtime reconnected');
     } finally {
       this.settleTurnForRuntimeReplacement();
     }
     this.debug('PiAgent reconnected (Pi RpcClient will be restarted on next chat)');
+  }
+
+  private async stopParentAndChildRuntimes(reason: string): Promise<void> {
+    const results = await Promise.allSettled([
+      this.stopChildRuntimes(reason),
+      this.stopRpcClient(),
+    ]);
+    const failures = results
+      .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+      .map(result => result.reason);
+    if (failures.length > 0) {
+      throw new AggregateError(failures, `Failed to fully stop parent and child runtimes: ${reason}`);
+    }
+  }
+
+  private async stopChildRuntimes(reason: string): Promise<void> {
+    if (this.childRuntimeTeardown) return this.childRuntimeTeardown;
+    this.childRuntimeEpoch++;
+    const teardown = (async () => {
+      await Promise.all([...this.childRuntimeAcquisitions]);
+      const leases = [...this.childRuntimeLeases];
+      this.childRuntimeLeases.clear();
+      const runtimes = new Map(leases.map(lease => [lease.runtime.runtimeId, lease.runtime]));
+      const runtimeResults = await Promise.allSettled([...runtimes.values()].map(async (runtime) => {
+        if (!(await runtime.getState()).isStreaming) return;
+        const settled = runtime.waitForIdle(60_000);
+        await runtime.abort();
+        await settled;
+      }));
+      const releaseResults = await Promise.allSettled(leases.map(lease => lease.release()));
+      const inboxResults = await Promise.allSettled([...this.childInboxWrites.values()]);
+      const failures = [...runtimeResults, ...releaseResults, ...inboxResults]
+        .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+        .map(result => result.reason);
+      if (leases.length > 0) this.debug(`Stopped ${leases.length} child task runtime(s): ${reason}`);
+      if (failures.length > 0) {
+        throw new AggregateError(failures, `Failed to fully stop child task runtimes: ${reason}`);
+      }
+    })();
+    this.childRuntimeTeardown = teardown;
+    try {
+      await teardown;
+    } finally {
+      if (this.childRuntimeTeardown === teardown) this.childRuntimeTeardown = null;
+    }
+  }
+
+  private async releaseChildRuntimeLease(lease: PiHostLease): Promise<void> {
+    await lease.release();
+    this.childRuntimeLeases.delete(lease);
   }
 
   private async stopRpcClient(): Promise<void> {
@@ -2691,7 +3389,6 @@ export class PiAgent extends BaseAgent {
       cwd: this.resolvedWorkspaceRoot(),
       agentDir: MORTISE_AGENT_DIR,
       projectConfigDir: MORTISE_PROJECT_DIR,
-      extensionTarget: 'mortise',
       inMemory: true,
       persistInitialState: false,
       uiCapabilities: {

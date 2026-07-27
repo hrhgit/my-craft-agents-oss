@@ -26,7 +26,7 @@ function setup() {
     const result: SpawnSessionResult = {
       sessionId: 'spawned-id',
       name: 'spawned',
-      status: 'started',
+      status: 'running',
     };
     return result;
   };

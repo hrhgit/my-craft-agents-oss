@@ -53,6 +53,18 @@ export interface HostQueuedUserProjection {
   }>;
 }
 
+export interface ChildTaskBackgroundOperation {
+  operationId: string;
+  childSessionId: string;
+  sessionPath: string;
+}
+
+export interface ChildTaskSettledOperation extends ChildTaskBackgroundOperation {
+  status: 'completed' | 'interrupted' | 'failed';
+  output?: string;
+  modified: string;
+}
+
 export interface IsolatedAgentRequest {
   prompt: string;
   provider?: string;
@@ -310,6 +322,12 @@ export interface CoreBackendConfig {
   /** Pi-first conversation projection stream. Must not contain Mortise Message DTOs. */
   onPiProjectionEvent?: (event: PiProjectionEventV1) => void;
 
+  /** Persist a background child operation immediately after its prompt is accepted. */
+  onChildTaskBackgroundStarted?: (operation: ChildTaskBackgroundOperation) => Promise<void>;
+
+  /** Deliver a terminal background child result through the parent Session. */
+  onChildTaskSettled?: (operation: ChildTaskSettledOperation) => Promise<void>;
+
   /** Execute a Pi extension's request against the host-owned capability router. */
   onHostCapabilityRequest?: (
     request: CapabilityRequestV1,
@@ -533,6 +551,24 @@ export interface AgentBackend {
     parentSessionId: string,
   ): Promise<import('../pi-agent.ts').PiChildSessionInfo[]>;
 
+  sendChildSessionMessage?(
+    parentSessionId: string,
+    childSessionId: string,
+    message: string,
+    options?: { background?: boolean; systemPrompt?: string; tools?: string[] },
+  ): Promise<import('../pi-agent.ts').PiSpawnChildSessionResult>;
+
+  resumeChildSession?(
+    parentSessionId: string,
+    childSessionId: string,
+    options?: { background?: boolean; systemPrompt?: string; tools?: string[] },
+  ): Promise<import('../pi-agent.ts').PiSpawnChildSessionResult>;
+
+  interruptChildSession?(
+    parentSessionId: string,
+    childSessionId: string,
+  ): Promise<import('../pi-agent.ts').PiSpawnChildSessionResult>;
+
   /**
    * Get a bound summarize callback for passing to API tool builders.
    */
@@ -622,7 +658,7 @@ export interface AgentBackend {
   onBackendAuthRequired: ((reason: string) => void) | null;
 
   /** Called when agent requests spawning a new session */
-  onSpawnSession: ((request: import('../base-agent.ts').SpawnSessionRequest) => Promise<import('../base-agent.ts').SpawnSessionResult>) | null;
+  onSpawnSession: ((request: import('../base-agent.ts').SpawnSessionRequest) => Promise<import('../base-agent.ts').SpawnSessionOperationResult>) | null;
 }
 
 /**

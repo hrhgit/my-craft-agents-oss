@@ -55,6 +55,7 @@ Run CLI, controller, build cache, process identity, semantic, native readiness, 
 Automation can pass against fixtures while physical rendering fails; stale native references can target the wrong control or process.
 
 ## Semantic history
+- 2026-07-27: Migrated Developer Kit manifests, development mounting, and extension validation scenarios to the single host-neutral Extension contract while retaining fail-closed rejection tests for removed target fields.
 - 2026-07-25: Removed Playwright locator actionability as a second raw-host readiness authority; the smoke now validates finite target geometry, sends real CDP mouse input, and proves the renderer transition without forced clicks or synthetic DOM activation, so background frame throttling cannot deadlock physical-input evidence.
 - 2026-07-25: Classified known transient Windows UIA RPC faults and retry readiness snapshots plus idempotent window-state actions only inside the existing request deadline; top-level focus uses a PID-verified HWND, and descendant actions resolve runtime IDs only inside that owner window's UIA subtree instead of Desktop Root, while permanent failures and non-idempotent actions remain fail-closed and no timeout was widened.
 - 2026-07-25: Moved stable renderer selector resolution into the Electron surface driver so the one live snapshot used by an action also owns its current ref and revision; explicit refs remain fail-closed, while host and physical extension smoke no longer pass a stale intermediate ref across the boundary.
@@ -74,4 +75,3 @@ Automation can pass against fixtures while physical rendering fails; stale nativ
 - 2026-07-22: Extended the isolated publication backend with a Session-targeted one-shot canonical-user persistence failure so physical validation can prove exact composer restoration and identity-stable retry for existing Sessions.
 - 2026-07-22: Added transferable same-profile restarts with fresh run identity and a Node-only one-shot first-turn backend restricted to provisional Sessions, with cross-process single-winner lease claims and physical failure/success/reload publication acceptance.
 - 2026-07-21: Reconciled DOM, accessibility, and business semantics by resolved element identity, and bound WebUI refs to decision-relevant semantic revisions instead of incidental DOM mutations.
-- 2026-07-21: Moved the complete playground component registry behind its own dynamic boundary so validation-only demos do not inflate the main renderer startup graph.

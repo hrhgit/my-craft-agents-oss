@@ -32,7 +32,7 @@ Maintain schemas, permissions, artifacts, task and plan tools, delegation lifecy
 Do not own the Pi built-in coding tools, external MCP connection management, or transcript UI.
 
 ## Contracts and invariants
-Tool inputs validate before side effects; child-session actions remain scoped to their parent and workspace; results are serializable.
+Tool inputs validate before side effects; child-task spawn, list, inspect, message, resume, and interrupt actions remain scoped to their parent and workspace; resume adds no synthetic history, and attachments must be existing absolute paths readable through the child's allowed tools. Results are serializable.
 
 ## Architecture and entry points
 `session-tools-core` supplies definitions and handlers; `session-mcp-server` exposes them to compatible runtimes.
@@ -47,6 +47,7 @@ Run package tests and downstream agent host tests for schema or lifecycle change
 Tool schema drift can break model calls without TypeScript errors; delegated sessions can outlive parent expectations.
 
 ## Semantic history
+- 2026-07-27: Replaced the legacy child-session execution path with one core child-task tool contract covering spawn, list, inspect, message, resume, and interrupt, with snapshot-based resume configuration and path-only attachments.
 - 2026-07-25: Established `@mortise/session-tools-core/runtime` as the host-neutral sealed-runtime authority, validating capsule identity and resolving Node, Bun, uv/Python, resource, and subprocess environments without shared-package or PATH fallbacks.
 - 2026-07-24: Made `spawn_session.thinkingLevel` expose exactly the six current Mortise values in both Zod and exported MCP JSON Schema, rejecting retired values without a shared-package dependency.
 - 2026-07-23: Moved the Session MCP server's Session and global-skill roots to the Mortise-owned Agent root and removed independent Pi path compatibility from the generated production bundle.

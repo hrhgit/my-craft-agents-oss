@@ -25,7 +25,6 @@ describe('Pi extension settings catalog', () => {
         extensions: [{
           id: 'disabled-extension',
           path: './disabled.js',
-          targets: ['mortise'],
           ui: {
             schemaVersion: 1,
             title: 'Disabled extension',

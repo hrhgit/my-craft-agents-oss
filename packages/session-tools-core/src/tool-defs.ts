@@ -86,7 +86,11 @@ export const BrowserToolSchema = z.object({
 
 export const SpawnSessionSchema = z.object({
   help: z.boolean().optional().describe('If true, returns available providers and models instead of creating a session'),
-  prompt: z.string().optional().describe('Instructions for the new session (required when not in help mode)'),
+  action: z.enum(['spawn', 'list', 'inspect', 'message', 'resume', 'interrupt']).optional().describe('Child-task operation (default: spawn)'),
+  prompt: z.string().optional().describe('Instructions for spawn, or a real follow-up message for message'),
+  sessionId: z.string().optional().describe('Child task ID for inspect, message, resume, or interrupt'),
+  template: z.string().optional().describe('Configured child-task template ID'),
+  background: z.boolean().optional().describe('Run asynchronously and return the persistent child task ID immediately'),
   name: z.string().optional().describe('Session name'),
   provider: z.string().optional().describe('Pi provider key (e.g., "anthropic", "openai")'),
   model: z.string().optional().describe('Model ID override'),
@@ -96,7 +100,7 @@ export const SpawnSessionSchema = z.object({
   attachments: z.array(z.object({
     path: z.string().describe('Absolute file path on disk'),
     name: z.string().optional().describe('Display name (defaults to file basename)'),
-  })).optional().describe('Files to include with the prompt'),
+  })).optional().describe('Existing absolute file paths the child can read with its read tool'),
 });
 
 export const GetSessionInfoSchema = z.object({
@@ -244,7 +248,7 @@ Examples:
 - \`close\` — close and destroy the browser window
 - \`hide\` — hide the window while preserving state`,
 
-  spawn_session: `Create a new session that runs independently with its own prompt, connection, and model.
+  spawn_session: `Create and control persistent child tasks owned by the current Session.
 
 Use this to delegate tasks to parallel sessions — research, analysis, drafts, or any work that benefits from separate context.
 
@@ -255,8 +259,8 @@ Optional overrides: \`provider\`, \`model\`, \`permissionMode\`, and \`thinkingL
 
 \`thinkingLevel\` is silently ignored on non-reasoning models (e.g. gpt-4o, gemini-2.5-flash) — the SDK drops the reasoning param rather than erroring. Use it when you want to force deeper reasoning on a supported model, or set it to \`off\` when spawning a session that doesn't need to think.
 
-The spawned session appears in the session list and runs fire-and-forget.
-Only use 'attachments' for existing file paths on disk — the tool reads them automatically.`,
+Child tasks never appear in the ordinary Session list. Foreground execution returns the final text; use background=true for asynchronous work. Use action=list/message/resume/interrupt to inspect and control existing child tasks. Resume without a prompt is a control action and does not append a synthetic message.
+Attachments pass existing absolute file paths to the child task. The selected template must include the read tool so the child can read their contents.`,
 
   send_developer_feedback: `Send freeform feedback to the Mortise Agent development team.
 

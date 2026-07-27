@@ -400,7 +400,6 @@ export default function (pi) {
 			{
 				id: "startup-provider",
 				path: "extensions/startup-provider.ts",
-				targets: ["pi"],
 				activation: "startup",
 			},
 		]);

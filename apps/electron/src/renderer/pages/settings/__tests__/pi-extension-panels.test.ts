@@ -6,9 +6,9 @@ import { patchCatalogField } from '../extension-settings-utils'
 
 function catalogEntry(configurable: boolean, withSchema: boolean): PiExtensionCatalogEntry {
   return {
-    id: 'extension', target: 'mortise', loaded: true, title: 'Extension', description: '', category: 'other',
+    id: 'extension', loaded: true, title: 'Extension', description: '', category: 'other',
     configurable, enabled: true, path: 'extension.ts', resolvedPath: 'C:\\extensions\\extension.ts',
-    manifestStatus: 'legacy', manifestDiagnostics: [], hostVersion: '0.1.0', loadable: true,
+    manifestStatus: 'legacy', manifestDiagnostics: [], loadable: true,
     commands: [], tools: [],
     ui: withSchema ? {
       schemaVersion: 1,

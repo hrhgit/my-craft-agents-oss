@@ -16,7 +16,7 @@ and MAY are to be interpreted as described by RFC 2119.
 
 Mortise owns one automation system. It owns the canonical definitions,
 scheduler, event ingress, run coordination, execution history, management RPC,
-and management UI. The former Mortise-target `prompt-automation` extension is
+and management UI. The former `prompt-automation` extension is
 not a second automation product, scheduler, store, or execution authority.
 
 The unified system supports:
@@ -724,7 +724,7 @@ The cutover is complete:
 
 - V3 is the only Mortise scheduler, store, history, and idempotency authority;
 - the former scheduler, `delegatePromptAutomation` setting and fallback,
-  Mortise-target `prompt-automation` runtime, and migration readers are absent;
+  `prompt-automation` runtime, and migration readers are absent;
 - Mortise exposes only the unified UI, RPC, CLI, and authenticated ingress;
 - independent Pi remains independent and keeps its own `.pi` storage. Like any
   external program, it may explicitly submit a typed event to authenticated

@@ -104,7 +104,6 @@ export async function runHeadlessMain(args: string[], options: HeadlessMainOptio
 		sessionStartEvent,
 		deferResourceLoad,
 		persistInitialState,
-		extensionTarget,
 		extensionPaths,
 	}) => {
 		const services = await createAgentSessionServices({
@@ -114,12 +113,10 @@ export async function runHeadlessMain(args: string[], options: HeadlessMainOptio
 			authStorage,
 			deferResourceLoad,
 			resourceLoaderOptions: {
-				extensionTarget: extensionTarget ?? "mortise",
 				additionalExtensionPaths: (extensionPaths ?? []).map((path, index) => ({
 					id: `runtime-extension-${index}`,
 					path,
 					activation: "startup" as const,
-					targets: ["mortise" as const],
 				})),
 				extensionFactories: options.extensionFactories,
 			},
@@ -161,7 +158,6 @@ export async function runHeadlessMain(args: string[], options: HeadlessMainOptio
 				defaultRuntime: {
 					cwd,
 					sessionManager,
-					extensionTarget: "mortise",
 					deferResourceLoad: false,
 					persistInitialState: true,
 					uiCapabilities,
@@ -174,7 +170,6 @@ export async function runHeadlessMain(args: string[], options: HeadlessMainOptio
 			agentDir,
 			projectConfigDir,
 			sessionManager,
-			extensionTarget: "mortise",
 			persistInitialState: true,
 		});
 		await runRpcMode(runtime, { uiCapabilities });

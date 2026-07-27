@@ -248,7 +248,6 @@ export type HostExtensionCategory =
 
 export interface HostExtensionSummary {
 	id: string;
-	target: "pi" | "mortise";
 	loaded: boolean;
 	title: string;
 	description: string;
@@ -257,7 +256,6 @@ export interface HostExtensionSummary {
 	manifest?: ExtensionManifestV1;
 	manifestStatus: ExtensionManifestStatus;
 	manifestDiagnostics: ExtensionManifestDiagnostic[];
-	hostVersion: string;
 	loadable: boolean;
 	ui?: ExtensionManifestUIV1;
 	path: string;
@@ -272,7 +270,7 @@ export interface HostExtensionSummary {
 
 export interface HostExtensionsResult {
 	extensions: HostExtensionSummary[];
-	errors: Array<{ path: string; error: string; target: "pi" | "mortise" }>;
+	errors: Array<{ path: string; error: string }>;
 }
 
 const VALID_THINKING_LEVELS: HostThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh"];
@@ -1101,16 +1099,13 @@ function dedupeHostSkillsBySlug(skills: HostSkillSummary[]): HostSkillSummary[] 
 	return deduped;
 }
 
-async function createHostResourceLoader(
-	args: { cwd?: string; agentDir?: string; projectConfigDir?: string; extensionTarget?: "pi" | "mortise" } = {},
-) {
+async function createHostResourceLoader(args: { cwd?: string; agentDir?: string; projectConfigDir?: string } = {}) {
 	const cwd = args.cwd ?? process.cwd();
 	const agentDir = args.agentDir ?? getAgentDir();
 	const loader = new DefaultResourceLoader({
 		cwd,
 		agentDir,
 		projectConfigDir: args.projectConfigDir,
-		extensionTarget: args.extensionTarget ?? "mortise",
 	});
 	await loader.reload({ phase: "full" });
 	return loader;
@@ -1190,7 +1185,6 @@ function summarizeExtension(extension: Extension): HostExtensionSummary {
 	const enabled = config?.enabled === undefined ? true : config.enabled !== false;
 	return {
 		id,
-		target: extension.target,
 		loaded: true,
 		title: manifestUI?.title ?? extension.manifest?.name ?? id,
 		description: manifestUI?.description ?? extension.manifest?.description ?? "",
@@ -1199,7 +1193,6 @@ function summarizeExtension(extension: Extension): HostExtensionSummary {
 		manifest: extension.manifest,
 		manifestStatus: extension.manifestStatus ?? "legacy",
 		manifestDiagnostics: extension.manifestDiagnostics ?? [],
-		hostVersion: extension.hostVersion ?? "0.0.0",
 		loadable: true,
 		ui: manifestUI,
 		path: extension.path,
@@ -1214,14 +1207,14 @@ function summarizeExtension(extension: Extension): HostExtensionSummary {
 }
 
 export async function getExtensions(
-	args: { cwd?: string; agentDir?: string; projectConfigDir?: string; extensionTarget?: "pi" | "mortise" } = {},
+	args: { cwd?: string; agentDir?: string; projectConfigDir?: string } = {},
 ): Promise<HostExtensionsResult> {
 	try {
 		const loader = await createHostResourceLoader(args);
 		const result = loader.getExtensions();
 		return {
 			extensions: result.extensions.map(summarizeExtension),
-			errors: result.errors.map((item) => ({ ...item, target: args.extensionTarget ?? "mortise" })),
+			errors: result.errors,
 		};
 	} catch (error) {
 		return {
@@ -1230,7 +1223,6 @@ export async function getExtensions(
 				{
 					path: "",
 					error: error instanceof Error ? error.message : String(error),
-					target: args.extensionTarget ?? "mortise",
 				},
 			],
 		};
@@ -1238,18 +1230,16 @@ export async function getExtensions(
 }
 
 export async function getExtensionCatalog(
-	args: { cwd?: string; agentDir?: string; projectConfigDir?: string; extensionTarget?: "pi" | "mortise" } = {},
+	args: { cwd?: string; agentDir?: string; projectConfigDir?: string } = {},
 ): Promise<HostExtensionsResult> {
 	const cwd = args.cwd ?? process.cwd();
 	const agentDir = args.agentDir ?? getAgentDir();
-	const target = args.extensionTarget ?? "mortise";
 	try {
 		const resourceResolver = new ResourceResolver({
 			cwd,
 			agentDir,
 			projectConfigDir: args.projectConfigDir,
 			settingsManager: SettingsManager.create(cwd, agentDir, args.projectConfigDir),
-			extensionTarget: target,
 		});
 		const resolved = await resourceResolver.resolve();
 		return {
@@ -1262,7 +1252,6 @@ export async function getExtensionCatalog(
 					const config = readExtensionConfig(id);
 					return {
 						id,
-						target,
 						loaded: false,
 						title: manifestUI?.title ?? manifest?.name ?? id,
 						description: manifestUI?.description ?? manifest?.description ?? "",
@@ -1271,7 +1260,6 @@ export async function getExtensionCatalog(
 						manifest,
 						manifestStatus: resource.metadata.extensionManifestStatus ?? "legacy",
 						manifestDiagnostics: resource.metadata.extensionManifestDiagnostics ?? [],
-						hostVersion: resource.metadata.extensionHostVersion ?? "0.0.0",
 						loadable: resource.metadata.extensionLoadable ?? resource.enabled,
 						ui: manifestUI,
 						path: resource.path,
@@ -1289,7 +1277,7 @@ export async function getExtensionCatalog(
 	} catch (error) {
 		return {
 			extensions: [],
-			errors: [{ path: "", error: error instanceof Error ? error.message : String(error), target }],
+			errors: [{ path: "", error: error instanceof Error ? error.message : String(error) }],
 		};
 	}
 }

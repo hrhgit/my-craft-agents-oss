@@ -4,7 +4,7 @@ import lockfile from "proper-lockfile";
 import { getAgentDir, getProjectConfigDir } from "../config.ts";
 import { normalizePath, resolvePath } from "../utils/paths.ts";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
-import type { ExtensionActivation, ExtensionTarget } from "./extensions/types.ts";
+import type { ExtensionActivation } from "./extensions/types.ts";
 import { DEFAULT_HTTP_IDLE_TIMEOUT_MS, parseHttpIdleTimeoutMs } from "./http-dispatcher.ts";
 import type { NetworkSettings } from "./network-types.ts";
 
@@ -44,9 +44,7 @@ export interface ThinkingBudgetsSettings {
 	high?: number;
 }
 
-export type ExtensionPathSource =
-	| string
-	| { id?: string; path: string; activation?: ExtensionActivation; targets?: ExtensionTarget[] };
+export type ExtensionPathSource = string | { id?: string; path: string; activation?: ExtensionActivation };
 
 /**
  * Per-extension namespace configuration.
@@ -103,7 +101,7 @@ export interface Settings {
 	hideThinkingBlock?: boolean;
 	shellPath?: string; // Custom shell path (e.g., for Cygwin users on Windows)
 	shellCommandPrefix?: string; // Prefix prepended to every bash command (e.g., "shopt -s expand_aliases" for alias support)
-	extensions?: ExtensionPathSource[]; // Array of local extension file paths/directories, optionally with activation/targets
+	extensions?: ExtensionPathSource[]; // Array of local extension file paths/directories, optionally with activation
 	extensionConfig?: Record<string, ExtensionNamespaceSettings>; // Per-extension namespace config (model/enabled/concurrency), keyed by extension name
 	shellGui?: Record<string, ShellGuiNamespaceSettings>; // mortise shell GUI preferences (shell.gui.<name>.*); ignored by pi CLI standalone
 	skills?: string[]; // Array of local skill file paths or directories

@@ -524,15 +524,11 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
   }, [isCompactMode, sessionId, session?.sessionFolderPath, sessionMeta, t])
 
   const headerActions = isCompactMode ? compactInfoButton : shareButton
-  const openSideTaskSession = React.useCallback((childSessionId: string) => {
-    navigate(routes.view.allSessions(childSessionId), { newPanel: true })
-  }, [])
   const sideTasksStatusButton = React.useMemo(() => (
     <SideTasksStatusPopover
       parentSessionId={sessionId}
-      onOpenSession={openSideTaskSession}
     />
-  ), [openSideTaskSession, sessionId])
+  ), [sessionId])
 
   // Build title menu content for chat sessions using shared SessionMenu.
   // Desktop uses Radix DropdownMenu via PanelHeader; compact mode uses a

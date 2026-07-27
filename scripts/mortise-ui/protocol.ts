@@ -25,7 +25,6 @@ export interface MortiseUiMountedExtensionEntry {
   id: string
   path: string
   version: string
-  targets: string[]
   overrodeExisting: boolean
 }
 

@@ -75,7 +75,6 @@ export type {
 	ExtensionIsolation,
 	// Runtime
 	ExtensionRuntime,
-	ExtensionTarget,
 	ExtensionUIAction,
 	ExtensionUICapabilities,
 	ExtensionUIContext,

@@ -1,32 +1,31 @@
 /**
  * Spawn Session Tool (spawn_session)
  *
- * Session-scoped tool that enables the main agent to create independent sessions
+ * Session-scoped tool that enables the main agent to create persistent child tasks
  * with a configurable provider, model, and initial prompt.
  *
- * Task 11: spawn_session is now a thin wrapper. When the backend implements
- * spawnChildSession (PiAgent), the onSpawnSession callback delegates to pi's
- * session tree — pi creates the child session file (header + spawnedFrom +
- * spawnConfig + optional initial prompt/name) and mortise no longer instantiates
- * its own SessionManager or writes session files. The SubagentPanel lists these
- * children via listChildSessions(spawnedFrom filter). Backends without
- * spawnChildSession fall back to independent mortise session creation (deprecated).
+ * The core runtime owns child execution and persistence. Child tasks are stored
+ * beneath their parent Session sidecar and never become ordinary Sessions.
  *
  * Two modes:
  * - help=true: Returns available providers and models
- * - Default: Creates a session and sends the prompt (fire-and-forget)
+ * - Default: Creates a child task and sends the prompt
  */
 
 import { z } from 'zod';
-import type { SpawnSessionResult, SpawnSessionHelpResult } from './base-agent.ts';
+import type { SpawnSessionOperationResult, SpawnSessionHelpResult } from './base-agent.ts';
 import { createMcpTool } from '../mcp/server-factory.ts';
 import { errorResponse } from './tool-result.ts';
 
-export type SpawnSessionFn = (input: Record<string, unknown>) => Promise<SpawnSessionResult | SpawnSessionHelpResult>;
+export type SpawnSessionFn = (input: Record<string, unknown>) => Promise<SpawnSessionOperationResult | SpawnSessionHelpResult>;
 
 interface SpawnSessionToolArgs {
   help?: boolean;
+  action?: 'spawn' | 'list' | 'inspect' | 'message' | 'resume' | 'interrupt';
   prompt?: string;
+  sessionId?: string;
+  template?: string;
+  background?: boolean;
   name?: string;
   provider?: string;
   model?: string;
@@ -49,7 +48,7 @@ export function createSpawnSessionTool(options: SpawnSessionToolOptions) {
     'spawn_session',
     `Create a new session that runs independently with its own prompt, provider, and model.
 
-Use this to delegate tasks to parallel sessions — research, analysis, drafts, or any work that benefits from separate context.
+Use this to delegate temporary child tasks, inspect their state and output, send follow-up messages, resume interrupted work without adding a fake user message, or interrupt a running child task.
 
 Call with help=true first to discover available providers and models.
 When spawning, the 'prompt' parameter is required.
@@ -58,13 +57,21 @@ Optional overrides: provider, model, permissionMode, and thinkingLevel. Omitted 
 
 thinkingLevel is silently ignored on non-reasoning models (e.g. gpt-4o, gemini-2.5-flash) — the SDK drops the reasoning param rather than erroring.
 
-The spawned session appears in the session list and runs fire-and-forget.
-Only use 'attachments' for existing file paths on disk — the tool reads them automatically.`,
+Child tasks stay attached to the parent Session and never appear in the ordinary Session list. Foreground execution returns the final text; set background=true to return immediately.
+Attachments pass existing absolute file paths to the child task. The selected template must include the read tool so the child can read their contents.`,
     {
       help: z.boolean().optional()
         .describe('If true, returns available providers and models instead of creating a session'),
+      action: z.enum(['spawn', 'list', 'inspect', 'message', 'resume', 'interrupt']).optional()
+        .describe('Child-task operation (default: spawn)'),
       prompt: z.string().optional()
-        .describe('Instructions for the new session (required when not in help mode)'),
+        .describe('Instructions for spawn, or a real follow-up message for message'),
+      sessionId: z.string().optional()
+        .describe('Child task ID for inspect, message, resume, or interrupt'),
+      template: z.string().optional()
+        .describe('Configured child-task template ID'),
+      background: z.boolean().optional()
+        .describe('Run asynchronously and return the persistent child task ID immediately'),
       name: z.string().optional()
         .describe('Session name'),
       provider: z.string().optional()
@@ -79,7 +86,7 @@ Only use 'attachments' for existing file paths on disk — the tool reads them a
         path: z.string().describe('Absolute file path on disk'),
         name: z.string().optional().describe('Display name (defaults to file basename)'),
       })).optional()
-        .describe('Files to include with the prompt'),
+        .describe('Existing absolute file paths the child can read with its read tool'),
     },
     async (args) => {
       const spawnFn = options.getSpawnSessionFn();

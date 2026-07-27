@@ -85,7 +85,7 @@ describe('PiHostManager process-level sharing', () => {
       key: 'default',
       client: {},
       runtime: {
-        runtimeId: 'runtime-a', cwd: 'E:/project', agentDir: MORTISE_AGENT_DIR, projectConfigDir: MORTISE_PROJECT_DIR, extensionTarget: 'mortise',
+        runtimeId: 'runtime-a', cwd: 'E:/project', agentDir: MORTISE_AGENT_DIR, projectConfigDir: MORTISE_PROJECT_DIR,
         extensionPaths: ['E:/extensions/browser.js', 'E:/extensions/messaging.js'],
       },
     };
@@ -107,6 +107,32 @@ describe('PiHostManager process-level sharing', () => {
     expect(fake.stop).toHaveBeenCalledTimes(1);
   });
 
+  it('single-flights concurrent opens for the same runtime identity', async () => {
+    const fake = createFakeClient();
+    const manager = new PiHostManager({ createClient: () => fake.client });
+    const options: PiHostAcquireOptions = {
+      key: 'concurrent-runtime',
+      client: {},
+      runtime: {
+        runtimeId: 'runtime-a',
+        cwd: 'E:/project',
+        agentDir: MORTISE_AGENT_DIR,
+        projectConfigDir: MORTISE_PROJECT_DIR,
+      },
+    };
+
+    const [first, second] = await Promise.all([
+      manager.acquire(options),
+      manager.acquire(options),
+    ]);
+
+    expect(fake.openRuntime).toHaveBeenCalledTimes(1);
+    expect(first.runtime).toBe(second.runtime);
+    await Promise.all([first.release(), second.release()]);
+    expect(fake.close).toHaveBeenCalledTimes(1);
+    await manager.dispose();
+  });
+
   it('rejects an RPC v2 host as an explicit compatibility failure', async () => {
     const fake = createFakeClient(2);
     const manager = new PiHostManager({ createClient: () => fake.client });
@@ -114,7 +140,7 @@ describe('PiHostManager process-level sharing', () => {
     await expect(manager.acquire({
       key: 'legacy',
       client: {},
-      runtime: { runtimeId: 'runtime-a', cwd: 'E:/project', agentDir: MORTISE_AGENT_DIR, projectConfigDir: MORTISE_PROJECT_DIR, extensionTarget: 'mortise' },
+      runtime: { runtimeId: 'runtime-a', cwd: 'E:/project', agentDir: MORTISE_AGENT_DIR, projectConfigDir: MORTISE_PROJECT_DIR },
     })).rejects.toBeInstanceOf(PiHostProtocolError);
     expect(fake.openRuntime).not.toHaveBeenCalled();
     expect(fake.stop).toHaveBeenCalledTimes(1);
@@ -133,7 +159,7 @@ describe('PiHostManager process-level sharing', () => {
     const lease = await manager.acquire({
       key: 'startup-events',
       client: {},
-      runtime: { runtimeId: 'runtime-a', cwd: 'E:/project', agentDir: MORTISE_AGENT_DIR, projectConfigDir: MORTISE_PROJECT_DIR, extensionTarget: 'mortise' },
+      runtime: { runtimeId: 'runtime-a', cwd: 'E:/project', agentDir: MORTISE_AGENT_DIR, projectConfigDir: MORTISE_PROJECT_DIR },
     });
 
     expect(lease.startupEvents).toEqual([startupEvent]);
@@ -151,7 +177,7 @@ describe('PiHostManager process-level sharing', () => {
     const options: PiHostAcquireOptions = {
       key: 'recoverable',
       client: {},
-      runtime: { runtimeId: 'runtime-a', cwd: 'E:/project', agentDir: MORTISE_AGENT_DIR, projectConfigDir: MORTISE_PROJECT_DIR, extensionTarget: 'mortise' },
+      runtime: { runtimeId: 'runtime-a', cwd: 'E:/project', agentDir: MORTISE_AGENT_DIR, projectConfigDir: MORTISE_PROJECT_DIR },
     };
 
     const firstLease = await manager.acquire(options);
@@ -176,7 +202,7 @@ describe('PiHostManager process-level sharing', () => {
     const options: PiHostAcquireOptions = {
       key: 'config-generation',
       client: {},
-      runtime: { runtimeId: 'runtime-a', cwd: 'E:/project', agentDir: MORTISE_AGENT_DIR, projectConfigDir: MORTISE_PROJECT_DIR, extensionTarget: 'mortise' },
+      runtime: { runtimeId: 'runtime-a', cwd: 'E:/project', agentDir: MORTISE_AGENT_DIR, projectConfigDir: MORTISE_PROJECT_DIR },
     };
 
     const oldLease = await manager.acquire(options);
@@ -213,7 +239,6 @@ describe('PiHostManager process-level sharing', () => {
         cwd: 'E:/project',
         agentDir: MORTISE_AGENT_DIR,
         projectConfigDir: MORTISE_PROJECT_DIR,
-        extensionTarget: 'mortise',
       },
     });
 
@@ -241,7 +266,7 @@ describe('PiHostManager process-level sharing', () => {
     await expect(manager.acquire({
       key: 'stuck',
       client: {},
-      runtime: { runtimeId: 'runtime-a', cwd: 'E:/project', agentDir: MORTISE_AGENT_DIR, projectConfigDir: MORTISE_PROJECT_DIR, extensionTarget: 'mortise' },
+      runtime: { runtimeId: 'runtime-a', cwd: 'E:/project', agentDir: MORTISE_AGENT_DIR, projectConfigDir: MORTISE_PROJECT_DIR },
     })).rejects.toThrow('startup timed out');
     expect(fake.stop).toHaveBeenCalledTimes(1);
   });

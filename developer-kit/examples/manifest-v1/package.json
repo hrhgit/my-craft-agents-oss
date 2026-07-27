@@ -7,7 +7,6 @@
       {
         "id": "manifest-v1-example",
         "path": "./index.ts",
-        "targets": ["mortise"],
         "manifest": {
           "schemaVersion": 1,
           "name": "Manifest V1 Example",
@@ -19,9 +18,6 @@
           "publisher": "example-author",
           "description": "A minimal host-rendered Mortise extension.",
           "license": "MIT",
-          "engines": {
-            "mortise": "^0.1.0"
-          },
           "capabilities": ["ui.contributions"],
           "permissions": []
         },

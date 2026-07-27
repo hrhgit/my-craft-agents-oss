@@ -20,10 +20,7 @@ async function discoverAndLoadExtensions(_paths: string[], agentDir: string, cwd
 		? fs.readdirSync(extensionsDir).map((entry) => path.join(extensionsDir, entry))
 		: [];
 	const metadata = new Map(
-		declaredPaths.map((extensionPath, index) => [
-			extensionPath,
-			{ id: `runner-test-${index}`, target: "pi" as const, agentDir },
-		]),
+		declaredPaths.map((extensionPath, index) => [extensionPath, { id: `runner-test-${index}`, agentDir }]),
 	);
 	return loadExtensions(declaredPaths, cwd, undefined, undefined, metadata);
 }

@@ -23,6 +23,7 @@ import { DEFAULT_THINKING_LEVEL, normalizeThinkingLevel } from './thinking-level
 import type { PermissionMode } from './mode-manager.ts';
 import { type LLMQueryRequest, type LLMQueryResult } from './llm-tool.ts';
 import { readPiGlobalProviders, readPiGlobalSettings } from '../config/pi-global-config.ts';
+import { listSubagentTemplates } from '../config/agent-settings.ts';
 
 import type {
   AgentBackend,
@@ -77,7 +78,11 @@ export interface MiniAgentConfig {
 // ============================================================
 
 export interface SpawnSessionRequest {
-  prompt: string;
+  action: 'spawn' | 'list' | 'inspect' | 'message' | 'resume' | 'interrupt';
+  prompt?: string;
+  sessionId?: string;
+  template?: string;
+  background?: boolean;
   name?: string;
   provider?: string;
   model?: string;
@@ -89,10 +94,21 @@ export interface SpawnSessionRequest {
 export interface SpawnSessionResult {
   sessionId: string;
   name: string;
-  status: 'started';
+  status: 'running' | 'completed' | 'interrupted' | 'failed';
   provider?: string;
   model?: string;
+  output?: string;
 }
+
+export interface SpawnSessionListResult {
+  children: import('./pi-agent.ts').PiChildSessionInfo[];
+}
+
+export interface SpawnSessionInspectResult {
+  child: import('./pi-agent.ts').PiChildSessionInfo;
+}
+
+export type SpawnSessionOperationResult = SpawnSessionResult | SpawnSessionListResult | SpawnSessionInspectResult;
 
 export interface SpawnSessionHelpResult {
   providers: Array<{
@@ -106,6 +122,7 @@ export interface SpawnSessionHelpResult {
     defaultProvider: string | null;
     permissionMode: string;
   };
+  templates: Array<{ id: string; name: string; description: string; model?: string }>;
 }
 
 /** Tool list for mini agents - quick config edits only */
@@ -184,7 +201,7 @@ export abstract class BaseAgent implements AgentBackend {
   onDebug: ((message: string) => void) | null = null;
   onUsageUpdate: ((update: UsageUpdate) => void) | null = null;
   onBackendAuthRequired: ((reason: string) => void) | null = null;
-  onSpawnSession: ((request: SpawnSessionRequest) => Promise<SpawnSessionResult>) | null = null;
+  onSpawnSession: ((request: SpawnSessionRequest) => Promise<SpawnSessionOperationResult>) | null = null;
 
   // ============================================================
   // Constructor
@@ -862,16 +879,23 @@ ${formattedMessages}
    */
   protected async preExecuteSpawnSession(
     input: Record<string, unknown>
-  ): Promise<SpawnSessionResult | SpawnSessionHelpResult> {
+  ): Promise<SpawnSessionOperationResult | SpawnSessionHelpResult> {
     // Help mode — return available config info
     if (input.help) {
       return this.getSpawnSessionHelp();
     }
 
-    // Spawn mode — validate and delegate
+    const action = (input.action as SpawnSessionRequest['action'] | undefined) ?? 'spawn';
+    if (action !== 'spawn' && input.template !== undefined) {
+      throw new Error('template is only valid when spawning a child task');
+    }
     const prompt = input.prompt as string | undefined;
-    if (!prompt?.trim()) {
+    if ((action === 'spawn' || action === 'message') && !prompt?.trim()) {
       throw new Error('prompt is required when not in help mode. Call with help=true to see available options.');
+    }
+    const sessionId = input.sessionId as string | undefined;
+    if ((action === 'inspect' || action === 'message' || action === 'resume' || action === 'interrupt') && !sessionId?.trim()) {
+      throw new Error(`sessionId is required for ${action}`);
     }
 
     if (!this.onSpawnSession) {
@@ -879,7 +903,11 @@ ${formattedMessages}
     }
 
     const request: SpawnSessionRequest = {
+      action,
       prompt,
+      sessionId,
+      template: input.template as string | undefined,
+      background: input.background as boolean | undefined,
       name: input.name as string | undefined,
       provider: input.provider as string | undefined,
       model: input.model as string | undefined,
@@ -894,7 +922,7 @@ ${formattedMessages}
   /**
    * Get available providers and models for spawn_session help mode.
    */
-  protected getSpawnSessionHelp(): SpawnSessionHelpResult {
+  protected async getSpawnSessionHelp(): Promise<SpawnSessionHelpResult> {
     const providers = readPiGlobalProviders();
     const settings = readPiGlobalSettings();
     return {
@@ -909,6 +937,12 @@ ${formattedMessages}
         defaultProvider: settings.defaultProvider ?? null,
         permissionMode: this.permissionManager.getPermissionMode(),
       },
+      templates: (await listSubagentTemplates({ cwd: this.config.workspace.rootPath })).map(({ id, name, description, model }) => ({
+        id,
+        name,
+        description,
+        ...(model ? { model } : {}),
+      })),
     };
   }
 

@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { ExtensionManifestV1 } from "../src/core/extension-manifest.ts";
+import { getExtensionCatalog } from "../src/core/host-facade.ts";
 import { type ResourcePathEntry, ResourceResolver } from "../src/core/resource-resolver.ts";
 import { type Settings, SettingsManager } from "../src/core/settings-manager.ts";
 
@@ -14,15 +15,12 @@ function manifest(name: string, overrides: Partial<ExtensionManifestV1> = {}): E
 		author: { name: "Mortise Test Author", url: "https://example.com/author" },
 		publisher: "mortise-tests",
 		description: `${name} extension`,
-		homepage: "https://example.com/extensions",
-		repository: "https://example.com/repository",
 		license: "MIT",
-		engines: { mortise: "^0.1.0" },
 		...overrides,
 	};
 }
 
-describe("extension manifest v1", () => {
+describe("unified Mortise extension manifest", () => {
 	let root: string;
 	let agentDir: string;
 	let cwd: string;
@@ -35,9 +33,7 @@ describe("extension manifest v1", () => {
 		mkdirSync(cwd, { recursive: true });
 	});
 
-	afterEach(() => {
-		rmSync(root, { recursive: true, force: true });
-	});
+	afterEach(() => rmSync(root, { recursive: true, force: true }));
 
 	function writeExtension(id: string): string {
 		const relativePath = `extensions/${id}.js`;
@@ -47,84 +43,69 @@ describe("extension manifest v1", () => {
 
 	async function resolve(entries: ResourcePathEntry[]) {
 		const settingsManager = SettingsManager.inMemory({ extensions: entries } as Partial<Settings>);
-		return new ResourceResolver({
-			cwd,
-			agentDir,
-			settingsManager,
-			extensionTarget: "mortise",
-			hostVersions: { mortise: "0.1.0" },
-		}).resolve();
+		return new ResourceResolver({ cwd, agentDir, settingsManager }).resolve();
 	}
 
-	it("preserves author, version, declarations, and compatibility metadata", async () => {
+	it("loads one host-neutral declaration and preserves manifest metadata", async () => {
 		const path = writeExtension("status-panel");
 		const extensionManifest = manifest("Status Panel", {
 			capabilities: ["ui.contributions", "settings.schema"],
 			permissions: ["workspace.files.read"],
 		});
 
-		const result = await resolve([{ id: "status-panel", path, targets: ["mortise"], manifest: extensionManifest }]);
+		const result = await resolve([{ id: "status-panel", path, manifest: extensionManifest }]);
 
 		expect(result.extensions).toHaveLength(1);
 		expect(result.extensions[0]?.metadata).toMatchObject({
 			extensionManifest,
 			extensionManifestStatus: "compatible",
 			extensionManifestDiagnostics: [],
-			extensionHostVersion: "0.1.0",
 			extensionLoadable: true,
 		});
+		expect(result.extensions[0]?.metadata).not.toHaveProperty("targets");
+		expect(result.extensions[0]?.metadata).not.toHaveProperty("extensionHostVersion");
 	});
 
-	it("blocks an extension outside its Mortise engine range", async () => {
-		const path = writeExtension("future-only");
-		const result = await resolve([
+	it("accepts core tool identifiers in subagent templates", async () => {
+		const path = writeExtension("subagent-templates");
+		const extensionManifest = manifest("Subagent Templates", {
+			subagents: [
+				{
+					id: "reviewer",
+					name: "Reviewer",
+					description: "Reviews changes",
+					systemPrompt: "Review changes carefully.",
+					tools: ["read", "spawn_session", "mcp__session__config_validate"],
+				},
+			],
+		});
+
+		const result = await resolve([{ id: "subagent-templates", path, manifest: extensionManifest }]);
+
+		expect(result.extensions[0]?.metadata.extensionManifest?.subagents).toEqual(extensionManifest.subagents);
+	});
+
+	it.each([
+		["targets", { id: "invalid", path: "extensions/invalid.js", targets: ["mortise"] }],
+		[
+			"engines",
 			{
-				id: "future-only",
-				path,
-				targets: ["mortise"],
-				manifest: manifest("Future Only", { engines: { mortise: ">=2.0.0" } }),
+				id: "invalid",
+				path: "extensions/invalid.js",
+				manifest: { ...manifest("Invalid"), engines: { mortise: "*" } },
 			},
-		]);
-
-		expect(result.extensions[0]?.enabled).toBe(false);
-		expect(result.extensions[0]?.metadata.extensionManifestStatus).toBe("blocked");
-		expect(result.extensions[0]?.metadata.extensionManifestDiagnostics).toContainEqual(
-			expect.objectContaining({ code: "host-incompatible", severity: "error" }),
-		);
-	});
-
-	it("reports duplicate legacy ids as blocked instead of merely legacy", async () => {
-		const firstPath = writeExtension("duplicate-first");
-		const secondPath = writeExtension("duplicate-second");
-		const result = await resolve([
-			{ id: "duplicate", path: firstPath, targets: ["mortise"] },
-			{ id: "duplicate", path: secondPath, targets: ["mortise"] },
-		]);
-
-		const duplicate = result.extensions.find((entry) => entry.path.endsWith("duplicate-second.js"))!;
-		expect(duplicate.enabled).toBe(false);
-		expect(duplicate.metadata.extensionManifestStatus).toBe("blocked");
-		expect(duplicate.metadata.extensionManifestDiagnostics).toContainEqual(
-			expect.objectContaining({ code: "duplicate-id", severity: "error" }),
-		);
+		],
+	])("rejects the removed %s field", async (_field, entry) => {
+		writeExtension("invalid");
+		await expect(resolve([entry as unknown as ResourcePathEntry])).rejects.toThrow(/unknown fields/);
 	});
 
 	it("loads required dependencies first and validates their versions", async () => {
 		const addonPath = writeExtension("addon");
 		const foundationPath = writeExtension("foundation");
 		const result = await resolve([
-			{
-				id: "addon",
-				path: addonPath,
-				targets: ["mortise"],
-				manifest: manifest("Addon", { dependencies: { foundation: "^1.0.0" } }),
-			},
-			{
-				id: "foundation",
-				path: foundationPath,
-				targets: ["mortise"],
-				manifest: manifest("Foundation"),
-			},
+			{ id: "addon", path: addonPath, manifest: manifest("Addon", { dependencies: { foundation: "^1.0.0" } }) },
+			{ id: "foundation", path: foundationPath, manifest: manifest("Foundation") },
 		]);
 
 		expect(result.extensions.filter((entry) => entry.enabled).map((entry) => basename(entry.path))).toEqual([
@@ -133,113 +114,81 @@ describe("extension manifest v1", () => {
 		]);
 	});
 
-	it("blocks missing required dependencies but only warns for optional dependencies", async () => {
-		const requiredPath = writeExtension("required-addon");
-		const optionalPath = writeExtension("optional-addon");
+	it("blocks missing dependencies and declared conflicts", async () => {
+		for (const id of ["base", "missing", "conflicting"]) writeExtension(id);
 		const result = await resolve([
+			{ id: "base", path: "extensions/base.js", manifest: manifest("Base") },
 			{
-				id: "required-addon",
-				path: requiredPath,
-				targets: ["mortise"],
-				manifest: manifest("Required Addon", { dependencies: { absent: "^1.0.0" } }),
+				id: "missing",
+				path: "extensions/missing.js",
+				manifest: manifest("Missing", { dependencies: { absent: "^1.0.0" } }),
 			},
-			{
-				id: "optional-addon",
-				path: optionalPath,
-				targets: ["mortise"],
-				manifest: manifest("Optional Addon", { optionalDependencies: { absent: "^1.0.0" } }),
-			},
-		]);
-
-		const required = result.extensions.find((entry) => entry.metadata.extensionId === "required-addon")!;
-		const optional = result.extensions.find((entry) => entry.metadata.extensionId === "optional-addon")!;
-		expect(required.metadata.extensionManifestStatus).toBe("blocked");
-		expect(required.metadata.extensionManifestDiagnostics?.[0]?.code).toBe("missing-dependency");
-		expect(optional.enabled).toBe(true);
-		expect(optional.metadata.extensionManifestStatus).toBe("warning");
-		expect(optional.metadata.extensionManifestDiagnostics?.[0]?.code).toBe("optional-dependency-missing");
-	});
-
-	it("blocks declared conflicts and required dependency cycles", async () => {
-		for (const id of ["base", "conflicting", "cycle-a", "cycle-b"]) writeExtension(id);
-		const result = await resolve([
-			{ id: "base", path: "extensions/base.js", targets: ["mortise"], manifest: manifest("Base") },
 			{
 				id: "conflicting",
 				path: "extensions/conflicting.js",
-				targets: ["mortise"],
 				manifest: manifest("Conflicting", { conflicts: { base: "*" } }),
-			},
-			{
-				id: "cycle-a",
-				path: "extensions/cycle-a.js",
-				targets: ["mortise"],
-				manifest: manifest("Cycle A", { dependencies: { "cycle-b": "*" } }),
-			},
-			{
-				id: "cycle-b",
-				path: "extensions/cycle-b.js",
-				targets: ["mortise"],
-				manifest: manifest("Cycle B", { dependencies: { "cycle-a": "*" } }),
 			},
 		]);
 
 		expect(
+			result.extensions.find((entry) => entry.metadata.extensionId === "missing")?.metadata
+				.extensionManifestDiagnostics,
+		).toContainEqual(expect.objectContaining({ code: "missing-dependency", severity: "error" }));
+		expect(
 			result.extensions.find((entry) => entry.metadata.extensionId === "conflicting")?.metadata
 				.extensionManifestDiagnostics,
-		).toContainEqual(expect.objectContaining({ code: "conflict" }));
-		for (const id of ["cycle-a", "cycle-b"]) {
-			expect(
-				result.extensions.find((entry) => entry.metadata.extensionId === id)?.metadata.extensionManifestDiagnostics,
-			).toContainEqual(expect.objectContaining({ code: "dependency-cycle" }));
-		}
+		).toContainEqual(expect.objectContaining({ code: "conflict", severity: "error" }));
 	});
 
-	it("uses deterministic load-order hints and warns instead of blocking on hint cycles", async () => {
+	it("keeps deterministic load ordering and warns on hint cycles", async () => {
 		for (const id of ["first", "second", "third"]) writeExtension(id);
 		const result = await resolve([
 			{
 				id: "first",
 				path: "extensions/first.js",
-				targets: ["mortise"],
 				manifest: manifest("First", { loadOrder: { after: ["second"] } }),
 			},
 			{
 				id: "second",
 				path: "extensions/second.js",
-				targets: ["mortise"],
 				manifest: manifest("Second", { loadOrder: { after: ["first"] } }),
 			},
-			{
-				id: "third",
-				path: "extensions/third.js",
-				targets: ["mortise"],
-				manifest: manifest("Third", { loadOrder: { priority: 100 } }),
-			},
+			{ id: "third", path: "extensions/third.js", manifest: manifest("Third", { loadOrder: { priority: 100 } }) },
 		]);
 
 		expect(result.extensions[0]?.metadata.extensionId).toBe("third");
 		for (const id of ["first", "second"]) {
-			const entry = result.extensions.find((candidate) => candidate.metadata.extensionId === id)!;
-			expect(entry.enabled).toBe(true);
-			expect(entry.metadata.extensionManifestDiagnostics).toContainEqual(
-				expect.objectContaining({ code: "load-order-cycle", severity: "warning" }),
-			);
+			expect(
+				result.extensions.find((entry) => entry.metadata.extensionId === id)?.metadata.extensionManifestDiagnostics,
+			).toContainEqual(expect.objectContaining({ code: "load-order-cycle", severity: "warning" }));
 		}
 	});
 
-	it.each([
-		["invalid version", { version: "latest" }],
-		["missing target engine", { engines: { pi: "^0.1.0" } }],
-		["self dependency", { dependencies: { invalid: "^1.0.0" } }],
-	])("rejects %s at the strict manifest boundary", async (_label, manifestOverrides) => {
-		const path = writeExtension("invalid");
-		const entry = {
-			id: "invalid",
-			path,
-			targets: ["mortise"],
-			manifest: manifest("Invalid", manifestOverrides as Partial<ExtensionManifestV1>),
-		} as ResourcePathEntry;
-		await expect(resolve([entry])).rejects.toThrow(/extension manifest/);
+	it("exposes a host-neutral catalog without executing extension factories", async () => {
+		const extensionPath = join(agentDir, "extensions", "static.js");
+		writeFileSync(extensionPath, "throw new Error('factory executed')", "utf8");
+		writeFileSync(
+			join(agentDir, "extensions", "package.json"),
+			JSON.stringify({
+				pi: {
+					extensions: [
+						{
+							id: "static-catalog",
+							path: "./static.js",
+							manifest: manifest("Static Catalog"),
+							ui: { schemaVersion: 1, title: "Static catalog", category: "ui" },
+						},
+					],
+				},
+			}),
+			"utf8",
+		);
+
+		const result = await getExtensionCatalog({ cwd, agentDir });
+		expect(result.errors).toEqual([]);
+		expect(result.extensions).toHaveLength(1);
+		expect(result.extensions[0]).toMatchObject({ id: "static-catalog", title: "Static catalog", loaded: false });
+		expect(result.extensions[0]).not.toHaveProperty("target");
+		expect(result.extensions[0]).not.toHaveProperty("hostVersion");
 	});
 });
