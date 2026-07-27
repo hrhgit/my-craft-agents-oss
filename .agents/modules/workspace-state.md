@@ -49,6 +49,7 @@ Run multi-writer storage, workspace normalization, path validation, and renderer
 Path normalization differs by platform; concurrent source and installed backends can race without operation identities.
 
 ## Semantic history
+- 2026-07-28: Made ID-keyed SQLite topology authoritative for Workspace V2 locations, added strict membership markers and revisioned idempotent mutations, and qualified local file/draft/watch/transfer operations by stable location identity.
 - 2026-07-23: Hard-cut workspace project resources to `<workspace>/.mortise`, renamed the Session bucket API to Mortise terminology, and retained no project `.pi` fallback or alias.
 - 2026-07-23: Routed workspace Session projections through the Mortise-owned Agent root without reading independent Pi Session history.
 - 2026-07-21: Made `state.sqlite` the sole workspace-configuration authority, removed workspace-local JSON import/materialization, strictly rejected retired fields and permission aliases without rewriting them, and published the canonical record identity for non-runtime consumers.

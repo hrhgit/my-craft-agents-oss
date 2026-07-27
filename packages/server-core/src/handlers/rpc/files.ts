@@ -14,8 +14,15 @@ import {
   type WorkspaceEntryMutationResult,
   type WorkspaceEntryRenameResult,
   type FileTextWriteResult,
+  parseWorkspacePathRefV1,
+  type WorkspacePathRefV1,
 } from '@mortise/shared/protocol'
 import type { StoredAttachment } from '@mortise/core/types'
+import {
+  getDefaultWorkspaceTopologyStore,
+  readWorkspaceMarker,
+  type WorkspaceTopologyStore,
+} from '@mortise/shared/workspaces'
 import {
   ATTACHMENT_SINGLE_FILE_LIMIT_BYTES,
   ATTACHMENT_TEXT_INLINE_LIMIT_BYTES,
@@ -26,13 +33,14 @@ import {
 import { getSessionAttachmentsPath, validateSessionId } from '@mortise/shared/sessions'
 import { getWorkspaceOrThrow } from '../utils'
 import { resizeImageForAPI, inspectImageBuffer } from '@mortise/server-core/services'
-import { sanitizeFilename, validateFilePath, getWorkspaceAllowedDirs, isSensitivePath } from '../utils'
+import { sanitizeFilename, validateFilePath, isSensitivePath } from '../utils'
 import { MarkItDown } from 'markitdown-js'
 import chokidar, { type FSWatcher as ChokidarWatcher } from 'chokidar'
 import { pushTyped, type HandlerFn, type RpcServer } from '@mortise/server-core/transport'
 import type { HandlerDeps } from '../handler-deps'
 import { requestClientOpenFileDialog } from '@mortise/server-core/transport'
 import { setTransferableHandler } from './transfer'
+import { ensureWorkspaceTopology } from './workspace-topology'
 
 export const HANDLED_CHANNELS = [
   RPC_CHANNELS.file.READ,
@@ -90,7 +98,7 @@ const WORKSPACE_BINARY_EXTENSIONS = new Set([
   'mov', 'mp3', 'mp4', 'o', 'psd', 'so', 'tar', 'tif', 'tiff', 'webm', 'zip',
 ])
 const WORKSPACE_SEARCH_SKIPPED_DIRECTORIES = new Set([
-  '.git', '.hg', '.next', '.nuxt', '.nyc_output', '.svn', '.turbo',
+  '.git', '.hg', '.mortise', '.next', '.nuxt', '.nyc_output', '.svn', '.turbo',
   '__pycache__', 'build', 'coverage', 'dist', 'node_modules', 'out', 'vendor',
 ])
 
@@ -107,36 +115,84 @@ export function normalizeWorkspaceRelativePath(value: unknown): string {
   return parts.join('/')
 }
 
-function getRequestWorkspaceRoot(
+interface ResolvedWorkspaceLocation {
+  workspaceId: string
+  locationId: string
+  rootPath: string
+  revision: number
+}
+
+function getRequestWorkspaceLocation(
   ctx: { workspaceId?: string | null; webContentsId?: number | null },
   deps: HandlerDeps,
-): { workspaceId: string; rootPath: string } {
+  topologyStore: WorkspaceTopologyStore,
+  value?: unknown,
+  requestedLocationId?: string,
+): ResolvedWorkspaceLocation & { relativePath: string } {
   const workspaceId = ctx.workspaceId
     ?? (ctx.webContentsId != null ? deps.windowManager?.getWorkspaceForWindow(ctx.webContentsId) : undefined)
   if (!workspaceId) throw new Error('A workspace is required')
-  const workspace = deps.sessionManager.getWorkspaces().find(candidate => candidate.id === workspaceId)
+  const getWorkspaces = deps.sessionManager.getWorkspaces as (() => ReturnType<HandlerDeps['sessionManager']['getWorkspaces']>) | undefined
+  const candidate = getWorkspaces?.call(deps.sessionManager).find(workspace => workspace.id === workspaceId)
     ?? getWorkspaceOrThrow(workspaceId)
-  return { workspaceId, rootPath: workspace.rootPath }
+  ensureWorkspaceTopology(topologyStore, candidate)
+  const workspace = topologyStore.get(workspaceId)
+  if (!workspace) throw new Error(`Workspace topology not found: ${workspaceId}`)
+
+  let locationId = requestedLocationId ?? workspace.primaryLocationId
+  let relativePath = ''
+  if (value && typeof value === 'object') {
+    const pathRef = parseWorkspacePathRefV1(value)
+    if (pathRef.workspaceId !== workspaceId) {
+      throw new Error(
+        `Workspace mismatch: authenticated workspace (${workspaceId}) does not match requested (${pathRef.workspaceId})`,
+      )
+    }
+    if (requestedLocationId && requestedLocationId !== pathRef.locationId) {
+      throw new Error('Workspace location mismatch')
+    }
+    locationId = pathRef.locationId
+    relativePath = pathRef.relativePath
+  } else {
+    relativePath = normalizeWorkspaceRelativePath(value)
+  }
+
+  const location = workspace.locations.find(item => item.id === locationId)
+  if (!location) throw new Error(`Workspace location not found: ${locationId}`)
+  if (location.endpoint.kind !== 'local') {
+    throw new Error(`Workspace location ${locationId} is remote and cannot be handled by the local file service`)
+  }
+  readWorkspaceMarker(location.endpoint.rootPath, workspaceId)
+  return {
+    workspaceId,
+    locationId,
+    rootPath: location.endpoint.rootPath,
+    revision: workspace.revision,
+    relativePath,
+  }
 }
 
 async function resolveWorkspaceRelativePath(
   ctx: { workspaceId?: string | null; webContentsId?: number | null },
   deps: HandlerDeps,
+  topologyStore: WorkspaceTopologyStore,
   value: unknown,
-): Promise<{ relativePath: string; candidatePath: string; safePath: string; rootPath: string }> {
-  const relativePath = normalizeWorkspaceRelativePath(value)
-  const { rootPath } = getRequestWorkspaceRoot(ctx, deps)
+  requestedLocationId?: string,
+): Promise<ResolvedWorkspaceLocation & { relativePath: string; candidatePath: string; safePath: string }> {
+  const resolvedLocation = getRequestWorkspaceLocation(ctx, deps, topologyStore, value, requestedLocationId)
+  const { relativePath, rootPath } = resolvedLocation
   const candidatePath = relativePath ? join(rootPath, ...relativePath.split('/')) : rootPath
   const safePath = await validateFilePath(candidatePath, [rootPath], { allowHome: false, allowTmp: false })
-  return { relativePath, candidatePath, safePath, rootPath }
+  return { ...resolvedLocation, candidatePath, safePath }
 }
 
 async function resolveWorkspaceMutationPath(
   ctx: { workspaceId?: string | null; webContentsId?: number | null },
   deps: HandlerDeps,
+  topologyStore: WorkspaceTopologyStore,
   value: unknown,
 ) {
-  const resolved = await resolveWorkspaceRelativePath(ctx, deps, value)
+  const resolved = await resolveWorkspaceRelativePath(ctx, deps, topologyStore, value)
   if (!resolved.relativePath) throw new Error('The workspace root cannot be modified')
   if (
     isSensitivePath(resolved.candidatePath)
@@ -152,11 +208,13 @@ async function resolveWorkspaceMutationPath(
 async function resolveWorkspaceMutationSourcePath(
   ctx: { workspaceId?: string | null; webContentsId?: number | null },
   deps: HandlerDeps,
+  topologyStore: WorkspaceTopologyStore,
   value: unknown,
 ) {
-  const relativePath = normalizeWorkspaceRelativePath(value)
+  const location = getRequestWorkspaceLocation(ctx, deps, topologyStore, value)
+  const { relativePath } = location
   if (!relativePath) throw new Error('The workspace root cannot be modified')
-  const { rootPath } = getRequestWorkspaceRoot(ctx, deps)
+  const { rootPath } = location
   const candidatePath = join(rootPath, ...relativePath.split('/'))
   await validateFilePath(dirname(candidatePath), [rootPath], { allowHome: false, allowTmp: false })
   if (isSensitivePath(candidatePath) || isSensitivePath(`${candidatePath}/`)) {
@@ -164,15 +222,15 @@ async function resolveWorkspaceMutationSourcePath(
   }
   const entry = await lstat(candidatePath)
   if (!entry.isSymbolicLink()) {
-    return { ...await resolveWorkspaceMutationPath(ctx, deps, relativePath), symlinkTargetValidated: true }
+    return { ...await resolveWorkspaceMutationPath(ctx, deps, topologyStore, value), symlinkTargetValidated: true }
   }
   try {
     const safePath = await validateFilePath(candidatePath, [rootPath], { allowHome: false, allowTmp: false })
-    return { relativePath, candidatePath, safePath, rootPath, symlinkTargetValidated: true }
+    return { ...location, candidatePath, safePath, symlinkTargetValidated: true }
   } catch {
     // The lexical parent is workspace-owned, so mutation may safely operate on
     // the link itself even when its target escapes, is sensitive, or is broken.
-    return { relativePath, candidatePath, safePath: candidatePath, rootPath, symlinkTargetValidated: false }
+    return { ...location, candidatePath, safePath: candidatePath, symlinkTargetValidated: false }
   }
 }
 
@@ -212,6 +270,7 @@ async function workspaceMutationResult(
 interface WorkspaceWatchRegistration {
   watcher: ChokidarWatcher
   workspaceId: string
+  locationId: string
   rootPath: string
   clientIds: Set<string>
   debounceTimers: Map<string, ReturnType<typeof setTimeout>>
@@ -228,8 +287,8 @@ const defaultWorkspaceWatcherFactory: WorkspaceWatcherFactory = (rootPath, optio
   chokidar.watch(rootPath, options)
 let workspaceWatcherFactory = defaultWorkspaceWatcherFactory
 
-function workspaceWatchKey(workspaceId: string, rootPath: string): string {
-  return `${workspaceId}\0${rootPath}`
+function workspaceWatchKey(workspaceId: string, locationId: string): string {
+  return `${workspaceId}\0${locationId}`
 }
 
 function shouldIgnoreWorkspaceWatchPath(rootPath: string, watchedPath: string): boolean {
@@ -277,6 +336,7 @@ function createWorkspaceWatchRegistration(
   server: RpcServer,
   deps: HandlerDeps,
   workspaceId: string,
+  locationId: string,
   rootPath: string,
 ): WorkspaceWatchRegistration {
   let resolveReady!: () => void
@@ -295,6 +355,7 @@ function createWorkspaceWatchRegistration(
   const state: WorkspaceWatchRegistration = {
     watcher,
     workspaceId,
+    locationId,
     rootPath,
     clientIds: new Set(),
     debounceTimers: new Map(),
@@ -311,7 +372,7 @@ function createWorkspaceWatchRegistration(
       readySettled = true
       rejectReady(error instanceof Error ? error : new Error(String(error)))
     }
-    closeWorkspaceWatchRegistration(workspaceWatchKey(workspaceId, rootPath), state)
+    closeWorkspaceWatchRegistration(workspaceWatchKey(workspaceId, locationId), state)
   })
   watcher.on('all', () => {
     for (const clientId of state.clientIds) {
@@ -346,6 +407,7 @@ async function readWorkspaceDirectoryEntries(
   const rawEntries = await readdir(safePath, { withFileTypes: true })
   const entries: WorkspaceFileEntry[] = []
   for (const entry of rawEntries) {
+    if (entry.name === '.mortise') continue
     const childPath = join(safePath, entry.name)
     if (isSensitivePath(childPath) || isSensitivePath(`${childPath}/`)) continue
     let type: WorkspaceFileEntry['type'] | null = entry.isDirectory()
@@ -437,18 +499,25 @@ export interface WorkspaceFileDraftStorageIdentity {
 function workspaceDraftIdentity(
   ctx: { workspaceId?: string | null; webContentsId?: number | null },
   deps: HandlerDeps,
+  topologyStore: WorkspaceTopologyStore,
   value: unknown,
+  requestedLocationId?: string,
 ): WorkspaceFileDraftStorageIdentity {
-  const relativePath = normalizeWorkspaceRelativePath(value)
+  const { workspaceId, locationId, rootPath, relativePath } = getRequestWorkspaceLocation(
+    ctx,
+    deps,
+    topologyStore,
+    value,
+    requestedLocationId,
+  )
   if (!relativePath) throw new Error('A workspace file path is required')
-  const { workspaceId, rootPath } = getRequestWorkspaceRoot(ctx, deps)
   const candidate = join(rootPath, ...relativePath.split('/'))
   if (isSensitivePath(candidate)) throw new Error('Access denied: cannot read sensitive files')
 
-  // CONFIG_DIR identifies the server/profile. Hashing workspace + root prevents
-  // a recycled workspace id from restoring a draft for a different directory.
+  // Stable location identity keeps same-named resources in attached roots
+  // isolated even if an endpoint path is later replaced.
   const workspaceScope = createHash('sha256')
-    .update(`${workspaceId}\0${rootPath}`)
+    .update(`${workspaceId}\0${locationId}`)
     .digest('hex')
   const resourceId = createHash('sha256').update(relativePath).digest('hex')
   const serverConfigDir = process.env.MORTISE_CONFIG_DIR || join(homedir(), '.mortise')
@@ -702,9 +771,11 @@ async function renameWorkspaceEntryCaseOnly(
 async function collectWorkspaceDraftIdentities(
   ctx: { workspaceId?: string | null; webContentsId?: number | null },
   deps: HandlerDeps,
+  topologyStore: WorkspaceTopologyStore,
   prefix: string,
+  locationId: string,
 ): Promise<WorkspaceFileDraftStorageIdentity[]> {
-  const anchor = workspaceDraftIdentity(ctx, deps, prefix)
+  const anchor = workspaceDraftIdentity(ctx, deps, topologyStore, prefix, locationId)
   let names: string[]
   try {
     names = await readdir(anchor.directoryPath)
@@ -732,7 +803,7 @@ async function collectWorkspaceDraftIdentities(
     if (record.workspaceScope !== anchor.workspaceScope || typeof record.relativePath !== 'string') {
       throw new Error('Invalid workspace file draft record blocks file mutation')
     }
-    const identity = workspaceDraftIdentity(ctx, deps, record.relativePath)
+    const identity = workspaceDraftIdentity(ctx, deps, topologyStore, record.relativePath, locationId)
     const expectedName = parsePath(isMarker
       ? workspaceFileDraftDeletionMarkerPath(identity)
       : identity.filePath).base
@@ -749,9 +820,11 @@ async function collectWorkspaceDraftIdentities(
 async function assertNoActiveWorkspaceDraftsAndClearStaleRecords(
   ctx: { workspaceId?: string | null; webContentsId?: number | null },
   deps: HandlerDeps,
+  topologyStore: WorkspaceTopologyStore,
   prefix: string,
+  locationId: string,
 ): Promise<void> {
-  const identities = await collectWorkspaceDraftIdentities(ctx, deps, prefix)
+  const identities = await collectWorkspaceDraftIdentities(ctx, deps, topologyStore, prefix, locationId)
   for (const identity of identities) {
     if (await readWorkspaceFileDraftRecord(identity)) {
       throw new Error('Save or discard recoverable drafts before renaming or deleting this workspace entry')
@@ -835,12 +908,41 @@ function getFilePathValidationOptions(
   }
 }
 
-export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): void {
+function getWorkspaceAllowedLocalRoots(
+  deps: HandlerDeps,
+  topologyStore: WorkspaceTopologyStore,
+  workspaceId?: string | null,
+): string[] {
+  if (!workspaceId) return []
+  const getWorkspaces = deps.sessionManager.getWorkspaces as (() => ReturnType<HandlerDeps['sessionManager']['getWorkspaces']>) | undefined
+  let candidate = getWorkspaces?.call(deps.sessionManager).find(workspace => workspace.id === workspaceId)
+  if (!candidate) {
+    try {
+      candidate = getWorkspaceOrThrow(workspaceId)
+    } catch {
+      return []
+    }
+  }
+  ensureWorkspaceTopology(topologyStore, candidate)
+  const workspace = topologyStore.get(workspaceId)
+  if (!workspace) return []
+  return workspace.locations.flatMap(location => {
+    if (location.endpoint.kind !== 'local') return []
+    readWorkspaceMarker(location.endpoint.rootPath, workspaceId)
+    return [location.endpoint.rootPath]
+  })
+}
+
+export function registerFilesHandlers(
+  server: RpcServer,
+  deps: HandlerDeps,
+  topologyStore: WorkspaceTopologyStore = getDefaultWorkspaceTopologyStore(),
+): void {
   // Read a file (with path validation to prevent traversal attacks)
   server.handle(RPC_CHANNELS.file.READ, async (ctx, path: string) => {
     try {
       const workspaceId = ctx.workspaceId ?? deps.windowManager?.getWorkspaceForWindow(ctx.webContentsId!)
-      const safePath = await validateFilePath(path, getWorkspaceAllowedDirs(workspaceId), getFilePathValidationOptions(ctx, deps, workspaceId))
+      const safePath = await validateFilePath(path, getWorkspaceAllowedLocalRoots(deps, topologyStore, workspaceId), getFilePathValidationOptions(ctx, deps, workspaceId))
       await assertPreviewReadSize(safePath, WORKSPACE_TEXT_PREVIEW_MAX_BYTES)
       const content = await readFile(safePath, 'utf-8')
       return content
@@ -861,7 +963,7 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
   server.handle(RPC_CHANNELS.file.READ_DATA_URL, async (ctx, path: string) => {
     try {
       const workspaceId = ctx.workspaceId ?? deps.windowManager?.getWorkspaceForWindow(ctx.webContentsId!)
-      const safePath = await validateFilePath(path, getWorkspaceAllowedDirs(workspaceId), getFilePathValidationOptions(ctx, deps, workspaceId))
+      const safePath = await validateFilePath(path, getWorkspaceAllowedLocalRoots(deps, topologyStore, workspaceId), getFilePathValidationOptions(ctx, deps, workspaceId))
       await assertPreviewReadSize(safePath, WORKSPACE_RICH_PREVIEW_MAX_BYTES)
       const buffer = await readFile(safePath)
       const ext = safePath.split('.').pop()?.toLowerCase() ?? ''
@@ -894,7 +996,7 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
   server.handle(RPC_CHANNELS.file.READ_PREVIEW_DATA_URL, async (ctx, path: string, maxSize = 64) => {
     try {
       const workspaceId = ctx.workspaceId ?? deps.windowManager?.getWorkspaceForWindow(ctx.webContentsId!)
-      const safePath = await validateFilePath(path, getWorkspaceAllowedDirs(workspaceId), getFilePathValidationOptions(ctx, deps, workspaceId))
+      const safePath = await validateFilePath(path, getWorkspaceAllowedLocalRoots(deps, topologyStore, workspaceId), getFilePathValidationOptions(ctx, deps, workspaceId))
       await assertPreviewReadSize(safePath, WORKSPACE_RICH_PREVIEW_MAX_BYTES)
       const size = Number.isFinite(maxSize) ? Math.max(16, Math.min(256, Math.floor(maxSize))) : 64
       const preview = await deps.platform.imageProcessor.process(safePath, {
@@ -915,7 +1017,7 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
   server.handle(RPC_CHANNELS.file.READ_BINARY, async (ctx, path: string) => {
     try {
       const workspaceId = ctx.workspaceId ?? deps.windowManager?.getWorkspaceForWindow(ctx.webContentsId!)
-      const safePath = await validateFilePath(path, getWorkspaceAllowedDirs(workspaceId), getFilePathValidationOptions(ctx, deps, workspaceId))
+      const safePath = await validateFilePath(path, getWorkspaceAllowedLocalRoots(deps, topologyStore, workspaceId), getFilePathValidationOptions(ctx, deps, workspaceId))
       await assertPreviewReadSize(safePath, WORKSPACE_RICH_PREVIEW_MAX_BYTES)
       const buffer = await readFile(safePath)
       // Return as Uint8Array (serializes to ArrayBuffer over IPC)
@@ -946,7 +1048,7 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
   server.handle(RPC_CHANNELS.file.READ_ATTACHMENT, async (ctx, path: string) => {
     try {
       const workspaceId = ctx.workspaceId ?? deps.windowManager?.getWorkspaceForWindow(ctx.webContentsId!)
-      const safePath = await validateFilePath(path, getWorkspaceAllowedDirs(workspaceId), getFilePathValidationOptions(ctx, deps, workspaceId))
+      const safePath = await validateFilePath(path, getWorkspaceAllowedLocalRoots(deps, topologyStore, workspaceId), getFilePathValidationOptions(ctx, deps, workspaceId))
       // Use shared utility that handles file type detection, encoding, etc.
       const attachment = await readFileAttachment(safePath)
       if (!attachment) return null
@@ -1067,8 +1169,16 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
       if (!workspaceId) {
         throw new Error('Cannot determine workspace for attachment storage')
       }
-      const workspace = getWorkspaceOrThrow(workspaceId)
-      const workspaceRootPath = workspace.rootPath
+      if (
+        !attachment.base64
+        && !attachment.text
+        && attachment.path
+        && isAbsolute(attachment.path)
+        && !isTrustedLocalUserPathRequest(ctx, deps, workspaceId)
+      ) {
+        throw new Error('Path-only attachments are only accepted from the local Electron window. Upload file contents instead.')
+      }
+      const { rootPath: workspaceRootPath } = getRequestWorkspaceLocation(ctx, deps, topologyStore, '')
 
       // SECURITY: Validate sessionId to prevent path traversal attacks
       // This must happen before using sessionId in any file path operations
@@ -1403,13 +1513,13 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
 
   server.handle(RPC_CHANNELS.fs.CREATE_WORKSPACE_ENTRY, async (
     ctx,
-    requestedPath: string,
+    requestedPath: string | WorkspacePathRefV1,
     type: WorkspaceFileEntry['type'],
   ): Promise<WorkspaceEntryMutationResult> => {
     if (type !== 'file' && type !== 'directory') {
       throw new Error('Workspace entry type must be file or directory')
     }
-    const resolved = await resolveWorkspaceMutationPath(ctx, deps, requestedPath)
+    const resolved = await resolveWorkspaceMutationPath(ctx, deps, topologyStore, requestedPath)
     return serializePathMutation(workspaceEntryMutationChains, resolved.rootPath, async () => {
       await assertWorkspaceEntryMissing(resolved.candidatePath)
       if (type === 'directory') {
@@ -1423,11 +1533,14 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
 
   server.handle(RPC_CHANNELS.fs.RENAME_WORKSPACE_ENTRY, async (
     ctx,
-    requestedPath: string,
-    requestedNextPath: string,
+    requestedPath: string | WorkspacePathRefV1,
+    requestedNextPath: string | WorkspacePathRefV1,
   ): Promise<WorkspaceEntryRenameResult> => {
-    const source = await resolveWorkspaceMutationSourcePath(ctx, deps, requestedPath)
-    const destination = await resolveWorkspaceMutationPath(ctx, deps, requestedNextPath)
+    const source = await resolveWorkspaceMutationSourcePath(ctx, deps, topologyStore, requestedPath)
+    const destination = await resolveWorkspaceMutationPath(ctx, deps, topologyStore, requestedNextPath)
+    if (source.locationId !== destination.locationId) {
+      throw new Error('Cross-location moves require an explicit Workspace transfer operation')
+    }
     if (source.relativePath === destination.relativePath) {
       throw new Error('The source and destination workspace paths are the same')
     }
@@ -1436,8 +1549,12 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
       throw new Error('A workspace directory cannot be moved inside itself')
     }
     return serializePathMutation(workspaceEntryMutationChains, source.rootPath, async () => {
-      await assertNoActiveWorkspaceDraftsAndClearStaleRecords(ctx, deps, source.relativePath)
-      await assertNoActiveWorkspaceDraftsAndClearStaleRecords(ctx, deps, destination.relativePath)
+      await assertNoActiveWorkspaceDraftsAndClearStaleRecords(
+        ctx, deps, topologyStore, source.relativePath, source.locationId,
+      )
+      await assertNoActiveWorkspaceDraftsAndClearStaleRecords(
+        ctx, deps, topologyStore, destination.relativePath, destination.locationId,
+      )
       const sourceResult = await workspaceMutationResult(
         source.relativePath,
         source.candidatePath,
@@ -1463,13 +1580,15 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
 
   server.handle(RPC_CHANNELS.fs.DELETE_WORKSPACE_ENTRY, async (
     ctx,
-    requestedPath: string,
+    requestedPath: string | WorkspacePathRefV1,
     recursive: boolean,
   ): Promise<WorkspaceEntryMutationResult> => {
     if (typeof recursive !== 'boolean') throw new Error('Directory deletion requires an explicit recursive flag')
-    const resolved = await resolveWorkspaceMutationSourcePath(ctx, deps, requestedPath)
+    const resolved = await resolveWorkspaceMutationSourcePath(ctx, deps, topologyStore, requestedPath)
     return serializePathMutation(workspaceEntryMutationChains, resolved.rootPath, async () => {
-      await assertNoActiveWorkspaceDraftsAndClearStaleRecords(ctx, deps, resolved.relativePath)
+      await assertNoActiveWorkspaceDraftsAndClearStaleRecords(
+        ctx, deps, topologyStore, resolved.relativePath, resolved.locationId,
+      )
       const result = await workspaceMutationResult(
         resolved.relativePath,
         resolved.candidatePath,
@@ -1491,10 +1610,10 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
     })
   })
 
-  server.handle(RPC_CHANNELS.fs.WATCH_WORKSPACE, async ctx => {
-    const { workspaceId } = getRequestWorkspaceRoot(ctx, deps)
-    const { safePath: rootPath } = await resolveWorkspaceRelativePath(ctx, deps, '')
-    const key = workspaceWatchKey(workspaceId, rootPath)
+  server.handle(RPC_CHANNELS.fs.WATCH_WORKSPACE, async (ctx, locationId?: string) => {
+    const resolved = await resolveWorkspaceRelativePath(ctx, deps, topologyStore, '', locationId)
+    const { workspaceId, locationId: resolvedLocationId, safePath: rootPath } = resolved
+    const key = workspaceWatchKey(workspaceId, resolvedLocationId)
     const currentKey = clientWorkspaceWatchKeys.get(ctx.clientId)
     if (currentKey === key) {
       await workspaceWatchRegistrations.get(key)?.ready
@@ -1503,7 +1622,7 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
     cleanupWorkspaceFileWatchForClient(ctx.clientId)
     let state = workspaceWatchRegistrations.get(key)
     if (!state) {
-      state = createWorkspaceWatchRegistration(server, deps, workspaceId, rootPath)
+      state = createWorkspaceWatchRegistration(server, deps, workspaceId, resolvedLocationId, rootPath)
       workspaceWatchRegistrations.set(key, state)
     }
     state.clientIds.add(ctx.clientId)
@@ -1511,16 +1630,15 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
     await state.ready
   })
 
-  server.handle(RPC_CHANNELS.fs.UNWATCH_WORKSPACE, async ctx => {
-    const { workspaceId } = getRequestWorkspaceRoot(ctx, deps)
-    const { safePath: rootPath } = await resolveWorkspaceRelativePath(ctx, deps, '')
-    if (clientWorkspaceWatchKeys.get(ctx.clientId) === workspaceWatchKey(workspaceId, rootPath)) {
+  server.handle(RPC_CHANNELS.fs.UNWATCH_WORKSPACE, async (ctx, locationId?: string) => {
+    const resolved = await resolveWorkspaceRelativePath(ctx, deps, topologyStore, '', locationId)
+    if (clientWorkspaceWatchKeys.get(ctx.clientId) === workspaceWatchKey(resolved.workspaceId, resolved.locationId)) {
       cleanupWorkspaceFileWatchForClient(ctx.clientId)
     }
   })
 
-  server.handle(RPC_CHANNELS.fs.LIST_WORKSPACE_DIRECTORY, async (ctx, requestedPath?: string): Promise<WorkspaceDirectoryListing> => {
-    const { relativePath, safePath, rootPath } = await resolveWorkspaceRelativePath(ctx, deps, requestedPath)
+  server.handle(RPC_CHANNELS.fs.LIST_WORKSPACE_DIRECTORY, async (ctx, requestedPath?: string | WorkspacePathRefV1): Promise<WorkspaceDirectoryListing> => {
+    const { relativePath, safePath, rootPath } = await resolveWorkspaceRelativePath(ctx, deps, topologyStore, requestedPath)
     const directory = await stat(safePath)
     if (!directory.isDirectory()) throw new Error('Workspace path is not a directory')
     const allEntries = await readWorkspaceDirectoryEntries(safePath, rootPath, relativePath)
@@ -1532,13 +1650,13 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
     }
   })
 
-  server.handle(RPC_CHANNELS.fs.SEARCH_WORKSPACE, async (ctx, rawQuery: string): Promise<WorkspaceFileEntry[]> => {
+  server.handle(RPC_CHANNELS.fs.SEARCH_WORKSPACE, async (ctx, rawQuery: string, locationId?: string): Promise<WorkspaceFileEntry[]> => {
     if (typeof rawQuery !== 'string') throw new Error('Workspace file search query must be a string')
     const query = rawQuery.trim().toLowerCase()
     if (!query) return []
     if (query.length > 120) throw new Error('Workspace file search query is too long')
 
-    const { safePath: rootPath } = await resolveWorkspaceRelativePath(ctx, deps, '')
+    const { safePath: rootPath } = await resolveWorkspaceRelativePath(ctx, deps, topologyStore, '', locationId)
     const results: WorkspaceFileEntry[] = []
     const queue = ['']
     let scannedEntries = 0
@@ -1587,8 +1705,8 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
     return results
   })
 
-  server.handle(RPC_CHANNELS.fs.READ_WORKSPACE_PREVIEW, async (ctx, requestedPath: string): Promise<WorkspaceFilePreview> => {
-    const { relativePath, safePath } = await resolveWorkspaceRelativePath(ctx, deps, requestedPath)
+  server.handle(RPC_CHANNELS.fs.READ_WORKSPACE_PREVIEW, async (ctx, requestedPath: string | WorkspacePathRefV1): Promise<WorkspaceFilePreview> => {
+    const { relativePath, safePath } = await resolveWorkspaceRelativePath(ctx, deps, topologyStore, requestedPath)
     if (!relativePath) throw new Error('A workspace file path is required')
     const fileStats = await stat(safePath)
     if (!fileStats.isFile()) throw new Error('Workspace path is not a file')
@@ -1647,22 +1765,22 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
     return { ...base, kind: 'text', content }
   })
 
-  server.handle(RPC_CHANNELS.fs.READ_WORKSPACE_DRAFT, async (ctx, requestedPath: string): Promise<WorkspaceFileDraft | null> => {
-    const { safePath } = await resolveWorkspaceRelativePath(ctx, deps, requestedPath)
+  server.handle(RPC_CHANNELS.fs.READ_WORKSPACE_DRAFT, async (ctx, requestedPath: string | WorkspacePathRefV1): Promise<WorkspaceFileDraft | null> => {
+    const { safePath } = await resolveWorkspaceRelativePath(ctx, deps, topologyStore, requestedPath)
     await assertEditableWorkspaceTextFile(safePath)
-    return readWorkspaceFileDraftRecord(workspaceDraftIdentity(ctx, deps, requestedPath))
+    return readWorkspaceFileDraftRecord(workspaceDraftIdentity(ctx, deps, topologyStore, requestedPath))
   })
 
   server.handle(RPC_CHANNELS.fs.SET_WORKSPACE_DRAFT, async (
     ctx,
-    requestedPath: string,
+    requestedPath: string | WorkspacePathRefV1,
     rawContent: string,
     rawBaseContent: string,
   ): Promise<WorkspaceFileDraft> => {
     const content = validateWorkspaceDraftText(rawContent, 'Draft content')
     const baseContent = validateWorkspaceDraftText(rawBaseContent, 'Draft base content')
-    const { safePath, rootPath } = await resolveWorkspaceRelativePath(ctx, deps, requestedPath)
-    const identity = workspaceDraftIdentity(ctx, deps, requestedPath)
+    const { safePath, rootPath } = await resolveWorkspaceRelativePath(ctx, deps, topologyStore, requestedPath)
+    const identity = workspaceDraftIdentity(ctx, deps, topologyStore, requestedPath)
     return serializePathMutation(workspaceEntryMutationChains, rootPath, () =>
       serializePathMutation(workspaceFileDraftMutationChains, identity.filePath, async () => {
         await assertEditableWorkspaceTextFile(safePath)
@@ -1670,9 +1788,9 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
       }))
   })
 
-  server.handle(RPC_CHANNELS.fs.DELETE_WORKSPACE_DRAFT, async (ctx, requestedPath: string): Promise<void> => {
-    const identity = workspaceDraftIdentity(ctx, deps, requestedPath)
-    const { rootPath } = getRequestWorkspaceRoot(ctx, deps)
+  server.handle(RPC_CHANNELS.fs.DELETE_WORKSPACE_DRAFT, async (ctx, requestedPath: string | WorkspacePathRefV1): Promise<void> => {
+    const identity = workspaceDraftIdentity(ctx, deps, topologyStore, requestedPath)
+    const { rootPath } = getRequestWorkspaceLocation(ctx, deps, topologyStore, requestedPath)
     await serializePathMutation(workspaceEntryMutationChains, rootPath, () =>
       serializePathMutation(workspaceFileDraftMutationChains, identity.filePath, () =>
         deleteWorkspaceFileDraftRecord(identity)))
@@ -1680,13 +1798,13 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
 
   server.handle(RPC_CHANNELS.fs.WRITE_WORKSPACE_TEXT, async (
     ctx,
-    requestedPath: string,
+    requestedPath: string | WorkspacePathRefV1,
     rawContent: string,
     rawExpectedContent: string,
   ): Promise<FileTextWriteResult> => {
     const content = validateWorkspaceDraftText(rawContent, 'File content')
     const expectedContent = validateWorkspaceDraftText(rawExpectedContent, 'Expected file content')
-    const { safePath, rootPath } = await resolveWorkspaceRelativePath(ctx, deps, requestedPath)
+    const { safePath, rootPath } = await resolveWorkspaceRelativePath(ctx, deps, topologyStore, requestedPath)
     return serializePathMutation(workspaceEntryMutationChains, rootPath, () =>
       serializePathMutation(workspaceTextWriteChains, safePath, async () => {
         await assertEditableWorkspaceTextFile(safePath)
@@ -1710,7 +1828,7 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
     // used by file.READ. Directory symlinks are not enqueued by this Dirent-based
     // walk; keep any future stat-based recursion realpath-aware before entering.
     const workspaceId = ctx.workspaceId ?? deps.windowManager?.getWorkspaceForWindow(ctx.webContentsId!)
-    const safeBase = await validateFilePath(basePath, getWorkspaceAllowedDirs(workspaceId), getFilePathValidationOptions(ctx, deps, workspaceId))
+    const safeBase = await validateFilePath(basePath, getWorkspaceAllowedLocalRoots(deps, topologyStore, workspaceId), getFilePathValidationOptions(ctx, deps, workspaceId))
 
     // Directories to never recurse into
     const SKIP_DIRS = new Set([
@@ -1813,7 +1931,7 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
     // The browser picker starts at the server's home directory. This is a
     // directory-listing-only capability; file reads retain their stricter
     // trusted-local-client requirement in getFilePathValidationOptions().
-    const safePath = await validateFilePath(dirPath, getWorkspaceAllowedDirs(workspaceId), {
+    const safePath = await validateFilePath(dirPath, getWorkspaceAllowedLocalRoots(deps, topologyStore, workspaceId), {
       allowHome: true,
     })
 

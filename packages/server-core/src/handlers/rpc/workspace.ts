@@ -1,12 +1,48 @@
 import { existsSync } from 'fs'
-import { join } from 'path'
+import { isAbsolute, join, relative, sep } from 'path'
 import { RPC_CHANNELS } from '@mortise/shared/protocol'
-import { CONFIG_DIR, getWorkspaceByNameOrId, addWorkspace, setActiveWorkspace, updateWorkspaceRemoteServer } from '@mortise/shared/config'
+import { CONFIG_DIR, getWorkspaceByNameOrId, addWorkspace, setActiveWorkspace } from '@mortise/shared/config'
+import type { Workspace, WorkspaceLocationInfo } from '@mortise/core/types'
+import {
+  getDefaultWorkspaceTopologyStore,
+  readWorkspaceMarker,
+  type LegacyWorkspaceV1,
+  type WorkspaceTopologyStore,
+} from '@mortise/shared/workspaces'
 import { perf } from '@mortise/shared/utils'
 import { pushTyped, type RpcServer } from '@mortise/server-core/transport'
 import type { HandlerDeps } from '../handler-deps'
 import { isValidWorkspaceRootPath } from '../../utils/path-validation'
 import { getWorkspaceOrThrow } from '../utils'
+import {
+  ensureWorkspaceTopology,
+  registerWorkspaceTopologyHandlers,
+  WORKSPACE_TOPOLOGY_HANDLED_CHANNELS,
+} from './workspace-topology'
+
+function redactPrimaryLocation(workspace: Workspace): WorkspaceLocationInfo {
+  const primary = workspace.locations.find(location => location.id === workspace.primaryLocationId)!
+  return {
+    id: primary.id,
+    name: primary.name,
+    endpoint: primary.endpoint.kind === 'local'
+      ? { kind: 'local' }
+      : {
+          kind: 'remote',
+          url: primary.endpoint.url,
+          remoteWorkspaceId: primary.endpoint.remoteWorkspaceId,
+          ...(primary.endpoint.allowInsecureTls === undefined
+            ? {}
+            : { allowInsecureTls: primary.endpoint.allowInsecureTls }),
+        },
+  }
+}
+
+function isInsideRoot(rootPath: string, candidatePath: string): boolean {
+  const nested = relative(rootPath, candidatePath)
+  return nested === ''
+    || (nested !== '..' && !nested.startsWith(`..${sep}`) && !isAbsolute(nested))
+}
 
 export const CORE_HANDLED_CHANNELS = [
   RPC_CHANNELS.workspaces.GET,
@@ -29,15 +65,40 @@ export const CORE_HANDLED_CHANNELS = [
   RPC_CHANNELS.theme.GET_ALL_WORKSPACE_THEMES,
   RPC_CHANNELS.theme.BROADCAST_WORKSPACE_THEME,
   RPC_CHANNELS.toolIcons.GET_MAPPINGS,
+  ...WORKSPACE_TOPOLOGY_HANDLED_CHANNELS,
 ] as const
 
-export function registerWorkspaceCoreHandlers(server: RpcServer, deps: HandlerDeps): void {
+export function registerWorkspaceCoreHandlers(
+  server: RpcServer,
+  deps: HandlerDeps,
+  topologyStore: WorkspaceTopologyStore = getDefaultWorkspaceTopologyStore(),
+): void {
   const { sessionManager } = deps
   const windowManager = deps.windowManager
+  registerWorkspaceTopologyHandlers(server, deps, topologyStore)
 
-  // Get workspaces (LOCAL_ONLY — includes rootPath for local Electron renderer)
+  const resolveWorkspace = (workspaceId: string): Workspace => {
+    const candidate = sessionManager.getWorkspaces().find(workspace => workspace.id === workspaceId)
+      ?? getWorkspaceOrThrow(workspaceId)
+    ensureWorkspaceTopology(topologyStore, candidate)
+    const workspace = topologyStore.get(workspaceId)
+    if (!workspace) throw new Error(`Workspace topology not found: ${workspaceId}`)
+    return workspace
+  }
+
+  const requireLocalPrimaryRoot = (workspaceId: string): string => {
+    const workspace = resolveWorkspace(workspaceId)
+    const primary = workspace.locations.find(location => location.id === workspace.primaryLocationId)!
+    if (primary.endpoint.kind !== 'local') {
+      throw new Error(`Workspace ${workspaceId} has a remote primary location`)
+    }
+    readWorkspaceMarker(primary.endpoint.rootPath, workspaceId)
+    return primary.endpoint.rootPath
+  }
+
+  // Client projections never expose local paths or credential references.
   server.handle(RPC_CHANNELS.workspaces.GET, async () => {
-    return sessionManager.getWorkspaces()
+    return sessionManager.getWorkspaces().map(candidate => ensureWorkspaceTopology(topologyStore, candidate))
   })
 
   // Create a new workspace at a folder path (Obsidian-style: folder IS the workspace)
@@ -48,10 +109,17 @@ export function registerWorkspaceCoreHandlers(server: RpcServer, deps: HandlerDe
       throw new Error(validation.reason!)
     }
 
-    const workspace = addWorkspace({ name, rootPath, ...(remoteServer && { remoteServer }) })
+    if (remoteServer) {
+      throw new Error('Remote Workspace creation requires the credential-backed remote connection flow')
+    }
+    // The registry owner still publishes the initial identity. Topology becomes
+    // authoritative immediately and all later location changes bypass that
+    // legacy single-root record.
+    const candidate = addWorkspace({ name, rootPath } as never) as unknown as LegacyWorkspaceV1
+    const workspace = ensureWorkspaceTopology(topologyStore, candidate)
     // Make it active
     setActiveWorkspace(workspace.id)
-    deps.platform.logger.info(`Created workspace "${name}" at ${rootPath}${remoteServer ? ` (remote: ${remoteServer.url})` : ''}`)
+    deps.platform.logger.info(`Created workspace "${name}" at ${rootPath}`)
     return workspace
   })
 
@@ -64,11 +132,8 @@ export function registerWorkspaceCoreHandlers(server: RpcServer, deps: HandlerDe
   })
 
   // Update remote server config for an existing workspace (reconnect flow)
-  server.handle(RPC_CHANNELS.workspaces.UPDATE_REMOTE, async (ctx, workspaceId: string, remoteServer: { url: string; token: string; remoteWorkspaceId: string }) => {
-    updateWorkspaceRemoteServer(workspaceId, remoteServer)
-    deps.platform.logger.info(`Updated remote server for workspace ${workspaceId}: ${remoteServer.url}`)
-    pushTyped(server, RPC_CHANNELS.workspaces.REMOTE_UPDATED, { to: 'all', exclude: ctx.clientId }, { workspaceId })
-    return { success: true }
+  server.handle(RPC_CHANNELS.workspaces.UPDATE_REMOTE, async () => {
+    throw new Error('workspaces:updateRemote is retired; use a revisioned Workspace topology command')
   })
 
   // Get workspace ID for the calling window
@@ -78,7 +143,11 @@ export function registerWorkspaceCoreHandlers(server: RpcServer, deps: HandlerDe
     if (workspaceId) {
       const workspace = getWorkspaceByNameOrId(workspaceId)
       if (workspace) {
-        sessionManager.setupConfigWatcher(workspace.rootPath, workspaceId)
+        const topology = resolveWorkspace(workspaceId)
+        const primary = topology.locations.find(location => location.id === topology.primaryLocationId)
+        if (primary?.endpoint.kind === 'local') {
+          sessionManager.setupConfigWatcher(primary.endpoint.rootPath, workspaceId)
+        }
       }
     }
     return workspaceId
@@ -92,7 +161,7 @@ export function registerWorkspaceCoreHandlers(server: RpcServer, deps: HandlerDe
   // Switch workspace in current window (in-window switching)
   server.handle(RPC_CHANNELS.window.SWITCH_WORKSPACE, async (ctx, workspaceId: string) => {
     const end = perf.start('ipc.switchWorkspace', { workspaceId })
-    const workspace = getWorkspaceOrThrow(workspaceId)
+    const workspace = resolveWorkspace(workspaceId)
 
     if (windowManager) {
       const wcId = ctx.webContentsId!
@@ -134,14 +203,17 @@ export function registerWorkspaceCoreHandlers(server: RpcServer, deps: HandlerDe
     setActiveWorkspace(workspaceId)
 
     // Set up ConfigWatcher for the new workspace
-    sessionManager.setupConfigWatcher(workspace.rootPath, workspaceId)
+    const primary = workspace.locations.find(location => location.id === workspace.primaryLocationId)!
+    if (primary.endpoint.kind === 'local') {
+      sessionManager.setupConfigWatcher(primary.endpoint.rootPath, workspaceId)
+    }
     end()
 
     // Return connection details so the preload RoutedClient can decide
     // whether to connect directly to a remote server for this workspace.
     return {
       workspaceId,
-      remoteServer: workspace?.remoteServer ?? null,
+      primaryLocation: redactPrimaryLocation(workspace),
     }
   })
 
@@ -151,7 +223,7 @@ export function registerWorkspaceCoreHandlers(server: RpcServer, deps: HandlerDe
 
   // Generic workspace image loading (for source icons, status icons, etc.)
   server.handle(RPC_CHANNELS.workspace.READ_IMAGE, async (_ctx, workspaceId: string, relativePath: string) => {
-    const workspace = getWorkspaceOrThrow(workspaceId)
+    const rootPath = requireLocalPrimaryRoot(workspaceId)
 
     const { readFileSync, existsSync } = await import('fs')
     const { join, normalize } = await import('path')
@@ -171,10 +243,10 @@ export function registerWorkspaceCoreHandlers(server: RpcServer, deps: HandlerDe
     }
 
     // Resolve path relative to workspace root
-    const absolutePath = normalize(join(workspace.rootPath, relativePath))
+    const absolutePath = normalize(join(rootPath, relativePath))
 
     // Double-check the resolved path is still within workspace
-    if (!absolutePath.startsWith(workspace.rootPath)) {
+    if (!isInsideRoot(rootPath, absolutePath)) {
       throw new Error('Invalid path: outside workspace directory')
     }
 
@@ -206,7 +278,7 @@ export function registerWorkspaceCoreHandlers(server: RpcServer, deps: HandlerDe
   // Generic workspace image writing (for workspace icon, etc.)
   // Resizes images to max 256x256 to keep file sizes small
   server.handle(RPC_CHANNELS.workspace.WRITE_IMAGE, async (_ctx, workspaceId: string, relativePath: string, base64: string, mimeType: string) => {
-    const workspace = getWorkspaceOrThrow(workspaceId)
+    const rootPath = requireLocalPrimaryRoot(workspaceId)
 
     const { writeFileSync, existsSync, unlinkSync, readdirSync } = await import('fs')
     const { join, normalize, basename } = await import('path')
@@ -224,20 +296,20 @@ export function registerWorkspaceCoreHandlers(server: RpcServer, deps: HandlerDe
     }
 
     // Resolve path relative to workspace root
-    const absolutePath = normalize(join(workspace.rootPath, relativePath))
+    const absolutePath = normalize(join(rootPath, relativePath))
 
     // Double-check the resolved path is still within workspace
-    if (!absolutePath.startsWith(workspace.rootPath)) {
+    if (!isInsideRoot(rootPath, absolutePath)) {
       throw new Error('Invalid path: outside workspace directory')
     }
 
     // If this is an icon file (icon.*), delete any existing icon files with different extensions
     const fileName = basename(relativePath)
     if (fileName.startsWith('icon.')) {
-      const files = readdirSync(workspace.rootPath)
+      const files = readdirSync(rootPath)
       for (const file of files) {
         if (file.startsWith('icon.') && file !== fileName) {
-          const oldPath = join(workspace.rootPath, file)
+          const oldPath = join(rootPath, file)
           try {
             unlinkSync(oldPath)
           } catch {
@@ -311,30 +383,24 @@ export function registerWorkspaceCoreHandlers(server: RpcServer, deps: HandlerDe
 
   // Workspace-level theme overrides
   server.handle(RPC_CHANNELS.theme.GET_WORKSPACE_COLOR_THEME, async (_ctx, workspaceId: string) => {
-    const { getWorkspaces } = await import('@mortise/shared/config/storage')
     const { getWorkspaceColorTheme } = await import('@mortise/shared/workspaces/storage')
-    const workspaces = getWorkspaces()
-    const workspace = workspaces.find(w => w.id === workspaceId)
-    if (!workspace) return null
-    return getWorkspaceColorTheme(workspace.rootPath) ?? null
+    return getWorkspaceColorTheme(requireLocalPrimaryRoot(workspaceId)) ?? null
   })
 
   server.handle(RPC_CHANNELS.theme.SET_WORKSPACE_COLOR_THEME, async (_ctx, workspaceId: string, themeId: string | null) => {
-    const { getWorkspaces } = await import('@mortise/shared/config/storage')
     const { setWorkspaceColorTheme } = await import('@mortise/shared/workspaces/storage')
-    const workspaces = getWorkspaces()
-    const workspace = workspaces.find(w => w.id === workspaceId)
-    if (!workspace) return
-    setWorkspaceColorTheme(workspace.rootPath, themeId ?? undefined)
+    setWorkspaceColorTheme(requireLocalPrimaryRoot(workspaceId), themeId ?? undefined)
   })
 
   server.handle(RPC_CHANNELS.theme.GET_ALL_WORKSPACE_THEMES, async () => {
-    const { getWorkspaces } = await import('@mortise/shared/config/storage')
     const { getWorkspaceColorTheme } = await import('@mortise/shared/workspaces/storage')
-    const workspaces = getWorkspaces()
     const themes: Record<string, string | undefined> = {}
-    for (const ws of workspaces) {
-      themes[ws.id] = getWorkspaceColorTheme(ws.rootPath)
+    for (const workspace of sessionManager.getWorkspaces()) {
+      const topology = resolveWorkspace(workspace.id)
+      const primary = topology.locations.find(location => location.id === topology.primaryLocationId)!
+      themes[workspace.id] = primary.endpoint.kind === 'local'
+        ? getWorkspaceColorTheme(primary.endpoint.rootPath)
+        : undefined
     }
     return themes
   })
