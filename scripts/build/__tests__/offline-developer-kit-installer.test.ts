@@ -49,12 +49,17 @@ describe('offline Developer Kit installer contract', () => {
 
   test('keeps the kit optional at install time and discoverable when selected', () => {
     const config = readRepoFile('apps/electron/electron-builder.yml')
+    const developerHostConfig = readRepoFile('apps/electron/electron-builder.devhost.yml')
     const installer = readRepoFile('apps/electron/resources/installer.nsh')
     const discovery = readRepoFile('packages/shared/src/config/developer-kit.ts')
 
     expect(config).toContain('from: dist/installer-developer-kit')
     expect(config).toContain('to: developer-kit')
     expect(config).toContain('include: dist/resources/installer.nsh')
+    expect(config).toContain('deleteAppDataOnUninstall: false')
+    expect(config).not.toContain('deleteAppDataOnUninstall: true')
+    expect(developerHostConfig).toContain('deleteAppDataOnUninstall: false')
+    expect(developerHostConfig).not.toContain('deleteAppDataOnUninstall: true')
     expect(installer).toContain('Install Mortise Developer Kit (recommended for developers)')
     expect(installer).toContain('IfSilent 0 +2')
     expect(installer).toContain('!ifndef BUILD_UNINSTALLER')
