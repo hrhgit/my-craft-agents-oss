@@ -21,6 +21,7 @@ import type { AppMenuProps } from './types'
 import { CrossfadeAvatar } from '@/components/ui/avatar'
 import { cn } from '@/lib/utils'
 import { hasPlatformCapability } from '@/lib/platform-capabilities'
+import { RemoteConnectionPanel } from '@/components/RemoteConnectionPanel'
 
 const SNAPPY_SPRING = { type: 'spring' as const, stiffness: 400, damping: 36, mass: 0.8 }
 const BACKDROP_FADE = { duration: 0.18 }
@@ -355,12 +356,11 @@ function MobileWorkspacePage({
                 />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-[15px] leading-tight">{item.workspace.name}</span>
-                  {item.workspace.remoteServer && (
-                    <span className={cn('mt-0.5 flex items-center gap-1 truncate text-[12px]', item.isDisconnected ? 'text-destructive' : 'text-foreground/45')}>
-                      {item.isDisconnected ? <Icons.CloudOff className="h-3 w-3 shrink-0" /> : <Icons.Cloud className="h-3 w-3 shrink-0" />}
-                      <span className="truncate">{item.isDisconnected ? item.disconnectLabel : item.workspace.remoteServer.url}</span>
-                    </span>
-                  )}
+                  <RemoteConnectionPanel
+                    workspace={item.workspace}
+                    isDisconnected={item.isDisconnected}
+                    disconnectLabel={item.disconnectLabel}
+                  />
                 </span>
                 {item.hasUnread && <span className="h-2 w-2 shrink-0 rounded-full bg-accent" />}
                 {item.isActive && <Icons.Check className="h-4 w-4 shrink-0 text-foreground/55" />}
