@@ -18,7 +18,12 @@ import {
   type WorkspaceTransferResultV1,
 } from '../protocol/workspace-topology.ts'
 import { CONFIG_DIR } from '../config/paths.ts'
-import { MultiWriterStore, type JsonValue, type MultiWriterTransaction } from '../storage/index.ts'
+import {
+  MultiWriterStore,
+  type JsonValue,
+  type MultiWriterReadTransaction,
+  type MultiWriterTransaction,
+} from '../storage/index.ts'
 import { getMortiseStateDatabasePath, MORTISE_STATE_WRITER_VERSION } from '../config/state-contract.ts'
 import { ensureWorkspaceMarker, readWorkspaceMarker, WorkspaceTopologyError } from './marker.ts'
 import {
@@ -498,14 +503,14 @@ function parseRegistry(value: JsonValue): WorkspaceTopologyRegistry {
   return { schemaVersion: 1, workspaceIds }
 }
 
-function readRegistry(transaction: MultiWriterTransaction): WorkspaceTopologyRegistry {
+function readRegistry(transaction: MultiWriterReadTransaction): WorkspaceTopologyRegistry {
   const identity = getWorkspaceTopologyRegistryIdentity()
   const record = transaction.getRecord(identity.namespace, identity.key)
   return record ? parseRegistry(record.value) : emptyRegistry()
 }
 
 function readWorkspaceInTransaction(
-  transaction: MultiWriterTransaction,
+  transaction: MultiWriterReadTransaction,
   workspaceId: string,
 ): Workspace | null {
   const identity = getWorkspaceTopologyRecordIdentity(workspaceId)
