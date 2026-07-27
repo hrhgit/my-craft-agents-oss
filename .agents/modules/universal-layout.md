@@ -72,4 +72,3 @@ Persisted layouts can reference removed content; native views can occlude drag t
 - 2026-07-21: Updated projection-owned processing and completion consumers to keep retrying Pi attempts active until `agent_settled`, while retaining legacy `agent_end` snapshot compatibility.
 - 2026-07-21: Added local skill discovery with default-all individual selection and explicit confirmed batch import into the bound workspace.
 - 2026-07-20: Removed the retired Sources navigator, detail type, and navigation-registry state from the current layout contract.
-- 2026-07-20: Made initial draft-route focus one-shot and kept programmatic first-message navigation on the draft until send succeeds.
