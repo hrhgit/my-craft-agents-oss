@@ -75,6 +75,12 @@ describe('channel routing behavior', () => {
       }
     }
   })
+
+  test('Workspace topology authority and broadcasts stay local', () => {
+    expect(LOCAL_ONLY_CHANNELS.has(RPC_CHANNELS.workspaces.GET_TOPOLOGY)).toBe(true)
+    expect(LOCAL_ONLY_CHANNELS.has(RPC_CHANNELS.workspaces.TOPOLOGY_COMMAND)).toBe(true)
+    expect(LOCAL_ONLY_CHANNELS.has(RPC_CHANNELS.workspaces.TOPOLOGY_CHANGED)).toBe(true)
+  })
 })
 
 describe('platform capability protocol', () => {

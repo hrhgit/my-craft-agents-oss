@@ -6,12 +6,20 @@
 export type {
   WorkspaceInfo,
   Workspace,
+  WorkspaceLocation,
+  WorkspaceLocationInfo,
+  WorkspaceEndpoint,
+  WorkspaceEndpointInfo,
+  LocalWorkspaceEndpoint,
+  RemoteWorkspaceEndpoint,
+  NonEmptyArray,
   RemoteServerConfig,
   McpAuthType,
   AuthType,
   OAuthCredentials,
   StoredConfig,
 } from './workspace.ts';
+export { WORKSPACE_SCHEMA_VERSION } from './workspace.ts';
 
 // Session types
 export type {
