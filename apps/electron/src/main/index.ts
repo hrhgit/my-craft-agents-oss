@@ -94,7 +94,7 @@ function redactBrowserUrl(value: string): string {
 
 import { join, delimiter } from 'path'
 import { existsSync, readFileSync } from 'fs'
-import { RPC_CHANNELS } from '@mortise/shared/protocol'
+import { RPC_CHANNELS, parseWorkspaceTransferRequestV1 } from '@mortise/shared/protocol'
 import { clearRuntimeLayoutProcessEnvironment } from '@mortise/session-tools-core/runtime'
 import { SessionManager, setSessionPlatform, setSessionRuntimeHooks, type SessionBackendFactory } from '@mortise/server-core/sessions'
 import { createAutomationWorkspaceCapabilityProvider, createBrowserCommandProvider, createBrowserControlProvider, createBrowserOperationsProvider, createBrowserProvider, createFilePreviewProvider, createFilesProvider, createMessagingSessionCapabilityProvider, createSessionShareCapabilityProvider, createSessionTransferCapabilityProvider, createSystemNotificationProvider, getWorkspaceAllowedDirs, validateFilePath } from '@mortise/server-core'
@@ -149,6 +149,7 @@ import { setAutoUpdateEventSink, isUpdating, setBeforeUpdateQuitHook } from './a
 import type { EventSink } from '@mortise/server-core/transport'
 import { validateGitBashPath, checkVCRedistInstalled } from '@mortise/server-core/services'
 import { PRELOAD_LOCAL_CHANNELS } from '../shared/ipc-channels'
+import { WorkspaceTransferHostCoordinator } from '../transport/workspace-transfer-single-flight'
 import { spawnWorkspaceServer, type SpawnedWorkspaceServer } from './workspace-server-spawner'
 import { resolveElectronResourcePaths } from './electron-resource-paths'
 const isPackagedDeveloperHost = __MORTISE_DEV_HOST_BUILD__ && app.isPackaged
@@ -176,6 +177,8 @@ initializeRendererLoggingBridge()
 const electronRuntime = resolveElectronRuntimeContext(app)
 if (!electronRuntime.immutableRuntime) clearRuntimeLayoutProcessEnvironment(process.env)
 const immutableSourceRuntime = !!electronRuntime.immutableRuntime
+const workspaceTransferCoordinator = new WorkspaceTransferHostCoordinator()
+const workspaceTransferOwnerWatches = new WeakSet<Electron.WebContents>()
 const electronResourcePaths = resolveElectronResourcePaths({
   isPackaged: app.isPackaged,
   appPath: electronRuntime.appRootPath,
@@ -1156,6 +1159,22 @@ app.whenReady().then(async () => {
       ipcMain.handle(PRELOAD_LOCAL_CHANNELS.WORKSPACE_DELETE_REMOTE_CREDENTIAL, async (_event, input) => {
         if (!input || !getWorkspaceByNameOrId(input.workspaceId)) throw new Error('Workspace not found')
         await deleteWorkspaceRemoteCredential(getCredentialManager(), input)
+      })
+
+      ipcMain.handle(PRELOAD_LOCAL_CHANNELS.WORKSPACE_TRANSFER_LEASE_ACQUIRE, async (event, requestValue) => {
+        const request = parseWorkspaceTransferRequestV1(requestValue)
+        if (!workspaceTransferOwnerWatches.has(event.sender)) {
+          workspaceTransferOwnerWatches.add(event.sender)
+          const ownerId = event.sender.id
+          event.sender.once('destroyed', () => workspaceTransferCoordinator.releaseOwner(ownerId))
+        }
+        return workspaceTransferCoordinator.acquire(request, event.sender.id)
+      })
+
+      ipcMain.handle(PRELOAD_LOCAL_CHANNELS.WORKSPACE_TRANSFER_LEASE_RELEASE, (_event, requestValue, token: unknown) => {
+        const request = parseWorkspaceTransferRequestV1(requestValue)
+        if (typeof token !== 'string' || !token) throw new Error('Workspace transfer lease token is invalid')
+        workspaceTransferCoordinator.release(request, token)
       })
 
       ipcMain.handle(

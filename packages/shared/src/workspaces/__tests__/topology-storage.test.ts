@@ -8,9 +8,16 @@ import {
   WORKSPACE_MARKER_SCHEMA_VERSION,
   type WorkspaceLocationProjectionV1,
   type WorkspaceTopologyCommandV1,
+  type WorkspaceTransferRequestV1,
 } from '../../protocol/workspace-topology.ts'
 import { getWorkspaceMarkerPath, readWorkspaceMarker } from '../marker.ts'
-import { getWorkspaceTopologyRecordIdentity } from '../state-contract.ts'
+import { MultiWriterStore } from '../../storage/multi-writer-store.ts'
+import {
+  getWorkspaceTopologyRecordIdentity,
+  getWorkspaceTopologyRegistryIdentity,
+  getWorkspaceTransferOperationIdentity,
+  getWorkspaceTransferDestinationIdentity,
+} from '../state-contract.ts'
 import { WorkspaceTopologyStore } from '../topology-storage.ts'
 
 const cleanup: string[] = []
@@ -76,6 +83,11 @@ function command(
 }
 
 describe('WorkspaceTopologyStore', () => {
+  it('keeps destination reservation namespaces collision-free for slash-bearing identities', () => {
+    expect(getWorkspaceTransferDestinationIdentity('a/b', 'c', 'file.txt')).not.toEqual(
+      getWorkspaceTransferDestinationIdentity('a', 'b/c', 'file.txt'),
+    )
+  })
   it('stores topology by Workspace identity and adopts the local root with a strict marker', () => {
     const { root, store } = harness()
     const workspaceRoot = join(root, 'project')
@@ -414,5 +426,144 @@ describe('WorkspaceTopologyStore', () => {
     expect(clientJson).not.toContain('credentialRef')
     expect(storedJson).not.toContain('availability')
     expect(storedJson).not.toContain('permissions')
+  })
+
+  it('serializes destination ownership and source outcome across concurrent writers', () => {
+    const { root, store } = harness()
+    const primaryRoot = join(root, 'primary')
+    const attachedRoot = join(root, 'attached')
+    mkdirSync(primaryRoot)
+    mkdirSync(attachedRoot)
+    store.create({
+      ...localWorkspace(primaryRoot),
+      locations: [
+        ...localWorkspace(primaryRoot).locations,
+        { id: 'attached', name: 'Attached', rootName: 'attached', endpoint: { kind: 'local', rootPath: attachedRoot } },
+      ],
+    })
+    const second = new WorkspaceTopologyStore({ databasePath: join(root, 'state.sqlite'), writerId: 'concurrent-writer' })
+    stores.push(second)
+    const request = (operationId: string): WorkspaceTransferRequestV1 => ({
+      schemaVersion: 1, operationId, workspaceId: 'workspace-1', expectedRevision: 0, mode: 'move',
+      source: { schemaVersion: 1, workspaceId: 'workspace-1', locationId: 'primary', relativePath: `${operationId}.txt` },
+      destination: { schemaVersion: 1, workspaceId: 'workspace-1', locationId: 'attached', relativePath: 'shared.txt' },
+    })
+    const sha256 = 'a'.repeat(64)
+    const first = request('first')
+    const competing = request('competing')
+    store.prepareTransfer(first, { bytes: 1, sha256 })
+    expect(() => second.prepareTransfer(competing, { bytes: 1, sha256 })).toThrow('already reserved')
+    expect(() => store.recordTransferResult(first, {
+      schemaVersion: 1, operationId: first.operationId, status: 'applied', workspaceId: first.workspaceId,
+      sourceLocationId: 'primary', destinationLocationId: 'attached', revision: 0, mode: 'move',
+      sha256, bytes: 1, sourceRemoved: true,
+    })).toThrow('source outcome is not resolved')
+
+    store.markTransferDestinationPublished(first)
+    store.markTransferSourceResolved(first, true)
+    expect(() => second.markTransferSourceResolved(first, false)).toThrow('source outcome conflicted')
+    store.recordTransferResult(first, {
+      schemaVersion: 1, operationId: first.operationId, status: 'applied', workspaceId: first.workspaceId,
+      sourceLocationId: 'primary', destinationLocationId: 'attached', revision: 0, mode: 'move',
+      sha256, bytes: 1, sourceRemoved: true,
+    })
+    expect(store.listPendingTransferCleanup('workspace-1')).toEqual([first])
+    store.markTransferCleanupComplete(first)
+    expect(store.listPendingTransferCleanup('workspace-1')).toEqual([])
+    expect(second.prepareTransfer(competing, { bytes: 1, sha256 }).phase).toBe('prepared')
+  })
+
+  it('rejects a conflicting source outcome that wins during the journal CAS', () => {
+    const { root, store } = harness()
+    const primaryRoot = join(root, 'primary')
+    const attachedRoot = join(root, 'attached')
+    mkdirSync(primaryRoot)
+    mkdirSync(attachedRoot)
+    store.create({
+      ...localWorkspace(primaryRoot),
+      locations: [
+        ...localWorkspace(primaryRoot).locations,
+        { id: 'attached', name: 'Attached', rootName: 'attached', endpoint: { kind: 'local', rootPath: attachedRoot } },
+      ],
+    })
+    const second = new WorkspaceTopologyStore({ databasePath: join(root, 'state.sqlite'), writerId: 'cas-winner' })
+    stores.push(second)
+    const request: WorkspaceTransferRequestV1 = {
+      schemaVersion: 1, operationId: 'source-cas-race', workspaceId: 'workspace-1', expectedRevision: 0, mode: 'move',
+      source: { schemaVersion: 1, workspaceId: 'workspace-1', locationId: 'primary', relativePath: 'source.txt' },
+      destination: { schemaVersion: 1, workspaceId: 'workspace-1', locationId: 'attached', relativePath: 'destination.txt' },
+    }
+    store.prepareTransfer(request, { bytes: 1, sha256: 'a'.repeat(64) })
+    store.markTransferDestinationPublished(request)
+
+    const internalStore = (store as unknown as { store: { mutateRecord: (...args: unknown[]) => unknown } }).store
+    const originalMutateRecord = internalStore.mutateRecord.bind(internalStore)
+    let interleaved = false
+    internalStore.mutateRecord = (...args: unknown[]) => {
+      if (!interleaved) {
+        interleaved = true
+        second.markTransferSourceResolved(request, false)
+      }
+      return originalMutateRecord(...args)
+    }
+
+    expect(() => store.markTransferSourceResolved(request, true)).toThrow('already used with a different payload')
+    expect(store.getTransferJournal(request)).toMatchObject({ phase: 'source-resolved', sourceRemoved: false })
+  })
+
+  it('migrates a v1 transfer receipt to the v2 journal without a read fallback', () => {
+    const root = mkdtempSync(join(tmpdir(), 'mortise-transfer-migration-'))
+    cleanup.push(root)
+    const databasePath = join(root, 'state.sqlite')
+    const workspaceRoot = join(root, 'workspace')
+    mkdirSync(workspaceRoot)
+    const workspace = localWorkspace(workspaceRoot)
+    const request: WorkspaceTransferRequestV1 = {
+      schemaVersion: 1, operationId: 'historical-transfer', workspaceId: workspace.id, expectedRevision: 0, mode: 'copy',
+      source: { schemaVersion: 1, workspaceId: workspace.id, locationId: 'primary', relativePath: 'source.txt' },
+      destination: { schemaVersion: 1, workspaceId: workspace.id, locationId: 'primary', relativePath: 'destination.txt' },
+    }
+    const result = {
+      schemaVersion: 1 as const, operationId: request.operationId, status: 'applied' as const, workspaceId: workspace.id,
+      sourceLocationId: 'primary', destinationLocationId: 'primary', revision: 0, mode: 'copy' as const,
+      sha256: 'b'.repeat(64), bytes: 7, sourceRemoved: false,
+    }
+    const journalRequest = { ...request, operationId: 'historical-completed-journal' }
+    const journalResult = { ...result, operationId: journalRequest.operationId }
+    const raw = MultiWriterStore.openSync({
+      databasePath, writerId: 'legacy-writer', writerVersion: 1,
+      capabilities: {
+        'workspace.topology': { minWriteVersion: 1, maxWriteVersion: 1 },
+        'workspace.transfer': { minWriteVersion: 1, maxWriteVersion: 1 },
+      },
+    })
+    const topologyIdentity = getWorkspaceTopologyRecordIdentity(workspace.id)
+    const registryIdentity = getWorkspaceTopologyRegistryIdentity()
+    const transferIdentity = getWorkspaceTransferOperationIdentity(workspace.id, request.operationId)
+    raw.mutateRecord({ capability: 'workspace.topology', ...topologyIdentity, value: workspace as any, expectedVersion: null, operationId: 'legacy-topology' })
+    raw.mutateRecord({ capability: 'workspace.topology', ...registryIdentity, value: { schemaVersion: 1, workspaceIds: [workspace.id] }, expectedVersion: null, operationId: 'legacy-registry' })
+    raw.mutateRecord({ capability: 'workspace.transfer', ...transferIdentity, value: { request, result } as any, expectedVersion: null, operationId: 'legacy-transfer' })
+    raw.mutateRecord({
+      capability: 'workspace.transfer',
+      ...getWorkspaceTransferOperationIdentity(workspace.id, journalRequest.operationId),
+      value: {
+        schemaVersion: 1, operationId: journalRequest.operationId, workspaceId: workspace.id,
+        request: journalRequest, phase: 'completed', bytes: journalResult.bytes, sha256: journalResult.sha256,
+        sourceRemoved: false, result: journalResult,
+      } as any,
+      expectedVersion: null,
+      operationId: 'legacy-completed-journal',
+    })
+    raw.close()
+
+    const migrated = new WorkspaceTopologyStore({ databasePath, writerId: 'current-writer' })
+    stores.push(migrated)
+    expect(migrated.getTransferJournal(request)).toMatchObject({
+      schemaVersion: 2, phase: 'completed', sourceRemoved: false, result, cleanupPending: false,
+    })
+    expect(migrated.getTransferResult(request)).toEqual({ ...result, status: 'duplicate' })
+    expect(migrated.getTransferJournal(journalRequest)).toMatchObject({
+      schemaVersion: 2, phase: 'completed', cleanupPending: false, result: journalResult,
+    })
   })
 })

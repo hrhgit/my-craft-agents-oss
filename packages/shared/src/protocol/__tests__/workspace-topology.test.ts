@@ -17,6 +17,7 @@ import {
   parseWorkspaceTopologyChangedV1,
   parseWorkspaceTopologyResultV1,
   parseWorkspaceTransferRequestV1,
+  parseWorkspaceTransferJournalV2,
   parseWorkspaceTransferResultV1,
   parseWorkspaceV2,
   redactWorkspaceInfo,
@@ -297,6 +298,18 @@ describe('Workspace transfer contract', () => {
       destination: source,
     })).toThrow('must differ')
     expect(() => parseWorkspaceTransferRequestV1({ ...request, expectedSha256: 'A'.repeat(64) })).toThrow()
+    for (const privateAlias of ['.MORTISE/workspace.json', '.mortise./workspace.json', '.mortise /workspace.json']) {
+      expect(() => parseWorkspaceTransferRequestV1({
+        ...request,
+        source: { ...source, relativePath: privateAlias },
+      })).toThrow()
+    }
+    for (const invalidWindowsPath of ['CON', 'nul.txt', 'safe:stream', 'a?.txt', 'a*.txt', 'a<.txt', 'a|b.txt']) {
+      expect(() => parseWorkspaceTransferRequestV1({
+        ...request,
+        destination: { ...destination, relativePath: invalidWindowsPath },
+      })).toThrow()
+    }
   })
 
   test('rejects secret, absolute-path, and compatibility fields', () => {
@@ -326,6 +339,39 @@ describe('Workspace transfer contract', () => {
     expect(() => parseWorkspaceTransferResultV1({ ...result, mode: 'copy', sourceRemoved: true })).toThrow()
     expect(() => parseWorkspaceTransferResultV1({ ...result, bytes: -1 })).toThrow()
     expect(() => parseWorkspaceTransferResultV1({ ...result, warning: 'ignored' })).toThrow()
+  })
+
+  test('strictly binds durable transfer journal phases and results to the request', () => {
+    const completed = {
+      schemaVersion: 2 as const, operationId: request.operationId, workspaceId: request.workspaceId, request,
+      phase: 'completed', bytes: 42, sha256: 'a'.repeat(64), sourceRemoved: true, cleanupPending: false,
+      result: {
+        schemaVersion: 1, operationId: request.operationId, status: 'applied', workspaceId: request.workspaceId,
+        sourceLocationId: source.locationId, destinationLocationId: destination.locationId, revision: 4,
+        mode: 'move' as const, sha256: 'a'.repeat(64), bytes: 42, sourceRemoved: true,
+      },
+    } as const
+    expect(parseWorkspaceTransferJournalV2(completed)).toEqual(completed)
+    expect(() => parseWorkspaceTransferJournalV2({ ...completed, phase: 'prepared' })).toThrow('cannot contain')
+    expect(() => parseWorkspaceTransferJournalV2({ ...completed, result: { ...completed.result, sourceLocationId: 'wrong' } })).toThrow('identity')
+    expect(() => parseWorkspaceTransferJournalV2({
+      ...completed, phase: 'source-conflict', result: undefined, sourceRemoved: false, sourceConflict: 'changed', cleanupPending: undefined,
+    })).not.toThrow()
+    expect(() => parseWorkspaceTransferJournalV2({
+      ...completed, phase: 'source-resolved', result: undefined, sourceConflict: 'impossible',
+    })).toThrow('cannot contain')
+    expect(() => parseWorkspaceTransferJournalV2({
+      ...completed, phase: 'prepared', result: undefined, sourceRemoved: undefined,
+      cleanupPending: undefined, sha256: 'b'.repeat(64),
+    })).toThrow('checksum')
+    expect(() => parseWorkspaceTransferJournalV2({
+      ...completed,
+      request: { ...request, mode: 'copy' },
+      phase: 'source-resolved',
+      result: undefined,
+      cleanupPending: undefined,
+      sourceRemoved: true,
+    })).toThrow('copy journal')
   })
 })
 

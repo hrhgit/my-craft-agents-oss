@@ -68,6 +68,25 @@ export interface WorkspaceTransferResultV1 {
   sourceRemoved: boolean
 }
 
+export const WORKSPACE_TRANSFER_JOURNAL_SCHEMA_VERSION = 2 as const
+export type WorkspaceTransferJournalPhaseV2 = 'prepared' | 'destination-published' | 'source-resolved' | 'source-conflict' | 'completed' | 'aborted'
+
+export interface WorkspaceTransferJournalV2 {
+  schemaVersion: typeof WORKSPACE_TRANSFER_JOURNAL_SCHEMA_VERSION
+  operationId: string
+  workspaceId: string
+  request: WorkspaceTransferRequestV1
+  phase: WorkspaceTransferJournalPhaseV2
+  bytes: number
+  sha256: string
+  sourceRemoved?: boolean
+  sourceConflict?: string
+  result?: WorkspaceTransferResultV1
+  cleanupPending?: boolean
+  destinationCleanupToken?: string
+  sourceCleanupToken?: string
+}
+
 interface WorkspaceRemotePrimaryCommandBaseV1 {
   schemaVersion: typeof WORKSPACE_REMOTE_PRIMARY_SCHEMA_VERSION
   operationId: string
@@ -374,7 +393,7 @@ const WorkspacePathRefV1Schema = z.object({
   schemaVersion: z.literal(WORKSPACE_PATH_REF_SCHEMA_VERSION),
   workspaceId: BoundedIdSchema,
   locationId: BoundedIdSchema,
-  relativePath: z.string().max(32_768).refine(isCanonicalRelativePath, 'relativePath must be a canonical forward-slash relative path'),
+  relativePath: z.string().max(32_768).refine(isCanonicalWorkspaceRelativePath, 'relativePath must be a canonical forward-slash relative path'),
 }).strict()
 
 const WorkspaceTransferRequestV1Schema = z.object({
@@ -393,7 +412,7 @@ const WorkspaceTransferRequestV1Schema = z.object({
   if (!request.source.relativePath || !request.destination.relativePath) {
     context.addIssue({ code: 'custom', path: ['source'], message: 'Transfer paths must identify files' })
   }
-  if (isMortisePrivatePath(request.source.relativePath) || isMortisePrivatePath(request.destination.relativePath)) {
+  if (isMortiseWorkspacePrivatePath(request.source.relativePath) || isMortiseWorkspacePrivatePath(request.destination.relativePath)) {
     context.addIssue({ code: 'custom', path: ['source'], message: 'Workspace private resources cannot be transferred' })
   }
   if (
@@ -419,6 +438,91 @@ const WorkspaceTransferResultV1Schema = z.object({
 }).strict().superRefine((result, context) => {
   if (result.mode === 'copy' && result.sourceRemoved) {
     context.addIssue({ code: 'custom', path: ['sourceRemoved'], message: 'A copy result cannot remove its source' })
+  }
+})
+
+const WorkspaceTransferJournalV2Schema = z.object({
+  schemaVersion: z.literal(WORKSPACE_TRANSFER_JOURNAL_SCHEMA_VERSION),
+  operationId: OperationIdSchema,
+  workspaceId: BoundedIdSchema,
+  request: WorkspaceTransferRequestV1Schema,
+  phase: z.enum(['prepared', 'destination-published', 'source-resolved', 'source-conflict', 'completed', 'aborted']),
+  bytes: z.number().int().nonnegative(),
+  sha256: Sha256Schema,
+  sourceRemoved: z.boolean().optional(),
+  sourceConflict: z.string().min(1).max(1024).optional(),
+  result: WorkspaceTransferResultV1Schema.optional(),
+  cleanupPending: z.boolean().optional(),
+  destinationCleanupToken: z.string().uuid().optional(),
+  sourceCleanupToken: z.string().uuid().optional(),
+}).strict().superRefine((journal, context) => {
+  if (journal.request.operationId !== journal.operationId || journal.request.workspaceId !== journal.workspaceId) {
+    context.addIssue({ code: 'custom', path: ['request'], message: 'Transfer journal identity does not match its request' })
+  }
+  if (journal.request.expectedSha256 && journal.request.expectedSha256 !== journal.sha256) {
+    context.addIssue({ code: 'custom', path: ['sha256'], message: 'Transfer journal checksum does not match its request' })
+  }
+  if (journal.request.mode === 'copy' && (journal.sourceRemoved === true || journal.sourceConflict !== undefined || journal.sourceCleanupToken !== undefined)) {
+    context.addIssue({ code: 'custom', path: ['sourceRemoved'], message: 'A copy journal cannot mutate or conflict with its source' })
+  }
+  if (journal.sourceCleanupToken && journal.sourceRemoved === false && journal.sourceConflict === undefined) {
+    context.addIssue({ code: 'custom', path: ['sourceCleanupToken'], message: 'A retained source without conflict cannot have a cleanup token' })
+  }
+  if ((journal.phase === 'source-resolved' || journal.phase === 'completed') && journal.sourceRemoved === undefined) {
+    context.addIssue({ code: 'custom', path: ['sourceRemoved'], message: 'Resolved transfer journal requires a source outcome' })
+  }
+  if (journal.phase === 'source-conflict' && !journal.sourceConflict) {
+    context.addIssue({ code: 'custom', path: ['sourceConflict'], message: 'Conflicted transfer journal requires a reason' })
+  }
+  if (journal.phase === 'completed' && !journal.result) {
+    context.addIssue({ code: 'custom', path: ['result'], message: 'Completed transfer journal requires a result' })
+  }
+  if (journal.phase === 'completed' && journal.cleanupPending === undefined) {
+    context.addIssue({ code: 'custom', path: ['cleanupPending'], message: 'Completed transfer journal requires a cleanup outcome' })
+  }
+  if (journal.phase !== 'completed' && journal.cleanupPending !== undefined) {
+    context.addIssue({ code: 'custom', path: ['cleanupPending'], message: `${journal.phase} transfer journal cannot contain cleanup state` })
+  }
+  if ((journal.phase === 'prepared' || journal.phase === 'aborted') && journal.destinationCleanupToken !== undefined) {
+    context.addIssue({ code: 'custom', path: ['destinationCleanupToken'], message: `${journal.phase} transfer journal cannot contain a destination cleanup token` })
+  }
+  if ((journal.phase === 'prepared' || journal.phase === 'destination-published' || journal.phase === 'aborted') && journal.sourceCleanupToken !== undefined) {
+    context.addIssue({ code: 'custom', path: ['sourceCleanupToken'], message: `${journal.phase} transfer journal cannot contain a source cleanup token` })
+  }
+  if (journal.cleanupPending === false && (journal.destinationCleanupToken || journal.sourceCleanupToken)) {
+    context.addIssue({ code: 'custom', path: ['cleanupPending'], message: 'Cleaned transfer journal cannot retain cleanup tokens' })
+  }
+  if (journal.result && (journal.result.sha256 !== journal.sha256 || journal.result.bytes !== journal.bytes)) {
+    context.addIssue({ code: 'custom', path: ['result'], message: 'Transfer journal manifest does not match its result' })
+  }
+  if (journal.result && journal.result.sourceRemoved !== journal.sourceRemoved) {
+    context.addIssue({ code: 'custom', path: ['result'], message: 'Transfer result does not match the durable source outcome' })
+  }
+  const forbidsSourceOutcome = journal.phase === 'prepared'
+    || journal.phase === 'destination-published'
+    || journal.phase === 'aborted'
+  if (forbidsSourceOutcome && journal.sourceRemoved !== undefined) {
+    context.addIssue({ code: 'custom', path: ['sourceRemoved'], message: `${journal.phase} transfer journal cannot contain a source outcome` })
+  }
+  if (journal.phase !== 'source-conflict' && journal.sourceConflict !== undefined) {
+    context.addIssue({ code: 'custom', path: ['sourceConflict'], message: `${journal.phase} transfer journal cannot contain a source conflict` })
+  }
+  if (journal.phase !== 'completed' && journal.result !== undefined) {
+    context.addIssue({ code: 'custom', path: ['result'], message: `${journal.phase} transfer journal cannot contain a result` })
+  }
+  if (journal.phase === 'source-conflict' && journal.sourceRemoved !== false) {
+    context.addIssue({ code: 'custom', path: ['sourceRemoved'], message: 'Conflicted transfer journal must retain its source' })
+  }
+  if (journal.result && (
+    journal.result.status !== 'applied'
+    || journal.result.operationId !== journal.request.operationId
+    || journal.result.workspaceId !== journal.request.workspaceId
+    || journal.result.sourceLocationId !== journal.request.source.locationId
+    || journal.result.destinationLocationId !== journal.request.destination.locationId
+    || journal.result.revision !== journal.request.expectedRevision
+    || journal.result.mode !== journal.request.mode
+  )) {
+    context.addIssue({ code: 'custom', path: ['result'], message: 'Transfer result identity does not match its journal request' })
   }
 })
 
@@ -612,6 +716,10 @@ export function parseWorkspaceTransferResultV1(value: unknown): WorkspaceTransfe
   return WorkspaceTransferResultV1Schema.parse(value) as WorkspaceTransferResultV1
 }
 
+export function parseWorkspaceTransferJournalV2(value: unknown): WorkspaceTransferJournalV2 {
+  return WorkspaceTransferJournalV2Schema.parse(value) as WorkspaceTransferJournalV2
+}
+
 export function assertWorkspaceTransferResultV1(value: unknown): asserts value is WorkspaceTransferResultV1 {
   WorkspaceTransferResultV1Schema.parse(value)
 }
@@ -725,11 +833,19 @@ export function getWorkspaceLocationRole(
   return workspace.primaryLocationId === locationId ? 'primary' : 'attached'
 }
 
-function isCanonicalRelativePath(value: string): boolean {
+export function isCanonicalWorkspaceRelativePath(value: string): boolean {
   if (value.includes('\\') || value.includes('\0') || value.startsWith('/') || /^[A-Za-z]:/.test(value)) return false
-  return value === '' || value.split('/').every(segment => segment !== '' && segment !== '.' && segment !== '..')
+  return value === '' || value.split('/').every(segment => (
+    segment !== ''
+    && segment !== '.'
+    && segment !== '..'
+    && !/[ .]$/.test(segment)
+    && !/[<>:"|?*\u0000-\u001f]/.test(segment)
+    && !/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(segment)
+  ))
 }
 
-function isMortisePrivatePath(relativePath: string): boolean {
-  return relativePath === '.mortise' || relativePath.startsWith('.mortise/')
+export function isMortiseWorkspacePrivatePath(relativePath: string): boolean {
+  const firstSegment = relativePath.split('/')[0]?.replace(/[ .]+$/g, '').toLowerCase()
+  return firstSegment === '.mortise'
 }

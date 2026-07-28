@@ -49,6 +49,7 @@ Run multi-writer storage, workspace normalization, path validation, and renderer
 Path normalization differs by platform; concurrent source and installed backends can race without operation identities.
 
 ## Semantic history
+- 2026-07-28: Extended explicit Workspace transfer across local and remote endpoints with atomic chunked publication, durable source and cleanup outcomes, and transaction-fenced destructive topology changes.
 - 2026-07-28: Coordinated destructive topology mutations across Session and Automation lifecycles, holding the Automation scheduler pause through definitive commit or failure, then resuming only future scheduling without restarting interrupted work.
 - 2026-07-28: Made the topology store the canonical Workspace collection authority with an atomically maintained identity registry, stable listing, and tombstoned removal that preserves user roots while rejecting later topology operations.
 - 2026-07-28: Made ID-keyed SQLite topology authoritative for Workspace V2 locations, added strict membership markers and revisioned idempotent mutations, and qualified local file/draft/watch/transfer operations by stable location identity.

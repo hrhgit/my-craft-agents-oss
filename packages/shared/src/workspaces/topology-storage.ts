@@ -6,6 +6,7 @@ import type { Workspace, WorkspaceEndpoint, WorkspaceInfo, WorkspaceLocation } f
 import { WORKSPACE_SCHEMA_VERSION } from '@mortise/core/types'
 import {
   WORKSPACE_TOPOLOGY_ERROR_CODES,
+  parseWorkspaceTransferJournalV2,
   parseWorkspaceTransferRequestV1,
   parseWorkspaceTransferResultV1,
   parseWorkspaceTopologyCommandV1,
@@ -15,6 +16,7 @@ import {
   type WorkspaceTopologyCommandV1,
   type WorkspaceTopologyResultV1,
   type WorkspaceTransferRequestV1,
+  type WorkspaceTransferJournalV2,
   type WorkspaceTransferResultV1,
 } from '../protocol/workspace-topology.ts'
 import { CONFIG_DIR } from '../config/paths.ts'
@@ -30,13 +32,14 @@ import {
   getWorkspaceTopologyOperationIdentity,
   getWorkspaceTopologyRecordIdentity,
   getWorkspaceTopologyRegistryIdentity,
+  getWorkspaceTransferDestinationIdentity,
   getWorkspaceTransferOperationIdentity,
 } from './state-contract.ts'
 
 const TOPOLOGY_CAPABILITY = 'workspace.topology'
 const TOPOLOGY_CAPABILITY_VERSION = 1
 const TRANSFER_CAPABILITY = 'workspace.transfer'
-const TRANSFER_CAPABILITY_VERSION = 1
+const TRANSFER_CAPABILITY_VERSION = 2
 
 export interface LegacyWorkspaceV1 {
   id: string
@@ -77,10 +80,81 @@ export interface WorkspaceTopologyStoreOptions {
   projectionProvider?: WorkspaceLocationProjectionProvider
 }
 
-interface WorkspaceTransferReceipt {
+interface WorkspaceTransferDestinationReservationV2 {
+  schemaVersion: 2
+  operationId: string
   request: WorkspaceTransferRequestV1
-  result: WorkspaceTransferResultV1
+  status: 'active' | 'released'
 }
+
+const WORKSPACE_TRANSFER_V2_MIGRATION = {
+  id: 'workspace-transfer-v2-journal-reservations',
+  checksum: 'workspace-transfer-v2-journal-reservations-2026-07-28',
+  migrate(transaction: MultiWriterTransaction): void {
+    const currentVersion = transaction.getCapabilityVersion(TRANSFER_CAPABILITY)
+    if (currentVersion === TRANSFER_CAPABILITY_VERSION) return
+    if (currentVersion !== null && currentVersion !== 1) {
+      throw new Error(`Unsupported Workspace transfer capability version: ${currentVersion}`)
+    }
+    const records = transaction.all<{ namespace: string; record_key: string; value_json: string }>(`
+      SELECT namespace, record_key, value_json
+      FROM mortise_records
+      WHERE namespace LIKE 'workspace-transfer-operation/%'
+    `)
+    const reservations = new Map<string, WorkspaceTransferDestinationReservationV2>()
+    for (const record of records) {
+      const value = JSON.parse(record.value_json) as Record<string, unknown>
+      const request = parseWorkspaceTransferRequestV1(value.request)
+      let journal: WorkspaceTransferJournalV2
+      if (value.result && !value.phase) {
+        const result = parseWorkspaceTransferResultV1(value.result)
+        journal = parseWorkspaceTransferJournalV2({
+          schemaVersion: 2, operationId: request.operationId, workspaceId: request.workspaceId, request,
+          phase: 'completed', bytes: result.bytes, sha256: result.sha256, cleanupPending: false,
+          sourceRemoved: result.sourceRemoved, result,
+        })
+      } else {
+        const phase = value.phase
+        if (phase !== 'prepared' && phase !== 'destination-published' && phase !== 'completed') {
+          throw new Error(`Unsupported Workspace transfer journal phase during migration: ${String(phase)}`)
+        }
+        const result = value.result ? parseWorkspaceTransferResultV1(value.result) : undefined
+        journal = parseWorkspaceTransferJournalV2({
+          ...value, schemaVersion: 2, request, phase,
+          ...(result ? { result, sourceRemoved: result.sourceRemoved } : {}),
+          ...(phase === 'completed' ? { cleanupPending: false } : {}),
+        })
+      }
+      transaction.run(`
+        UPDATE mortise_records
+        SET value_json = ?, version = version + 1, updated_at = ?
+        WHERE namespace = ? AND record_key = ?
+      `, JSON.stringify(journal), Date.now(), record.namespace, record.record_key)
+      if (journal.phase !== 'completed' && journal.phase !== 'aborted') {
+        const identity = getWorkspaceTransferDestinationIdentity(
+          request.workspaceId, request.destination.locationId, request.destination.relativePath,
+        )
+        const reservation: WorkspaceTransferDestinationReservationV2 = {
+          schemaVersion: 2, operationId: request.operationId, request, status: 'active',
+        }
+        const reservationKey = `${identity.namespace}\0${identity.key}`
+        const existing = reservations.get(reservationKey)
+        if (existing && existing.operationId !== request.operationId) {
+          throw new Error(`Conflicting historical Workspace transfer destinations: ${request.destination.relativePath}`)
+        }
+        reservations.set(reservationKey, reservation)
+      }
+    }
+    for (const [reservationKey, reservation] of reservations) {
+      const separator = reservationKey.indexOf('\0')
+      transaction.run(`
+        INSERT INTO mortise_records (namespace, record_key, version, value_json, updated_at, writer_id)
+        VALUES (?, ?, 1, ?, ?, ?)
+      `, reservationKey.slice(0, separator), reservationKey.slice(separator + 1), JSON.stringify(reservation), Date.now(), 'workspace-transfer-v2-migration')
+    }
+    transaction.setCapabilityVersion(TRANSFER_CAPABILITY, TRANSFER_CAPABILITY_VERSION)
+  },
+} as const
 
 export type WorkspaceLocationProjectionProvider = (
   workspace: Workspace,
@@ -105,6 +179,7 @@ export class WorkspaceTopologyStore {
           maxWriteVersion: TRANSFER_CAPABILITY_VERSION,
         },
       },
+      moduleMigrations: [WORKSPACE_TRANSFER_V2_MIGRATION],
     })
     this.projectionProvider = options.projectionProvider ?? observeWorkspaceLocations
   }
@@ -270,6 +345,7 @@ export class WorkspaceTopologyStore {
       if (!stored) throw new Error(`Workspace topology not found: ${command.workspaceId}`)
       const current = parseWorkspaceV2(structuredClone(stored.value))
       assertExpectedRevision(command, current.revision)
+      assertTransferLifecycleAllowsTopologyMutation(transaction, command)
       const next = applyPreparedCommand(current, command, prepared)
       const result = transaction.mutateRecord({
         capability: TOPOLOGY_CAPABILITY,
@@ -312,30 +388,229 @@ export class WorkspaceTopologyStore {
   getTransferResult(requestValue: unknown): WorkspaceTransferResultV1 | null {
     const request = parseWorkspaceTransferRequestV1(requestValue)
     if (!this.get(request.workspaceId)) throw new Error(`Workspace topology not found: ${request.workspaceId}`)
-    const receipt = this.readTransferReceipt(request)
-    return receipt ? { ...receipt.result, status: 'duplicate' } : null
+    const journal = this.getTransferJournal(request)
+    return journal?.phase === 'completed' && journal.result
+      ? { ...journal.result, status: 'duplicate' }
+      : null
   }
 
-  recordTransferResult(requestValue: unknown, resultValue: unknown): WorkspaceTransferResultV1 {
+  getTransferJournal(requestValue: unknown): WorkspaceTransferJournalV2 | null {
+    const request = parseWorkspaceTransferRequestV1(requestValue)
+    if (!this.get(request.workspaceId)) throw new Error(`Workspace topology not found: ${request.workspaceId}`)
+    const identity = getWorkspaceTransferOperationIdentity(request.workspaceId, request.operationId)
+    const record = this.store.getRecord(identity.namespace, identity.key)
+    if (!record) return null
+    return parseTransferJournalRecord(record.value, request)
+  }
+
+  listPendingTransferCleanup(workspaceIdValue: unknown): WorkspaceTransferRequestV1[] {
+    const workspaceId = typeof workspaceIdValue === 'string' ? workspaceIdValue.trim() : ''
+    if (!workspaceId) throw new Error('workspaceId must not be empty')
+    const namespace = getWorkspaceTransferOperationIdentity(workspaceId, 'pending-cleanup').namespace
+    return this.store.readTransaction(transaction => transaction.all<{ value_json: string }>(`
+      SELECT value_json
+      FROM mortise_records
+      WHERE namespace = ?
+    `, namespace).map(row => parseWorkspaceTransferJournalV2(JSON.parse(row.value_json)))
+      .filter(journal => journal.phase === 'completed' && journal.cleanupPending)
+      .map(journal => journal.request))
+  }
+
+  prepareTransfer(
+    requestValue: unknown,
+    manifestValue: { bytes: number; sha256: string },
+  ): WorkspaceTransferJournalV2 {
+    const request = parseWorkspaceTransferRequestV1(requestValue)
+    const bytes = manifestValue?.bytes
+    const sha256 = manifestValue?.sha256
+    if (!Number.isSafeInteger(bytes) || bytes < 0 || typeof sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(sha256)) {
+      throw new Error('Workspace transfer manifest is invalid')
+    }
+    return this.store.writeTransaction({ requiredCapabilities: [TRANSFER_CAPABILITY] }, transaction => {
+      const topology = readWorkspaceInTransaction(transaction, request.workspaceId)
+      if (!topology) throw new Error(`Workspace topology not found: ${request.workspaceId}`)
+      if (topology.revision !== request.expectedRevision) throw staleTransferRevision(request, topology.revision)
+      const identity = getWorkspaceTransferOperationIdentity(request.workspaceId, request.operationId)
+      const currentRecord = transaction.getRecord(identity.namespace, identity.key)
+      if (currentRecord) {
+        const existing = parseTransferJournalRecord(currentRecord.value, request)
+        if (existing.bytes !== bytes || existing.sha256 !== sha256) throw new Error(`operationId was already prepared with different content: ${request.operationId}`)
+        if (existing.phase !== 'completed' && existing.phase !== 'aborted') {
+          const destinationIdentity = getWorkspaceTransferDestinationIdentity(request.workspaceId, request.destination.locationId, request.destination.relativePath)
+          const reservationRecord = transaction.getRecord(destinationIdentity.namespace, destinationIdentity.key)
+          if (!reservationRecord) throw new Error(`Workspace transfer destination reservation disappeared: ${request.operationId}`)
+          const reservation = parseDestinationReservation(reservationRecord.value)
+          if (reservation.operationId !== request.operationId || reservation.status !== 'active') throw new Error(`Workspace transfer destination reservation is not owned by ${request.operationId}`)
+        }
+        return existing
+      }
+      const destinationIdentity = getWorkspaceTransferDestinationIdentity(request.workspaceId, request.destination.locationId, request.destination.relativePath)
+      const reservationRecord = transaction.getRecord(destinationIdentity.namespace, destinationIdentity.key)
+      if (reservationRecord) {
+        const reservation = parseDestinationReservation(reservationRecord.value)
+        if (reservation.status === 'active' && reservation.operationId !== request.operationId) throw new Error(`Workspace transfer destination is already reserved by ${reservation.operationId}`)
+      }
+      const journal: WorkspaceTransferJournalV2 = {
+        schemaVersion: 2, operationId: request.operationId, workspaceId: request.workspaceId, request,
+        phase: 'prepared', bytes, sha256,
+      }
+      const write = transaction.mutateRecord({ capability: TRANSFER_CAPABILITY, namespace: identity.namespace, key: identity.key, value: journal as unknown as JsonValue, expectedVersion: null, operationId: `${request.operationId}:transfer-prepare` })
+      if (write.status !== 'applied') throw new Error(`Workspace transfer prepare conflicted: ${request.operationId}`)
+      const reservation: WorkspaceTransferDestinationReservationV2 = { schemaVersion: 2, operationId: request.operationId, request, status: 'active' }
+      const reservationWrite = transaction.mutateRecord({ capability: TRANSFER_CAPABILITY, namespace: destinationIdentity.namespace, key: destinationIdentity.key, value: reservation as unknown as JsonValue, expectedVersion: reservationRecord?.version ?? null, operationId: `${request.operationId}:transfer-reserve-destination` })
+      if (reservationWrite.status !== 'applied') throw new Error(`Workspace transfer destination reservation conflicted: ${request.operationId}`)
+      return parseWorkspaceTransferJournalV2(structuredClone(write.value))
+    })
+  }
+
+  markTransferDestinationPublished(requestValue: unknown, destinationCleanupToken?: string): WorkspaceTransferJournalV2 {
+    const request = parseWorkspaceTransferRequestV1(requestValue)
+    const current = this.getTransferJournal(request)
+    if (!current) throw new Error(`Workspace transfer was not prepared: ${request.operationId}`)
+    if (current.phase !== 'prepared') {
+      if (destinationCleanupToken && current.destinationCleanupToken !== destinationCleanupToken) {
+        throw new Error(`Workspace transfer destination cleanup token conflicted: ${request.operationId}`)
+      }
+      return current
+    }
+    return this.advanceTransferJournal(current, {
+      ...current,
+      phase: 'destination-published',
+      ...(destinationCleanupToken ? { destinationCleanupToken } : {}),
+    }, 'destination-published')
+  }
+
+  markTransferSourceResolved(requestValue: unknown, sourceRemoved: boolean, sourceConflict?: string, sourceCleanupToken?: string): WorkspaceTransferJournalV2 {
+    const request = parseWorkspaceTransferRequestV1(requestValue)
+    const current = this.getTransferJournal(request)
+    if (!current) throw new Error(`Workspace transfer was not prepared: ${request.operationId}`)
+    if (current.phase === 'source-resolved' || current.phase === 'completed') {
+      if (current.sourceRemoved !== sourceRemoved || sourceConflict || (sourceCleanupToken && current.sourceCleanupToken !== sourceCleanupToken)) throw new Error(`Workspace transfer source outcome conflicted: ${request.operationId}`)
+      return current
+    }
+    if (current.phase === 'source-conflict') {
+      if (!sourceConflict || current.sourceConflict !== sourceConflict || (sourceCleanupToken && current.sourceCleanupToken !== sourceCleanupToken)) throw new Error(`Workspace transfer source outcome conflicted: ${request.operationId}`)
+      return current
+    }
+    if (current.phase !== 'destination-published') throw new Error(`Workspace transfer destination is not published: ${request.operationId}`)
+    const next = sourceConflict
+      ? { ...current, phase: 'source-conflict' as const, sourceConflict, sourceRemoved: false, ...(sourceCleanupToken ? { sourceCleanupToken } : {}) }
+      : { ...current, phase: 'source-resolved' as const, sourceRemoved, ...(sourceCleanupToken ? { sourceCleanupToken } : {}) }
+    const advanced = this.advanceTransferJournal(current, next, 'source-resolved')
+    if (sourceConflict) {
+      if (advanced.phase !== 'source-conflict' || advanced.sourceConflict !== sourceConflict) {
+        throw new Error(`Workspace transfer source outcome conflicted: ${request.operationId}`)
+      }
+    } else if (
+      (advanced.phase !== 'source-resolved' && advanced.phase !== 'completed')
+      || advanced.sourceRemoved !== sourceRemoved
+    ) {
+      throw new Error(`Workspace transfer source outcome conflicted: ${request.operationId}`)
+    }
+    return advanced
+  }
+
+  abortTransfer(requestValue: unknown): WorkspaceTransferJournalV2 {
+    const request = parseWorkspaceTransferRequestV1(requestValue)
+    return this.store.writeTransaction({ requiredCapabilities: [TRANSFER_CAPABILITY] }, transaction => {
+      const identity = getWorkspaceTransferOperationIdentity(request.workspaceId, request.operationId)
+      const journalRecord = transaction.getRecord(identity.namespace, identity.key)
+      if (!journalRecord) throw new Error(`Workspace transfer was not prepared: ${request.operationId}`)
+      const current = parseTransferJournalRecord(journalRecord.value, request)
+      if (current.phase === 'aborted') return current
+      if (current.phase !== 'prepared') throw new Error(`Published Workspace transfer cannot be aborted: ${request.operationId}`)
+      const destinationIdentity = getWorkspaceTransferDestinationIdentity(request.workspaceId, request.destination.locationId, request.destination.relativePath)
+      const reservationRecord = transaction.getRecord(destinationIdentity.namespace, destinationIdentity.key)
+      if (!reservationRecord) throw new Error(`Workspace transfer destination reservation disappeared: ${request.operationId}`)
+      const reservation = parseDestinationReservation(reservationRecord.value)
+      if (reservation.operationId !== request.operationId || reservation.status !== 'active') throw new Error(`Workspace transfer destination reservation is not owned by ${request.operationId}`)
+      const next = parseWorkspaceTransferJournalV2({ ...current, phase: 'aborted' })
+      const journalWrite = transaction.mutateRecord({ capability: TRANSFER_CAPABILITY, namespace: identity.namespace, key: identity.key, value: next as unknown as JsonValue, expectedVersion: journalRecord.version, operationId: `${request.operationId}:transfer-aborted` })
+      if (journalWrite.status !== 'applied') throw new Error(`Workspace transfer abort conflicted: ${request.operationId}`)
+      const released = { ...reservation, status: 'released' as const }
+      const reservationWrite = transaction.mutateRecord({ capability: TRANSFER_CAPABILITY, namespace: destinationIdentity.namespace, key: destinationIdentity.key, value: released as unknown as JsonValue, expectedVersion: reservationRecord.version, operationId: `${request.operationId}:transfer-release-destination` })
+      if (reservationWrite.status !== 'applied') throw new Error(`Workspace transfer destination release conflicted: ${request.operationId}`)
+      return next
+    })
+  }
+
+  recordTransferResult(
+    requestValue: unknown,
+    resultValue: unknown,
+    cleanup: { destinationCleanupToken?: string; sourceCleanupToken?: string } = {},
+  ): WorkspaceTransferResultV1 {
     const request = parseWorkspaceTransferRequestV1(requestValue)
     if (!this.get(request.workspaceId)) throw new Error(`Workspace topology not found: ${request.workspaceId}`)
     const result = parseWorkspaceTransferResultV1(resultValue)
     if (result.status !== 'applied') throw new Error('Only an applied Workspace transfer can be recorded')
     assertTransferResultMatchesRequest(request, result)
-    const identity = getWorkspaceTransferOperationIdentity(request.workspaceId, request.operationId)
-    const receipt: WorkspaceTransferReceipt = { request, result }
-    const write = this.store.mutateRecord({
-      capability: TRANSFER_CAPABILITY,
-      namespace: identity.namespace,
-      key: identity.key,
-      value: receipt as unknown as JsonValue,
-      expectedVersion: null,
-      operationId: `${request.operationId}:transfer-receipt`,
+    return this.store.writeTransaction({ requiredCapabilities: [TRANSFER_CAPABILITY] }, transaction => {
+      const identity = getWorkspaceTransferOperationIdentity(request.workspaceId, request.operationId)
+      const journalRecord = transaction.getRecord(identity.namespace, identity.key)
+      if (!journalRecord) throw new Error(`Workspace transfer must be prepared before completion: ${request.operationId}`)
+      const current = parseTransferJournalRecord(journalRecord.value, request)
+      if (current.phase === 'completed' && current.result) return { ...current.result, status: 'duplicate' as const }
+      if (current.bytes !== result.bytes || current.sha256 !== result.sha256) throw new Error(`Workspace transfer result manifest changed: ${request.operationId}`)
+      if (current.phase !== 'source-resolved') throw new Error(`Workspace transfer source outcome is not resolved: ${request.operationId}`)
+      if (current.sourceRemoved !== result.sourceRemoved) throw new Error(`Workspace transfer result changed its durable source outcome: ${request.operationId}`)
+      if (cleanup.destinationCleanupToken && current.destinationCleanupToken && cleanup.destinationCleanupToken !== current.destinationCleanupToken) throw new Error(`Workspace transfer destination cleanup token conflicted: ${request.operationId}`)
+      if (cleanup.sourceCleanupToken && current.sourceCleanupToken && cleanup.sourceCleanupToken !== current.sourceCleanupToken) throw new Error(`Workspace transfer source cleanup token conflicted: ${request.operationId}`)
+      const completed = parseWorkspaceTransferJournalV2({
+        schemaVersion: 2,
+        operationId: current.operationId,
+        workspaceId: current.workspaceId,
+        request: current.request,
+        phase: 'completed',
+        bytes: current.bytes,
+        sha256: current.sha256,
+        sourceRemoved: result.sourceRemoved,
+        result: { ...result, status: 'applied' },
+        cleanupPending: true,
+        ...(current.destinationCleanupToken || cleanup.destinationCleanupToken ? { destinationCleanupToken: current.destinationCleanupToken ?? cleanup.destinationCleanupToken } : {}),
+        ...(current.sourceCleanupToken || cleanup.sourceCleanupToken ? { sourceCleanupToken: current.sourceCleanupToken ?? cleanup.sourceCleanupToken } : {}),
+      })
+      const journalWrite = transaction.mutateRecord({ capability: TRANSFER_CAPABILITY, namespace: identity.namespace, key: identity.key, value: completed as unknown as JsonValue, expectedVersion: journalRecord.version, operationId: `${request.operationId}:transfer-completed` })
+      if (journalWrite.status !== 'applied') throw new Error(`Workspace transfer completion conflicted: ${request.operationId}`)
+      const destinationIdentity = getWorkspaceTransferDestinationIdentity(request.workspaceId, request.destination.locationId, request.destination.relativePath)
+      const reservationRecord = transaction.getRecord(destinationIdentity.namespace, destinationIdentity.key)
+      if (!reservationRecord) throw new Error(`Workspace transfer destination reservation disappeared: ${request.operationId}`)
+      const reservation = parseDestinationReservation(reservationRecord.value)
+      if (reservation.operationId !== request.operationId || reservation.status !== 'active') throw new Error(`Workspace transfer destination reservation is not owned by ${request.operationId}`)
+      const reservationWrite = transaction.mutateRecord({ capability: TRANSFER_CAPABILITY, namespace: destinationIdentity.namespace, key: destinationIdentity.key, value: { ...reservation, status: 'released' } as unknown as JsonValue, expectedVersion: reservationRecord.version, operationId: `${request.operationId}:transfer-release-destination` })
+      if (reservationWrite.status !== 'applied') throw new Error(`Workspace transfer destination release conflicted: ${request.operationId}`)
+      return completed.result!
     })
-    if (write.status === 'applied') return result
-    const replay = this.readTransferReceipt(request)
-    if (!replay) throw new Error(`Workspace transfer receipt conflicted: ${request.operationId}`)
-    return { ...replay.result, status: 'duplicate' }
+  }
+
+  markTransferCleanupComplete(requestValue: unknown): WorkspaceTransferJournalV2 {
+    const request = parseWorkspaceTransferRequestV1(requestValue)
+    return this.store.writeTransaction({ requiredCapabilities: [TRANSFER_CAPABILITY] }, transaction => {
+      const identity = getWorkspaceTransferOperationIdentity(request.workspaceId, request.operationId)
+      const record = transaction.getRecord(identity.namespace, identity.key)
+      if (!record) throw new Error(`Workspace transfer journal disappeared: ${request.operationId}`)
+      const current = parseTransferJournalRecord(record.value, request)
+      if (current.phase !== 'completed') throw new Error(`Workspace transfer is not completed: ${request.operationId}`)
+      if (!current.cleanupPending) return current
+      const {
+        destinationCleanupToken: _destinationCleanupToken,
+        sourceCleanupToken: _sourceCleanupToken,
+        ...journalWithoutCleanupTokens
+      } = current
+      const cleaned = parseWorkspaceTransferJournalV2({
+        ...journalWithoutCleanupTokens,
+        cleanupPending: false,
+      })
+      const write = transaction.mutateRecord({
+        capability: TRANSFER_CAPABILITY,
+        namespace: identity.namespace,
+        key: identity.key,
+        value: cleaned as unknown as JsonValue,
+        expectedVersion: record.version,
+        operationId: `${request.operationId}:transfer-cleanup-complete`,
+      })
+      if (write.status !== 'applied') throw new Error(`Workspace transfer cleanup completion conflicted: ${request.operationId}`)
+      return parseWorkspaceTransferJournalV2(structuredClone(write.value))
+    })
   }
 
   private project(workspace: Workspace): WorkspaceInfo {
@@ -349,18 +624,28 @@ export class WorkspaceTopologyStore {
     return validateReceipt(record.value, command)
   }
 
-  private readTransferReceipt(request: WorkspaceTransferRequestV1): WorkspaceTransferReceipt | null {
-    const identity = getWorkspaceTransferOperationIdentity(request.workspaceId, request.operationId)
+  private advanceTransferJournal(
+    current: WorkspaceTransferJournalV2,
+    next: WorkspaceTransferJournalV2,
+    transition: 'destination-published' | 'source-resolved' | 'completed' | 'aborted',
+  ): WorkspaceTransferJournalV2 {
+    const identity = getWorkspaceTransferOperationIdentity(current.workspaceId, current.operationId)
     const record = this.store.getRecord(identity.namespace, identity.key)
-    if (!record) return null
-    const receipt = structuredClone(record.value) as unknown as WorkspaceTransferReceipt
-    if (!receipt || !isDeepStrictEqual(receipt.request, request)) {
-      throw new Error(`operationId was already used for a different Workspace transfer: ${request.operationId}`)
-    }
-    receipt.request = parseWorkspaceTransferRequestV1(receipt.request)
-    receipt.result = parseWorkspaceTransferResultV1(receipt.result)
-    assertTransferResultMatchesRequest(receipt.request, receipt.result)
-    return receipt
+    if (!record) throw new Error(`Workspace transfer journal disappeared: ${current.operationId}`)
+    const stored = parseTransferJournalRecord(record.value, current.request)
+    if (stored.phase !== current.phase) return stored
+    const write = this.store.mutateRecord({
+      capability: TRANSFER_CAPABILITY,
+      namespace: identity.namespace,
+      key: identity.key,
+      value: next as unknown as JsonValue,
+      expectedVersion: record.version,
+      operationId: `${current.operationId}:transfer-${transition}`,
+    })
+    if (write.status === 'applied') return parseWorkspaceTransferJournalV2(structuredClone(write.value))
+    const replay = this.getTransferJournal(current.request)
+    if (!replay) throw new Error(`Workspace transfer transition conflicted: ${current.operationId}`)
+    return replay
   }
 
   private prepareCommand(command: WorkspaceTopologyCommandV1): WorkspaceEndpoint | null {
@@ -481,6 +766,60 @@ function applyPreparedCommand(
 
 function emptyRegistry(): WorkspaceTopologyRegistry {
   return { schemaVersion: 1, workspaceIds: [] }
+}
+
+function assertTransferLifecycleAllowsTopologyMutation(
+  transaction: MultiWriterReadTransaction,
+  command: WorkspaceTopologyCommandV1,
+): void {
+  if (command.operation !== 'detach' && command.operation !== 'replace-endpoint') return
+  const namespace = getWorkspaceTransferOperationIdentity(command.workspaceId, command.operationId).namespace
+  const rows = transaction.all<{ value_json: string }>(`
+    SELECT value_json
+    FROM mortise_records
+    WHERE namespace = ?
+  `, namespace)
+  for (const row of rows) {
+    const journal = parseWorkspaceTransferJournalV2(JSON.parse(row.value_json))
+    if (
+      (journal.phase === 'prepared'
+        || journal.phase === 'destination-published'
+        || journal.phase === 'source-resolved'
+        || journal.phase === 'source-conflict'
+        || (journal.phase === 'completed' && journal.cleanupPending))
+      && (journal.request.source.locationId === command.locationId
+        || journal.request.destination.locationId === command.locationId)
+    ) {
+      throw new WorkspaceTopologyError(
+        WORKSPACE_TOPOLOGY_ERROR_CODES.LOCATION_IN_USE,
+        `Workspace location ${command.locationId} is used by active transfer ${journal.operationId}`,
+        { workspaceId: command.workspaceId, locationId: command.locationId, retryable: true },
+      )
+    }
+  }
+}
+
+function parseTransferJournalRecord(value: JsonValue, request: WorkspaceTransferRequestV1): WorkspaceTransferJournalV2 {
+  const journal = parseWorkspaceTransferJournalV2(structuredClone(value))
+  if (!isDeepStrictEqual(journal.request, request)) {
+    throw new Error(`operationId was already used for a different Workspace transfer: ${request.operationId}`)
+  }
+  return journal
+}
+
+function parseDestinationReservation(value: JsonValue): WorkspaceTransferDestinationReservationV2 {
+  const reservation = value as Partial<WorkspaceTransferDestinationReservationV2>
+  if (reservation.schemaVersion !== 2 || typeof reservation.operationId !== 'string' || (reservation.status !== 'active' && reservation.status !== 'released')) throw new Error('Workspace transfer destination reservation is invalid')
+  const request = parseWorkspaceTransferRequestV1(reservation.request)
+  return { schemaVersion: 2, operationId: reservation.operationId, request, status: reservation.status }
+}
+
+function staleTransferRevision(request: WorkspaceTransferRequestV1, actualRevision: number): WorkspaceTopologyError {
+  return new WorkspaceTopologyError(
+    WORKSPACE_TOPOLOGY_ERROR_CODES.STALE_REVISION,
+    `Workspace revision is ${actualRevision}, expected ${request.expectedRevision}`,
+    { workspaceId: request.workspaceId, expectedRevision: request.expectedRevision, actualRevision, retryable: true },
+  )
 }
 
 function parseRegistry(value: JsonValue): WorkspaceTopologyRegistry {

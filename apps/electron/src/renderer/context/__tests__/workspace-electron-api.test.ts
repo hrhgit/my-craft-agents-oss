@@ -8,19 +8,23 @@ describe('workspace Electron API context', () => {
     const invokeWorkspaceApi = mock(async () => undefined)
     const getSessions = mock(async () => [])
     const closeWindow = mock(async () => undefined)
+    const workspaceTransfer = mock(async () => ({ status: 'applied' }))
     const api = createWorkspaceElectronApi({
       getSessions,
       closeWindow,
+      workspaceTransfer,
       invokeWorkspaceApi,
       onWorkspaceApiEvent: mock(() => () => {}),
     } as any, route)
 
     await api.getSessions()
     await api.closeWindow()
+    await api.workspaceTransfer({} as never)
 
     expect(invokeWorkspaceApi).toHaveBeenCalledWith(route, 'getSessions')
     expect(getSessions).not.toHaveBeenCalled()
     expect(closeWindow).toHaveBeenCalledTimes(1)
+    expect(workspaceTransfer).toHaveBeenCalledTimes(1)
   })
 
   it('scopes remote event subscriptions', () => {

@@ -6,6 +6,7 @@ export const WORKSPACE_TOPOLOGY_REGISTRY_NAMESPACE = 'workspace-topology-registr
 export const WORKSPACE_TOPOLOGY_REGISTRY_KEY = 'root'
 export const WORKSPACE_TOPOLOGY_OPERATION_NAMESPACE = 'workspace-topology-operation'
 export const WORKSPACE_TRANSFER_OPERATION_NAMESPACE = 'workspace-transfer-operation'
+export const WORKSPACE_TRANSFER_DESTINATION_NAMESPACE = 'workspace-transfer-destination'
 
 /** Return the stable, path-independent identity of a Workspace topology record. */
 export function getWorkspaceTopologyRecordIdentity(workspaceId: string): Readonly<{
@@ -15,6 +16,21 @@ export function getWorkspaceTopologyRecordIdentity(workspaceId: string): Readonl
   const id = workspaceId.trim()
   if (!id) throw new TypeError('workspaceId must not be empty')
   return { namespace: WORKSPACE_TOPOLOGY_RECORD_NAMESPACE, key: id }
+}
+
+/** Return the canonical reservation identity for one destination path. */
+export function getWorkspaceTransferDestinationIdentity(
+  workspaceId: string,
+  locationId: string,
+  relativePath: string,
+): Readonly<{ namespace: string; key: string }> {
+  const workspace = workspaceId.trim()
+  const location = locationId.trim()
+  if (!workspace || !location || !relativePath) throw new TypeError('Workspace destination identity is incomplete')
+  return {
+    namespace: `${WORKSPACE_TRANSFER_DESTINATION_NAMESPACE}/${encodeURIComponent(workspace)}/${encodeURIComponent(location)}`,
+    key: relativePath,
+  }
 }
 
 /** Return the canonical Workspace membership registry identity. */

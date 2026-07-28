@@ -28,6 +28,10 @@ export const PRELOAD_LOCAL_CHANNELS = {
   WORKSPACE_SET_REMOTE_CREDENTIAL: '__workspace:set-remote-credential',
   /** invoke -> delete one remote location secret through the host credential authority. */
   WORKSPACE_DELETE_REMOTE_CREDENTIAL: '__workspace:delete-remote-credential',
+  /** invoke -> acquire the app-wide Workspace transfer orchestration lease. */
+  WORKSPACE_TRANSFER_LEASE_ACQUIRE: '__workspace:transfer-lease-acquire',
+  /** invoke -> release the app-wide Workspace transfer orchestration lease. */
+  WORKSPACE_TRANSFER_LEASE_RELEASE: '__workspace:transfer-lease-release',
   /** invoke → sync a language change to main (persist + rebuild native menu). */
   I18N_CHANGE_LANGUAGE: 'i18n:changeLanguage',
   /** send -> publish a validated development-only UI state batch. */

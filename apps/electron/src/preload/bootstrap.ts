@@ -26,6 +26,7 @@ import { buildWorkspaceClientApi, evictWorkspaceApiCache, resolveWorkspaceApiMet
 import { workspaceRouteKey } from '../transport/workspace-runtime-registry'
 import { WorkspaceRuntimeGenerationTracker, WorkspaceRuntimeUpdateQueue } from '../transport/workspace-runtime-generation'
 import { WorkspaceRuntimeTopologyState } from '../transport/workspace-runtime-topology'
+import { WorkspaceTransferSingleFlight } from '../transport/workspace-transfer-single-flight'
 import {
   CLIENT_OPEN_EXTERNAL,
   CLIENT_OPEN_PATH,
@@ -38,7 +39,22 @@ import {
 import type { ConfirmDialogSpec, FileDialogSpec, BrowserCapabilityRequest } from '@mortise/server-core/transport'
 import type { RpcClient } from '@mortise/server-core/transport'
 import type { WorkspaceInfo, WorkspaceLocationInfo } from '@mortise/core/types'
-import { RPC_CHANNELS, type WorkspaceTopologyChangedV1 } from '@mortise/shared/protocol'
+import {
+  RPC_CHANNELS,
+  parseWorkspaceTransferEndpointCommitResultV1,
+  parseWorkspaceTransferEndpointAccessResultV1,
+  parseWorkspaceTransferEndpointCompleteResultV1,
+  parseWorkspaceTransferEndpointExportInfoV1,
+  parseWorkspaceTransferEndpointImportOpenResultV1,
+  parseWorkspaceTransferEndpointReadResultV1,
+  parseWorkspaceTransferEndpointWriteResultV1,
+  parseWorkspaceTransferJournalV2,
+  parseWorkspaceTransferRequestV1,
+  parseWorkspaceTransferResultV1,
+  type WorkspaceTopologyChangedV1,
+  type WorkspaceTransferRequestV1,
+  type WorkspaceTransferResultV1,
+} from '@mortise/shared/protocol'
 import type { ElectronAPI } from '../shared/types'
 import type { ResolvedWorkspaceRoute, WorkspaceRoute } from '../shared/app-layout'
 import { PRELOAD_LOCAL_CHANNELS } from '../shared/ipc-channels'
@@ -68,6 +84,8 @@ const isClientOnly = !!process.env.MORTISE_SERVER_URL
 let client: TransportClient
 let workspaceApiTransport: import('../transport/workspace-api').WorkspaceApiTransport
 const workspaceApis = new Map<string, ElectronAPI>()
+let orchestrateWorkspaceTransfer: ((request: WorkspaceTransferRequestV1) => Promise<WorkspaceTransferResultV1>) | undefined
+const workspaceTransferSingleFlight = new WorkspaceTransferSingleFlight()
 
 if (isClientOnly) {
   // ── Thin-client mode ───────────────────────────────────────────────────
@@ -176,12 +194,15 @@ if (isClientOnly) {
     return pending
   }
 
-  const loadWorkspaceTopology = async (requestedWorkspaceId: string): Promise<WorkspaceInfo> => {
-    const workspace = await localClient.invoke(
+  const readWorkspaceTopology = async (requestedWorkspaceId: string): Promise<WorkspaceInfo> => {
+    return await localClient.invoke(
       RPC_CHANNELS.workspaces.GET_TOPOLOGY,
       requestedWorkspaceId,
     ) as WorkspaceInfo
-    return topologyState.set(workspace)
+  }
+
+  const loadWorkspaceTopology = async (requestedWorkspaceId: string): Promise<WorkspaceInfo> => {
+    return topologyState.set(await readWorkspaceTopology(requestedWorkspaceId))
   }
 
   const resolveRuntimeConfig = async (
@@ -400,6 +421,284 @@ if (isClientOnly) {
       }
     },
   }
+
+  orchestrateWorkspaceTransfer = async (requestValue) => {
+    const request = parseWorkspaceTransferRequestV1(requestValue)
+    return workspaceTransferSingleFlight.run(request, async (): Promise<WorkspaceTransferResultV1> => {
+    const hostLeaseToken = await ipcRenderer.invoke(PRELOAD_LOCAL_CHANNELS.WORKSPACE_TRANSFER_LEASE_ACQUIRE, request) as string
+    try {
+    const journalValue = await localClient.invoke(RPC_CHANNELS.workspaces.TRANSFER_JOURNAL_GET, request)
+    let journal = journalValue ? parseWorkspaceTransferJournalV2(journalValue) : null
+    const priorValue = await localClient.invoke(RPC_CHANNELS.workspaces.TRANSFER_RECEIPT_GET, request)
+    let prior = priorValue ? parseWorkspaceTransferResultV1(priorValue) : null
+    if (prior && !(journal?.phase === 'completed' && journal.cleanupPending)) {
+      return { ...prior, status: 'duplicate' }
+    }
+    const workspace = topologyState.get(request.workspaceId) ?? await loadWorkspaceTopology(request.workspaceId)
+    if (workspace.revision !== request.expectedRevision && !journal) throw new Error(`Workspace revision is ${workspace.revision}, expected ${request.expectedRevision}`)
+    if (journal?.phase === 'source-resolved') {
+      prior = parseWorkspaceTransferResultV1(await localClient.invoke(RPC_CHANNELS.workspaces.TRANSFER_RECEIPT_RECORD, request, {
+        schemaVersion: 1,
+        operationId: request.operationId,
+        status: 'applied',
+        workspaceId: request.workspaceId,
+        sourceLocationId: request.source.locationId,
+        destinationLocationId: request.destination.locationId,
+        revision: request.expectedRevision,
+        mode: request.mode,
+        sha256: journal.sha256,
+        bytes: journal.bytes,
+        sourceRemoved: journal.sourceRemoved!,
+      }))
+      journal = parseWorkspaceTransferJournalV2(await localClient.invoke(RPC_CHANNELS.workspaces.TRANSFER_JOURNAL_GET, request))
+    }
+    const sourceLocation = workspace.locations.find(location => location.id === request.source.locationId)
+    const destinationLocation = workspace.locations.find(location => location.id === request.destination.locationId)
+    if (!sourceLocation || !destinationLocation) throw new Error('Workspace transfer location is not available')
+    const sourceRoute = topologyState.resolveRoute({ workspaceId: request.workspaceId, locationId: sourceLocation.id })
+    const destinationRoute = topologyState.resolveRoute({ workspaceId: request.workspaceId, locationId: destinationLocation.id })
+    await ensureWorkspaceRuntime(sourceRoute)
+    await ensureWorkspaceRuntime(destinationRoute)
+    const sourceInvoke = (channel: string, ...args: unknown[]) => routedClient.invokeForWorkspace(sourceRoute, channel, ...args)
+    const destinationInvoke = (channel: string, ...args: unknown[]) => routedClient.invokeForWorkspace(destinationRoute, channel, ...args)
+    const endpointRef = (location: WorkspaceLocationInfo) => location.endpoint.kind === 'local' ? location.id : undefined
+    if (prior) {
+      if (sourceLocation.endpoint.kind === 'local' && destinationLocation.endpoint.kind === 'local') {
+        return parseWorkspaceTransferResultV1(await localClient.invoke(RPC_CHANNELS.workspaces.TRANSFER, request))
+      }
+      try {
+        if (journal?.phase !== 'completed' || !journal.cleanupPending || !journal.destinationCleanupToken) {
+          throw new Error('Workspace transfer cleanup journal is incomplete')
+        }
+        const cleanups: Promise<unknown>[] = [destinationInvoke(RPC_CHANNELS.workspaces.TRANSFER_ENDPOINT_IMPORT_CLEANUP, {
+          schemaVersion: 1, operationId: request.operationId, workspaceId: request.workspaceId,
+          locationId: endpointRef(destinationLocation), relativePath: request.destination.relativePath,
+          expectedBytes: prior.bytes, expectedSha256: prior.sha256,
+          cleanupToken: journal.destinationCleanupToken,
+        })]
+        if (journal.sourceCleanupToken) {
+          cleanups.push(sourceInvoke(RPC_CHANNELS.workspaces.TRANSFER_ENDPOINT_EXPORT_CLEANUP, {
+            schemaVersion: 1, operationId: request.operationId, workspaceId: request.workspaceId,
+            locationId: endpointRef(sourceLocation), relativePath: request.source.relativePath,
+            cleanupToken: journal.sourceCleanupToken,
+          }))
+        }
+        await Promise.all(cleanups)
+        parseWorkspaceTransferJournalV2(await localClient.invoke(RPC_CHANNELS.workspaces.TRANSFER_JOURNAL_CLEANUP_COMPLETE, request))
+      } catch {}
+      return { ...prior, status: 'duplicate' }
+    }
+    const sourceAccess = parseWorkspaceTransferEndpointAccessResultV1(await sourceInvoke(RPC_CHANNELS.workspaces.TRANSFER_ENDPOINT_ACCESS, {
+      schemaVersion: 1, operationId: request.operationId, workspaceId: request.workspaceId, locationId: endpointRef(sourceLocation),
+    }))
+    const destinationAccess = parseWorkspaceTransferEndpointAccessResultV1(await destinationInvoke(RPC_CHANNELS.workspaces.TRANSFER_ENDPOINT_ACCESS, {
+      schemaVersion: 1, operationId: request.operationId, workspaceId: request.workspaceId, locationId: endpointRef(destinationLocation),
+    }))
+    assertTransferEndpointAccess(sourceLocation.id, sourceAccess, 'read', request.mode === 'move')
+    assertTransferEndpointAccess(destinationLocation.id, destinationAccess, 'write')
+    if (sourceLocation.endpoint.kind === 'local' && destinationLocation.endpoint.kind === 'local') {
+      return parseWorkspaceTransferResultV1(await localClient.invoke(RPC_CHANNELS.workspaces.TRANSFER, request))
+    }
+
+    let sourceOpened = false
+    let destinationOpened = false
+    try {
+      const sourceInfo = parseWorkspaceTransferEndpointExportInfoV1(await sourceInvoke(RPC_CHANNELS.workspaces.TRANSFER_ENDPOINT_EXPORT_OPEN, {
+        schemaVersion: 1, operationId: request.operationId, workspaceId: request.workspaceId,
+        locationId: endpointRef(sourceLocation), relativePath: request.source.relativePath,
+      }))
+      sourceOpened = sourceInfo.status === 'opened'
+      if (request.expectedSha256 && request.expectedSha256 !== sourceInfo.sha256) throw new Error('Workspace transfer source checksum mismatch')
+      if (sourceInfo.status === 'source-conflict') {
+        parseWorkspaceTransferJournalV2(await localClient.invoke(RPC_CHANNELS.workspaces.TRANSFER_JOURNAL_SOURCE_RESOLVED, request, {
+          sourceRemoved: false,
+          sourceConflict: sourceInfo.sourceConflict,
+          sourceCleanupToken: sourceInfo.cleanupToken,
+        }))
+        throw new Error('Workspace transfer source resolution conflicted')
+      }
+      if (sourceInfo.status === 'already-removed') {
+        if (
+          request.mode !== 'move'
+          || !journal
+          || journal.phase !== 'destination-published'
+          || journal.bytes !== sourceInfo.bytes
+          || journal.sha256 !== sourceInfo.sha256
+        ) {
+          throw new Error('Workspace transfer source was already removed without a published journal')
+        }
+        const result: WorkspaceTransferResultV1 = {
+          schemaVersion: 1, operationId: request.operationId, status: 'applied', workspaceId: request.workspaceId,
+          sourceLocationId: request.source.locationId, destinationLocationId: request.destination.locationId,
+          revision: request.expectedRevision, mode: request.mode, sha256: sourceInfo.sha256, bytes: sourceInfo.bytes,
+          sourceRemoved: true,
+        }
+        parseWorkspaceTransferJournalV2(await localClient.invoke(RPC_CHANNELS.workspaces.TRANSFER_JOURNAL_SOURCE_RESOLVED, request, {
+          sourceRemoved: true,
+          sourceCleanupToken: sourceInfo.cleanupToken,
+        }))
+        const destinationReplay = parseWorkspaceTransferEndpointImportOpenResultV1(await destinationInvoke(RPC_CHANNELS.workspaces.TRANSFER_ENDPOINT_IMPORT_OPEN, {
+          schemaVersion: 1, operationId: request.operationId, workspaceId: request.workspaceId,
+          locationId: endpointRef(destinationLocation), relativePath: request.destination.relativePath,
+          expectedBytes: sourceInfo.bytes, expectedSha256: sourceInfo.sha256,
+        }))
+        if (destinationReplay.status !== 'already-published' || !destinationReplay.cleanupToken) throw new Error('Workspace transfer destination replay is not published')
+        const recorded = parseWorkspaceTransferResultV1(await localClient.invoke(
+          RPC_CHANNELS.workspaces.TRANSFER_RECEIPT_RECORD,
+          request,
+          result,
+          { destinationCleanupToken: destinationReplay.cleanupToken, sourceCleanupToken: sourceInfo.cleanupToken },
+        ))
+        try {
+          await Promise.all([
+            destinationInvoke(RPC_CHANNELS.workspaces.TRANSFER_ENDPOINT_IMPORT_CLEANUP, {
+              schemaVersion: 1, operationId: request.operationId, workspaceId: request.workspaceId,
+              locationId: endpointRef(destinationLocation), relativePath: request.destination.relativePath,
+              expectedBytes: sourceInfo.bytes, expectedSha256: sourceInfo.sha256,
+              cleanupToken: destinationReplay.cleanupToken,
+            }),
+            sourceInvoke(RPC_CHANNELS.workspaces.TRANSFER_ENDPOINT_EXPORT_CLEANUP, {
+              schemaVersion: 1, operationId: request.operationId, workspaceId: request.workspaceId,
+              locationId: endpointRef(sourceLocation), relativePath: request.source.relativePath,
+              cleanupToken: sourceInfo.cleanupToken,
+            }),
+          ])
+          parseWorkspaceTransferJournalV2(await localClient.invoke(RPC_CHANNELS.workspaces.TRANSFER_JOURNAL_CLEANUP_COMPLETE, request))
+        } catch {}
+        return recorded
+      }
+      const prepared = parseWorkspaceTransferJournalV2(await localClient.invoke(RPC_CHANNELS.workspaces.TRANSFER_JOURNAL_PREPARE, request, {
+        bytes: sourceInfo.bytes,
+        sha256: sourceInfo.sha256,
+      }))
+      if (prepared.phase === 'completed' && prepared.result) return { ...prepared.result, status: 'duplicate' }
+      if (prepared.phase === 'aborted') throw new Error(`Workspace transfer was aborted: ${request.operationId}`)
+      if (prepared.phase === 'source-conflict') throw new Error('Workspace transfer source resolution conflicted')
+      const importOpen = parseWorkspaceTransferEndpointImportOpenResultV1(await destinationInvoke(RPC_CHANNELS.workspaces.TRANSFER_ENDPOINT_IMPORT_OPEN, {
+        schemaVersion: 1, operationId: request.operationId, workspaceId: request.workspaceId,
+        locationId: endpointRef(destinationLocation), relativePath: request.destination.relativePath,
+        expectedBytes: sourceInfo.bytes, expectedSha256: sourceInfo.sha256,
+      }))
+      destinationOpened = importOpen.status === 'opened'
+      let destinationCleanupToken = importOpen.cleanupToken
+      let offset = 0
+      while (importOpen.status === 'opened' && offset < sourceInfo.bytes) {
+        const chunk = parseWorkspaceTransferEndpointReadResultV1(await sourceInvoke(RPC_CHANNELS.workspaces.TRANSFER_ENDPOINT_EXPORT_READ, {
+          schemaVersion: 1, operationId: request.operationId, offset, maxBytes: 256 * 1024,
+        }))
+        if (chunk.offset !== offset || chunk.bytes.byteLength === 0) throw new Error('Workspace transfer endpoint returned an invalid chunk')
+        const write = parseWorkspaceTransferEndpointWriteResultV1(await destinationInvoke(RPC_CHANNELS.workspaces.TRANSFER_ENDPOINT_IMPORT_WRITE, {
+          schemaVersion: 1, operationId: request.operationId, offset, bytes: chunk.bytes,
+        }))
+        offset += chunk.bytes.byteLength
+        if (write.offset !== offset) throw new Error('Workspace transfer endpoint acknowledged an invalid write offset')
+      }
+      if (importOpen.status === 'opened') {
+        const committed = parseWorkspaceTransferEndpointCommitResultV1(await destinationInvoke(RPC_CHANNELS.workspaces.TRANSFER_ENDPOINT_IMPORT_COMMIT, {
+          schemaVersion: 1, operationId: request.operationId, bytes: sourceInfo.bytes, sha256: sourceInfo.sha256,
+        }))
+        if (committed.bytes !== sourceInfo.bytes || committed.sha256 !== sourceInfo.sha256) {
+          throw new Error('Workspace transfer endpoint committed unexpected content')
+        }
+        if (destinationCleanupToken && destinationCleanupToken !== committed.cleanupToken) throw new Error('Workspace transfer destination cleanup token changed')
+        destinationCleanupToken = committed.cleanupToken
+      }
+      destinationOpened = false
+      if (!destinationCleanupToken) throw new Error('Workspace transfer destination did not return a cleanup token')
+      parseWorkspaceTransferJournalV2(await localClient.invoke(
+        RPC_CHANNELS.workspaces.TRANSFER_JOURNAL_PUBLISHED,
+        request,
+        { destinationCleanupToken },
+      ))
+      const completed = parseWorkspaceTransferEndpointCompleteResultV1(await sourceInvoke(RPC_CHANNELS.workspaces.TRANSFER_ENDPOINT_EXPORT_COMPLETE, {
+        schemaVersion: 1, operationId: request.operationId, removeIfUnchanged: request.mode === 'move',
+      }))
+      if (completed.sourceConflict) throw new Error('Workspace transfer source resolution conflicted')
+      sourceOpened = false
+      parseWorkspaceTransferJournalV2(await localClient.invoke(RPC_CHANNELS.workspaces.TRANSFER_JOURNAL_SOURCE_RESOLVED, request, {
+        sourceRemoved: completed.sourceRemoved,
+        ...(completed.sourceConflict ? { sourceConflict: completed.sourceConflict } : {}),
+        ...(completed.cleanupToken ? { sourceCleanupToken: completed.cleanupToken } : {}),
+      }))
+      const result: WorkspaceTransferResultV1 = {
+        schemaVersion: 1, operationId: request.operationId, status: 'applied', workspaceId: request.workspaceId,
+        sourceLocationId: request.source.locationId, destinationLocationId: request.destination.locationId,
+        revision: request.expectedRevision, mode: request.mode, sha256: sourceInfo.sha256, bytes: sourceInfo.bytes,
+        sourceRemoved: completed.sourceRemoved,
+      }
+      const recorded = parseWorkspaceTransferResultV1(await localClient.invoke(
+        RPC_CHANNELS.workspaces.TRANSFER_RECEIPT_RECORD,
+        request,
+        result,
+        {
+          destinationCleanupToken,
+          ...(completed.cleanupToken ? { sourceCleanupToken: completed.cleanupToken } : {}),
+        },
+      ))
+      try {
+        const cleanups: Promise<unknown>[] = [destinationInvoke(RPC_CHANNELS.workspaces.TRANSFER_ENDPOINT_IMPORT_CLEANUP, {
+          schemaVersion: 1, operationId: request.operationId, workspaceId: request.workspaceId,
+          locationId: endpointRef(destinationLocation), relativePath: request.destination.relativePath,
+          expectedBytes: sourceInfo.bytes, expectedSha256: sourceInfo.sha256,
+          cleanupToken: destinationCleanupToken,
+        })]
+        if (completed.cleanupToken) {
+          cleanups.push(sourceInvoke(RPC_CHANNELS.workspaces.TRANSFER_ENDPOINT_EXPORT_CLEANUP, {
+            schemaVersion: 1, operationId: request.operationId, workspaceId: request.workspaceId,
+            locationId: endpointRef(sourceLocation), relativePath: request.source.relativePath,
+            cleanupToken: completed.cleanupToken,
+          }))
+        } else if (recorded.sourceRemoved || completed.sourceConflict) {
+          throw new Error('Workspace transfer source did not return a cleanup token')
+        }
+        await Promise.all(cleanups)
+        parseWorkspaceTransferJournalV2(await localClient.invoke(RPC_CHANNELS.workspaces.TRANSFER_JOURNAL_CLEANUP_COMPLETE, request))
+      } catch {}
+      return recorded
+    } catch (error) {
+      await Promise.allSettled([
+        sourceOpened
+          ? sourceInvoke(RPC_CHANNELS.workspaces.TRANSFER_ENDPOINT_ABORT, { schemaVersion: 1, operationId: request.operationId })
+          : Promise.resolve(),
+        destinationOpened
+          ? destinationInvoke(RPC_CHANNELS.workspaces.TRANSFER_ENDPOINT_ABORT, { schemaVersion: 1, operationId: request.operationId })
+          : Promise.resolve(),
+      ])
+      throw error
+    }
+    } finally {
+      await ipcRenderer.invoke(PRELOAD_LOCAL_CHANNELS.WORKSPACE_TRANSFER_LEASE_RELEASE, request, hostLeaseToken)
+    }
+    })
+  }
+
+  void initialWorkspaceReady.then(async () => {
+    const pending = await localClient.invoke(
+      RPC_CHANNELS.workspaces.TRANSFER_JOURNAL_LIST_PENDING_CLEANUP,
+      workspaceId,
+    ) as unknown[]
+    for (const requestValue of pending) {
+      await orchestrateWorkspaceTransfer!(parseWorkspaceTransferRequestV1(requestValue)).catch(error => {
+        console.error('[WorkspaceTransfer] Failed to recover pending cleanup:', error)
+      })
+    }
+  }).catch(error => {
+    console.error('[WorkspaceTransfer] Failed to list pending cleanup:', error)
+  })
+}
+
+function assertTransferEndpointAccess(
+  locationId: string,
+  access: { availability: 'available'; permissions: { read: boolean; write: boolean } },
+  required: 'read' | 'write',
+  requireSourceWrite = false,
+): void {
+  if (access.availability !== 'available' || !access.permissions[required]) {
+    throw new Error(`Workspace transfer location ${locationId} does not grant ${required} access`)
+  }
+  if (requireSourceWrite && !access.permissions.write) {
+    throw new Error(`Workspace move source ${locationId} does not grant write access`)
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -551,6 +850,10 @@ client.onConnectionStateChanged((state) => {
   getWorkspaceMethod(route, method, 'invoke')(...args)
 ;(api as ElectronAPI).onWorkspaceApiEvent = (route: WorkspaceRoute, method: string, callback: (...args: any[]) => void) =>
   getWorkspaceMethod(route, method, 'listener')(callback)
+;(api as ElectronAPI).workspaceTransfer = (request: WorkspaceTransferRequestV1) => {
+  if (orchestrateWorkspaceTransfer) return orchestrateWorkspaceTransfer(request)
+  return client.invoke(RPC_CHANNELS.workspaces.TRANSFER, request).then(parseWorkspaceTransferResultV1)
+}
 
 // System warnings — expose env-based flags set during main process startup
 // (preload-only: reads env var directly, no IPC round-trip needed)
