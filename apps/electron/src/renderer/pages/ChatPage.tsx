@@ -55,7 +55,6 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
     onSendMessage,
     onOpenFile,
     onOpenUrl,
-    workspaces,
     onRespondToPermission,
     onMarkSessionRead,
     onMarkSessionUnread,
@@ -113,7 +112,7 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
       ? {
           sessionId,
           api: electronApi,
-          cacheKey: `${workspaceRoute.serverId}::${workspaceRoute.workspaceId}::${sessionId}`,
+          cacheKey: `${workspaceRoute.workspaceId}::${workspaceRoute.locationId ?? ''}::${sessionId}`,
         }
       : sessionId
     ensureMessagesLoaded(request)
@@ -273,24 +272,12 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
     return piGlobalSettings.defaultModel ?? ''
   }, [session?.model, providerUnavailable, piGlobalSettings.defaultModel])
 
-  const activeWorkspace = React.useMemo(
-    () => workspaces.find((w) => w.id === activeWorkspaceId) || null,
-    [workspaces, activeWorkspaceId]
-  )
-
   const handleOpenFile = React.useCallback(
     async (path: string) => {
-      // Resolve bare relative paths against the selected workspace root.
-      const resolved = (() => {
-        if (path.startsWith('/') || path.startsWith('~/')) return path
-
-        const baseDir = activeWorkspace?.rootPath
-        if (!baseDir) return path
-
-        const cleanedBase = baseDir.replace(/\/+$/, '')
-        const cleanedPath = path.replace(/^\.\//, '')
-        return `${cleanedBase}/${cleanedPath}`
-      })()
+      // Workspace paths are intentionally client-redacted. Absolute paths that
+      // came from an explicit OS attachment remain usable; Agent-produced
+      // relative paths stay relative and are handled by the workspace surface.
+      const resolved = path
 
       // Smart fallback for missing files in AI output:
       // if the exact path doesn't exist, search nearby for same basename
@@ -322,7 +309,7 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
 
       onOpenFile(resolved)
     },
-    [onOpenFile, activeWorkspace?.rootPath, electronApi, t]
+    [onOpenFile, electronApi, t]
   )
 
   const handleOpenUrl = React.useCallback(
@@ -614,7 +601,6 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
                 onAttachmentsChange={handleAttachmentsChange}
                 skills={skills}
                 workspaceId={activeWorkspaceId || undefined}
-                workspaceRoot={activeWorkspace?.rootPath}
                 messagesLoading={messageLoadState.messagesLoading}
                 searchQuery={sessionListSearchQuery}
                 isSearchModeActive={isSearchModeActive}
@@ -690,7 +676,6 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
             onAttachmentsChange={handleAttachmentsChange}
             skills={skills}
             workspaceId={activeWorkspaceId || undefined}
-            workspaceRoot={activeWorkspace?.rootPath}
             sessionFolderPath={session?.sessionFolderPath}
             messagesLoading={messageLoadState.messagesLoading}
             searchQuery={sessionListSearchQuery}

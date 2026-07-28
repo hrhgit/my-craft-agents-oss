@@ -22,6 +22,7 @@ export type CredentialType =
   | 'llm_service_account' // GCP service account JSON
   // Workspace credentials
   | 'workspace_oauth'    // Workspace MCP OAuth token
+  | 'workspace_remote_bearer' // Remote Workspace location bearer token
   | 'automation_secret'  // Workspace-scoped outbound automation secret
   // Messaging gateway credentials (keyed by workspaceId + platform)
   | 'messaging_bearer';  // Platform tokens (e.g., Telegram bot token)
@@ -33,6 +34,7 @@ const VALID_CREDENTIAL_TYPES: readonly CredentialType[] = [
   'llm_iam',
   'llm_service_account',
   'workspace_oauth',
+  'workspace_remote_bearer',
   'automation_secret',
   'messaging_bearer',
 ] as const;
@@ -162,6 +164,11 @@ export function credentialIdToAccount(id: CredentialId): string {
     return parts.join(CREDENTIAL_DELIMITER);
   }
 
+  if (id.type === 'workspace_remote_bearer' && id.workspaceId && id.name) {
+    parts.push(id.workspaceId, id.name);
+    return parts.join(CREDENTIAL_DELIMITER);
+  }
+
   // Messaging-scoped format:
   // messaging_bearer::{workspaceId}::{platform}
   if (isMessagingCredential(id.type) && id.workspaceId && id.name) {
@@ -227,6 +234,10 @@ export function accountToCredentialId(account: string): CredentialId | null {
   }
 
   if (type === 'automation_secret' && parts.length === 3) {
+    return { type, workspaceId: parts[1], name: parts[2] };
+  }
+
+  if (type === 'workspace_remote_bearer' && parts.length === 3) {
     return { type, workspaceId: parts[1], name: parts[2] };
   }
 

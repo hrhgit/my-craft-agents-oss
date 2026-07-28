@@ -15,7 +15,7 @@ export interface CompactSessionMenuProps {
   badge?: React.ReactNode
   isTitleBusy?: boolean
   item: SessionMeta
-  hasRemoteWorkspaces?: boolean
+  hasOtherWorkspaces?: boolean
   onRename: () => void
   onMarkUnread: () => void
   onOpenInNewWindow?: () => void
@@ -26,7 +26,7 @@ export interface CompactSessionMenuProps {
   trigger?: React.ReactNode | null
 }
 
-export function CompactSessionMenu({ title, badge, isTitleBusy, item, hasRemoteWorkspaces, onRename, onMarkUnread, onOpenInNewWindow, onSendToWorkspace, onDelete, open: controlledOpen, onOpenChange, trigger }: CompactSessionMenuProps) {
+export function CompactSessionMenu({ title, badge, isTitleBusy, item, hasOtherWorkspaces, onRename, onMarkUnread, onOpenInNewWindow, onSendToWorkspace, onDelete, open: controlledOpen, onOpenChange, trigger }: CompactSessionMenuProps) {
   const { t } = useTranslation()
   const [uncontrolledOpen, setUncontrolledOpen] = React.useState(false)
   const open = controlledOpen ?? uncontrolledOpen
@@ -46,7 +46,7 @@ export function CompactSessionMenu({ title, badge, isTitleBusy, item, hasRemoteW
     <DrawerHeader><DrawerTitle>{title}</DrawerTitle></DrawerHeader>
     <div className="flex flex-col px-2 pb-4">
       {!item.sharedUrl ? <Row icon={<CloudUpload />} label={t('sessionMenu.share')} onTap={closeAfter(actions.share)} /> : <><Row icon={<CloudUpload />} label={t('sessionMenu.openInBrowser')} onTap={closeAfter(actions.openSharedInBrowser)} /><Row icon={<Copy />} label={t('sessionMenu.copyLink')} onTap={closeAfter(actions.copySharedLink)} /></>}
-      {hasRemoteWorkspaces && <Row icon={<Send />} label={t('sessionMenu.sendToWorkspace')} onTap={closeAfter(onSendToWorkspace)} />}
+      {hasOtherWorkspaces && <Row icon={<Send />} label={t('sessionMenu.sendToWorkspace')} onTap={closeAfter(onSendToWorkspace)} />}
       <Row icon={<MessageSquare />} label={t('sessionMenu.connectMessaging')} onTap={() => { setOpen(false); void connectMessaging('telegram' as MessagingPlatform) }} />
       {!hasUnreadMeta(item) && hasMessagesMeta(item) && <Row icon={<MailOpen />} label={t('sessionMenu.markAsUnread')} onTap={closeAfter(onMarkUnread)} />}
       <Separator />

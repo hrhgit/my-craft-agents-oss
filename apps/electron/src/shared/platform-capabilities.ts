@@ -17,7 +17,6 @@ const ELECTRON_CAPABILITY_DEFINITIONS = {
   gitBashConfiguration: { status: 'supported' },
   localSkillManagement: { status: 'supported' },
   powerSaveBlocker: { status: 'supported' },
-  crossServerRpc: { status: 'supported' },
 } satisfies Record<string, PlatformCapabilityDescriptorV1>
 
 export const ELECTRON_PLATFORM_CAPABILITIES = createPlatformCapabilitySnapshotV1(

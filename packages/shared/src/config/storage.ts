@@ -2,7 +2,10 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync, rmSyn
 import { createHash, randomUUID } from 'node:crypto';
 import { join, dirname, basename } from 'path';
 import { clearAllMortiseCredentials } from '../credentials/index.ts';
-import { getOrCreateLatestSession, type SessionHeader } from '../sessions/index.ts';
+import {
+  getOrCreateLatestSession,
+  type SessionHeader,
+} from '../sessions/index.ts';
 import {
   discoverWorkspacesInDefaultLocation,
   loadWorkspaceConfig,
@@ -11,10 +14,11 @@ import {
   isValidWorkspace,
   closeWorkspaceStorage,
 } from '../workspaces/storage.ts';
+import { getDefaultWorkspaceTopologyStore } from '../workspaces/topology-storage.ts';
 import { findIconFile } from '../utils/icon.ts';
 import { extractWorkspaceSlugFromPath } from '../utils/workspace-slug.ts';
 import { initializeDocs } from '../docs/index.ts';
-import { expandPath, toPortablePath, getBundledAssetsDir } from '../utils/paths.ts';
+import { getBundledAssetsDir } from '../utils/paths.ts';
 import { debug } from '../utils/debug.ts';
 import { readJsonFileSync } from '../utils/files.ts';
 import { CONFIG_DIR } from './paths.ts';
@@ -53,14 +57,18 @@ export { CONFIG_DIR } from './paths.ts';
 export type {
   WorkspaceInfo,
   Workspace,
-  RemoteServerConfig,
   McpAuthType,
   AuthType,
   OAuthCredentials,
 } from '@mortise/core/types';
 
 // Import for local use
-import type { RemoteServerConfig, Workspace } from '@mortise/core/types';
+import {
+  WORKSPACE_SCHEMA_VERSION,
+  getPrimaryWorkspaceLocation,
+  requirePrimaryLocalWorkspaceRoot,
+  type Workspace,
+} from '@mortise/core/types';
 
 import {
   readPiGlobalProviders,
@@ -87,7 +95,6 @@ export interface StoredConfig {
   midStreamBehavior?: MidStreamBehavior;
   defaultThinkingLevel?: ThinkingLevel;  // App-level default thinking level for new sessions
 
-  workspaces: Workspace[];
   activeWorkspaceId: string | null;
   activeSessionId: string | null;  // Currently active session (primary scope)
   // Notifications
@@ -368,41 +375,23 @@ export function loadStoredConfig(): StoredConfig | null {
       value: storedRecord.value as unknown as StoredConfig,
     };
 
-    const config = JSON.parse(JSON.stringify(record.value)) as StoredConfig;
-
-    // Must have workspaces array
-    if (!Array.isArray(config.workspaces)) {
-      return null;
-    }
-
-    // Expand path variables (~ and ${HOME}) for portability
-    for (const workspace of config.workspaces) {
-      workspace.rootPath = expandPath(workspace.rootPath);
-    }
+    const storedValue = JSON.parse(JSON.stringify(record.value)) as StoredConfig & { workspaces?: unknown };
+    const { workspaces: _retiredWorkspaceTopology, ...rawConfig } = storedValue;
+    const config = rawConfig as StoredConfig;
 
     // Validate active workspace exists
-    const activeWorkspace = config.workspaces.find(w => w.id === config.activeWorkspaceId);
+    const workspaces = getDefaultWorkspaceTopologyStore().list();
+    const activeWorkspace = workspaces.find(w => w.id === config.activeWorkspaceId);
     if (!activeWorkspace) {
       // Default to first workspace
-      config.activeWorkspaceId = config.workspaces[0]?.id || null;
+      config.activeWorkspaceId = workspaces[0]?.id || null;
     }
 
-    // Ensure workspace folder structure exists for all workspaces.
-    // Failures here are non-fatal — the workspace will be re-created on next access.
-    for (const workspace of config.workspaces) {
-      if (!isValidWorkspace(workspace.rootPath)) {
-        try {
-          createWorkspaceAtPath(workspace.rootPath, workspace.name);
-        } catch (wsError) {
-          debug('[config] Failed to create workspace at', workspace.rootPath, ':', wsError instanceof Error ? wsError.message : wsError);
-        }
-      }
-    }
-
-    return attachConfigSnapshot(config, {
+    attachConfigSnapshot(config, {
       version: record.version,
       value: record.value,
     });
+    return config;
   } catch (error) {
     debug('[config] loadStoredConfig failed:', error instanceof Error ? error.message : error);
     return null;
@@ -412,13 +401,8 @@ export function loadStoredConfig(): StoredConfig | null {
 export function saveConfig(config: StoredConfig): void {
   ensureConfigDir();
 
-  // Convert paths to portable form (~ prefix) for cross-machine compatibility
-  const storageConfig: StoredConfig = {
-    ...config,
-    workspaces: config.workspaces.map(ws => ({
-      ...ws,
-      rootPath: toPortablePath(ws.rootPath),
-    })),
+  const { workspaces: _retiredWorkspaceTopology, ...storageConfig } = config as StoredConfig & {
+    workspaces?: unknown;
   };
 
   const store = getConfigStore();
@@ -842,20 +826,18 @@ export function findWorkspaceIcon(rootPath: string): string | null {
 }
 
 export function getWorkspaces(): Workspace[] {
-  const config = loadStoredConfig();
-  const workspaces = config?.workspaces || [];
+  const workspaces = getDefaultWorkspaceTopologyStore().list();
 
-  // Resolve workspace names from folder config and local icons
   return workspaces.map(w => {
-    // Read name from workspace folder config (single source of truth)
-    const wsConfig = loadWorkspaceConfig(w.rootPath);
-    const name = wsConfig?.name || basename(w.rootPath) || 'Untitled';
+    const primary = getPrimaryWorkspaceLocation(w);
 
     // If workspace has a stored iconUrl that's a remote URL, use it
     // Otherwise check for local icon file
     let iconUrl = w.iconUrl;
     if (!iconUrl || (!iconUrl.startsWith('http://') && !iconUrl.startsWith('https://'))) {
-      const localIcon = findWorkspaceIcon(w.rootPath);
+      const localIcon = primary.endpoint.kind === 'local'
+        ? findWorkspaceIcon(primary.endpoint.rootPath)
+        : null;
       if (localIcon) {
         // Convert absolute path to file:// URL for Electron renderer
         // Append mtime as cache-buster so UI refreshes when icon changes
@@ -868,17 +850,18 @@ export function getWorkspaces(): Workspace[] {
       }
     }
 
-    const slug = extractWorkspaceSlugFromPath(w.rootPath, w.id);
-    return { ...w, name, slug, iconUrl };
+    return { ...w, iconUrl };
   });
 }
 
 export function getActiveWorkspace(): Workspace | null {
   const config = loadStoredConfig();
-  if (!config || !config.activeWorkspaceId) {
-    return config?.workspaces[0] || null;
+  const topologyStore = getDefaultWorkspaceTopologyStore();
+  if (config?.activeWorkspaceId) {
+    const active = topologyStore.get(config.activeWorkspaceId);
+    if (active) return active;
   }
-  return config.workspaces.find(w => w.id === config.activeWorkspaceId) || config.workspaces[0] || null;
+  return topologyStore.list()[0] || null;
 }
 
 /**
@@ -893,24 +876,11 @@ export function getWorkspaceByNameOrId(nameOrId: string): Workspace | null {
   ) || null;
 }
 
-export function updateWorkspaceRemoteServer(
-  workspaceId: string,
-  remoteServer: RemoteServerConfig,
-): void {
-  const config = loadStoredConfig();
-  if (!config) return;
-  const ws = config.workspaces.find(w => w.id === workspaceId);
-  if (!ws) throw new Error('Workspace not found');
-  ws.remoteServer = remoteServer;
-  saveConfig(config);
-}
-
 export function setActiveWorkspace(workspaceId: string): void {
   const config = loadStoredConfig();
   if (!config) return;
 
-  const workspace = config.workspaces.find(w => w.id === workspaceId);
-  if (!workspace) return;
+  if (!getDefaultWorkspaceTopologyStore().get(workspaceId)) return;
 
   config.activeWorkspaceId = workspaceId;
   saveConfig(config);
@@ -927,15 +897,17 @@ export async function switchWorkspaceAtomic(workspaceId: string): Promise<{ work
   const config = loadStoredConfig();
   if (!config) return null;
 
-  const workspace = config.workspaces.find(w => w.id === workspaceId);
+  const workspace = getDefaultWorkspaceTopologyStore().get(workspaceId);
   if (!workspace) return null;
 
   // Get or create the latest session for this workspace
-  const session = await getOrCreateLatestSession(workspace.rootPath);
+  const session = await getOrCreateLatestSession(
+    workspace.id,
+    requirePrimaryLocalWorkspaceRoot(workspace),
+  );
 
   // Update active workspace in config
   config.activeWorkspaceId = workspaceId;
-  workspace.lastAccessedAt = Date.now();
   saveConfig(config);
 
   return { workspace, session };
@@ -943,7 +915,7 @@ export async function switchWorkspaceAtomic(workspaceId: string): Promise<{ work
 
 /**
  * Add a workspace to the global config.
- * @param workspace - Workspace data (must include rootPath)
+ * @param workspace - Canonical V2 Workspace data without generated identity fields.
  */
 export function addWorkspace(workspace: Omit<Workspace, 'id' | 'createdAt' | 'slug'>): Workspace {
   const config = loadStoredConfig();
@@ -951,24 +923,26 @@ export function addWorkspace(workspace: Omit<Workspace, 'id' | 'createdAt' | 'sl
     throw new Error('No config found');
   }
 
-  const slug = extractWorkspaceSlugFromPath(workspace.rootPath, '');
+  const primary = workspace.locations.find(location => location.id === workspace.primaryLocationId);
+  if (!primary) throw new Error('Primary Workspace location is missing');
+  const slugSource = primary.endpoint.kind === 'local'
+    ? primary.endpoint.rootPath
+    : primary.endpoint.remoteWorkspaceId;
+  const slug = extractWorkspaceSlugFromPath(slugSource, '');
 
-  // Check if workspace with same rootPath already exists
-  const existing = config.workspaces.find(w => w.rootPath === workspace.rootPath);
-  if (existing) {
-    // Update existing workspace with new settings
-    const updated: Workspace = {
-      ...existing,
-      ...workspace,
-      slug,
-      id: existing.id,
-      createdAt: existing.createdAt,
-    };
-    const existingIndex = config.workspaces.indexOf(existing);
-    config.workspaces[existingIndex] = updated;
-    saveConfig(config);
-    return updated;
-  }
+  const topologyStore = getDefaultWorkspaceTopologyStore();
+  const duplicate = topologyStore.list().find(existing => existing.locations.some(location => {
+    if (location.endpoint.kind !== primary.endpoint.kind) return false;
+    if (location.endpoint.kind === 'local' && primary.endpoint.kind === 'local') {
+      return location.endpoint.rootPath === primary.endpoint.rootPath;
+    }
+    if (location.endpoint.kind === 'remote' && primary.endpoint.kind === 'remote') {
+      return location.endpoint.url === primary.endpoint.url
+        && location.endpoint.remoteWorkspaceId === primary.endpoint.remoteWorkspaceId;
+    }
+    return false;
+  }));
+  if (duplicate) throw new Error('Workspace location is already attached to another Workspace');
 
   const newWorkspace: Workspace = {
     ...workspace,
@@ -978,14 +952,14 @@ export function addWorkspace(workspace: Omit<Workspace, 'id' | 'createdAt' | 'sl
   };
 
   // Create workspace folder structure if it doesn't exist
-  if (!isValidWorkspace(newWorkspace.rootPath)) {
-    createWorkspaceAtPath(newWorkspace.rootPath, newWorkspace.name);
+  if (primary.endpoint.kind === 'local' && !isValidWorkspace(primary.endpoint.rootPath)) {
+    createWorkspaceAtPath(primary.endpoint.rootPath, newWorkspace.name);
   }
 
-  config.workspaces.push(newWorkspace);
+  topologyStore.create(newWorkspace);
 
   // If this is the only workspace, make it active
-  if (config.workspaces.length === 1) {
+  if (topologyStore.list().length === 1) {
     config.activeWorkspaceId = newWorkspace.id;
   }
 
@@ -1002,8 +976,11 @@ export function syncWorkspaces(): void {
   const config = loadStoredConfig();
   if (!config) return;
 
+  const topologyStore = getDefaultWorkspaceTopologyStore();
   const discoveredPaths = discoverWorkspacesInDefaultLocation();
-  const trackedPaths = new Set(config.workspaces.map(w => w.rootPath));
+  const trackedPaths = new Set(topologyStore.list().flatMap(workspace => workspace.locations.flatMap(location => (
+    location.endpoint.kind === 'local' ? [location.endpoint.rootPath] : []
+  ))));
 
   let added = false;
   for (const rootPath of discoveredPaths) {
@@ -1014,21 +991,31 @@ export function syncWorkspaces(): void {
     if (!wsConfig) continue;
 
     const newWorkspace: Workspace = {
+      schemaVersion: WORKSPACE_SCHEMA_VERSION,
       id: wsConfig.id || generateWorkspaceId(),
+      revision: 0,
+      primaryLocationId: 'primary',
+      locations: [{
+        id: 'primary',
+        name: basename(rootPath) || wsConfig.name,
+        rootName: basename(rootPath) || wsConfig.name,
+        endpoint: { kind: 'local', rootPath },
+      }],
       name: wsConfig.name,
+      nameSource: 'custom',
       slug: extractWorkspaceSlugFromPath(rootPath, ''),
-      rootPath,
       createdAt: wsConfig.createdAt || Date.now(),
     };
 
-    config.workspaces.push(newWorkspace);
+    topologyStore.create(newWorkspace, `workspace-discovery-${newWorkspace.id}`);
     added = true;
   }
 
   if (added) {
     // If no active workspace, set to first
-    if (!config.activeWorkspaceId && config.workspaces.length > 0) {
-      config.activeWorkspaceId = config.workspaces[0]!.id;
+    const workspaces = topologyStore.list();
+    if (!config.activeWorkspaceId && workspaces.length > 0) {
+      config.activeWorkspaceId = workspaces[0]!.id;
     }
     saveConfig(config);
   }
@@ -1038,14 +1025,12 @@ export async function removeWorkspace(workspaceId: string): Promise<boolean> {
   const config = loadStoredConfig();
   if (!config) return false;
 
-  const index = config.workspaces.findIndex(w => w.id === workspaceId);
-  if (index === -1) return false;
-
-  config.workspaces.splice(index, 1);
+  const topologyStore = getDefaultWorkspaceTopologyStore();
+  if (!topologyStore.remove(workspaceId)) return false;
 
   // If we removed the active workspace, switch to first available
   if (config.activeWorkspaceId === workspaceId) {
-    config.activeWorkspaceId = config.workspaces[0]?.id || null;
+    config.activeWorkspaceId = topologyStore.list()[0]?.id || null;
   }
 
   saveConfig(config);

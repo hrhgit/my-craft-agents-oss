@@ -10,26 +10,29 @@ describe('WorkspaceRuntimeGenerationTracker', () => {
       token: 'secret-token-one',
       remoteWorkspaceId: 'remote-workspace',
     }
-    const initial = tracker.forRemote('local-workspace', base)
+    const initial = tracker.forRemote('local-workspace', 'remote-a', base)
 
-    expect(tracker.forRemote('local-workspace', { ...base })).toBe(initial)
-    const tokenChanged = tracker.forRemote('local-workspace', { ...base, token: 'secret-token-two' })
-    const tlsChanged = tracker.forRemote('local-workspace', {
+    expect(tracker.forRemote('local-workspace', 'remote-a', { ...base })).toBe(initial)
+    const otherLocation = tracker.forRemote('local-workspace', 'remote-b', { ...base })
+    const tokenChanged = tracker.forRemote('local-workspace', 'remote-a', { ...base, token: 'secret-token-two' })
+    const tlsChanged = tracker.forRemote('local-workspace', 'remote-a', {
       ...base,
       token: 'secret-token-two',
       allowInsecureTls: true,
     })
 
     expect(tokenChanged).not.toBe(initial)
+    expect(otherLocation).not.toBe(initial)
     expect(tlsChanged).not.toBe(tokenChanged)
     expect(initial).not.toContain(base.token)
     expect(tokenChanged).not.toContain('secret-token-two')
   })
 
   it('does not place credentials in the stable workspace route key', () => {
-    const route = { serverId: 'wss://remote.example.test', workspaceId: 'local-workspace' }
-    expect(workspaceRouteKey(route)).toBe('wss%3A%2F%2Fremote.example.test::local-workspace')
+    const route = { workspaceId: 'local-workspace', locationId: 'remote-a' }
+    expect(workspaceRouteKey(route)).toBe('local-workspace::remote-a')
     expect(workspaceRouteKey(route)).not.toContain('token')
+    expect(workspaceRouteKey(route)).not.toContain('remote.example.test')
   })
 
   it('serializes rapid URL rotations by workspace and reads the latest config at execution', async () => {

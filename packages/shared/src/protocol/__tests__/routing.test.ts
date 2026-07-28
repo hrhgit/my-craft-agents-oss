@@ -76,10 +76,19 @@ describe('channel routing behavior', () => {
     }
   })
 
-  test('Workspace topology authority and broadcasts stay local', () => {
+  test('Workspace topology, remote-primary creation, transfers, and broadcasts stay host-local', () => {
     expect(LOCAL_ONLY_CHANNELS.has(RPC_CHANNELS.workspaces.GET_TOPOLOGY)).toBe(true)
     expect(LOCAL_ONLY_CHANNELS.has(RPC_CHANNELS.workspaces.TOPOLOGY_COMMAND)).toBe(true)
     expect(LOCAL_ONLY_CHANNELS.has(RPC_CHANNELS.workspaces.TOPOLOGY_CHANGED)).toBe(true)
+    expect(LOCAL_ONLY_CHANNELS.has(RPC_CHANNELS.workspaces.REMOTE_PRIMARY_COMMAND)).toBe(true)
+    expect(LOCAL_ONLY_CHANNELS.has(RPC_CHANNELS.workspaces.TRANSFER)).toBe(true)
+    expect(REMOTE_ELIGIBLE_CHANNELS.has(RPC_CHANNELS.workspaces.REMOTE_PRIMARY_COMMAND)).toBe(false)
+    expect(REMOTE_ELIGIBLE_CHANNELS.has(RPC_CHANNELS.workspaces.TRANSFER)).toBe(false)
+  })
+
+  test('does not publish retired remote Workspace update channels', () => {
+    expect(getAllChannelValues()).not.toContain('workspaces:updateRemote')
+    expect(getAllChannelValues()).not.toContain('workspaces:remoteUpdated')
   })
 })
 

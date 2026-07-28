@@ -52,6 +52,8 @@ Run unified dock, navigation, workspace sidebar, geometry, detach, and layout se
 Persisted layouts can reference removed content; native views can occlude drag targets and floating surfaces.
 
 ## Semantic history
+- 2026-07-28: Kept explicit Workspace transfer bound to the preload-owned orchestrator when content is location-scoped, preventing a selected tab route from bypassing cross-endpoint coordination.
+- 2026-07-28: Routed the Workspace shell, transfers, and persisted dock content through the client-safe primary location identity; renderer code no longer derives authority from paths, credentials, or legacy remote-server fields, and primary-location changes retarget both the authoritative location ID and compatibility server metadata.
 - 2026-07-27: Added parent-scoped core child tasks to the existing right-side task status popover with running state, bounded history inspection, and message, resume, and interrupt actions without creating ordinary Session tabs.
 - 2026-07-24: Routed the shared draft record through one ordered asynchronous writer and registered window-close flushing so older debounced writes cannot overwrite a later published-draft clear.
 - 2026-07-23: Made current-Session chat search host-yielding and cursor-paged: initial/divergent indexes publish atomically after asynchronous chunking, deterministic identity/content snapshots protect the sealed prefix while streaming reindexes only mutable tails, navigation preserves active match identity across lazy pages, and exact semantic-target highlighting stays hard-bounded with the mounted neighborhood.
@@ -70,5 +72,3 @@ Persisted layouts can reference removed content; native views can occlude drag t
 - 2026-07-21: Coalesced window geometry persistence so drag and resize model changes update memory immediately but serialize and write only at idle or explicit workspace/window flush boundaries.
 - 2026-07-21: Updated projection-owned processing and completion consumers to keep retrying Pi attempts active until `agent_settled`, while retaining legacy `agent_end` snapshot compatibility.
 - 2026-07-21: Added local skill discovery with default-all individual selection and explicit confirmed batch import into the bound workspace.
-- 2026-07-20: Removed the retired Sources navigator, detail type, and navigation-registry state from the current layout contract.
-- 2026-07-20: Made initial draft-route focus one-shot and kept programmatic first-message navigation on the draft until send succeeds.

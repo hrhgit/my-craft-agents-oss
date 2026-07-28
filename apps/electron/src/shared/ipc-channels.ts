@@ -22,10 +22,16 @@ export const PRELOAD_LOCAL_CHANNELS = {
   APP_RELAUNCH: 'app:relaunch',
   /** invoke → remove a workspace from config. */
   WORKSPACE_REMOVE: 'workspace:remove',
-  /** invoke → cross-server RPC: invoke a channel on an arbitrary remote server. */
-  SERVER_INVOKE_ON_SERVER: 'server:invokeOnServer',
-  /** invoke → transfer a session to another workspace's owning server. */
-  SESSION_TRANSFER_TO_REMOTE_WORKSPACE: 'session:transferToRemoteWorkspace',
+  /** invoke -> resolve one trusted location endpoint for preload transport only. */
+  WORKSPACE_RESOLVE_LOCATION_RUNTIME: '__workspace:resolve-location-runtime',
+  /** invoke -> persist one remote location secret through the host credential authority. */
+  WORKSPACE_SET_REMOTE_CREDENTIAL: '__workspace:set-remote-credential',
+  /** invoke -> delete one remote location secret through the host credential authority. */
+  WORKSPACE_DELETE_REMOTE_CREDENTIAL: '__workspace:delete-remote-credential',
+  /** invoke -> acquire the app-wide Workspace transfer orchestration lease. */
+  WORKSPACE_TRANSFER_LEASE_ACQUIRE: '__workspace:transfer-lease-acquire',
+  /** invoke -> release the app-wide Workspace transfer orchestration lease. */
+  WORKSPACE_TRANSFER_LEASE_RELEASE: '__workspace:transfer-lease-release',
   /** invoke → sync a language change to main (persist + rebuild native menu). */
   I18N_CHANGE_LANGUAGE: 'i18n:changeLanguage',
   /** send -> publish a validated development-only UI state batch. */

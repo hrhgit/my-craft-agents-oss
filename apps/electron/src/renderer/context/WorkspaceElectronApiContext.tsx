@@ -14,12 +14,15 @@ export function WorkspaceElectronApiProvider({
   route: WorkspaceRoute
   children: React.ReactNode
 }) {
-  const { serverId, workspaceId } = route
+  const { workspaceId, locationId } = route
   const api = React.useMemo(
-    () => createWorkspaceElectronApi(window.electronAPI, { serverId, workspaceId }),
-    [serverId, workspaceId],
+    () => createWorkspaceElectronApi(window.electronAPI, { workspaceId, locationId }),
+    [locationId, workspaceId],
   )
-  const scopedRoute = React.useMemo(() => ({ serverId, workspaceId }), [serverId, workspaceId])
+  const scopedRoute = React.useMemo(
+    () => ({ workspaceId, locationId }),
+    [locationId, workspaceId],
+  )
   return (
     <WorkspaceRouteContext.Provider value={scopedRoute}>
       <WorkspaceElectronApiContext.Provider value={api}>{children}</WorkspaceElectronApiContext.Provider>

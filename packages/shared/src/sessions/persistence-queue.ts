@@ -199,8 +199,8 @@ class SessionPersistenceQueue {
 
     try {
       const { data } = entry
-      ensureSessionsDir(data.workspaceRootPath)
-      ensureSessionDir(data.workspaceRootPath, sessionId)
+      ensureSessionsDir(data.workspaceId)
+      ensureSessionDir(data.workspaceId, sessionId)
 
       // Prepare session with portable paths for cross-machine compatibility
       const storageSession: StoredSession = {
@@ -213,6 +213,7 @@ class SessionPersistenceQueue {
       // Create/update the Pi tree JSONL file and merge Mortise metadata into its header.
       const intendedHeaderSignature = getHeaderMetadataSignature(storageSession as SessionHeader)
       const treeFilePath = await ensureSharedPiTreeSessionFileAsync(storageSession, {
+        workspaceId: data.workspaceId,
         lastWrittenHeaderSignature: this.lastWrittenHeaderSignature.get(sessionId),
       })
       if (!existsSync(treeFilePath)) {

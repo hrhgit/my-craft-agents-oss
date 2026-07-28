@@ -159,4 +159,147 @@ describe('AutomationWorkspaceHostV3', () => {
     }, { sourceKind: 'external' })).toThrow(CapabilityReadOnlyError)
     await host.stop()
   })
+
+  it('durably interrupts active and queued runs, coalesces callers, and starts later work with a fresh signal', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'mortise-automations-host-interrupt-'))
+    roots.push(root)
+    let releaseActive!: () => void
+    const activeGate = new Promise<void>(resolve => { releaseActive = resolve })
+    const observedSignals: boolean[] = []
+    const host = new AutomationWorkspaceHostV3({
+      workspaceId: 'workspace-host-interrupt',
+      workspaceRootPath: root,
+      callbacks: {
+        prompt: async (_action, context) => {
+          observedSignals.push(context.signal?.aborted ?? false)
+          if (observedSignals.length === 1) {
+            await activeGate
+            observedSignals.push(context.signal?.aborted ?? false)
+          }
+          return { status: 'succeeded' }
+        },
+        webhook: async () => ({ status: 'succeeded' }),
+      },
+    })
+    host.start()
+    const document = host.store.initialize()
+    const now = new Date().toISOString()
+    const definition = {
+      id: 'automation-host-interrupt', name: 'Interrupt', enabled: true,
+      triggers: [{ id: 'trigger-host-interrupt', type: 'event' as const, source: 'mortise' as const, eventType: 'manual' }],
+      actions: [{ id: 'action-host-interrupt', type: 'prompt' as const, prompt: 'interrupt', target: { kind: 'new-session' as const } }],
+      runPolicy: { overlap: 'queue-one' as const }, createdAt: now, updatedAt: now,
+    }
+    expect(host.store.mutateDocument({
+      operationId: 'operation-host-interrupt-definition',
+      expectedRevision: document.revision,
+      document: { ...document, definitions: [definition] },
+    }).status).toBe('ok')
+
+    const active = host.acceptManual(definition.id, 'manual-interrupt-active').run
+    const queued = host.acceptManual(definition.id, 'manual-interrupt-queued').run
+    for (let attempt = 0; attempt < 50 && host.store.getRun(active.runId)?.state !== 'running'; attempt++) await Bun.sleep(5)
+    expect(host.store.getRun(active.runId)?.state).toBe('running')
+    expect(host.store.getRun(queued.runId)?.state).toBe('queued')
+
+    const first = host.interruptForWorkspaceTopologyChange()
+    const second = host.interruptForWorkspaceTopologyChange()
+    expect(second).toBe(first)
+    expect(() => host.acceptManual(definition.id, 'manual-during-interrupt')).toThrow('in progress')
+    expect(host.store.getRun(active.runId)).toMatchObject({ state: 'cancelled', reason: 'workspace-topology-interrupted' })
+    expect(host.store.getRun(queued.runId)).toMatchObject({ state: 'cancelled', reason: 'workspace-topology-interrupted' })
+
+    releaseActive()
+    await expect(first).resolves.toMatchObject({
+      selectedRunIds: expect.arrayContaining([active.runId, queued.runId]),
+      cancelledRunIds: expect.arrayContaining([active.runId, queued.runId]),
+    })
+    expect(observedSignals).toEqual([false, true])
+    expect(host.store.initialize().definitions).toMatchObject([{ id: definition.id, enabled: true }])
+    expect(host.interruptForWorkspaceTopologyChange()).toBe(first)
+    expect(() => host.acceptManual(definition.id, 'manual-before-topology-commit')).toThrow('in progress')
+    await host.resumeAfterWorkspaceTopologyChange()
+
+    const later = host.acceptManual(definition.id, 'manual-after-interrupt').run
+    for (let attempt = 0; attempt < 50 && host.store.getRun(later.runId)?.state !== 'succeeded'; attempt++) await Bun.sleep(5)
+    expect(host.store.getRun(later.runId)?.state).toBe('succeeded')
+    expect(observedSignals.at(-1)).toBe(false)
+    await host.interruptForWorkspaceTopologyChange()
+    await host.resumeAfterWorkspaceTopologyChange()
+    await host.stop()
+  })
+
+  it('does not recover topology-interrupted runs after a host restart', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'mortise-automations-host-interrupt-restart-'))
+    roots.push(root)
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const host = new AutomationWorkspaceHostV3({
+      workspaceId: 'workspace-host-interrupt-restart',
+      workspaceRootPath: root,
+      callbacks: {
+        prompt: async () => { await gate; return { status: 'succeeded' } },
+        webhook: async () => ({ status: 'succeeded' }),
+      },
+    })
+    host.start()
+    const document = host.store.initialize()
+    const now = new Date().toISOString()
+    const definition = {
+      id: 'automation-host-interrupt-restart', name: 'Restart', enabled: true,
+      triggers: [{ id: 'trigger-host-interrupt-restart', type: 'event' as const, source: 'mortise' as const, eventType: 'manual' }],
+      actions: [{ id: 'action-host-interrupt-restart', type: 'prompt' as const, prompt: 'restart', target: { kind: 'new-session' as const } }],
+      createdAt: now, updatedAt: now,
+    }
+    expect(host.store.mutateDocument({
+      operationId: 'operation-host-interrupt-restart-definition',
+      expectedRevision: document.revision,
+      document: { ...document, definitions: [definition] },
+    }).status).toBe('ok')
+    const run = host.acceptManual(definition.id, 'manual-interrupt-restart').run
+    for (let attempt = 0; attempt < 50 && host.store.getRun(run.runId)?.state !== 'running'; attempt++) await Bun.sleep(5)
+    const interrupted = host.interruptForWorkspaceTopologyChange()
+    release()
+    await interrupted
+    await host.stop()
+
+    let recoveredExecutions = 0
+    const recoveredHost = new AutomationWorkspaceHostV3({
+      workspaceId: 'workspace-host-interrupt-restart',
+      workspaceRootPath: root,
+      callbacks: {
+        prompt: async () => { recoveredExecutions++; return { status: 'succeeded' } },
+        webhook: async () => ({ status: 'succeeded' }),
+      },
+    })
+    recoveredHost.start()
+    await Bun.sleep(25)
+    expect(recoveredExecutions).toBe(0)
+    expect(recoveredHost.store.getRun(run.runId)).toMatchObject({ state: 'cancelled', reason: 'workspace-topology-interrupted' })
+    expect(recoveredHost.store.initialize().definitions).toMatchObject([{ id: definition.id, enabled: true }])
+    await recoveredHost.stop()
+  })
+
+  it('fails closed when durable interruption cannot be completed', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'mortise-automations-host-interrupt-failure-'))
+    roots.push(root)
+    const errors: Error[] = []
+    const host = new AutomationWorkspaceHostV3({
+      workspaceId: 'workspace-host-interrupt-failure',
+      workspaceRootPath: root,
+      callbacks: {
+        prompt: async () => ({ status: 'succeeded' }),
+        webhook: async () => ({ status: 'succeeded' }),
+      },
+      onError: error => errors.push(error),
+    })
+    host.start()
+    const originalCancel = host.store.cancelNonTerminalRuns.bind(host.store)
+    host.store.cancelNonTerminalRuns = () => { throw new Error('planned interruption persistence failure') }
+    await expect(host.interruptForWorkspaceTopologyChange()).rejects.toThrow('planned interruption persistence failure')
+    expect(() => host.acceptManual('missing-automation', 'manual-after-failure')).toThrow('blocked after topology interruption failed')
+    expect(errors.map(error => error.message)).toContain('planned interruption persistence failure')
+    host.store.cancelNonTerminalRuns = originalCancel
+    await host.stop()
+  })
 })

@@ -14,6 +14,7 @@ import {
 } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 import { SessionManager as PiSessionManager } from '@mortise/pi-coding-agent/host-facade'
+import { requirePrimaryLocalWorkspaceRoot, type Workspace } from '@mortise/core/types'
 import type { AgentBackend } from '../agent/backend/index.ts'
 import { PiProjectionBuilder } from '../agent/backend/pi/projection-builder.ts'
 import { getSessionFilePath, getSessionPath } from '../sessions/storage.ts'
@@ -63,7 +64,7 @@ interface PersistedState extends SessionValidationArmInput {
 
 export interface SessionValidationBackendArgs {
   coreConfig: {
-    workspace: { id: string; rootPath: string }
+    workspace: Workspace
     session?: { mortiseId: string }
     onPiProjectionEvent?: (event: ReturnType<PiProjectionBuilder['acceptRuntimeEvent']>[number]) => void
   }
@@ -125,16 +126,24 @@ export class SessionValidationController {
   readonly backendFactory: SessionValidationBackendFactory = args => {
     const sessionId = args.coreConfig.session?.mortiseId
     if (!sessionId) return args.createDefaultBackend()
+    const workspaceRoot = requirePrimaryLocalWorkspaceRoot(args.coreConfig.workspace)
     const path = statePath()
     const state = withStateLock(path, () => claimMatchingState(
       path,
       args.coreConfig.workspace.id,
-      args.coreConfig.workspace.rootPath,
+      workspaceRoot,
       sessionId,
       args.provisional,
     ))
     if (!state) return args.createDefaultBackend()
-    return deterministicBackend(path, sessionId, args.coreConfig.workspace.rootPath, state, args.coreConfig.onPiProjectionEvent)
+    return deterministicBackend(
+      path,
+      sessionId,
+      args.coreConfig.workspace.id,
+      workspaceRoot,
+      state,
+      args.coreConfig.onPiProjectionEvent,
+    )
   }
 }
 
@@ -193,7 +202,7 @@ function recordChatAttempt(path: string): number {
   })
 }
 
-function blockSettlementProjection(path: string, sessionId: string, workspaceRoot: string): void {
+function blockSettlementProjection(path: string, workspaceId: string, sessionId: string): void {
   withStateLock(path, () => {
     const current = readState(path)
     if (!current || current.mode.kind !== 'fail-settlement-projection' || current.sessionId !== sessionId) {
@@ -201,7 +210,7 @@ function blockSettlementProjection(path: string, sessionId: string, workspaceRoo
     }
     if (current.settlement?.blockerCreated) return
 
-    const sidecar = getSessionPath(workspaceRoot, sessionId)
+    const sidecar = getSessionPath(workspaceId, sessionId)
     const targetPath = join(sidecar, 'pi-projection-v1.json')
     const backupPath = join(sidecar, 'pi-projection-v1.session-validation-backup-v1.json')
     mkdirSync(sidecar, { recursive: true })
@@ -377,6 +386,7 @@ function emitCanonicalProjectionEvents(
 function deterministicBackend(
   statePathValue: string,
   sessionId: string,
+  workspaceId: string,
   workspaceRoot: string,
   state: PersistedState,
   emitProjection: SessionValidationBackendArgs['coreConfig']['onPiProjectionEvent'],
@@ -409,7 +419,7 @@ function deterministicBackend(
       stopReason: 'stop',
       usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
     }
-    const sessionFile = getSessionFilePath(workspaceRoot, sessionId, timestamp)
+    const sessionFile = getSessionFilePath(workspaceId, sessionId, timestamp)
     const piSession = mode.kind === 'fail-user-persistence-once' || mode.kind === 'fail-settlement-projection'
       ? PiSessionManager.open(sessionFile, dirname(sessionFile), workspaceRoot)
       : PiSessionManager.create(workspaceRoot, dirname(sessionFile), { id: sessionId })
@@ -421,12 +431,12 @@ function deterministicBackend(
     const builder = emitCanonicalProjectionEvents(sessionId, state.runId, userMessage, assistantMessage, emitProjection)
 
     if (mode.kind === 'fail-publication-metadata') {
-      const blockedSessionPath = getSessionPath(workspaceRoot, sessionId)
+      const blockedSessionPath = getSessionPath(workspaceId, sessionId)
       mkdirSync(dirname(blockedSessionPath), { recursive: true })
       writeFileSync(blockedSessionPath, 'blocked Session sidecar directory', 'utf8')
     }
     if (mode.kind === 'fail-settlement-projection') {
-      blockSettlementProjection(statePathValue, sessionId, workspaceRoot)
+      blockSettlementProjection(statePathValue, workspaceId, sessionId)
     }
     for (const event of builder.accept({ type: 'complete' })) emitProjection?.(event)
     yield { type: 'pi_user_message_persisted' }

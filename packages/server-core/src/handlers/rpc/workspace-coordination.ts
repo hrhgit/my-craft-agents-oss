@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
+import { requirePrimaryLocalWorkspaceRoot } from '@mortise/core/types'
 import { RPC_CHANNELS, type WorkspaceCoordinationStatusV1 } from '@mortise/shared/protocol'
 import {
   WorkspaceCoordinationStore,
@@ -128,7 +129,7 @@ export function registerWorkspaceCoordinationHandlers(server: RpcServer, deps: H
     if (!workspaceId) throw new Error('Workspace coordination requires an authenticated workspace')
     const workspace = getWorkspaceOrThrow(workspaceId)
     const store = WorkspaceCoordinationStore.open({
-      workspaceRoot: workspace.rootPath,
+      workspaceRoot: requirePrimaryLocalWorkspaceRoot(workspace),
       workspaceId,
       writerId: STATUS_WRITER_ID,
     })

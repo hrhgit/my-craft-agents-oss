@@ -81,7 +81,7 @@ describe('unified dock FlexLayout adapter', () => {
     expect((recovered.getNodeById('a') as TabNode).isEnablePopout()).toBe(false)
   })
 
-  it('retargets every tab in the reconnected workspace to its refreshed server URL', () => {
+  it('retargets every tab when the Workspace primary route changes', () => {
     const model = Model.fromJson({
       global: {},
       layout: {
@@ -93,13 +93,13 @@ describe('unified dock FlexLayout adapter', () => {
             id: 'conversation',
             name: 'Conversation',
             component: 'mortise-content',
-            config: { workspaceId: 'workspace-a', serverId: 'wss://old.example.test' },
+            config: { workspaceId: 'workspace-a', serverId: 'wss://old.example.test', locationId: 'old-location' },
           }, {
             type: 'tab',
             id: 'files',
             name: 'Files',
             component: 'mortise-content',
-            config: { workspaceId: 'workspace-a', serverId: 'wss://old.example.test' },
+            config: { workspaceId: 'workspace-a', serverId: 'wss://old.example.test', locationId: 'old-location' },
           }, {
             type: 'tab',
             id: 'other-workspace',
@@ -111,12 +111,17 @@ describe('unified dock FlexLayout adapter', () => {
       },
     })
 
-    expect(retargetWorkspaceTabs(model, 'workspace-a', 'wss://new.example.test')).toBe(2)
+    expect(retargetWorkspaceTabs(model, 'workspace-a', {
+      serverId: 'wss://new.example.test',
+      locationId: 'new-location',
+    })).toBe(2)
     expect((model.getNodeById('conversation') as TabNode).getConfig()).toMatchObject({
       serverId: 'wss://new.example.test',
+      locationId: 'new-location',
     })
     expect((model.getNodeById('files') as TabNode).getConfig()).toMatchObject({
       serverId: 'wss://new.example.test',
+      locationId: 'new-location',
     })
     expect((model.getNodeById('other-workspace') as TabNode).getConfig()).toMatchObject({
       serverId: 'wss://other.example.test',

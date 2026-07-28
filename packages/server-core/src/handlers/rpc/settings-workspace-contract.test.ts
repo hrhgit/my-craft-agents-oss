@@ -6,10 +6,17 @@ import type { HandlerDeps } from '../handler-deps'
 import type { HandlerFn, RequestContext, RpcServer } from '../../transport'
 
 const WORKSPACE = {
+  schemaVersion: 2,
   id: 'workspace-a',
-  rootPath: '/workspace-a',
+  revision: 0,
   name: 'Workspace A',
   slug: 'workspace-a',
+  primaryLocationId: 'primary',
+  locations: [{
+    id: 'primary',
+    name: 'Primary',
+    endpoint: { kind: 'local', rootPath: '/workspace-a' },
+  }],
   createdAt: 1,
 }
 

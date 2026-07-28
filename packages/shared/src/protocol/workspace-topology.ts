@@ -4,7 +4,9 @@ import {
   type Workspace,
   type WorkspaceEndpoint,
   type WorkspaceInfo,
+  type WorkspaceLocationAvailability,
   type WorkspaceLocationInfo,
+  type WorkspaceLocationPermissions,
 } from '@mortise/core/types'
 
 export const WORKSPACE_MARKER_SCHEMA_VERSION = 1 as const
@@ -14,6 +16,9 @@ export const WORKSPACE_PATH_REF_SCHEMA_VERSION = 1 as const
 export const WORKSPACE_TOPOLOGY_COMMAND_SCHEMA_VERSION = 1 as const
 export const WORKSPACE_TOPOLOGY_RESULT_SCHEMA_VERSION = 1 as const
 export const WORKSPACE_TOPOLOGY_CHANGE_SCHEMA_VERSION = 1 as const
+export const WORKSPACE_LOCATION_PROJECTION_SCHEMA_VERSION = 1 as const
+export const WORKSPACE_TRANSFER_SCHEMA_VERSION = 1 as const
+export const WORKSPACE_REMOTE_PRIMARY_SCHEMA_VERSION = 1 as const
 
 export interface WorkspaceMarkerV1 {
   schemaVersion: typeof WORKSPACE_MARKER_SCHEMA_VERSION
@@ -28,6 +33,101 @@ export interface WorkspacePathRefV1 {
   locationId: string
   /** Forward-slash relative path. Empty identifies the location root. */
   relativePath: string
+}
+
+/** Host-observed state required to produce one client-safe location projection. */
+export interface WorkspaceLocationProjectionV1 {
+  schemaVersion: typeof WORKSPACE_LOCATION_PROJECTION_SCHEMA_VERSION
+  locationId: string
+  availability: WorkspaceLocationAvailability
+  permissions: WorkspaceLocationPermissions
+}
+
+export interface WorkspaceTransferRequestV1 {
+  schemaVersion: typeof WORKSPACE_TRANSFER_SCHEMA_VERSION
+  operationId: string
+  workspaceId: string
+  expectedRevision: number
+  mode: 'copy' | 'move'
+  source: WorkspacePathRefV1
+  destination: WorkspacePathRefV1
+  expectedSha256?: string
+}
+
+export interface WorkspaceTransferResultV1 {
+  schemaVersion: typeof WORKSPACE_TRANSFER_SCHEMA_VERSION
+  operationId: string
+  status: 'applied' | 'duplicate'
+  workspaceId: string
+  sourceLocationId: string
+  destinationLocationId: string
+  revision: number
+  mode: 'copy' | 'move'
+  sha256: string
+  bytes: number
+  sourceRemoved: boolean
+}
+
+export const WORKSPACE_TRANSFER_JOURNAL_SCHEMA_VERSION = 2 as const
+export type WorkspaceTransferJournalPhaseV2 = 'prepared' | 'destination-published' | 'source-resolved' | 'source-conflict' | 'completed' | 'aborted'
+
+export interface WorkspaceTransferJournalV2 {
+  schemaVersion: typeof WORKSPACE_TRANSFER_JOURNAL_SCHEMA_VERSION
+  operationId: string
+  workspaceId: string
+  request: WorkspaceTransferRequestV1
+  phase: WorkspaceTransferJournalPhaseV2
+  bytes: number
+  sha256: string
+  sourceRemoved?: boolean
+  sourceConflict?: string
+  result?: WorkspaceTransferResultV1
+  cleanupPending?: boolean
+  destinationCleanupToken?: string
+  sourceCleanupToken?: string
+}
+
+interface WorkspaceRemotePrimaryCommandBaseV1 {
+  schemaVersion: typeof WORKSPACE_REMOTE_PRIMARY_SCHEMA_VERSION
+  operationId: string
+  workspaceId: string
+  locationId: string
+  displayName:
+    | { source: 'derived' }
+    | { source: 'custom'; name: string }
+  /** Verified remote root name, distinct from the user-editable Location name. */
+  remoteRootName: string
+}
+
+interface WorkspaceRemoteServerV1 {
+  url: string
+  credentialRef: string
+  allowInsecureTls?: boolean
+}
+
+/**
+ * Host-owned creation boundary for a Workspace whose first and primary
+ * location is remote. It never accepts a local bootstrap root or credential material.
+ */
+export type WorkspaceRemotePrimaryCommandV1 =
+  | (WorkspaceRemotePrimaryCommandBaseV1 & {
+      operation: 'connect-existing'
+      server: WorkspaceRemoteServerV1
+      remoteWorkspaceId: string
+    })
+  | (WorkspaceRemotePrimaryCommandBaseV1 & {
+      operation: 'create-and-connect'
+      server: WorkspaceRemoteServerV1
+    })
+
+export interface WorkspaceRemotePrimaryResultV1 {
+  schemaVersion: typeof WORKSPACE_REMOTE_PRIMARY_SCHEMA_VERSION
+  operationId: string
+  status: 'applied' | 'duplicate'
+  workspaceId: string
+  locationId: string
+  remoteWorkspaceId: string
+  workspace: WorkspaceInfo
 }
 
 interface WorkspaceTopologyCommandBaseV1 {
@@ -48,6 +148,7 @@ export type WorkspaceTopologyCommandV1 =
       operation: 'attach-remote'
       locationId: string
       name: string
+      rootName: string
       url: string
       remoteWorkspaceId: string
       credentialRef: string
@@ -60,6 +161,7 @@ export type WorkspaceTopologyCommandV1 =
   | (WorkspaceTopologyCommandBaseV1 & {
       operation: 'replace-endpoint'
       locationId: string
+      rootName: string
       endpoint: WorkspaceEndpoint
     })
   | (WorkspaceTopologyCommandBaseV1 & {
@@ -129,6 +231,7 @@ const LocationNameSchema = z.string()
   .refine(value => value.trim() === value, 'Location name must not have surrounding whitespace')
 const RevisionSchema = z.number().int().nonnegative()
 const TimestampSchema = z.number().int().nonnegative()
+const Sha256Schema = z.string().regex(/^[a-f0-9]{64}$/, 'SHA-256 must be a lowercase hexadecimal digest')
 const AbsoluteRootPathSchema = z.string().min(1).max(32_768)
   .refine(value => /^(?:[A-Za-z]:[\\/]|\\\\|\/)/.test(value), 'rootPath must be absolute')
 const RemoteUrlSchema = z.string().url().superRefine((value, context) => {
@@ -162,7 +265,47 @@ const WorkspaceEndpointSchema = z.discriminatedUnion('kind', [
 const WorkspaceLocationSchema = z.object({
   id: BoundedIdSchema,
   name: LocationNameSchema,
+  rootName: LocationNameSchema,
   endpoint: WorkspaceEndpointSchema,
+}).strict()
+
+const WorkspaceLocationAvailabilitySchema = z.discriminatedUnion('status', [
+  z.object({
+    status: z.literal('available'),
+    observedAt: TimestampSchema,
+  }).strict(),
+  z.object({
+    status: z.literal('unavailable'),
+    observedAt: TimestampSchema,
+    reason: z.enum([
+      'offline',
+      'authentication-required',
+      'permission-denied',
+      'marker-missing',
+      'marker-mismatch',
+      'not-found',
+      'unreachable',
+      'unknown',
+    ]),
+  }).strict(),
+  z.object({
+    status: z.literal('unknown'),
+    reason: z.enum(['not-observed', 'checking']),
+  }).strict(),
+])
+
+const WorkspaceLocationPermissionsSchema = z.object({
+  read: z.boolean(),
+  write: z.boolean(),
+  search: z.boolean(),
+  runCommands: z.boolean(),
+}).strict()
+
+const WorkspaceLocationProjectionV1Schema = z.object({
+  schemaVersion: z.literal(WORKSPACE_LOCATION_PROJECTION_SCHEMA_VERSION),
+  locationId: BoundedIdSchema,
+  availability: WorkspaceLocationAvailabilitySchema,
+  permissions: WorkspaceLocationPermissionsSchema,
 }).strict()
 
 const LocalEndpointInfoSchema = z.object({ kind: z.literal('local') }).strict()
@@ -175,11 +318,18 @@ const RemoteEndpointInfoSchema = z.object({
 const WorkspaceLocationInfoSchema = z.object({
   id: BoundedIdSchema,
   name: LocationNameSchema,
+  rootName: LocationNameSchema,
   endpoint: z.discriminatedUnion('kind', [LocalEndpointInfoSchema, RemoteEndpointInfoSchema]),
+  availability: WorkspaceLocationAvailabilitySchema,
+  permissions: WorkspaceLocationPermissionsSchema,
 }).strict()
 
+const WorkspaceNameSchema = z.string().min(1).max(256)
+  .refine(value => value.trim() === value, 'Workspace name must not have surrounding whitespace')
+
 const WorkspaceDisplayMetadataSchema = {
-  name: z.string().min(1).max(256),
+  name: WorkspaceNameSchema,
+  nameSource: z.enum(['derived', 'custom']),
   slug: z.string().min(1).max(256),
   lastAccessedAt: TimestampSchema.optional(),
   iconUrl: z.string().max(32_768).optional(),
@@ -243,8 +393,197 @@ const WorkspacePathRefV1Schema = z.object({
   schemaVersion: z.literal(WORKSPACE_PATH_REF_SCHEMA_VERSION),
   workspaceId: BoundedIdSchema,
   locationId: BoundedIdSchema,
-  relativePath: z.string().max(32_768).refine(isCanonicalRelativePath, 'relativePath must be a canonical forward-slash relative path'),
+  relativePath: z.string().max(32_768).refine(isCanonicalWorkspaceRelativePath, 'relativePath must be a canonical forward-slash relative path'),
 }).strict()
+
+const WorkspaceTransferRequestV1Schema = z.object({
+  schemaVersion: z.literal(WORKSPACE_TRANSFER_SCHEMA_VERSION),
+  operationId: OperationIdSchema,
+  workspaceId: BoundedIdSchema,
+  expectedRevision: RevisionSchema,
+  mode: z.enum(['copy', 'move']),
+  source: WorkspacePathRefV1Schema,
+  destination: WorkspacePathRefV1Schema,
+  expectedSha256: Sha256Schema.optional(),
+}).strict().superRefine((request, context) => {
+  if (request.source.workspaceId !== request.workspaceId || request.destination.workspaceId !== request.workspaceId) {
+    context.addIssue({ code: 'custom', path: ['workspaceId'], message: 'Transfer path Workspace identities must match the request' })
+  }
+  if (!request.source.relativePath || !request.destination.relativePath) {
+    context.addIssue({ code: 'custom', path: ['source'], message: 'Transfer paths must identify files' })
+  }
+  if (isMortiseWorkspacePrivatePath(request.source.relativePath) || isMortiseWorkspacePrivatePath(request.destination.relativePath)) {
+    context.addIssue({ code: 'custom', path: ['source'], message: 'Workspace private resources cannot be transferred' })
+  }
+  if (
+    request.source.locationId === request.destination.locationId
+    && request.source.relativePath === request.destination.relativePath
+  ) {
+    context.addIssue({ code: 'custom', path: ['destination'], message: 'Transfer source and destination must differ' })
+  }
+})
+
+const WorkspaceTransferResultV1Schema = z.object({
+  schemaVersion: z.literal(WORKSPACE_TRANSFER_SCHEMA_VERSION),
+  operationId: OperationIdSchema,
+  status: z.enum(['applied', 'duplicate']),
+  workspaceId: BoundedIdSchema,
+  sourceLocationId: BoundedIdSchema,
+  destinationLocationId: BoundedIdSchema,
+  revision: RevisionSchema,
+  mode: z.enum(['copy', 'move']),
+  sha256: Sha256Schema,
+  bytes: z.number().int().nonnegative(),
+  sourceRemoved: z.boolean(),
+}).strict().superRefine((result, context) => {
+  if (result.mode === 'copy' && result.sourceRemoved) {
+    context.addIssue({ code: 'custom', path: ['sourceRemoved'], message: 'A copy result cannot remove its source' })
+  }
+})
+
+const WorkspaceTransferJournalV2Schema = z.object({
+  schemaVersion: z.literal(WORKSPACE_TRANSFER_JOURNAL_SCHEMA_VERSION),
+  operationId: OperationIdSchema,
+  workspaceId: BoundedIdSchema,
+  request: WorkspaceTransferRequestV1Schema,
+  phase: z.enum(['prepared', 'destination-published', 'source-resolved', 'source-conflict', 'completed', 'aborted']),
+  bytes: z.number().int().nonnegative(),
+  sha256: Sha256Schema,
+  sourceRemoved: z.boolean().optional(),
+  sourceConflict: z.string().min(1).max(1024).optional(),
+  result: WorkspaceTransferResultV1Schema.optional(),
+  cleanupPending: z.boolean().optional(),
+  destinationCleanupToken: z.string().uuid().optional(),
+  sourceCleanupToken: z.string().uuid().optional(),
+}).strict().superRefine((journal, context) => {
+  if (journal.request.operationId !== journal.operationId || journal.request.workspaceId !== journal.workspaceId) {
+    context.addIssue({ code: 'custom', path: ['request'], message: 'Transfer journal identity does not match its request' })
+  }
+  if (journal.request.expectedSha256 && journal.request.expectedSha256 !== journal.sha256) {
+    context.addIssue({ code: 'custom', path: ['sha256'], message: 'Transfer journal checksum does not match its request' })
+  }
+  if (journal.request.mode === 'copy' && (journal.sourceRemoved === true || journal.sourceConflict !== undefined || journal.sourceCleanupToken !== undefined)) {
+    context.addIssue({ code: 'custom', path: ['sourceRemoved'], message: 'A copy journal cannot mutate or conflict with its source' })
+  }
+  if (journal.sourceCleanupToken && journal.sourceRemoved === false && journal.sourceConflict === undefined) {
+    context.addIssue({ code: 'custom', path: ['sourceCleanupToken'], message: 'A retained source without conflict cannot have a cleanup token' })
+  }
+  if ((journal.phase === 'source-resolved' || journal.phase === 'completed') && journal.sourceRemoved === undefined) {
+    context.addIssue({ code: 'custom', path: ['sourceRemoved'], message: 'Resolved transfer journal requires a source outcome' })
+  }
+  if (journal.phase === 'source-conflict' && !journal.sourceConflict) {
+    context.addIssue({ code: 'custom', path: ['sourceConflict'], message: 'Conflicted transfer journal requires a reason' })
+  }
+  if (journal.phase === 'completed' && !journal.result) {
+    context.addIssue({ code: 'custom', path: ['result'], message: 'Completed transfer journal requires a result' })
+  }
+  if (journal.phase === 'completed' && journal.cleanupPending === undefined) {
+    context.addIssue({ code: 'custom', path: ['cleanupPending'], message: 'Completed transfer journal requires a cleanup outcome' })
+  }
+  if (journal.phase !== 'completed' && journal.cleanupPending !== undefined) {
+    context.addIssue({ code: 'custom', path: ['cleanupPending'], message: `${journal.phase} transfer journal cannot contain cleanup state` })
+  }
+  if ((journal.phase === 'prepared' || journal.phase === 'aborted') && journal.destinationCleanupToken !== undefined) {
+    context.addIssue({ code: 'custom', path: ['destinationCleanupToken'], message: `${journal.phase} transfer journal cannot contain a destination cleanup token` })
+  }
+  if ((journal.phase === 'prepared' || journal.phase === 'destination-published' || journal.phase === 'aborted') && journal.sourceCleanupToken !== undefined) {
+    context.addIssue({ code: 'custom', path: ['sourceCleanupToken'], message: `${journal.phase} transfer journal cannot contain a source cleanup token` })
+  }
+  if (journal.cleanupPending === false && (journal.destinationCleanupToken || journal.sourceCleanupToken)) {
+    context.addIssue({ code: 'custom', path: ['cleanupPending'], message: 'Cleaned transfer journal cannot retain cleanup tokens' })
+  }
+  if (journal.result && (journal.result.sha256 !== journal.sha256 || journal.result.bytes !== journal.bytes)) {
+    context.addIssue({ code: 'custom', path: ['result'], message: 'Transfer journal manifest does not match its result' })
+  }
+  if (journal.result && journal.result.sourceRemoved !== journal.sourceRemoved) {
+    context.addIssue({ code: 'custom', path: ['result'], message: 'Transfer result does not match the durable source outcome' })
+  }
+  const forbidsSourceOutcome = journal.phase === 'prepared'
+    || journal.phase === 'destination-published'
+    || journal.phase === 'aborted'
+  if (forbidsSourceOutcome && journal.sourceRemoved !== undefined) {
+    context.addIssue({ code: 'custom', path: ['sourceRemoved'], message: `${journal.phase} transfer journal cannot contain a source outcome` })
+  }
+  if (journal.phase !== 'source-conflict' && journal.sourceConflict !== undefined) {
+    context.addIssue({ code: 'custom', path: ['sourceConflict'], message: `${journal.phase} transfer journal cannot contain a source conflict` })
+  }
+  if (journal.phase !== 'completed' && journal.result !== undefined) {
+    context.addIssue({ code: 'custom', path: ['result'], message: `${journal.phase} transfer journal cannot contain a result` })
+  }
+  if (journal.phase === 'source-conflict' && journal.sourceRemoved !== false) {
+    context.addIssue({ code: 'custom', path: ['sourceRemoved'], message: 'Conflicted transfer journal must retain its source' })
+  }
+  if (journal.result && (
+    journal.result.status !== 'applied'
+    || journal.result.operationId !== journal.request.operationId
+    || journal.result.workspaceId !== journal.request.workspaceId
+    || journal.result.sourceLocationId !== journal.request.source.locationId
+    || journal.result.destinationLocationId !== journal.request.destination.locationId
+    || journal.result.revision !== journal.request.expectedRevision
+    || journal.result.mode !== journal.request.mode
+  )) {
+    context.addIssue({ code: 'custom', path: ['result'], message: 'Transfer result identity does not match its journal request' })
+  }
+})
+
+const WorkspaceRemoteServerV1Schema = z.object({
+  url: RemoteUrlSchema,
+  credentialRef: BoundedIdSchema,
+  allowInsecureTls: z.boolean().optional(),
+}).strict()
+
+const WorkspaceDisplayNameRequestSchema = z.discriminatedUnion('source', [
+  z.object({ source: z.literal('derived') }).strict(),
+  z.object({ source: z.literal('custom'), name: WorkspaceNameSchema }).strict(),
+])
+
+function remotePrimaryCommandBase<Operation extends WorkspaceRemotePrimaryCommandV1['operation']>(operation: Operation) {
+  return z.object({
+    schemaVersion: z.literal(WORKSPACE_REMOTE_PRIMARY_SCHEMA_VERSION),
+    operation: z.literal(operation),
+    operationId: OperationIdSchema,
+    workspaceId: BoundedIdSchema,
+    locationId: BoundedIdSchema,
+    displayName: WorkspaceDisplayNameRequestSchema,
+    remoteRootName: WorkspaceNameSchema,
+  }).strict()
+}
+
+const WorkspaceRemotePrimaryCommandV1Schema = z.discriminatedUnion('operation', [
+  remotePrimaryCommandBase('connect-existing').extend({
+    server: WorkspaceRemoteServerV1Schema,
+    remoteWorkspaceId: BoundedIdSchema,
+  }),
+  remotePrimaryCommandBase('create-and-connect').extend({
+    server: WorkspaceRemoteServerV1Schema,
+  }),
+])
+
+const WorkspaceRemotePrimaryResultV1Schema = z.object({
+  schemaVersion: z.literal(WORKSPACE_REMOTE_PRIMARY_SCHEMA_VERSION),
+  operationId: OperationIdSchema,
+  status: z.enum(['applied', 'duplicate']),
+  workspaceId: BoundedIdSchema,
+  locationId: BoundedIdSchema,
+  remoteWorkspaceId: BoundedIdSchema,
+  workspace: WorkspaceInfoV2Schema,
+}).strict().superRefine((result, context) => {
+  if (result.workspace.id !== result.workspaceId) {
+    context.addIssue({ code: 'custom', path: ['workspace', 'id'], message: 'Created Workspace identity must match the result' })
+  }
+  if (result.workspace.primaryLocationId !== result.locationId) {
+    context.addIssue({ code: 'custom', path: ['workspace', 'primaryLocationId'], message: 'Created location must be the primary location' })
+    return
+  }
+  const primary = result.workspace.locations.find(location => location.id === result.locationId)
+  if (!primary || primary.endpoint.kind !== 'remote') {
+    context.addIssue({ code: 'custom', path: ['workspace', 'locations'], message: 'Remote-primary creation must produce a remote primary location' })
+    return
+  }
+  if (primary.endpoint.remoteWorkspaceId !== result.remoteWorkspaceId) {
+    context.addIssue({ code: 'custom', path: ['remoteWorkspaceId'], message: 'Remote Workspace identity must match the primary endpoint' })
+  }
+})
 
 const WorkspaceTopologyCommandV1Schema = z.discriminatedUnion('operation', [
   topologyCommandBase('attach-local').extend({
@@ -255,6 +594,7 @@ const WorkspaceTopologyCommandV1Schema = z.discriminatedUnion('operation', [
   topologyCommandBase('attach-remote').extend({
     locationId: BoundedIdSchema,
     name: LocationNameSchema,
+    rootName: LocationNameSchema,
     url: RemoteUrlSchema,
     remoteWorkspaceId: BoundedIdSchema,
     credentialRef: BoundedIdSchema,
@@ -263,6 +603,7 @@ const WorkspaceTopologyCommandV1Schema = z.discriminatedUnion('operation', [
   topologyCommandBase('detach').extend({ locationId: BoundedIdSchema }),
   topologyCommandBase('replace-endpoint').extend({
     locationId: BoundedIdSchema,
+    rootName: LocationNameSchema,
     endpoint: WorkspaceEndpointSchema,
   }),
   topologyCommandBase('set-primary').extend({ locationId: BoundedIdSchema }),
@@ -355,6 +696,50 @@ export function assertWorkspacePathRefV1(value: unknown): asserts value is Works
   WorkspacePathRefV1Schema.parse(value)
 }
 
+export function parseWorkspaceLocationProjectionV1(value: unknown): WorkspaceLocationProjectionV1 {
+  return WorkspaceLocationProjectionV1Schema.parse(value) as WorkspaceLocationProjectionV1
+}
+
+export function assertWorkspaceLocationProjectionV1(value: unknown): asserts value is WorkspaceLocationProjectionV1 {
+  WorkspaceLocationProjectionV1Schema.parse(value)
+}
+
+export function parseWorkspaceTransferRequestV1(value: unknown): WorkspaceTransferRequestV1 {
+  return WorkspaceTransferRequestV1Schema.parse(value) as WorkspaceTransferRequestV1
+}
+
+export function assertWorkspaceTransferRequestV1(value: unknown): asserts value is WorkspaceTransferRequestV1 {
+  WorkspaceTransferRequestV1Schema.parse(value)
+}
+
+export function parseWorkspaceTransferResultV1(value: unknown): WorkspaceTransferResultV1 {
+  return WorkspaceTransferResultV1Schema.parse(value) as WorkspaceTransferResultV1
+}
+
+export function parseWorkspaceTransferJournalV2(value: unknown): WorkspaceTransferJournalV2 {
+  return WorkspaceTransferJournalV2Schema.parse(value) as WorkspaceTransferJournalV2
+}
+
+export function assertWorkspaceTransferResultV1(value: unknown): asserts value is WorkspaceTransferResultV1 {
+  WorkspaceTransferResultV1Schema.parse(value)
+}
+
+export function parseWorkspaceRemotePrimaryCommandV1(value: unknown): WorkspaceRemotePrimaryCommandV1 {
+  return WorkspaceRemotePrimaryCommandV1Schema.parse(value) as WorkspaceRemotePrimaryCommandV1
+}
+
+export function assertWorkspaceRemotePrimaryCommandV1(value: unknown): asserts value is WorkspaceRemotePrimaryCommandV1 {
+  WorkspaceRemotePrimaryCommandV1Schema.parse(value)
+}
+
+export function parseWorkspaceRemotePrimaryResultV1(value: unknown): WorkspaceRemotePrimaryResultV1 {
+  return WorkspaceRemotePrimaryResultV1Schema.parse(value) as WorkspaceRemotePrimaryResultV1
+}
+
+export function assertWorkspaceRemotePrimaryResultV1(value: unknown): asserts value is WorkspaceRemotePrimaryResultV1 {
+  WorkspaceRemotePrimaryResultV1Schema.parse(value)
+}
+
 export function parseWorkspaceTopologyCommandV1(value: unknown): WorkspaceTopologyCommandV1 {
   return WorkspaceTopologyCommandV1Schema.parse(value) as WorkspaceTopologyCommandV1
 }
@@ -387,27 +772,49 @@ export function assertWorkspaceTopologyErrorDataV1(value: unknown): asserts valu
   WorkspaceTopologyErrorDataV1Schema.parse(value)
 }
 
-export function redactWorkspaceInfo(workspace: Workspace): WorkspaceInfo {
+export function redactWorkspaceInfo(
+  workspace: Workspace,
+  projectionValues: readonly WorkspaceLocationProjectionV1[],
+): WorkspaceInfo {
   const validated = parseWorkspaceV2(workspace)
-  const locations = validated.locations.map(location => ({
-    id: location.id,
-    name: location.name,
-    endpoint: location.endpoint.kind === 'local'
-      ? { kind: 'local' }
-      : {
-          kind: 'remote',
-          url: location.endpoint.url,
-          remoteWorkspaceId: location.endpoint.remoteWorkspaceId,
-          ...(location.endpoint.allowInsecureTls === undefined
-            ? {}
-            : { allowInsecureTls: location.endpoint.allowInsecureTls }),
-        },
-  })) as [WorkspaceLocationInfo, ...WorkspaceLocationInfo[]]
+  const projections = projectionValues.map(parseWorkspaceLocationProjectionV1)
+  const projectionByLocationId = new Map(projections.map(projection => [projection.locationId, projection]))
+  if (projectionByLocationId.size !== projections.length) {
+    throw new Error('Workspace location projections must have unique location identities')
+  }
+  if (
+    projections.length !== validated.locations.length
+    || projections.some(projection => !validated.locations.some(location => location.id === projection.locationId))
+  ) {
+    throw new Error('Workspace location projections must exactly cover the topology')
+  }
+  const locations = validated.locations.map(location => {
+    const projection = projectionByLocationId.get(location.id)
+    if (!projection) throw new Error(`Workspace location projection missing: ${location.id}`)
+    return {
+      id: location.id,
+      name: location.name,
+      rootName: location.rootName,
+      endpoint: location.endpoint.kind === 'local'
+        ? { kind: 'local' as const }
+        : {
+            kind: 'remote' as const,
+            url: location.endpoint.url,
+            remoteWorkspaceId: location.endpoint.remoteWorkspaceId,
+            ...(location.endpoint.allowInsecureTls === undefined
+              ? {}
+              : { allowInsecureTls: location.endpoint.allowInsecureTls }),
+          },
+      availability: projection.availability,
+      permissions: projection.permissions,
+    }
+  }) as [WorkspaceLocationInfo, ...WorkspaceLocationInfo[]]
   return {
     schemaVersion: WORKSPACE_SCHEMA_VERSION,
     id: validated.id,
     revision: validated.revision,
     name: validated.name,
+    nameSource: validated.nameSource,
     slug: validated.slug,
     primaryLocationId: validated.primaryLocationId,
     locations,
@@ -426,7 +833,19 @@ export function getWorkspaceLocationRole(
   return workspace.primaryLocationId === locationId ? 'primary' : 'attached'
 }
 
-function isCanonicalRelativePath(value: string): boolean {
+export function isCanonicalWorkspaceRelativePath(value: string): boolean {
   if (value.includes('\\') || value.includes('\0') || value.startsWith('/') || /^[A-Za-z]:/.test(value)) return false
-  return value === '' || value.split('/').every(segment => segment !== '' && segment !== '.' && segment !== '..')
+  return value === '' || value.split('/').every(segment => (
+    segment !== ''
+    && segment !== '.'
+    && segment !== '..'
+    && !/[ .]$/.test(segment)
+    && !/[<>:"|?*\u0000-\u001f]/.test(segment)
+    && !/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(segment)
+  ))
+}
+
+export function isMortiseWorkspacePrivatePath(relativePath: string): boolean {
+  const firstSegment = relativePath.split('/')[0]?.replace(/[ .]+$/g, '').toLowerCase()
+  return firstSegment === '.mortise'
 }

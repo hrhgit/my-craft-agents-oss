@@ -2,16 +2,14 @@
  * SendResourceToWorkspaceDialog — Copy a source, skill, or automation to another workspace.
  *
  * Uses the resources:export → resources:import RPC pipeline.
- * Supports both local and remote target workspaces:
- * - Local: both RPC calls go to the same server
- * - Remote: export runs locally, import runs via invokeOnServer on the target
+ * Both operations run through the trusted Workspace runtime router.
  *
  * Adapted from SendToWorkspaceDialog (session transfer).
  */
 
 import * as React from 'react'
-import { useState, useCallback, useEffect, useRef } from 'react'
-import { Cloud, CloudOff, Monitor, Send } from 'lucide-react'
+import { useState, useCallback } from 'react'
+import { Cloud, Monitor, Send } from 'lucide-react'
 import { toast } from 'sonner'
 import {
   Dialog,
@@ -25,7 +23,9 @@ import { Button } from '@/components/ui/button'
 import { CrossfadeAvatar } from '@/components/ui/avatar'
 import { useWorkspaceIcons } from '@/hooks/useWorkspaceIcon'
 import { cn } from '@/lib/utils'
-import type { Workspace, ExportResourcesOptions, ResourceImportMode } from '../../../shared/types'
+import { isPrimaryWorkspaceRemote } from '@/lib/workspace-info'
+import { copyResourcesToWorkspace } from '@/lib/workspace-transfer'
+import type { WorkspaceInfo, ExportResourcesOptions, ResourceImportMode } from '../../../shared/types'
 
 export type SendResourceType = 'skill' | 'automation'
 
@@ -39,7 +39,7 @@ export interface SendResourceToWorkspaceDialogProps {
   /** Display label for the dialog description */
   resourceLabel: string
   /** All workspaces */
-  workspaces: Workspace[]
+  workspaces: WorkspaceInfo[]
   /** Current workspace ID (excluded from picker) */
   activeWorkspaceId: string | null
   /** Called after successful transfer */
@@ -65,59 +65,15 @@ export function SendResourceToWorkspaceDialog({
   const [isSending, setIsSending] = useState(false)
   const workspaceIconMap = useWorkspaceIcons(workspaces)
 
-  // Health check results for remote workspaces
-  const [remoteHealthMap, setRemoteHealthMap] = useState<Map<string, 'ok' | 'error' | 'checking'>>(new Map())
-  const healthCheckAbort = useRef<AbortController | null>(null)
-
   // All workspaces except current (both local and remote)
   const targetWorkspaces = workspaces.filter(w => w.id !== activeWorkspaceId)
-
-  // Health-check remote workspaces when dialog opens
-  useEffect(() => {
-    if (!open) {
-      healthCheckAbort.current?.abort()
-      return
-    }
-
-    healthCheckAbort.current?.abort()
-    const abort = new AbortController()
-    healthCheckAbort.current = abort
-
-    const remoteTargets = targetWorkspaces.filter(w => w.remoteServer)
-    if (remoteTargets.length === 0) return
-
-    // Mark all remote as checking
-    setRemoteHealthMap(() => {
-      const next = new Map<string, 'ok' | 'error' | 'checking'>()
-      for (const ws of remoteTargets) next.set(ws.id, 'checking')
-      return next
-    })
-
-    // Fire parallel checks
-    for (const ws of remoteTargets) {
-      window.electronAPI.testRemoteConnection(
-        ws.remoteServer!.url,
-        ws.remoteServer!.token,
-        ws.remoteServer!.allowInsecureTls,
-      )
-        .then(result => {
-          if (abort.signal.aborted) return
-          setRemoteHealthMap(prev => new Map(prev).set(ws.id, result.ok ? 'ok' : 'error'))
-        })
-        .catch(() => {
-          if (abort.signal.aborted) return
-          setRemoteHealthMap(prev => new Map(prev).set(ws.id, 'error'))
-        })
-    }
-
-    return () => abort.abort()
-  }, [open, targetWorkspaces.map(w => w.id).join(',')])
 
   const handleSend = useCallback(async () => {
     if (!selectedWorkspaceId || !activeWorkspaceId || resourceIds.length === 0) return
 
+    const sourceWorkspace = workspaces.find(w => w.id === activeWorkspaceId)
     const targetWorkspace = workspaces.find(w => w.id === selectedWorkspaceId)
-    if (!targetWorkspace) return
+    if (!sourceWorkspace || !targetWorkspace) return
 
     setIsSending(true)
     const targetName = targetWorkspace.name
@@ -134,33 +90,16 @@ export function SendResourceToWorkspaceDialog({
       if (resourceType === 'skill') exportOptions.skills = resourceIds
       else if (resourceType === 'automation') exportOptions.automations = resourceIds
 
-      const { bundle, warnings: exportWarnings } = await window.electronAPI.exportResources(
-        activeWorkspaceId,
+      const { exportResult, importResult } = await copyResourcesToWorkspace(
+        window.electronAPI,
+        sourceWorkspace,
+        targetWorkspace,
         exportOptions,
+        mode,
       )
 
-      // 2. Import into target workspace
-      let importResult
-      if (targetWorkspace.remoteServer) {
-        // Remote target — use invokeOnServer
-        const { url, token, remoteWorkspaceId, allowInsecureTls } = targetWorkspace.remoteServer
-        importResult = await window.electronAPI.invokeOnServer(
-          url, token,
-          'resources:import',
-          { allowInsecureTls },
-          remoteWorkspaceId, bundle, mode,
-        )
-      } else {
-        // Local target — direct RPC
-        importResult = await window.electronAPI.importResources(
-          selectedWorkspaceId,
-          bundle,
-          mode,
-        )
-      }
-
       // 3. Report result
-      const bucket = importResult[`${resourceType}s`] ?? importResult[resourceType + 's']
+      const bucket = resourceType === 'skill' ? importResult.skills : importResult.automations
       const imported = bucket?.imported?.length ?? 0
       const skipped = bucket?.skipped?.length ?? 0
 
@@ -174,8 +113,8 @@ export function SendResourceToWorkspaceDialog({
         toast.warning(`Nothing was sent to ${targetName}`, { id: toastId })
       }
 
-      if (exportWarnings.length > 0) {
-        console.warn('[SendResource] Export warnings:', exportWarnings)
+      if (exportResult.warnings.length > 0) {
+        console.warn('[SendResource] Export warnings:', exportResult.warnings)
       }
 
       onOpenChange(false)
@@ -192,8 +131,6 @@ export function SendResourceToWorkspaceDialog({
       setIsSending(false)
     }
   }, [selectedWorkspaceId, activeWorkspaceId, resourceIds, resourceType, resourceLabel, workspaces, onOpenChange, onTransferComplete])
-
-  const { singular, plural } = RESOURCE_TYPE_LABELS[resourceType]
 
   return (
     <Dialog open={open} onOpenChange={(isOpen) => {
@@ -222,22 +159,18 @@ export function SendResourceToWorkspaceDialog({
           ) : (
             targetWorkspaces.map(workspace => {
               const isSelected = selectedWorkspaceId === workspace.id
-              const isRemote = !!workspace.remoteServer
-              const healthStatus = remoteHealthMap.get(workspace.id)
-              const isDisconnected = isRemote && healthStatus === 'error'
-              const isChecking = isRemote && healthStatus === 'checking'
+              const isRemote = isPrimaryWorkspaceRemote(workspace)
 
               return (
                 <button
                   key={workspace.id}
                   type="button"
-                  disabled={isSending || isDisconnected}
+                  disabled={isSending}
                   onClick={() => setSelectedWorkspaceId(workspace.id)}
                   className={cn(
                     'flex items-center gap-2 w-full px-2 py-2 rounded-md text-left text-sm transition-colors',
                     'hover:bg-foreground/5 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring',
                     isSelected && 'bg-foreground/10 ring-1 ring-foreground/15',
-                    isDisconnected && 'opacity-50 cursor-not-allowed hover:bg-transparent',
                   )}
                 >
                   <CrossfadeAvatar
@@ -249,14 +182,7 @@ export function SendResourceToWorkspaceDialog({
                   />
                   <span className="flex-1 truncate">{workspace.name}</span>
                   {isRemote ? (
-                    isDisconnected ? (
-                      <CloudOff className="h-3.5 w-3.5 text-muted-foreground/50 shrink-0" />
-                    ) : (
-                      <Cloud className={cn(
-                        'h-3.5 w-3.5 shrink-0',
-                        isChecking ? 'text-muted-foreground/30 animate-pulse' : 'text-muted-foreground',
-                      )} />
-                    )
+                    <Cloud className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                   ) : (
                     <Monitor className="h-3.5 w-3.5 text-muted-foreground/50 shrink-0" />
                   )}

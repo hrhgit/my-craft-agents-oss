@@ -87,7 +87,6 @@ describe('config multi-writer compatibility', () => {
     const configDir = setupConfigDir()
     const legacyPath = join(configDir, 'config.json')
     const legacyContents = JSON.stringify({
-      workspaces: [],
       activeWorkspaceId: null,
       activeSessionId: null,
       colorTheme: 'legacy-theme',

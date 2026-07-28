@@ -28,11 +28,47 @@ export interface RemoteWorkspaceEndpoint {
 
 export type WorkspaceEndpoint = LocalWorkspaceEndpoint | RemoteWorkspaceEndpoint;
 export type NonEmptyArray<Value> = [Value, ...Value[]];
+export type WorkspaceNameSource = 'derived' | 'custom';
+
+export type WorkspaceLocationAvailability =
+  | {
+      status: 'available';
+      /** Host observation time. Availability is runtime state, not persisted topology. */
+      observedAt: number;
+    }
+  | {
+      status: 'unavailable';
+      observedAt: number;
+      /** Stable redacted reason; diagnostic details remain host-private. */
+      reason:
+        | 'offline'
+        | 'authentication-required'
+        | 'permission-denied'
+        | 'marker-missing'
+        | 'marker-mismatch'
+        | 'not-found'
+        | 'unreachable'
+        | 'unknown';
+    }
+  | {
+      status: 'unknown';
+      reason: 'not-observed' | 'checking';
+    };
+
+/** Effective grants for one location. Enforcement must fail closed on `false`. */
+export interface WorkspaceLocationPermissions {
+  read: boolean;
+  write: boolean;
+  search: boolean;
+  runCommands: boolean;
+}
 
 export interface WorkspaceLocation {
   id: string;
   /** User-visible name. Names are unique within one Workspace, but are not identities. */
   name: string;
+  /** Endpoint root name used for derived Workspace naming. It is not user-editable location metadata. */
+  rootName: string;
   endpoint: WorkspaceEndpoint;
 }
 
@@ -50,11 +86,16 @@ export type WorkspaceEndpointInfo =
 export interface WorkspaceLocationInfo {
   id: string;
   name: string;
+  rootName: string;
   endpoint: WorkspaceEndpointInfo;
+  availability: WorkspaceLocationAvailability;
+  permissions: WorkspaceLocationPermissions;
 }
 
 interface WorkspaceDisplayMetadata {
   name: string;
+  /** Derived names follow the primary root name; custom names remain stable across primary changes. */
+  nameSource: WorkspaceNameSource;
   /** Display/navigation slug only. It is not a Workspace identity. */
   slug: string;
   lastAccessedAt?: number;
@@ -82,11 +123,38 @@ export interface Workspace extends WorkspaceDisplayMetadata {
   createdAt: number;
 }
 
-/**
- * Source-compatibility name for callers while they migrate to location
- * endpoints. The old token-bearing shape is intentionally not preserved.
- */
-export type RemoteServerConfig = RemoteWorkspaceEndpoint;
+export function getWorkspaceLocation(
+  workspace: Workspace,
+  locationId: string,
+): WorkspaceLocation | undefined {
+  return workspace.locations.find(location => location.id === locationId);
+}
+
+export function getPrimaryWorkspaceLocation(workspace: Workspace): WorkspaceLocation {
+  const location = getWorkspaceLocation(workspace, workspace.primaryLocationId);
+  if (!location) {
+    throw new Error(`Workspace ${workspace.id} has no primary location ${workspace.primaryLocationId}`);
+  }
+  return location;
+}
+
+export function requireLocalWorkspaceLocationRoot(
+  workspace: Workspace,
+  locationId: string,
+): string {
+  const location = getWorkspaceLocation(workspace, locationId);
+  if (!location) {
+    throw new Error(`Workspace ${workspace.id} has no location ${locationId}`);
+  }
+  if (location.endpoint.kind !== 'local') {
+    throw new Error(`Workspace location ${locationId} is remote and has no local root`);
+  }
+  return location.endpoint.rootPath;
+}
+
+export function requirePrimaryLocalWorkspaceRoot(workspace: Workspace): string {
+  return requireLocalWorkspaceLocationRoot(workspace, workspace.primaryLocationId);
+}
 
 /** Authentication type for an AI provider. */
 export type AuthType = 'api_key' | 'oauth_token' | 'codex_oauth' | 'codex_api_key';

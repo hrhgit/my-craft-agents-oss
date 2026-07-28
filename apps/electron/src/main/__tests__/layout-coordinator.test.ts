@@ -41,7 +41,7 @@ function tab(id: string, groupId = 'group:main'): ContentTab {
     id,
     title: id,
     groupId,
-    ref: { kind: 'conversation', serverId: 'local', workspaceId: 'ws-a', sessionId: id },
+    ref: { kind: 'conversation', workspaceId: 'ws-a', sessionId: id },
     protection: { pinned: false, dirty: false, running: false, awaitingInput: false },
     instancePolicy: 'multiple',
     allowDetach: true,
@@ -107,7 +107,7 @@ describe('LayoutCoordinator', () => {
   it('atomically persists versioned layouts per workspace', async () => {
     const storagePath = pathForTest()
     const coordinator = new LayoutCoordinator({ storagePath })
-    const next = createDefaultAppLayout({ serverId: 'local', workspaceId: 'ws-a', sessionId: 's1' })
+    const next = createDefaultAppLayout({ workspaceId: 'ws-a', sessionId: 's1' })
     const saved = coordinator.saveSnapshot(next, coordinator.getSnapshot('ws-a').revision)
     expect(saved.revision).toBeGreaterThan(next.revision)
     await coordinator.flush()
@@ -117,14 +117,14 @@ describe('LayoutCoordinator', () => {
   it('rejects stale writers and unauthorized workspace routes', () => {
     const coordinator = new LayoutCoordinator({
       storagePath: pathForTest(),
-      authorizeContentRef: ref => ref.serverId === 'local' && ref.workspaceId !== 'blocked',
+      authorizeContentRef: ref => ref.workspaceId !== 'blocked',
     })
     const snapshot = coordinator.getSnapshot('allowed')
-    const allowed = createDefaultAppLayout({ serverId: 'local', workspaceId: 'allowed' })
+    const allowed = createDefaultAppLayout({ workspaceId: 'allowed' })
     coordinator.saveSnapshot(allowed, snapshot.revision)
     expect(() => coordinator.saveSnapshot(allowed, snapshot.revision)).toThrow('revision conflict')
 
-    const blocked = createDefaultAppLayout({ serverId: 'local', workspaceId: 'blocked' })
+    const blocked = createDefaultAppLayout({ workspaceId: 'blocked' })
     expect(() => coordinator.saveSnapshot(blocked)).toThrow('Unauthorized content route')
   })
 
@@ -132,7 +132,7 @@ describe('LayoutCoordinator', () => {
     const storagePath = pathForTest()
     const coordinator = new LayoutCoordinator({ storagePath })
     coordinator.saveSnapshot(openContentTab(
-      withRightGroup(createDefaultAppLayout({ serverId: 'local', workspaceId: 'ws-a' })),
+      withRightGroup(createDefaultAppLayout({ workspaceId: 'ws-a' })),
       tab('right-one', 'group:right'),
       { forceNew: true },
     ))
@@ -148,7 +148,7 @@ describe('LayoutCoordinator', () => {
   it('persists a detached tab and redocks it into its source group after restart', async () => {
     const storagePath = pathForTest()
     const coordinator = new LayoutCoordinator({ storagePath })
-    const layout = createDefaultAppLayout({ serverId: 'local', workspaceId: 'ws-a', sessionId: 's1' })
+    const layout = createDefaultAppLayout({ workspaceId: 'ws-a', sessionId: 's1' })
     coordinator.saveSnapshot(layout)
     coordinator.detachTab('ws-a', 'content:main', 'aux-tab')
     expect(coordinator.getSnapshot('ws-a').windows['aux-tab'].sourceTabIndex).toBe(0)
@@ -161,21 +161,21 @@ describe('LayoutCoordinator', () => {
 
   it('keeps workspace layouts independent and rejects mixed tabs', () => {
     const coordinator = new LayoutCoordinator({ storagePath: pathForTest() })
-    coordinator.saveSnapshot(createDefaultAppLayout({ serverId: 'local', workspaceId: 'ws-a', sessionId: 'a' }))
-    coordinator.saveSnapshot(createDefaultAppLayout({ serverId: 'local', workspaceId: 'ws-b', sessionId: 'b' }))
+    coordinator.saveSnapshot(createDefaultAppLayout({ workspaceId: 'ws-a', sessionId: 'a' }))
+    coordinator.saveSnapshot(createDefaultAppLayout({ workspaceId: 'ws-b', sessionId: 'b' }))
 
     expect(coordinator.getSnapshot('ws-a').tabs['content:main'].ref.sessionId).toBe('a')
     expect(coordinator.getSnapshot('ws-b').tabs['content:main'].ref.sessionId).toBe('b')
 
-    const mixed = createDefaultAppLayout({ serverId: 'local', workspaceId: 'ws-a' })
+    const mixed = createDefaultAppLayout({ workspaceId: 'ws-a' })
     mixed.tabs['content:main'].ref.workspaceId = 'ws-b'
     expect(() => coordinator.saveSnapshot(mixed)).toThrow('Layout cannot mix workspaces')
   })
 
   it('loads valid workspaces after a deleted or unauthorized persisted candidate', () => {
     const storagePath = pathForTest()
-    const deleted = createDefaultAppLayout({ serverId: 'local', workspaceId: 'deleted' })
-    const valid = createDefaultAppLayout({ serverId: 'local', workspaceId: 'valid', sessionId: 'kept' })
+    const deleted = createDefaultAppLayout({ workspaceId: 'deleted' })
+    const valid = createDefaultAppLayout({ workspaceId: 'valid', sessionId: 'kept' })
     writeFileSync(storagePath, JSON.stringify({ version: 1, layouts: { deleted, valid } }))
 
     const coordinator = new LayoutCoordinator({
@@ -185,37 +185,23 @@ describe('LayoutCoordinator', () => {
     expect(coordinator.getSnapshot('valid').tabs['content:main'].ref.sessionId).toBe('kept')
   })
 
-  it('rebinds stale persisted server routes and window geometry to the requested server', async () => {
+  it('drops legacy server route metadata instead of treating it as authority', async () => {
     const storagePath = pathForTest()
-    const layout = createDefaultAppLayout({ serverId: 'https://old.example', workspaceId: 'ws-a' })
-    layout.geometry = { config: { serverId: 'https://old.example' } }
+    const layout = createDefaultAppLayout({ workspaceId: 'ws-a' })
+    const legacyLayout = structuredClone(layout) as any
+    legacyLayout.tabs['content:main'].ref.serverId = 'https://old.example'
     const initial = new LayoutCoordinator({ storagePath })
-    initial.saveSnapshot(layout)
+    initial.saveSnapshot(legacyLayout)
     await initial.flush()
 
-    const coordinator = new LayoutCoordinator({
-      storagePath,
-      resolveServerId: workspaceId => workspaceId === 'ws-a' ? 'https://new.example' : undefined,
-    })
-
-    const rebound = coordinator.getSnapshot('ws-a', 'https://new.example')
-    expect(rebound.tabs['content:main'].ref.serverId).toBe('https://new.example')
-    expect((rebound.geometry as any).config.serverId).toBe('https://new.example')
-    expect(rebound.revision).toBeGreaterThan(layout.revision)
-    await coordinator.flush()
-    expect(JSON.parse(readFileSync(storagePath, 'utf8')).layouts['ws-a'].tabs['content:main'].ref.serverId)
-      .toBe('https://new.example')
-
-    const staleWriter = structuredClone(rebound)
-    staleWriter.tabs['content:main'].ref.serverId = 'https://old.example'
-    const repairedSave = coordinator.saveSnapshot(staleWriter, rebound.revision)
-    expect(repairedSave.tabs['content:main'].ref.serverId).toBe('https://new.example')
-    expect(() => coordinator.getSnapshot('ws-a', 'https://old.example')).toThrow('server mismatch')
+    const coordinator = new LayoutCoordinator({ storagePath })
+    const recovered = coordinator.getSnapshot('ws-a')
+    expect(recovered.tabs['content:main'].ref).not.toHaveProperty('serverId')
   })
 
   it('merges primary and auxiliary window views without replacing sibling content', () => {
     const coordinator = new LayoutCoordinator({ storagePath: pathForTest() })
-    let layout = createDefaultAppLayout({ serverId: 'local', workspaceId: 'ws-a' })
+    let layout = createDefaultAppLayout({ workspaceId: 'ws-a' })
     layout = openContentTab(layout, tab('detached'), { forceNew: true })
     layout.groups['primary-side'] = {
       id: 'primary-side', windowId: 'primary', tabIds: [], activeTabId: null,
@@ -250,7 +236,7 @@ describe('LayoutCoordinator', () => {
     const auxiliaryGroupId = detached.windows['aux-tab'].groupIds[0]
 
     const primaryView: AppLayout = {
-      ...createDefaultAppLayout({ serverId: 'local', workspaceId: 'ws-a' }),
+      ...createDefaultAppLayout({ workspaceId: 'ws-a' }),
       revision: detached.revision,
       geometry: {
         marker: 'latest-primary',
@@ -294,7 +280,7 @@ describe('LayoutCoordinator', () => {
     const splitTab = tab('split-tab', 'aux-split')
     const deepTab = tab('deep-tab', 'aux-deep')
     const auxiliaryView: AppLayout = {
-      ...createDefaultAppLayout({ serverId: 'local', workspaceId: 'ws-a' }),
+      ...createDefaultAppLayout({ workspaceId: 'ws-a' }),
       revision: primarySaved.revision,
       geometry: {
         marker: 'auxiliary-subtree',
@@ -380,12 +366,11 @@ describe('LayoutCoordinator', () => {
   it('preserves the latest primary geometry when an auxiliary tab redocks and survives the next save', async () => {
     const storagePath = pathForTest()
     const coordinator = new LayoutCoordinator({ storagePath })
-    let layout = createDefaultAppLayout({ serverId: 'local', workspaceId: 'ws-a' })
+    let layout = createDefaultAppLayout({ workspaceId: 'ws-a' })
     layout = openContentTab(layout, {
       ...tab('files'),
       ref: {
         kind: 'file',
-        serverId: 'local',
         workspaceId: 'ws-a',
         resourceId: 'files',
       },
@@ -394,7 +379,7 @@ describe('LayoutCoordinator', () => {
     coordinator.saveSnapshot(layout)
     const detached = coordinator.detachTab('ws-a', 'files', 'aux-files')
 
-    const primaryView = createDefaultAppLayout({ serverId: 'local', workspaceId: 'ws-a' })
+    const primaryView = createDefaultAppLayout({ workspaceId: 'ws-a' })
     primaryView.revision = detached.revision
     primaryView.geometry = { tabs: ['content:main'] }
     primaryView.windows.primary.geometry = { tabs: ['content:main'] }
@@ -426,19 +411,19 @@ describe('LayoutCoordinator', () => {
 
   it('keeps primary focus when an auxiliary window saves its local selection', () => {
     const coordinator = new LayoutCoordinator({ storagePath: pathForTest() })
-    let layout = createDefaultAppLayout({ serverId: 'local', workspaceId: 'ws-a' })
+    let layout = createDefaultAppLayout({ workspaceId: 'ws-a' })
     layout = openContentTab(layout, tab('detached'), { forceNew: true })
     coordinator.saveSnapshot(layout)
     const detached = coordinator.detachTab('ws-a', 'detached', 'aux-tab')
     const auxiliaryGroupId = detached.windows['aux-tab'].groupIds[0]
 
-    const primaryView = createDefaultAppLayout({ serverId: 'local', workspaceId: 'ws-a' })
+    const primaryView = createDefaultAppLayout({ workspaceId: 'ws-a' })
     primaryView.revision = detached.revision
     primaryView.focusedTabId = 'content:main'
     const primarySaved = coordinator.saveWindowSnapshot('primary', primaryView, detached.revision)
 
     const auxiliaryView: AppLayout = {
-      ...createDefaultAppLayout({ serverId: 'local', workspaceId: 'ws-a' }),
+      ...createDefaultAppLayout({ workspaceId: 'ws-a' }),
       revision: primarySaved.revision,
       tabs: {
         detached: { ...primarySaved.tabs.detached, groupId: auxiliaryGroupId },
@@ -464,18 +449,18 @@ describe('LayoutCoordinator', () => {
 
   it('merges closing the last auxiliary tab without deleting primary content', () => {
     const coordinator = new LayoutCoordinator({ storagePath: pathForTest() })
-    let layout = createDefaultAppLayout({ serverId: 'local', workspaceId: 'ws-a' })
+    let layout = createDefaultAppLayout({ workspaceId: 'ws-a' })
     layout = openContentTab(layout, tab('detached'), { forceNew: true })
     layout.geometry = { owner: 'primary' }
     layout.windows.primary.geometry = { owner: 'primary' }
     coordinator.saveSnapshot(layout)
     const detached = coordinator.detachTab('ws-a', 'detached', 'aux-tab')
-    const primaryView = createDefaultAppLayout({ serverId: 'local', workspaceId: 'ws-a' })
+    const primaryView = createDefaultAppLayout({ workspaceId: 'ws-a' })
     primaryView.revision = detached.revision
     primaryView.geometry = { owner: 'primary' }
     const primarySaved = coordinator.saveWindowSnapshot('primary', primaryView, detached.revision)
     const emptyView: AppLayout = {
-      ...createDefaultAppLayout({ serverId: 'local', workspaceId: 'ws-a' }),
+      ...createDefaultAppLayout({ workspaceId: 'ws-a' }),
       revision: primarySaved.revision,
       tabs: {},
       groups: {},

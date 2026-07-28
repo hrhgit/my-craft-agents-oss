@@ -743,14 +743,14 @@ plansFolderPath: C:\\Users\\32858\\.pi\\agent\\sessions\\demo\\.mortise\\plans
 
     setSharedPiSessionsDirForTests(piRoot)
 
-    const session = await createSession(workspaceRoot, { name: 'Shared write' })
-    const filePath = getSessionFilePath(workspaceRoot, session.mortiseId)
+    const session = await createSession('test-workspace', workspaceRoot, { name: 'Shared write' })
+    const filePath = getSessionFilePath('test-workspace', session.mortiseId)
 
     expect(filePath.startsWith(piRoot)).toBe(true)
     expect(filePath).toContain(`${session.mortiseId}.jsonl`)
     expect(existsSync(filePath)).toBe(false)
-    expect(loadSession(workspaceRoot, session.mortiseId)).toBeNull()
-    expect(listSessions(workspaceRoot).map(s => s.mortiseId)).not.toContain(session.mortiseId)
+    expect(loadSession('test-workspace', session.mortiseId)).toBeNull()
+    expect(listSessions('test-workspace', workspaceRoot).map(s => s.mortiseId)).not.toContain(session.mortiseId)
   })
 
   it('rejects the removed workingDirectory field for new sessions', async () => {
@@ -770,10 +770,11 @@ plansFolderPath: C:\\Users\\32858\\.pi\\agent\\sessions\\demo\\.mortise\\plans
     setSharedPiSessionsDirForTests(piRoot)
 
     const createWithRemovedField = createSession as unknown as (
+      workspaceId: string,
       root: string,
       options: { workingDirectory: string; name: string },
     ) => Promise<unknown>
-    await expect(createWithRemovedField(workspaceRoot, {
+    await expect(createWithRemovedField('test-workspace', workspaceRoot, {
       workingDirectory: sessionWorkingDirectory,
       name: 'Custom cwd session',
     })).rejects.toMatchObject({
@@ -781,7 +782,7 @@ plansFolderPath: C:\\Users\\32858\\.pi\\agent\\sessions\\demo\\.mortise\\plans
       code: 'SESSION_FIELD_REMOVED',
       field: 'workingDirectory',
     } satisfies Partial<RemovedSessionFieldError>)
-    expect(listSessions(workspaceRoot)).toEqual([])
+    expect(listSessions('test-workspace', workspaceRoot)).toEqual([])
   })
 
   it('rejects the removed workingDirectory metadata mutation', async () => {
@@ -789,14 +790,14 @@ plansFolderPath: C:\\Users\\32858\\.pi\\agent\\sessions\\demo\\.mortise\\plans
     const piRoot = join(dir, 'pi-sessions-metadata-contract')
     mkdirSync(workspaceRoot, { recursive: true })
     setSharedPiSessionsDirForTests(piRoot)
-    const session = await createSession(workspaceRoot, { name: 'Current session' })
+    const session = await createSession('test-workspace', workspaceRoot, { name: 'Current session' })
     const updateWithRemovedField = updateSessionMetadata as unknown as (
       root: string,
       sessionId: string,
       updates: { workingDirectory: string },
     ) => Promise<void>
 
-    await expect(updateWithRemovedField(workspaceRoot, session.mortiseId, {
+    await expect(updateWithRemovedField('test-workspace', session.mortiseId, {
       workingDirectory: join(workspaceRoot, 'nested'),
     })).rejects.toMatchObject({
       name: 'RemovedSessionFieldError',
@@ -811,13 +812,13 @@ plansFolderPath: C:\\Users\\32858\\.pi\\agent\\sessions\\demo\\.mortise\\plans
     mkdirSync(workspaceRoot, { recursive: true })
     setSharedPiSessionsDirForTests(piRoot)
 
-    const visible = await createSession(workspaceRoot, { name: 'Visible' })
-    const hidden = await createSession(workspaceRoot, { name: 'Hidden', hidden: true })
+    const visible = await createSession('test-workspace', workspaceRoot, { name: 'Visible' })
+    const hidden = await createSession('test-workspace', workspaceRoot, { name: 'Hidden', hidden: true })
 
-    expect(existsSync(getSessionFilePath(workspaceRoot, visible.mortiseId))).toBe(false)
-    expect(listSessions(workspaceRoot).map(session => session.mortiseId)).not.toContain(visible.mortiseId)
-    expect(listSessions(workspaceRoot).map(session => session.mortiseId)).not.toContain(hidden.mortiseId)
-    expect(loadSession(workspaceRoot, hidden.mortiseId)?.hidden).toBe(true)
+    expect(existsSync(getSessionFilePath('test-workspace', visible.mortiseId))).toBe(false)
+    expect(listSessions('test-workspace', workspaceRoot).map(session => session.mortiseId)).not.toContain(visible.mortiseId)
+    expect(listSessions('test-workspace', workspaceRoot).map(session => session.mortiseId)).not.toContain(hidden.mortiseId)
+    expect(loadSession('test-workspace', hidden.mortiseId)?.hidden).toBe(true)
   })
 
   it('rejects nested legacy session.jsonl paths inside the Pi session bucket', () => {
@@ -827,7 +828,7 @@ plansFolderPath: C:\\Users\\32858\\.pi\\agent\\sessions\\demo\\.mortise\\plans
     mkdirSync(workspaceRoot, { recursive: true })
     setSharedPiSessionsDirForTests(piRoot)
 
-    const flatCandidate = getSessionFilePath(workspaceRoot, sessionId)
+    const flatCandidate = getSessionFilePath('test-workspace', sessionId)
     const nestedSessionFile = join(dirname(flatCandidate), sessionId, 'session.jsonl')
     mkdirSync(dirname(nestedSessionFile), { recursive: true })
     writeJsonl(nestedSessionFile, [{
@@ -839,9 +840,9 @@ plansFolderPath: C:\\Users\\32858\\.pi\\agent\\sessions\\demo\\.mortise\\plans
       mortise: { id: sessionId, workspaceRootPath: workspaceRoot },
     }])
 
-    expect(listSessions(workspaceRoot).map(session => session.mortiseId)).not.toContain(sessionId)
-    expect(loadSession(workspaceRoot, sessionId)).toBeNull()
-    expect(getSessionFilePath(workspaceRoot, sessionId)).not.toBe(nestedSessionFile)
+    expect(listSessions('test-workspace', workspaceRoot).map(session => session.mortiseId)).not.toContain(sessionId)
+    expect(loadSession('test-workspace', sessionId)).toBeNull()
+    expect(getSessionFilePath('test-workspace', sessionId)).not.toBe(nestedSessionFile)
   })
 
   it('does not expose sidecar plan counts for an unpublished draft', async () => {
@@ -850,11 +851,11 @@ plansFolderPath: C:\\Users\\32858\\.pi\\agent\\sessions\\demo\\.mortise\\plans
     mkdirSync(workspaceRoot, { recursive: true })
     setSharedPiSessionsDirForTests(piRoot)
 
-    const session = await createSession(workspaceRoot, { name: 'Plan count' })
-    const plansDir = getSessionPlansPath(workspaceRoot, session.mortiseId)
+    const session = await createSession('test-workspace', workspaceRoot, { name: 'Plan count' })
+    const plansDir = getSessionPlansPath('test-workspace', session.mortiseId)
     writeFileSync(join(plansDir, 'plan.md'), '# Plan\n')
 
-    const listed = listSessions(workspaceRoot)
+    const listed = listSessions('test-workspace', workspaceRoot)
     expect(listed.find(s => s.mortiseId === session.mortiseId)).toBeUndefined()
   })
 })

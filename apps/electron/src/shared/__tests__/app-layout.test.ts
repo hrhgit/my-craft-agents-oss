@@ -21,7 +21,6 @@ function tab(id: string, groupId = 'group:main'): ContentTab {
     groupId,
     ref: {
       kind: 'conversation',
-      serverId: 'server-a',
       workspaceId: id.includes('b') ? 'ws-b' : 'ws-a',
       sessionId: id,
     },
@@ -54,7 +53,6 @@ function withRightGroup(layout: AppLayout): AppLayout {
 describe('app layout domain', () => {
   it('focuses a new conversation while preserving other workspace content', () => {
     const initial = withRightGroup(createDefaultAppLayout({
-      serverId: 'local',
       workspaceId: 'ws-a',
       sessionId: 'old-session',
       route: 'allSessions/session/old-session',
@@ -64,7 +62,6 @@ describe('app layout domain', () => {
     expect(Object.keys(focused.tabs)).toHaveLength(Object.keys(initial.tabs).length)
     expect(focused.tabs['content:main']?.ref).toEqual({
       kind: 'conversation',
-      serverId: 'local',
       workspaceId: 'ws-a',
       resourceId: 'allSessions/new/default',
     })
@@ -73,7 +70,6 @@ describe('app layout domain', () => {
 
   it('opens a separate draft instead of replacing a protected conversation', () => {
     const initial = createDefaultAppLayout({
-      serverId: 'local',
       workspaceId: 'ws-a',
       sessionId: 'running-session',
       route: 'allSessions/session/running-session',
@@ -92,7 +88,7 @@ describe('app layout domain', () => {
   })
 
   it('creates one main group and defers extra splits until content is opened', () => {
-    const layout = createDefaultAppLayout({ serverId: 'local', workspaceId: 'ws-a', sessionId: 's1' })
+    const layout = createDefaultAppLayout({ workspaceId: 'ws-a', sessionId: 's1' })
     expect(layout.windows.primary.groupIds).toEqual(['group:main'])
     expect(layout.groups['group:right']).toBeUndefined()
     expect(layout.tabs['content:main'].ref.sessionId).toBe('s1')
@@ -107,7 +103,7 @@ describe('app layout domain', () => {
   })
 
   it('replaces a safe active tab and opens a new tab when protected', () => {
-    const initial = createDefaultAppLayout({ serverId: 'local', workspaceId: 'ws-a' })
+    const initial = createDefaultAppLayout({ workspaceId: 'ws-a' })
     const replaced = openContentTab(initial, tab('next'), { replaceTabId: 'content:main' })
     expect(replaced.tabs['content:main']).toBeUndefined()
     expect(replaced.groups['group:main'].tabIds).toEqual(['next'])
@@ -124,7 +120,7 @@ describe('app layout domain', () => {
   })
 
   it('rejects content from another workspace before it enters the layout', () => {
-    let layout = withRightGroup(createDefaultAppLayout({ serverId: 'local', workspaceId: 'ws-a' }))
+    let layout = withRightGroup(createDefaultAppLayout({ workspaceId: 'ws-a' }))
     layout = openContentTab(layout, tab('b-session'), { forceNew: true })
     expect(layout.tabs['b-session']).toBeUndefined()
     expect(moveContentTab(layout, 'b-session', 'group:right', 0)).toBe(layout)
@@ -132,7 +128,7 @@ describe('app layout domain', () => {
 
   it('detaches a group, redocks it on close, and redocks all auxiliaries on restart', () => {
     const initial = openContentTab(
-      withRightGroup(createDefaultAppLayout({ serverId: 'local', workspaceId: 'ws-a' })),
+      withRightGroup(createDefaultAppLayout({ workspaceId: 'ws-a' })),
       tab('right-one', 'group:right'),
       { forceNew: true },
     )
@@ -150,7 +146,7 @@ describe('app layout domain', () => {
   })
 
   it('detaches one tab from its group and restores it at the original index', () => {
-    let initial = createDefaultAppLayout({ serverId: 'local', workspaceId: 'ws-a' })
+    let initial = createDefaultAppLayout({ workspaceId: 'ws-a' })
     initial = openContentTab(initial, tab('middle'), { forceNew: true })
     initial = openContentTab(initial, tab('last'), { forceNew: true })
 
@@ -169,7 +165,7 @@ describe('app layout domain', () => {
   })
 
   it('locally reinserts a detached tab without replacing the latest primary geometry', () => {
-    let initial = createDefaultAppLayout({ serverId: 'local', workspaceId: 'ws-a' })
+    let initial = createDefaultAppLayout({ workspaceId: 'ws-a' })
     initial = openContentTab(initial, tab('detached'), { forceNew: true })
     initial.geometry = {
       marker: 'before-detach',
@@ -220,7 +216,7 @@ describe('app layout domain', () => {
   })
 
   it('returns a detached group to its nested anchor without changing current sibling ratios', () => {
-    let initial = withRightGroup(createDefaultAppLayout({ serverId: 'local', workspaceId: 'ws-a' }))
+    let initial = withRightGroup(createDefaultAppLayout({ workspaceId: 'ws-a' }))
     initial = openContentTab(initial, tab('right-one', 'group:right'), { forceNew: true })
     initial.groups.bottom = {
       id: 'bottom', windowId: 'primary', tabIds: [], activeTabId: null, defaultLocation: 'bottom',
@@ -268,7 +264,7 @@ describe('app layout domain', () => {
   })
 
   it('redocks multiple detached tabs in source order regardless of close order', () => {
-    let initial = createDefaultAppLayout({ serverId: 'local', workspaceId: 'ws-a' })
+    let initial = createDefaultAppLayout({ workspaceId: 'ws-a' })
     initial = openContentTab(initial, tab('one'), { forceNew: true })
     initial = openContentTab(initial, tab('two'), { forceNew: true })
     initial = openContentTab(initial, tab('three'), { forceNew: true })
@@ -295,7 +291,7 @@ describe('app layout domain', () => {
   })
 
   it('uses the auxiliary leaf anchor when the original detached tab was closed', () => {
-    let initial = createDefaultAppLayout({ serverId: 'local', workspaceId: 'ws-a' })
+    let initial = createDefaultAppLayout({ workspaceId: 'ws-a' })
     initial = openContentTab(initial, tab('detached'), { forceNew: true })
     const groupTabs = new Map([
       ['before-one', 'lead-one'],
@@ -386,7 +382,7 @@ describe('app layout domain', () => {
   })
 
   it('redocks multiple detached groups in source order regardless of close order', () => {
-    const initial = withRightGroup(createDefaultAppLayout({ serverId: 'local', workspaceId: 'ws-a' }))
+    const initial = withRightGroup(createDefaultAppLayout({ workspaceId: 'ws-a' }))
     initial.groups['group:bottom'] = {
       id: 'group:bottom', windowId: 'primary', tabIds: [], activeTabId: null, defaultLocation: 'bottom',
     }
@@ -419,14 +415,14 @@ describe('app layout domain', () => {
   })
 
   it('does not detach a group while it owns an outstanding detached tab', () => {
-    let initial = withRightGroup(createDefaultAppLayout({ serverId: 'local', workspaceId: 'ws-a' }))
+    let initial = withRightGroup(createDefaultAppLayout({ workspaceId: 'ws-a' }))
     initial = openContentTab(initial, tab('one'), { forceNew: true })
     const detached = detachContentTab(initial, 'one', 'aux-tab')
     expect(detachPanelGroup(detached, 'group:main', 'aux-group')).toBe(detached)
   })
 
   it('allows the only primary tab to detach while preserving an empty redock target', () => {
-    const initial = createDefaultAppLayout({ serverId: 'local', workspaceId: 'ws-a' })
+    const initial = createDefaultAppLayout({ workspaceId: 'ws-a' })
     const detached = detachContentTab(initial, 'content:main', 'aux-only')
     expect(detached.groups['group:main'].tabIds).toEqual([])
     expect(detached.windows.primary.groupIds).toEqual(['group:main'])
@@ -437,7 +433,7 @@ describe('app layout domain', () => {
   })
 
   it('restores auxiliary content after the final primary tab was closed', () => {
-    let initial = withRightGroup(createDefaultAppLayout({ serverId: 'local', workspaceId: 'ws-a' }))
+    let initial = withRightGroup(createDefaultAppLayout({ workspaceId: 'ws-a' }))
     initial = openContentTab(initial, tab('aux-one', 'group:right'), { forceNew: true })
     const detached = detachPanelGroup(initial, 'group:right', 'aux-only')
     const persisted = {
@@ -469,7 +465,7 @@ describe('app layout domain', () => {
   })
 
   it('drops full browser URLs and retired side-task tabs during persistence recovery', () => {
-    const layout = createDefaultAppLayout({ serverId: 'local', workspaceId: 'ws-a' })
+    const layout = createDefaultAppLayout({ workspaceId: 'ws-a' })
     const unsafe = {
       ...layout,
       tabs: {
@@ -478,7 +474,6 @@ describe('app layout domain', () => {
           ...tab('browser'),
           ref: {
             kind: 'browser',
-            serverId: 'local',
             workspaceId: 'ws-a',
             resourceId: 'https://example.test/path?token=secret',
           },
@@ -487,7 +482,6 @@ describe('app layout domain', () => {
           ...tab('sideTasks'),
           ref: {
             kind: 'side-task',
-            serverId: 'local',
             workspaceId: 'ws-a',
             sessionId: 'parent-session',
             resourceId: 'side-tasks:parent-session',
@@ -509,7 +503,7 @@ describe('app layout domain', () => {
   })
 
   it('drops retired Sources navigation tabs during persistence recovery', () => {
-    const layout = createDefaultAppLayout({ serverId: 'local', workspaceId: 'ws-a' })
+    const layout = createDefaultAppLayout({ workspaceId: 'ws-a' })
     const persisted = {
       ...layout,
       tabs: {
@@ -518,7 +512,6 @@ describe('app layout domain', () => {
           ...tab('sources'),
           ref: {
             kind: 'navigation',
-            serverId: 'local',
             workspaceId: 'ws-a',
             resourceId: 'sources/api/source/github',
           },
@@ -539,7 +532,7 @@ describe('app layout domain', () => {
   })
 
   it('preserves non-detachable content through persisted layout sanitization', () => {
-    const layout = createDefaultAppLayout({ serverId: 'local', workspaceId: 'ws-a' })
+    const layout = createDefaultAppLayout({ workspaceId: 'ws-a' })
     layout.tabs['content:main'].allowDetach = false
 
     const recovered = sanitizeAppLayout(JSON.parse(JSON.stringify(layout)))
@@ -548,7 +541,7 @@ describe('app layout domain', () => {
   })
 
   it('repairs duplicate tab membership and removes unreferenced empty groups', () => {
-    const layout = withRightGroup(createDefaultAppLayout({ serverId: 'local', workspaceId: 'ws-a' }))
+    const layout = withRightGroup(createDefaultAppLayout({ workspaceId: 'ws-a' }))
     const corrupted = {
       ...layout,
       tabs: {

@@ -26,8 +26,9 @@ import type { ProjectionApplyResult } from '../projection'
 import type { SessionBundle, DispatchMode } from '@mortise/shared/sessions'
 import type { SessionShareTransferService } from '../services/session-share-transfer'
 import type { EventSink } from '../transport'
+import type { WorkspaceTopologySessionCoordinator } from '../domain'
 
-export interface ISessionManager {
+export interface ISessionManager extends WorkspaceTopologySessionCoordinator {
   readonly shareTransferService: SessionShareTransferService
   // ---------------------------------------------------------------------------
   // Lifecycle

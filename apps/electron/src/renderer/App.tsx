@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { useTheme } from '@/hooks/useTheme'
 import type { ThemeOverrides } from '@config/theme'
 import { useSetAtom, useStore, useAtomValue, useAtom } from 'jotai'
-import type { Session, Workspace, SessionEvent, Message, FileAttachment, StoredAttachment, PermissionRequest, SetupNeeds, NewChatActionParams, ContentBadge, PermissionModeState } from '../shared/types'
+import type { Session, WorkspaceInfo, SessionEvent, Message, FileAttachment, StoredAttachment, PermissionRequest, SetupNeeds, NewChatActionParams, ContentBadge, PermissionModeState } from '../shared/types'
 import type { SessionDraft, DraftAttachmentRef } from '@mortise/shared/config'
 import type { MidStreamSendIntent } from '@mortise/shared/protocol'
 import type { SessionOptions, SessionOptionUpdates } from './hooks/useSessionOptions'
@@ -102,6 +102,7 @@ import { useUiValidationStateBridge } from '@/ui-validation/state-bridge'
 import { useStaleSessionRecovery } from '@/hooks/useStaleSessionRecovery'
 import { usePiProjectionSync, type PiProjectionEventApplied } from '@/hooks/usePiProjectionSync'
 import { TransportConnectionBanner, shouldShowTransportConnectionBanner } from '@/components/app-shell/TransportConnectionBanner'
+import { getPrimaryRemoteWorkspaceId } from '@/components/RemoteConnectionPanel'
 import type { WorkspaceSwitchDestination } from '@/components/workspace/useWorkspaceNavigation'
 import { getFileManagerName } from '@/lib/platform'
 import { rendererLog } from '@/lib/logger'
@@ -296,7 +297,7 @@ export default function App() {
     })
   }, [updateSessionDirect])
 
-  const [workspaces, setWorkspaces] = useState<Workspace[]>([])
+  const [workspaces, setWorkspaces] = useState<WorkspaceInfo[]>([])
   // Window's workspace ID — shared atom so Root/ThemeProvider stays in sync on switch
   const [windowWorkspaceId, setWindowWorkspaceId] = useAtom(windowWorkspaceIdAtom)
   const [workspaceSwitchDestination, setWorkspaceSwitchDestination] = useState<WorkspaceSwitchDestination | null>(null)
@@ -330,11 +331,12 @@ export default function App() {
     }
   }, [])
 
-  // Derive remote workspace ID for session matching in NavigationContext
-  const windowRemoteWorkspaceId = useMemo(() => {
+  // A remote server uses its own Workspace identity only when the current
+  // primary location is remote. Attached locations never redefine the host identity.
+  const windowPrimaryRemoteWorkspaceId = useMemo(() => {
     if (!windowWorkspaceId) return null
     const workspace = workspaces.find(w => w.id === windowWorkspaceId)
-    return workspace?.remoteServer?.remoteWorkspaceId ?? null
+    return workspace ? getPrimaryRemoteWorkspaceId(workspace) : null
   }, [windowWorkspaceId, workspaces])
 
   const {
@@ -541,7 +543,7 @@ export default function App() {
         const expectedWorkspace = workspacesRef.current.find(workspace => workspace.id === expectedWorkspaceId)
         assertWorkspaceSessionBatch(loadedSessions, [
           expectedWorkspaceId,
-          expectedWorkspace?.remoteServer?.remoteWorkspaceId,
+          expectedWorkspace ? getPrimaryRemoteWorkspaceId(expectedWorkspace) : null,
         ])
 
         // Initialize per-session atoms and metadata map only after ownership validation.
@@ -620,7 +622,7 @@ export default function App() {
         reason,
         removeMissing,
         windowWorkspaceId,
-        windowRemoteWorkspaceId,
+        windowRemoteWorkspaceId: windowPrimaryRemoteWorkspaceId,
         selectedSessionId,
         beforeCount: beforeIds.size,
         returnedCount: sessions.length,
@@ -655,7 +657,7 @@ export default function App() {
         reason,
         removeMissing,
         windowWorkspaceId,
-        windowRemoteWorkspaceId,
+        windowRemoteWorkspaceId: windowPrimaryRemoteWorkspaceId,
         selectedSessionId,
         beforeCount: beforeIds.size,
         beforeIds: summarizeIds(beforeIds),
@@ -665,7 +667,7 @@ export default function App() {
       })
       return null
     }
-  }, [store, syncSessionOptionsFromSession, windowWorkspaceId, windowRemoteWorkspaceId])
+  }, [store, syncSessionOptionsFromSession, windowWorkspaceId, windowPrimaryRemoteWorkspaceId])
 
   // Stale session watchdog — catches stuck sessions that the reconnect protocol misses
   const { trackSessionActivity } = useStaleSessionRecovery({
@@ -1289,7 +1291,7 @@ export default function App() {
       && typeof attachment.path === 'string'
       && isAbsoluteLocalPath(attachment.path)
     )
-    const attachmentsForStorage = windowRemoteWorkspaceId
+    const attachmentsForStorage = windowPrimaryRemoteWorkspaceId
       ? await Promise.all(attachments.map(async attachment => {
           if (!isPathOnlyAttachment(attachment)) return attachment
           try {
@@ -1341,7 +1343,7 @@ export default function App() {
       processedAttachments: processedAttachments.length > 0 ? processedAttachments : undefined,
       failedAttachmentNames,
     }
-  }, [windowRemoteWorkspaceId])
+  }, [windowPrimaryRemoteWorkspaceId])
 
   const buildMessageBadges = useCallback((
     message: string,
@@ -1993,7 +1995,7 @@ export default function App() {
     setWorkspaces(await window.electronAPI.getWorkspaces())
   }, [])
 
-  useEffect(() => window.electronAPI.onWorkspaceRemoteServerUpdated(() => {
+  useEffect(() => window.electronAPI.onWorkspaceTopologyChanged(() => {
     void handleRefreshWorkspaces()
   }), [handleRefreshWorkspaces])
 
@@ -2204,7 +2206,7 @@ export default function App() {
           isReady={appState === 'ready'}
           isSessionsReady={sessionsLoaded}
           areDraftsReady={draftsLoaded}
-          remoteWorkspaceId={windowRemoteWorkspaceId}
+          remoteWorkspaceId={windowPrimaryRemoteWorkspaceId}
           workspaceSwitchDestination={workspaceSwitchDestination}
           onWorkspaceSwitchDestinationConsumed={() => setWorkspaceSwitchDestination(null)}
         >

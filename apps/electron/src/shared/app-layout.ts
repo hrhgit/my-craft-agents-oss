@@ -24,9 +24,12 @@ export type ContentKind =
   | 'navigation'
 
 export interface WorkspaceRoute {
-  serverId: string
   workspaceId: string
+  /** Omit only at a renderer/layout boundary to select the current primary location. */
+  locationId?: string
 }
+
+export type ResolvedWorkspaceRoute = WorkspaceRoute & { locationId: string }
 
 export interface ContentRef extends WorkspaceRoute {
   kind: ContentKind
@@ -122,8 +125,8 @@ export function createDefaultAppLayout(options: CreateDefaultLayoutOptions): App
         groupId: mainGroupId,
         ref: {
           kind: 'conversation',
-          serverId: options.serverId,
           workspaceId: options.workspaceId,
+          ...(options.locationId ? { locationId: options.locationId } : {}),
           ...(options.sessionId ? { sessionId: options.sessionId } : {}),
           ...(options.route ? { resourceId: options.route } : {}),
         },
@@ -179,8 +182,8 @@ export function focusConversationRoute(layout: AppLayout, route: string): AppLay
           title: 'Conversation',
           ref: {
             kind: 'conversation',
-            serverId: conversation.ref.serverId,
             workspaceId: conversation.ref.workspaceId,
+            ...(conversation.ref.locationId ? { locationId: conversation.ref.locationId } : {}),
             resourceId: route,
           },
         },
@@ -199,14 +202,14 @@ export function focusConversationRoute(layout: AppLayout, route: string): AppLay
   let tabId = 'content:new-conversation'
   let suffix = 1
   while (layout.tabs[tabId]) tabId = `content:new-conversation-${suffix++}`
-  const serverId = primaryTabIds.map(id => layout.tabs[id]?.ref.serverId).find(Boolean) ?? 'local'
+  const locationId = primaryTabIds.map(id => layout.tabs[id]?.ref.locationId).find(Boolean)
   const tab: ContentTab = {
     id: tabId,
     title: 'Conversation',
     ref: {
       kind: 'conversation',
-      serverId,
       workspaceId: layout.workspaceId,
+      ...(locationId ? { locationId } : {}),
       resourceId: route,
     },
     groupId,
@@ -590,7 +593,7 @@ export function restoreLayoutForStartup(layout: AppLayout): AppLayout {
 
 export function sanitizeAppLayout(input: unknown): AppLayout {
   if (!isRecord(input) || input.version !== APP_LAYOUT_VERSION) {
-    return createDefaultAppLayout({ serverId: 'local', workspaceId: '' })
+    return createDefaultAppLayout({ workspaceId: '' })
   }
 
   const rawTabs = isRecord(input.tabs) ? input.tabs : {}
@@ -628,7 +631,7 @@ export function sanitizeAppLayout(input: unknown): AppLayout {
   const declaredWorkspaceId = stringValue(input.workspaceId, '')
   const firstWorkspaceId = Object.values(tabs)[0]?.ref.workspaceId ?? ''
   const workspaceId = declaredWorkspaceId || firstWorkspaceId
-  const defaultServerId = Object.values(tabs)[0]?.ref.serverId ?? 'local'
+  const defaultLocationId = Object.values(tabs)[0]?.ref.locationId
   for (const tab of Object.values(tabs)) {
     if (tab.ref.workspaceId !== workspaceId) delete tabs[tab.id]
   }
@@ -751,7 +754,7 @@ export function sanitizeAppLayout(input: unknown): AppLayout {
   // lives in an auxiliary window. Preserve that intermediate state so startup
   // restoration can redock the surviving groups instead of replacing them.
   if (Object.keys(tabs).length === 0) {
-    return createDefaultAppLayout({ serverId: defaultServerId, workspaceId })
+    return createDefaultAppLayout({ workspaceId, ...(defaultLocationId ? { locationId: defaultLocationId } : {}) })
   }
 
   return {
@@ -817,8 +820,8 @@ function findSingleton(layout: AppLayout, tab: ContentTab): ContentTab | undefin
   return Object.values(layout.tabs).find(candidate =>
     candidate.instancePolicy === 'singleton'
     && candidate.ref.kind === tab.ref.kind
-    && candidate.ref.serverId === tab.ref.serverId
     && candidate.ref.workspaceId === tab.ref.workspaceId
+    && candidate.ref.locationId === tab.ref.locationId
     && candidate.ref.sessionId === tab.ref.sessionId
     && candidate.ref.resourceId === tab.ref.resourceId
   )
@@ -950,9 +953,7 @@ function sanitizeTab(id: string, value: unknown): ContentTab | null {
   if (!isRecord(value) || !isRecord(value.ref)) return null
   const kind = value.ref.kind
   if (!isContentKind(kind)) return null
-  const serverId = stringValue(value.ref.serverId, '')
   const workspaceId = stringValue(value.ref.workspaceId, '')
-  if (!serverId) return null
 
   // Sources was retired as a navigation surface. Persisted tabs used its
   // route as the resource id, so remove them here before the layout is
@@ -969,8 +970,10 @@ function sanitizeTab(id: string, value: unknown): ContentTab | null {
     groupId: stringValue(value.groupId, ''),
     ref: {
       kind,
-      serverId,
       workspaceId,
+      ...(typeof value.ref.locationId === 'string' && value.ref.locationId
+        ? { locationId: value.ref.locationId }
+        : {}),
       ...(typeof value.ref.sessionId === 'string' ? { sessionId: value.ref.sessionId } : {}),
       ...(resourceId ? { resourceId } : {}),
     },

@@ -32,7 +32,11 @@ export function registerBrowserHandlers(server: RpcServer, deps: HandlerDeps): v
 
   const workspaceAliasesFromContext = (workspaceId: string | null): readonly string[] => {
     if (!workspaceId) return []
-    const remoteWorkspaceId = getWorkspaceByNameOrId(workspaceId)?.remoteServer?.remoteWorkspaceId
+    const workspace = getWorkspaceByNameOrId(workspaceId)
+    const primary = workspace?.locations.find(location => location.id === workspace.primaryLocationId)
+    const remoteWorkspaceId = primary?.endpoint.kind === 'remote'
+      ? primary.endpoint.remoteWorkspaceId
+      : undefined
     return remoteWorkspaceId && remoteWorkspaceId !== workspaceId
       ? [workspaceId, remoteWorkspaceId]
       : [workspaceId]

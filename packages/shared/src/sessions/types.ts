@@ -27,7 +27,7 @@ import type { PlanModeStateV1, StoredMessage } from '@mortise/core/types';
  */
 export const MORTISE_SESSION_METADATA_FIELDS = [
   // Identity
-  'mortiseId', 'workspaceRootPath', 'sdkSessionId', 'sdkCwd',
+  'mortiseId', 'workspaceId', 'workspaceRootPath', 'sdkSessionId', 'sdkCwd',
   // Timestamps
   'createdAt', 'lastUsedAt', 'lastMessageAt',
   // Display
@@ -129,9 +129,11 @@ export interface MortiseSessionMetadata {
    * 在 Pi 文件中序列化为 `mortise.id`。
    */
   mortiseId: string;
+  /** Stable owning Workspace identity. Paths and endpoints never replace this field. */
+  workspaceId: string;
   /** SDK session ID（Claude SDK 等底层 SDK 的 session 标识，捕获于首条消息后） */
   sdkSessionId?: string;
-  /** Mortise workspace 根路径 */
+  /** Last resolved primary execution root; not a Workspace identity or storage key. */
   workspaceRootPath: string;
   // ============================================
   // Mortise 时间戳
@@ -302,7 +304,7 @@ export class RemovedSessionFieldError extends Error {
   readonly field: string;
 
   constructor(field: string) {
-    super(`Session field "${field}" has been removed; workspaceRootPath is the sole working-directory authority`);
+    super(`Session field "${field}" has been removed; Workspace identity and the current primary location are authoritative`);
     this.name = 'RemovedSessionFieldError';
     this.field = field;
   }

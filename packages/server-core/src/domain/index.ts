@@ -4,3 +4,8 @@ export * from './init-gate'
 export * from './session-branch-cleanup'
 export * from './session-browser-release'
 export * from './provider-setup-logic'
+export type {
+  WorkspaceSessionInterruptionResult,
+  WorkspaceSessionInterruptionTarget,
+  WorkspaceTopologySessionCoordinator,
+} from './workspace-topology-session-coordinator'

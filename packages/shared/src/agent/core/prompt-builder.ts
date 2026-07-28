@@ -16,6 +16,7 @@ import { formatPreferencesForPrompt } from '../../config/preferences.ts';
 import { formatSessionState } from '../mode-manager.ts';
 import { getDateTimeContext, getWorkingDirectoryContext } from '../../prompts/system.ts';
 import { getSessionPlansPath, getSessionDataPath } from '../../sessions/storage.ts';
+import { requirePrimaryLocalWorkspaceRoot } from '@mortise/core/types';
 import type {
   PromptBuilderConfig,
   ContextBlockOptions,
@@ -43,11 +44,13 @@ import type {
 export class PromptBuilder {
   private config: PromptBuilderConfig;
   private workspaceRootPath: string;
+  private workspaceId: string;
   private pinnedPreferencesPrompt: string | null = null;
 
   constructor(config: PromptBuilderConfig) {
     this.config = config;
-    this.workspaceRootPath = config.workspace?.rootPath ?? '';
+    this.workspaceRootPath = requirePrimaryLocalWorkspaceRoot(config.workspace);
+    this.workspaceId = config.workspace.id;
   }
 
   // ============================================================
@@ -105,9 +108,9 @@ export class PromptBuilder {
     // Only this volatile builder may consume the one-shot mode-change signal.
     const sessionId = this.config.session?.mortiseId ?? `temp-${Date.now()}`;
     const plansFolderPath = options.plansFolderPath ??
-      getSessionPlansPath(this.workspaceRootPath, sessionId);
+      getSessionPlansPath(this.workspaceId, sessionId);
     const dataFolderPath = options.dataFolderPath ??
-      getSessionDataPath(this.workspaceRootPath, sessionId);
+      getSessionDataPath(this.workspaceId, sessionId);
     parts.push(formatSessionState(sessionId, {
       plansFolderPath,
       dataFolderPath,
@@ -226,7 +229,8 @@ Please continue the conversation naturally from where we left off.
    */
   setWorkspace(workspace: PromptBuilderConfig['workspace']): void {
     this.config.workspace = workspace;
-    this.workspaceRootPath = workspace?.rootPath ?? '';
+    this.workspaceRootPath = requirePrimaryLocalWorkspaceRoot(workspace);
+    this.workspaceId = workspace.id;
   }
 
   /**

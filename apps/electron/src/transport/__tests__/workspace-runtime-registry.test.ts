@@ -1,7 +1,7 @@
 import { describe, expect, it, mock } from 'bun:test'
 import { WorkspaceRuntimeRegistry } from '../workspace-runtime-registry'
 
-function client(label: string) {
+function client(label: unknown) {
   const calls: Array<{ channel: string; args: unknown[] }> = []
   const listeners = new Map<string, Set<(...args: any[]) => void>>()
   const destroy = mock(() => {})
@@ -27,15 +27,15 @@ function client(label: string) {
 }
 
 describe('WorkspaceRuntimeRegistry', () => {
-  it('keeps multiple workspace runtimes live and routes by the full trusted key', async () => {
+  it('keeps multiple location runtimes in one Workspace live concurrently', async () => {
     const registry = new WorkspaceRuntimeRegistry()
     const a = client('a')
     const b = client('b')
-    registry.register({ route: { serverId: 'local', workspaceId: 'a' }, client: a as any })
-    registry.register({ route: { serverId: 'remote.example', workspaceId: 'b' }, client: b as any })
+    registry.register({ route: { workspaceId: 'workspace', locationId: 'local' }, client: a as any })
+    registry.register({ route: { workspaceId: 'workspace', locationId: 'remote' }, client: b as any })
 
-    expect(await registry.invoke({ serverId: 'local', workspaceId: 'a' }, 'sessions:get', 'a')).toBe('a')
-    expect(await registry.invoke({ serverId: 'remote.example', workspaceId: 'b' }, 'sessions:get', 'b')).toBe('b')
+    expect(await registry.invoke({ workspaceId: 'workspace', locationId: 'local' }, 'sessions:get', 'workspace')).toBe('a')
+    expect(await registry.invoke({ workspaceId: 'workspace', locationId: 'remote' }, 'sessions:get', 'workspace')).toBe('b')
     expect(a.calls).toHaveLength(1)
     expect(b.calls).toHaveLength(1)
   })
@@ -44,13 +44,13 @@ describe('WorkspaceRuntimeRegistry', () => {
     const registry = new WorkspaceRuntimeRegistry()
     const remote = client('remote')
     registry.register({
-      route: { serverId: 'remote.example', workspaceId: 'local-alias' },
+      route: { workspaceId: 'local-alias', locationId: 'primary' },
       targetWorkspaceId: 'remote-id',
       client: remote as any,
     })
 
     await registry.invoke(
-      { serverId: 'remote.example', workspaceId: 'local-alias' },
+      { workspaceId: 'local-alias', locationId: 'primary' },
       'automations:test',
       'local-alias',
       { workspaceId: 'local-alias', id: 'task' },
@@ -58,19 +58,49 @@ describe('WorkspaceRuntimeRegistry', () => {
     expect(remote.calls[0].args).toEqual(['remote-id', { workspaceId: 'remote-id', id: 'task' }])
   })
 
+  it('recursively restores logical Workspace identity in results and events', async () => {
+    const registry = new WorkspaceRuntimeRegistry()
+    const remote = client({
+      workspaceId: 'remote-id',
+      remoteWorkspaceId: 'remote-id',
+      nested: [{ workspaceId: 'remote-id' }, { workspaceId: 'other-id' }],
+      opaque: 'remote-id',
+    })
+    const route = { workspaceId: 'local-alias', locationId: 'primary' }
+    registry.register({ route, targetWorkspaceId: 'remote-id', client: remote as any })
+
+    expect(await registry.invoke(route, 'sessions:get')).toEqual({
+      workspaceId: 'local-alias',
+      remoteWorkspaceId: 'remote-id',
+      nested: [{ workspaceId: 'local-alias' }, { workspaceId: 'other-id' }],
+      opaque: 'remote-id',
+    })
+
+    const callback = mock(() => {})
+    registry.on(route, 'sessions:event', callback)
+    remote.emit('sessions:event', {
+      workspaceId: 'remote-id',
+      detail: { workspaceId: 'remote-id', remoteWorkspaceId: 'remote-id' },
+    })
+    expect(callback).toHaveBeenCalledWith({
+      workspaceId: 'local-alias',
+      detail: { workspaceId: 'local-alias', remoteWorkspaceId: 'remote-id' },
+    })
+  })
+
   it('rejects unregistered routes and local-only channels', async () => {
     const registry = new WorkspaceRuntimeRegistry()
     const local = client('local')
-    registry.register({ route: { serverId: 'local', workspaceId: 'a' }, client: local as any })
+    registry.register({ route: { workspaceId: 'a', locationId: 'primary' }, client: local as any })
 
-    expect(registry.invoke({ serverId: 'local', workspaceId: 'b' }, 'sessions:get')).rejects.toThrow('not registered')
-    expect(registry.invoke({ serverId: 'local', workspaceId: 'a' }, 'window:close')).rejects.toThrow('local-only')
+    expect(registry.invoke({ workspaceId: 'b', locationId: 'primary' }, 'sessions:get')).rejects.toThrow('not registered')
+    expect(registry.invoke({ workspaceId: 'a', locationId: 'primary' }, 'window:close')).rejects.toThrow('local-only')
   })
 
   it('uses leases so one tab cannot dispose a runtime still used by another tab', () => {
     const registry = new WorkspaceRuntimeRegistry()
     const shared = client('shared')
-    const registration = { route: { serverId: 'local', workspaceId: 'a' }, client: shared as any }
+    const registration = { route: { workspaceId: 'a', locationId: 'primary' }, client: shared as any }
     const releaseA = registry.register(registration)
     const releaseB = registry.register(registration)
     releaseA()
@@ -81,9 +111,12 @@ describe('WorkspaceRuntimeRegistry', () => {
 
   it('replaces a generation, migrates listeners, and disposes the old client', async () => {
     const registry = new WorkspaceRuntimeRegistry()
-    const route = { serverId: 'wss://remote.example', workspaceId: 'workspace-a' }
+    const route = { workspaceId: 'workspace-a', locationId: 'remote' }
+    const unrelatedRoute = { workspaceId: 'workspace-a', locationId: 'local' }
     const oldClient = client('old')
     const newClient = client('new')
+    const unrelatedClient = client('unrelated')
+    registry.register({ route: unrelatedRoute, client: unrelatedClient as any })
     const releaseOld = registry.register({
       route,
       client: oldClient as any,
@@ -105,6 +138,7 @@ describe('WorkspaceRuntimeRegistry', () => {
     expect(callback).toHaveBeenCalledTimes(1)
     expect(callback).toHaveBeenCalledWith('new')
     expect(await registry.invoke(route, 'sessions:get')).toBe('new')
+    expect(await registry.invoke(unrelatedRoute, 'sessions:get')).toBe('unrelated')
     expect(oldClient.destroy).toHaveBeenCalledTimes(1)
 
     releaseOld()
@@ -117,70 +151,22 @@ describe('WorkspaceRuntimeRegistry', () => {
     expect(newClient.destroy).toHaveBeenCalledTimes(1)
   })
 
-  it('atomically moves listeners to a new trusted route without exposing the old route', async () => {
+  it('uses the replacement runtime identity when rebinding listeners', () => {
     const registry = new WorkspaceRuntimeRegistry()
-    const oldRoute = { serverId: 'wss://old.example.test', workspaceId: 'workspace-a' }
-    const newRoute = { serverId: 'wss://new.example.test', workspaceId: 'workspace-a' }
+    const route = { workspaceId: 'logical-id', locationId: 'remote' }
     const oldClient = client('old')
     const newClient = client('new')
-    const releaseOld = registry.register({
-      route: oldRoute,
-      client: oldClient as any,
-      generation: 'generation-1',
-      dispose: oldClient.destroy,
-    })
+    registry.register({ route, targetWorkspaceId: 'remote-old', client: oldClient as any, generation: 'old' })
     const callback = mock(() => {})
-    const unsubscribe = registry.on(oldRoute, 'sessions:event', callback)
+    registry.on(route, 'sessions:event', callback)
 
-    const releaseNew = registry.move(oldRoute, {
-      route: newRoute,
-      client: newClient as any,
-      generation: 'generation-2',
-      dispose: newClient.destroy,
+    registry.replace({ route, targetWorkspaceId: 'remote-new', client: newClient as any, generation: 'new' })
+    newClient.emit('sessions:event', { workspaceId: 'remote-new', remoteWorkspaceId: 'remote-new' })
+
+    expect(callback).toHaveBeenCalledWith({
+      workspaceId: 'logical-id',
+      remoteWorkspaceId: 'remote-new',
     })
-
-    expect(registry.has(oldRoute)).toBe(false)
-    expect(registry.has(newRoute)).toBe(true)
-    await expect(registry.invoke(oldRoute, 'sessions:get')).rejects.toThrow('not registered')
-    expect(await registry.invoke(newRoute, 'sessions:get')).toBe('new')
-    oldClient.emit('sessions:event', 'old')
-    newClient.emit('sessions:event', 'new')
-    expect(callback).toHaveBeenCalledTimes(1)
-    expect(callback).toHaveBeenCalledWith('new')
-    expect(oldClient.destroy).toHaveBeenCalledTimes(1)
-
-    releaseOld()
-    expect(registry.has(newRoute)).toBe(true)
-    unsubscribe()
-    releaseNew()
-    expect(registry.has(newRoute)).toBe(false)
   })
 
-  it('treats a stale move as idempotent when the next generation already won the race', () => {
-    const registry = new WorkspaceRuntimeRegistry()
-    const staleRoute = { serverId: 'wss://old.example.test', workspaceId: 'workspace-a' }
-    const nextRoute = { serverId: 'wss://new.example.test', workspaceId: 'workspace-a' }
-    const winner = client('winner')
-    const redundant = client('redundant')
-    const releaseWinner = registry.register({
-      route: nextRoute,
-      client: winner as any,
-      generation: 'generation-2',
-      dispose: winner.destroy,
-    })
-
-    const releaseRedundant = registry.move(staleRoute, {
-      route: nextRoute,
-      client: redundant as any,
-      generation: 'generation-2',
-      dispose: redundant.destroy,
-    })
-
-    expect(redundant.destroy).toHaveBeenCalledTimes(1)
-    releaseWinner()
-    expect(registry.has(nextRoute)).toBe(true)
-    releaseRedundant()
-    expect(registry.has(nextRoute)).toBe(false)
-    expect(winner.destroy).toHaveBeenCalledTimes(1)
-  })
 })

@@ -130,6 +130,10 @@ export class PiCredentialStore implements CredentialBackend {
   }
 
   async get(id: CredentialId): Promise<StoredCredential | null> {
+    return this.getSync(id);
+  }
+
+  getSync(id: CredentialId): StoredCredential | null {
     const slug = escapeSlugSegment(credentialIdToAccount(id));
     const cred = getMortiseCredential(slug);
     const decoded = decodeCredential(cred);
@@ -137,6 +141,10 @@ export class PiCredentialStore implements CredentialBackend {
   }
 
   async set(id: CredentialId, credential: StoredCredential): Promise<void> {
+    this.setSync(id, credential);
+  }
+
+  setSync(id: CredentialId, credential: StoredCredential): void {
     const slug = escapeSlugSegment(credentialIdToAccount(id));
     setMortiseCredential(slug, encodeCredential(credential, id.type));
     // 回读校验：通过 Pi facade 重新读取，确保写入确实落到 Pi AuthStorage。

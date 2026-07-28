@@ -1,5 +1,10 @@
-import { beforeEach, describe, expect, it, mock } from 'bun:test'
+import { afterAll, beforeEach, describe, expect, it, mock } from 'bun:test'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { RPC_CHANNELS } from '@mortise/shared/protocol'
+import { WorkspaceTopologyStore } from '@mortise/shared/workspaces'
+import type { Workspace } from '@mortise/core/types'
 import type { HandlerDeps } from '../handler-deps'
 import type { HandlerFn, RequestContext, RpcServer } from '../../transport'
 
@@ -7,8 +12,25 @@ const sequence: string[] = []
 const setActiveWorkspace = mock((_workspaceId: string) => {
   sequence.push('persist')
 })
+const workspaceRoot = mkdtempSync(join(tmpdir(), 'mortise-workspace-switch-'))
+const workspaceB: Workspace = {
+  schemaVersion: 2 as const,
+  id: 'workspace-b',
+  revision: 0,
+  name: 'Workspace B',
+  nameSource: 'custom',
+  slug: 'workspace-b',
+  primaryLocationId: 'primary',
+  locations: [{
+    id: 'primary',
+    name: 'Primary',
+    rootName: 'mortise-workspace-switch',
+    endpoint: { kind: 'local', rootPath: workspaceRoot },
+  }],
+  createdAt: 1,
+}
 const getWorkspaceByNameOrId = mock((workspaceId: string) => workspaceId === 'workspace-b'
-  ? { id: workspaceId, rootPath: 'C:\\workspace-b', name: 'Workspace B', slug: 'workspace-b', createdAt: 1 }
+  ? workspaceB
   : null)
 
 mock.module('@mortise/shared/config', () => ({
@@ -50,8 +72,14 @@ function createHarness(options: { failRouting?: boolean } = {}) {
 
   const deps = {
     sessionManager: {
+      getWorkspaces: () => [workspaceB],
       setupConfigWatcher: () => sequence.push('watcher'),
       clearActiveViewingSession: () => {},
+      interruptWorkspaceSessionsForTopologyChange: async () => ({
+        selectedSessionIds: [],
+        interruptedSessionIds: [],
+      }),
+      updateWorkspaceTopology: () => {},
     },
     windowManager: {
       getWorkspaceForWindow: () => 'workspace-a',
@@ -77,13 +105,20 @@ function createHarness(options: { failRouting?: boolean } = {}) {
     },
   } as unknown as HandlerDeps
 
-  registerWorkspaceCoreHandlers(server, deps)
+  registerWorkspaceCoreHandlers(
+    server,
+    deps,
+    new WorkspaceTopologyStore({ databasePath: ':memory:', writerId: 'workspace-switch-test' }),
+  )
   const handler = server.handlers.get(RPC_CHANNELS.window.SWITCH_WORKSPACE)
   if (!handler) throw new Error('SWITCH_WORKSPACE handler not registered')
   return handler
 }
 
 describe('workspace switch active-workspace persistence', () => {
+  afterAll(() => {
+    rmSync(workspaceRoot, { recursive: true, force: true })
+  })
   beforeEach(() => {
     sequence.length = 0
     setActiveWorkspace.mockClear()

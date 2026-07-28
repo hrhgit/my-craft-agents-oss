@@ -14,6 +14,7 @@ owns:
   - packages/shared/src/branding.ts
   - packages/shared/src/feature-flags.ts
   - packages/shared/src/protocol/__tests__/routing.test.ts
+  - packages/shared/src/protocol/__tests__/workspace-topology.test.ts
   - packages/shared/src/protocol/__tests__/automation-capability.test.ts
   - packages/shared/src/protocol/__tests__/session-settlement.test.ts
   - packages/shared/src/protocol/automation-capability.ts
@@ -27,6 +28,8 @@ owns:
   - packages/shared/src/protocol/routing.ts
   - packages/shared/src/protocol/types.ts
   - packages/shared/src/protocol/workspace-coordination.ts
+  - packages/shared/src/protocol/workspace-transfer-endpoint.ts
+  - packages/shared/src/protocol/workspace-topology.ts
   - packages/shared/src/types/**
   - packages/shared/src/utils/**
   - packages/shared/src/validation/**
@@ -66,6 +69,8 @@ Run protocol and utility tests, shared type checking, and channel-map parity che
 A convenient shared helper can accumulate feature policy; protocol changes can compile locally while breaking older concurrent backends.
 
 ## Semantic history
+- 2026-07-28: Added portable-path-safe Workspace transfer contracts for bounded chunk I/O, staged checksum publication, source remove-if-unchanged, phase-bound journals, and host-only durable cleanup coordination.
+- 2026-07-28: Completed the Workspace V2 hard-cut contract with persisted name provenance, explicit truthful location access projections, host-owned remote-primary creation, and registered endpoint-qualified transfer RPCs.
 - 2026-07-28: Published the strict Workspace V2 identity, multi-location topology, redacted client projection, marker/path reference, topology command/event, routing, and stable failure-code contracts.
 - 2026-07-26: Preserved Automation run/history cursor query fingerprints and frozen pagination bounds across strict command and result DTO parsing, rejecting incomplete or mismatched cursor envelopes before they reach the indexed store.
 - 2026-07-25: Kept shared environment sanitization as a consumer of the host-neutral sealed-runtime contract and removed the empty shared runtime ownership after canonical runtime authority moved to `session-tools-core`.

@@ -306,7 +306,7 @@ export class AutomationV3Runtime {
     heartbeat.unref?.()
     try {
       const completed = await this.execute(definition, claim.run, event, signal)
-      await this.drainQueue(definition, signal)
+      if (!signal?.aborted) await this.drainQueue(definition, signal)
       return completed
     } finally {
       clearInterval(heartbeat)
@@ -325,9 +325,7 @@ export class AutomationV3Runtime {
     for (let index = 0; index < definition.actions.length; index++) {
       const action = definition.actions[index]!
       if (signal?.aborted) {
-        const completedAt = new Date().toISOString()
-        run = this.store.updateRun({ ...run, state: 'cancelled', completedAt, actions: run.actions.map(item => item.state === 'queued' ? { ...item, state: 'cancelled', completedAt } : item) }, automationIdentity('op_run', run.runId, 'cancelled'))
-        return run
+        return this.cancelAbortedRun(run.runId)
       }
       const actionState = run.actions[index]!
       const actionStartedAt = new Date().toISOString()
@@ -342,6 +340,8 @@ export class AutomationV3Runtime {
       } catch (error) {
         result = { status: 'failed', error: { code: 'executor_error', message: error instanceof Error ? error.message : String(error), retryable: false } }
       }
+
+      if (signal?.aborted) return this.cancelAbortedRun(run.runId)
 
       const completedAt = new Date().toISOString()
       run = this.store.updateRun({
@@ -362,7 +362,12 @@ export class AutomationV3Runtime {
       }
     }
 
+    if (signal?.aborted) return this.cancelAbortedRun(run.runId)
     const completedAt = new Date().toISOString()
     return this.store.updateRun({ ...run, state: aggregate(run.actions), completedAt }, automationIdentity('op_run', run.runId, 'terminal'))
+  }
+
+  private cancelAbortedRun(runId: string): AutomationRunV1 {
+    return this.store.cancelRunIfNonTerminal(runId, 'execution-aborted').run
   }
 }

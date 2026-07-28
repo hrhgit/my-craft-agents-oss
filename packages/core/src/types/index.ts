@@ -13,13 +13,21 @@ export type {
   LocalWorkspaceEndpoint,
   RemoteWorkspaceEndpoint,
   NonEmptyArray,
-  RemoteServerConfig,
+  WorkspaceNameSource,
+  WorkspaceLocationAvailability,
+  WorkspaceLocationPermissions,
   McpAuthType,
   AuthType,
   OAuthCredentials,
   StoredConfig,
 } from './workspace.ts';
-export { WORKSPACE_SCHEMA_VERSION } from './workspace.ts';
+export {
+  WORKSPACE_SCHEMA_VERSION,
+  getWorkspaceLocation,
+  getPrimaryWorkspaceLocation,
+  requireLocalWorkspaceLocationRoot,
+  requirePrimaryLocalWorkspaceRoot,
+} from './workspace.ts';
 
 // Session types
 export type {

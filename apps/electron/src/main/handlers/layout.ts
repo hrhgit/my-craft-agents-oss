@@ -17,7 +17,7 @@ export function registerLayoutHandlers(server: RpcServer, deps: HandlerDeps): vo
   const windowManager = deps.windowManager
   if (!coordinator) return
 
-  server.handle(RPC_CHANNELS.layout.GET, async (ctx, requestedWorkspaceId?: string, serverId?: string) => {
+  server.handle(RPC_CHANNELS.layout.GET, async (ctx, requestedWorkspaceId?: string) => {
     const windowWorkspaceId = ctx.webContentsId != null
       ? windowManager?.getWorkspaceForWindow(ctx.webContentsId) ?? undefined
       : undefined
@@ -25,7 +25,7 @@ export function registerLayoutHandlers(server: RpcServer, deps: HandlerDeps): vo
       throw new Error(`Cannot read layout for workspace ${requestedWorkspaceId} from window ${windowWorkspaceId}`)
     }
     const workspaceId = requestedWorkspaceId ?? ctx.workspaceId ?? windowWorkspaceId ?? ''
-    const snapshot = coordinator.getSnapshot(workspaceId, serverId)
+    const snapshot = coordinator.getSnapshot(workspaceId)
     await coordinator.flush()
     return snapshot
   })

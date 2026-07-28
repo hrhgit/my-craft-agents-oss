@@ -1,10 +1,15 @@
-import type { RemoteServerConfig } from '@mortise/core/types'
-
 interface RuntimeIdentity {
   kind: 'local' | 'remote'
   url?: string
   token?: string
   targetWorkspaceId?: string
+  allowInsecureTls?: boolean
+}
+
+export interface ResolvedRemoteWorkspaceRuntime {
+  url: string
+  token: string
+  remoteWorkspaceId: string
   allowInsecureTls?: boolean
 }
 
@@ -21,8 +26,8 @@ export class WorkspaceRuntimeGenerationTracker {
   private readonly entries = new Map<string, RuntimeGenerationEntry>()
   private nextGeneration = 1
 
-  forRemote(workspaceId: string, config: RemoteServerConfig): string {
-    return this.resolve(workspaceId, {
+  forRemote(workspaceId: string, locationId: string, config: ResolvedRemoteWorkspaceRuntime): string {
+    return this.resolve(workspaceId, locationId, {
       kind: 'remote',
       url: config.url,
       token: config.token,
@@ -31,18 +36,23 @@ export class WorkspaceRuntimeGenerationTracker {
     })
   }
 
-  forLocal(workspaceId: string): string {
-    return this.resolve(workspaceId, { kind: 'local' })
+  forLocal(workspaceId: string, locationId: string): string {
+    return this.resolve(workspaceId, locationId, { kind: 'local' })
   }
 
-  private resolve(workspaceId: string, identity: RuntimeIdentity): string {
-    const current = this.entries.get(workspaceId)
+  private resolve(workspaceId: string, locationId: string, identity: RuntimeIdentity): string {
+    const key = runtimeLocationKey(workspaceId, locationId)
+    const current = this.entries.get(key)
     if (current && runtimeIdentitiesEqual(current.identity, identity)) return current.generation
 
     const generation = `runtime-${this.nextGeneration++}`
-    this.entries.set(workspaceId, { identity, generation })
+    this.entries.set(key, { identity, generation })
     return generation
   }
+}
+
+function runtimeLocationKey(workspaceId: string, locationId: string): string {
+  return `${encodeURIComponent(workspaceId)}::${encodeURIComponent(locationId)}`
 }
 
 export class WorkspaceRuntimeUpdateQueue {

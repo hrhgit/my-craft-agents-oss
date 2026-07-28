@@ -16,7 +16,35 @@ export {
   getWorkspaceConfigRecordIdentity,
   normalizeWorkspaceRecordNamespace,
   WORKSPACE_CONFIG_RECORD_KEY,
+  getWorkspaceTopologyOperationIdentity,
+  getWorkspaceTopologyRecordIdentity,
+  getWorkspaceTopologyRegistryIdentity,
+  getWorkspaceTransferOperationIdentity,
+  WORKSPACE_TOPOLOGY_OPERATION_NAMESPACE,
+  WORKSPACE_TOPOLOGY_RECORD_KEY,
+  WORKSPACE_TOPOLOGY_RECORD_NAMESPACE,
+  WORKSPACE_TOPOLOGY_REGISTRY_KEY,
+  WORKSPACE_TOPOLOGY_REGISTRY_NAMESPACE,
+  WORKSPACE_TRANSFER_OPERATION_NAMESPACE,
 } from './state-contract.ts';
+
+export {
+  WorkspaceTopologyError,
+  ensureWorkspaceMarker,
+  getWorkspaceMarkerPath,
+  readWorkspaceMarker,
+} from './marker.ts';
+
+export {
+  WorkspaceTopologyStore,
+  closeWorkspaceTopologyStorage,
+  getDefaultWorkspaceTopologyStore,
+  observeWorkspaceLocations,
+  type ApplyWorkspaceTopologyResult,
+  type LegacyWorkspaceV1,
+  type WorkspaceLocationProjectionProvider,
+  type WorkspaceTopologyStoreOptions,
+} from './topology-storage.ts';
 
 // Storage functions
 export {

@@ -93,4 +93,47 @@ describe('AutomationV3Runtime', () => {
     expect(store.initialize().definitions[0]?.enabled).toBe(true)
     store.close()
   })
+
+  it('cancels a callback that returns after its abort signal instead of recording success', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'mortise-automations-runtime-abort-'))
+    roots.push(root)
+    const store = new AutomationV3Store({ workspaceId: 'workspace-abort', workspaceRootPath: root })
+    const initial = store.initialize()
+    const now = new Date().toISOString()
+    const definition = {
+      id: 'aut_abort_callback', name: 'Abort callback', enabled: true,
+      triggers: [{ id: 'trg_abort_callback', type: 'event' as const, source: 'mortise' as const, eventType: 'manual' }],
+      actions: [{ id: 'act_abort_callback', type: 'prompt' as const, prompt: 'wait', target: { kind: 'new-session' as const } }],
+      createdAt: now, updatedAt: now,
+    }
+    expect(store.mutateDocument({
+      operationId: 'operation-abort-callback-definition',
+      expectedRevision: initial.revision,
+      document: { ...initial, definitions: [definition] },
+    }).status).toBe('ok')
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    let started!: () => void
+    const callbackStarted = new Promise<void>(resolve => { started = resolve })
+    const runtime = new AutomationV3Runtime({
+      workspaceId: 'workspace-abort', store,
+      callbacks: {
+        prompt: async () => { started(); await gate; return { status: 'succeeded' } },
+        webhook: async () => ({ status: 'succeeded' }),
+      },
+    })
+    const controller = new AbortController()
+    const execution = runtime.runManual(definition.id, 'manual-abort-callback', undefined, controller.signal)
+    await callbackStarted
+    controller.abort(new Error('test abort'))
+    release()
+    await expect(execution).resolves.toMatchObject({
+      run: {
+        state: 'cancelled',
+        reason: 'execution-aborted',
+        actions: [{ state: 'cancelled' }],
+      },
+    })
+    store.close()
+  })
 })

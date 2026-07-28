@@ -12,7 +12,7 @@ import { useAtomValue } from 'jotai'
 import type { ChatDisplayHandle } from '@/components/app-shell/ChatDisplay'
 import type {
   Session,
-  Workspace,
+  WorkspaceInfo,
   FileAttachment,
   PermissionRequest,
   PermissionMode,
@@ -40,7 +40,7 @@ export interface AppShellContextType {
   // NOTE: sessions is NOT included here - use sessionMetaMapAtom for listing
   // and useSession(id) hook for individual sessions. This prevents closures
   // from retaining the full messages array and causing memory leaks.
-  workspaces: Workspace[]
+  workspaces: WorkspaceInfo[]
   activeWorkspaceId: string | null
   /** Explicit renderer transition boundary for workspace-owned layout state. */
   workspaceTransition: WorkspaceTransitionState | null
@@ -63,8 +63,6 @@ export interface AppShellContextType {
   clearDraft: (sessionId: string) => Promise<void>
   /** All skills for this workspace - provided by AppShell component (for @mentions) */
   skills?: LoadedSkill[]
-  /** Canonical root of the active workspace, used for workspace-scoped resolution. */
-  activeWorkspaceRoot?: string
   /** Enabled permission modes for Shift+Tab cycling */
   enabledModes?: PermissionMode[]
 
@@ -203,7 +201,7 @@ export function useSession(sessionId: string): Session | null {
 /**
  * Get the active workspace
  */
-export function useActiveWorkspace(): Workspace | null {
+export function useActiveWorkspace(): WorkspaceInfo | null {
   const { workspaces, activeWorkspaceId } = useAppShellContext()
   if (!activeWorkspaceId) return null
   return workspaces.find((w) => w.id === activeWorkspaceId) || null

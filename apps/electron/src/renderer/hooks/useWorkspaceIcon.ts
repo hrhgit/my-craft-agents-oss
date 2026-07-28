@@ -9,7 +9,7 @@
  */
 
 import { useState, useEffect, useRef } from 'react'
-import type { Workspace } from '../../shared/types'
+import type { WorkspaceInfo } from '../../shared/types'
 
 // Module-level cache to avoid redundant fetches across component instances
 // Key: workspaceId, Value: { dataUrl, sourceUrl }
@@ -25,7 +25,7 @@ const iconCache = new Map<string, { dataUrl: string; sourceUrl: string }>()
  * @param workspace - The workspace object with iconUrl
  * @returns Data URL or remote URL for the icon, or undefined
  */
-export function useWorkspaceIcon(workspace: Workspace | undefined): string | undefined {
+export function useWorkspaceIcon(workspace: WorkspaceInfo | undefined): string | undefined {
   const [iconUrl, setIconUrl] = useState<string | undefined>(() => {
     if (!workspace?.iconUrl) return undefined
 
@@ -126,7 +126,7 @@ export function useWorkspaceIcon(workspace: Workspace | undefined): string | und
  * @param workspaces - Array of workspace objects
  * @returns Map of workspaceId -> icon URL (data URL or remote URL)
  */
-export function useWorkspaceIcons(workspaces: Workspace[]): Map<string, string> {
+export function useWorkspaceIcons(workspaces: WorkspaceInfo[]): Map<string, string> {
   const [iconMap, setIconMap] = useState<Map<string, string>>(() => {
     const map = new Map<string, string>()
     for (const ws of workspaces) {

@@ -58,6 +58,7 @@ Run config, credential, permission, onboarding, and renderer settings tests.
 Configuration schema changes can silently weaken defaults; browser and desktop authentication have different trust boundaries. SQLite state changes must continue to preserve capability fencing, optimistic concurrency, idempotent operations, and atomic writes across concurrently running supported Mortise versions.
 
 ## Semantic history
+- 2026-07-28: Removed full Workspace topology and automatic V1 migration from global config; global settings retain only the active Workspace selection while the topology registry exclusively owns Workspace discovery, creation, and removal.
 - 2026-07-27: Unified user-authored and Extension-provided subagent templates under one core execution contract while retaining source identity and read-only Extension ownership in Agent settings.
 - 2026-07-24: Locked global thinking defaults and settings validation to the six current levels; retired `think` and `max` inputs are rejected without migration or persistence.
 - 2026-07-23: Made `.mortise` the sole Mortise project resource root for settings, skills, and extensions; removed shared `PI_PROJECT_*` path aliases and rejected project `.pi/skills` as a config path.

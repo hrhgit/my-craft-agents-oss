@@ -1,7 +1,7 @@
 import { describe, expect, it, mock } from 'bun:test'
 import { buildWorkspaceClientApi, evictWorkspaceApiCache, resolveWorkspaceApiMethod } from '../workspace-api'
 
-const route = { serverId: 'remote.example', workspaceId: 'workspace-a' }
+const route = { workspaceId: 'workspace-a', locationId: 'remote' }
 
 describe('workspace client API', () => {
   it('routes invoke methods through the trusted workspace route', async () => {
@@ -61,18 +61,18 @@ describe('workspace client API', () => {
     expect(invoke).not.toHaveBeenCalled()
   })
 
-  it('evicts only historical server routes for the refreshed workspace', () => {
+  it('evicts only historical location routes for the refreshed Workspace', () => {
     const cache = new Map([
-      ['wss%3A%2F%2Fold.example::workspace-a', 'old-a'],
-      ['wss%3A%2F%2Fnew.example::workspace-a', 'new-a'],
-      ['wss%3A%2F%2Fold.example::workspace-b', 'old-b'],
+      ['workspace-a::old', 'old-a'],
+      ['workspace-a::new', 'new-a'],
+      ['workspace-b::old', 'old-b'],
     ])
 
-    evictWorkspaceApiCache(cache, 'workspace-a', 'wss://new.example')
+    evictWorkspaceApiCache(cache, 'workspace-a', 'new')
 
     expect([...cache.entries()]).toEqual([
-      ['wss%3A%2F%2Fnew.example::workspace-a', 'new-a'],
-      ['wss%3A%2F%2Fold.example::workspace-b', 'old-b'],
+      ['workspace-a::new', 'new-a'],
+      ['workspace-b::old', 'old-b'],
     ])
   })
 })

@@ -2,6 +2,7 @@ import { resolve } from 'path'
 import { join } from 'path'
 import { homedir } from 'os'
 import { execSync } from 'child_process'
+import { getPrimaryWorkspaceLocation } from '@mortise/core/types'
 import { CodedError, RPC_CHANNELS } from '@mortise/shared/protocol'
 import { getWorkspaceByNameOrId, getGitBashPath, setGitBashPath, clearGitBashPath } from '@mortise/shared/config'
 import { classifyExternalUrl, formatBlockedUrlError } from '@mortise/shared/utils/url-safety'
@@ -136,7 +137,7 @@ function parseInternalMortiseDeepLink(parsed: URL): ParsedInternalDeepLink | nul
 /** Guard: reject filesystem-path actions on remote workspaces where local paths are meaningless. */
 function assertLocalWorkspace(ctx: { workspaceId: string | null }, action: string): void {
   const ws = getWorkspaceByNameOrId(ctx.workspaceId ?? '')
-  if (ws?.remoteServer) {
+  if (ws && getPrimaryWorkspaceLocation(ws).endpoint.kind === 'remote') {
     throw new Error(`${action} is not available for remote workspaces`)
   }
 }

@@ -19,6 +19,7 @@ function makeHeader(overrides: Partial<SessionHeader> = {}): SessionHeader {
       contextTokens: 0,
     },
     ...overrides,
+    workspaceId: overrides.workspaceId ?? 'ws',
   }
 }
 

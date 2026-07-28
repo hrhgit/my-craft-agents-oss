@@ -94,7 +94,7 @@ function redactBrowserUrl(value: string): string {
 
 import { join, delimiter } from 'path'
 import { existsSync, readFileSync } from 'fs'
-import { RPC_CHANNELS } from '@mortise/shared/protocol'
+import { RPC_CHANNELS, parseWorkspaceTransferRequestV1 } from '@mortise/shared/protocol'
 import { clearRuntimeLayoutProcessEnvironment } from '@mortise/session-tools-core/runtime'
 import { SessionManager, setSessionPlatform, setSessionRuntimeHooks, type SessionBackendFactory } from '@mortise/server-core/sessions'
 import { createAutomationWorkspaceCapabilityProvider, createBrowserCommandProvider, createBrowserControlProvider, createBrowserOperationsProvider, createBrowserProvider, createFilePreviewProvider, createFilesProvider, createMessagingSessionCapabilityProvider, createSessionShareCapabilityProvider, createSessionTransferCapabilityProvider, createSystemNotificationProvider, getWorkspaceAllowedDirs, validateFilePath } from '@mortise/server-core'
@@ -117,6 +117,11 @@ import {
 import { createMessagingBootstrap, type MessagingBootstrapHandle } from '@mortise/messaging-gateway'
 import { getCredentialManager } from '@mortise/shared/credentials'
 import { initModelRefreshService, getModelRefreshService, setFetcherPlatform } from '@mortise/server-core/model-fetchers'
+import {
+  deleteWorkspaceRemoteCredential,
+  resolveWorkspaceLocationRuntime,
+  setWorkspaceRemoteCredential,
+} from './workspace-remote-credentials'
 import { setSearchPlatform, setImageProcessor } from '@mortise/server-core/services'
 import { createApplicationMenu } from './menu'
 import { WindowManager } from './window-manager'
@@ -144,6 +149,7 @@ import { setAutoUpdateEventSink, isUpdating, setBeforeUpdateQuitHook } from './a
 import type { EventSink } from '@mortise/server-core/transport'
 import { validateGitBashPath, checkVCRedistInstalled } from '@mortise/server-core/services'
 import { PRELOAD_LOCAL_CHANNELS } from '../shared/ipc-channels'
+import { WorkspaceTransferHostCoordinator } from '../transport/workspace-transfer-single-flight'
 import { spawnWorkspaceServer, type SpawnedWorkspaceServer } from './workspace-server-spawner'
 import { resolveElectronResourcePaths } from './electron-resource-paths'
 const isPackagedDeveloperHost = __MORTISE_DEV_HOST_BUILD__ && app.isPackaged
@@ -171,6 +177,8 @@ initializeRendererLoggingBridge()
 const electronRuntime = resolveElectronRuntimeContext(app)
 if (!electronRuntime.immutableRuntime) clearRuntimeLayoutProcessEnvironment(process.env)
 const immutableSourceRuntime = !!electronRuntime.immutableRuntime
+const workspaceTransferCoordinator = new WorkspaceTransferHostCoordinator()
+const workspaceTransferOwnerWatches = new WeakSet<Electron.WebContents>()
 const electronResourcePaths = resolveElectronResourcePaths({
   isPackaged: app.isPackaged,
   appPath: electronRuntime.appRootPath,
@@ -397,10 +405,22 @@ async function createInitialWindows(): Promise<void> {
   if (workspaces.length === 0) {
     // Ensure config file exists (addWorkspace requires it)
     if (!loadStoredConfig()) {
-      saveConfig({ workspaces: [], activeWorkspaceId: null, activeSessionId: null })
+      saveConfig({ activeWorkspaceId: null, activeSessionId: null })
     }
     const defaultPath = join(getDefaultWorkspacesDir(), 'my-workspace')
-    addWorkspace({ rootPath: defaultPath, name: 'My Workspace' })
+    addWorkspace({
+      schemaVersion: 2,
+      revision: 0,
+      name: 'My Workspace',
+      nameSource: 'custom',
+      primaryLocationId: 'primary',
+      locations: [{
+        id: 'primary',
+        name: 'My Workspace',
+        rootName: 'my-workspace',
+        endpoint: { kind: 'local', rootPath: defaultPath },
+      }],
+    })
     workspaces = getWorkspaces() // Refresh after creation
     mainLog.info('Created default workspace on first run')
   }
@@ -523,11 +543,6 @@ app.whenReady().then(async () => {
     )
     layoutCoordinator = new LayoutCoordinator({
       authorizeContentRef: ref => ref.workspaceId === '' || !!getWorkspaceByNameOrId(ref.workspaceId),
-      resolveServerId: workspaceId => {
-        if (!workspaceId) return 'local'
-        const workspace = getWorkspaceByNameOrId(workspaceId)
-        return workspace ? workspace.remoteServer?.url ?? 'local' : undefined
-      },
     })
     windowManager.setAuxiliaryClosedHandler((windowId, workspaceId) => {
       layoutCoordinator?.redockWindow(windowId, workspaceId)
@@ -1072,14 +1087,14 @@ app.whenReady().then(async () => {
         initializeSessionManager: (sm) => sm.initialize(),
         initializeRuntime: async ({ server }) => {
           for (const workspace of getWorkspaces()) {
-            if (!workspace.remoteServer) automationIngressTokens.ensure(workspace.id)
+            automationIngressTokens.ensure(workspace.id)
           }
           if (!messagingHandle) {
             throw new Error('Messaging handle was not constructed in createHandlerDeps')
           }
           messagingHandle.setPublisher(server.push.bind(server))
           await messagingHandle.initializeWorkspaces(
-            getWorkspaces().filter(workspace => !workspace.remoteServer).map(workspace => workspace.id),
+            getWorkspaces().map(workspace => workspace.id),
           )
           if (messagingHandle.registry.size > 0) {
             mainLog.info(`[messaging] Fan-out sink active for ${messagingHandle.registry.size} workspace(s)`)
@@ -1136,135 +1151,40 @@ app.whenReady().then(async () => {
         return remove(workspaceId)
       })
 
-      // Cross-server RPC — invoke a channel on an arbitrary remote server
-      ipcMain.handle(PRELOAD_LOCAL_CHANNELS.SERVER_INVOKE_ON_SERVER, async (
-        _event,
-        url: string,
-        token: string,
-        channel: string,
-        connection: { allowInsecureTls?: boolean },
-        ...args: unknown[]
-      ) => {
-        const { connectToRemote } = await import('./handlers/workspace')
-        const { client, error } = await connectToRemote(url, token, connection)
-        if (!client) throw new Error(error ?? 'Connection failed')
-        try {
-          return await client.invoke(channel, ...args)
-        } finally {
-          client.destroy()
-        }
+      ipcMain.handle(PRELOAD_LOCAL_CHANNELS.WORKSPACE_SET_REMOTE_CREDENTIAL, async (_event, input) => {
+        if (!input || !getWorkspaceByNameOrId(input.workspaceId)) throw new Error('Workspace not found')
+        await setWorkspaceRemoteCredential(getCredentialManager(), input)
       })
 
-      // Transfer session to another workspace — orchestrated in main process
-      // so large bundles can be moved directly between owning servers.
-      ipcMain.handle(PRELOAD_LOCAL_CHANNELS.SESSION_TRANSFER_TO_REMOTE_WORKSPACE, async (_event, sessionId: string, targetWorkspaceId: string, sessionIndex?: number, sessionCount?: number) => {
-        const idx = sessionIndex ?? 0
-        const count = sessionCount ?? 1
-        const { getWorkspaceByNameOrId } = await import('@mortise/shared/config')
-        const { connectToRemote } = await import('./handlers/workspace')
-        const { CHUNKED_TRANSFER_THRESHOLD, getChunkCount, invokeChunked, prepareChunkedPayload } = await import('./chunked-rpc')
-
-        const targetWorkspace = getWorkspaceByNameOrId(targetWorkspaceId)
-        if (!targetWorkspace?.remoteServer) throw new Error(`Workspace ${targetWorkspaceId} has no remote server`)
-        if (!sessionManager) throw new Error('Session manager not initialized')
-
-        const sourceWorkspaceLocalId = windowManager?.getWorkspaceForWindow(_event.sender.id)
-        if (!sourceWorkspaceLocalId) throw new Error('Unable to resolve source workspace for transfer')
-
-        const sourceWorkspace = getWorkspaceByNameOrId(sourceWorkspaceLocalId)
-        if (!sourceWorkspace) throw new Error(`Source workspace ${sourceWorkspaceLocalId} not found`)
-
-        let bundle: any = null
-
-        if (sourceWorkspace.remoteServer) {
-          const sourceRemote = sourceWorkspace.remoteServer
-          const { url: sourceUrl, token: sourceToken, remoteWorkspaceId: sourceRemoteWorkspaceId } = sourceRemote
-          console.log(`[Transfer] Exporting remote-owned session ${sessionId} from workspace ${sourceRemoteWorkspaceId}...`)
-          const { client: sourceClient, error: sourceError } = await connectToRemote(sourceUrl, sourceToken, {
-            workspaceId: sourceRemoteWorkspaceId,
-            allowInsecureTls: sourceRemote.allowInsecureTls,
-          })
-          if (!sourceClient) throw new Error(sourceError ?? 'Connection failed to source remote server')
-
-          try {
-            bundle = await sourceClient.invoke('sessions:export', sessionId)
-            if (!bundle) throw new Error(`Failed to export session ${sessionId}`)
-
-            try {
-              console.log('[Transfer] Generating conversation summary on source server...')
-              const transferPayload = await sourceClient.invoke('sessions:exportRemoteTransfer', sessionId)
-              if (transferPayload?.summary && bundle.session?.header) {
-                ;(bundle.session.header as any).transferredSessionSummary = transferPayload.summary
-                ;(bundle.session.header as any).transferredSessionSummaryApplied = false
-                console.log(`[Transfer] Summary generated: ${transferPayload.summary.length} chars`)
-              }
-            } catch (err) {
-              console.warn('[Transfer] Source-server summary generation failed:', err)
-            }
-          } finally {
-            sourceClient.destroy()
-          }
-        } else {
-          console.log(`[Transfer] Exporting local-owned session ${sessionId} from workspace ${sourceWorkspace.id}...`)
-          bundle = await sessionManager.exportSession(sessionId, sourceWorkspace.id)
-          if (!bundle) throw new Error(`Failed to export session ${sessionId}`)
-
-          try {
-            console.log('[Transfer] Generating conversation summary...')
-            const transferPayload = await sessionManager.shareTransferService.exportSummary(sessionId, sourceWorkspace.id)
-            if (transferPayload?.summary && bundle.session?.header) {
-              ;(bundle.session.header as any).transferredSessionSummary = transferPayload.summary
-              ;(bundle.session.header as any).transferredSessionSummaryApplied = false
-              console.log(`[Transfer] Summary generated: ${transferPayload.summary.length} chars`)
-            }
-          } catch (err) {
-            console.warn('[Transfer] Summary generation failed:', err)
-          }
-        }
-
-        console.log(`[Transfer] Export complete: ${bundle.session?.messages?.length ?? 0} messages, ${bundle.files?.length ?? 0} files`)
-
-        const targetRemote = targetWorkspace.remoteServer
-        const { url, token, remoteWorkspaceId } = targetRemote
-        console.log(`[Transfer] Connecting to target remote server: ${url}`)
-        const { client, error } = await connectToRemote(url, token, {
-          workspaceId: remoteWorkspaceId,
-          allowInsecureTls: targetRemote.allowInsecureTls,
-        })
-        if (!client) throw new Error(error ?? 'Connection failed to target remote server')
-        console.log('[Transfer] Connected to target remote server')
-
-        try {
-          const preparedBundle = await prepareChunkedPayload(bundle)
-          const payloadSize = preparedBundle.bytes.length
-          const payloadMB = (payloadSize / (1024 * 1024)).toFixed(1)
-
-          const emitProgress = (chunkSent: number, chunkTotal: number) => {
-            try { _event.sender.send('transfer:progress', { sessionIndex: idx, sessionCount: count, chunkSent, chunkTotal }) } catch { /* renderer may be gone */ }
-          }
-
-          if (payloadSize < CHUNKED_TRANSFER_THRESHOLD) {
-            console.log(`[Transfer] Bundle size: ${payloadMB}MB (< 5MB threshold) → using direct RPC`)
-            emitProgress(0, 1)
-            const result = await client.invoke('sessions:import', remoteWorkspaceId, bundle, 'fork')
-            emitProgress(1, 1)
-            return result
-          }
-
-          const chunkCount = getChunkCount(payloadSize)
-          console.log(`[Transfer] Bundle size: ${payloadMB}MB (>= 5MB threshold) → using chunked transfer (${chunkCount} chunks)`)
-          return await invokeChunked(
-            client,
-            'sessions:import',
-            [remoteWorkspaceId, bundle, 'fork'],
-            1,
-            emitProgress,
-            preparedBundle,
-          )
-        } finally {
-          client.destroy()
-        }
+      ipcMain.handle(PRELOAD_LOCAL_CHANNELS.WORKSPACE_DELETE_REMOTE_CREDENTIAL, async (_event, input) => {
+        if (!input || !getWorkspaceByNameOrId(input.workspaceId)) throw new Error('Workspace not found')
+        await deleteWorkspaceRemoteCredential(getCredentialManager(), input)
       })
+
+      ipcMain.handle(PRELOAD_LOCAL_CHANNELS.WORKSPACE_TRANSFER_LEASE_ACQUIRE, async (event, requestValue) => {
+        const request = parseWorkspaceTransferRequestV1(requestValue)
+        if (!workspaceTransferOwnerWatches.has(event.sender)) {
+          workspaceTransferOwnerWatches.add(event.sender)
+          const ownerId = event.sender.id
+          event.sender.once('destroyed', () => workspaceTransferCoordinator.releaseOwner(ownerId))
+        }
+        return workspaceTransferCoordinator.acquire(request, event.sender.id)
+      })
+
+      ipcMain.handle(PRELOAD_LOCAL_CHANNELS.WORKSPACE_TRANSFER_LEASE_RELEASE, (_event, requestValue, token: unknown) => {
+        const request = parseWorkspaceTransferRequestV1(requestValue)
+        if (typeof token !== 'string' || !token) throw new Error('Workspace transfer lease token is invalid')
+        workspaceTransferCoordinator.release(request, token)
+      })
+
+      ipcMain.handle(
+        PRELOAD_LOCAL_CHANNELS.WORKSPACE_RESOLVE_LOCATION_RUNTIME,
+        async (_event, workspaceId: string, locationId: string) => {
+          const workspace = getWorkspaceByNameOrId(workspaceId)
+          if (!workspace) throw new Error('Workspace not found')
+          return resolveWorkspaceLocationRuntime(getCredentialManager(), workspace, locationId)
+        },
+      )
 
       // App relaunch (for server config changes — NOT an update install)
       ipcMain.handle(PRELOAD_LOCAL_CHANNELS.APP_RELAUNCH, () => {
@@ -1304,13 +1224,6 @@ app.whenReady().then(async () => {
       ipcMain.on('__get-ws-token', (e) => {
         e.returnValue = instance.token
       })
-      ipcMain.on('__get-workspace-remote-config', (e) => {
-        const wsId = windowManager?.getWorkspaceForWindow(e.sender.id)
-        if (!wsId) { e.returnValue = null; return }
-        const ws = getWorkspaceByNameOrId(wsId)
-        e.returnValue = ws?.remoteServer ?? null
-      })
-
       // Server config RPC handlers (LOCAL_ONLY — Electron-specific)
       const runningServerState = {
         host: rpcHost,

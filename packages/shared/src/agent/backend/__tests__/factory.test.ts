@@ -24,10 +24,14 @@ import { PiAgent } from '../../pi-agent.ts';
 // Test helpers
 function createTestWorkspace(): Workspace {
   return {
+    schemaVersion: 2,
     id: 'test-workspace',
+    revision: 0,
+    primaryLocationId: 'primary',
+    locations: [{ id: 'primary', name: 'Primary', rootName: 'workspace', endpoint: { kind: 'local', rootPath: '/test/workspace' } }],
     name: 'Test Workspace',
+    nameSource: 'custom',
     slug: 'workspace',
-    rootPath: '/test/workspace',
     createdAt: Date.now(),
   };
 }
@@ -35,6 +39,7 @@ function createTestWorkspace(): Workspace {
 function createTestSession(): Session {
   return {
     mortiseId: 'test-session',
+    workspaceId: 'test-workspace',
     name: 'Test Session',
     workspaceRootPath: '/test/workspace',
     createdAt: Date.now(),

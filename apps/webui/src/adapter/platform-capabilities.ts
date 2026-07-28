@@ -19,7 +19,6 @@ const WEBUI_CAPABILITY_DEFINITIONS = {
   gitBashConfiguration: { status: 'unavailable', reason: 'Git Bash configuration belongs to the desktop host.' },
   localSkillManagement: { status: 'unavailable', reason: 'Local skill discovery and shell actions require the desktop host.' },
   powerSaveBlocker: { status: 'unavailable', reason: 'A web page cannot control system sleep policy.' },
-  crossServerRpc: { status: 'unavailable', reason: 'Cross-server credentials are never delegated to the browser adapter.' },
 } satisfies Record<string, PlatformCapabilityDescriptorV1>
 
 export const WEBUI_PLATFORM_CAPABILITIES = createPlatformCapabilitySnapshotV1(
@@ -63,7 +62,6 @@ export const WEBUI_UNSUPPORTED_OPERATION_CAPABILITIES = Object.freeze({
   setKeepAwakeWhileRunning: 'powerSaveBlocker',
   getKeepAwakeWhileRunning: 'powerSaveBlocker',
   removeWorkspace: 'nativeWindowLifecycle',
-  invokeOnServer: 'crossServerRpc',
 } satisfies Partial<Record<keyof ElectronAPI, WebPlatformCapabilityName>>)
 
 export class WebCapabilityUnavailableError extends Error {

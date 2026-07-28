@@ -5,6 +5,7 @@ import { tmpdir } from 'os'
 import { dirname, join } from 'path'
 import { SessionManager as PiSessionManager } from '@mortise/pi-coding-agent/host-facade'
 import type { AgentBackend } from '@mortise/shared/agent/backend'
+import type { Workspace } from '@mortise/core/types'
 import { getSessionAttachmentsPath, getSessionFilePath, getSessionPath, readSessionJsonl, setSharedPiSessionsDirForTests } from '@mortise/shared/sessions'
 import {
   SessionManager,
@@ -29,22 +30,20 @@ import {
 describe('sendMessage durability', () => {
   let tmpRoot: string
   let sm: SessionManager
-  let testWorkspace: {
-    id: string
-    name: string
-    slug: string
-    rootPath: string
-    createdAt: number
-  }
+  let testWorkspace: Workspace
 
   beforeEach(() => {
     tmpRoot = mkdtempSync(join(tmpdir(), 'sm-durability-'))
     setSharedPiSessionsDirForTests(join(tmpRoot, 'pi-sessions'))
     testWorkspace = {
+      schemaVersion: 2,
       id: 'ws_test',
+      revision: 0,
       name: 'Test Workspace',
+      nameSource: 'custom',
       slug: 'test-workspace',
-      rootPath: tmpRoot,
+      primaryLocationId: 'primary',
+      locations: [{ id: 'primary', name: 'Primary', rootName: 'test-workspace', endpoint: { kind: 'local', rootPath: tmpRoot } }],
       createdAt: Date.now(),
     }
     sm = new SessionManager({
@@ -76,7 +75,7 @@ describe('sendMessage durability', () => {
   async function publishExistingSession(id: string): Promise<void> {
     const piSession = PiSessionManager.create(
       tmpRoot,
-      dirname(getSessionFilePath(tmpRoot, id, Date.now())),
+      dirname(getSessionFilePath(testWorkspace.id, id, Date.now())),
       { id },
     )
     piSession.appendMessage({ role: 'user', content: 'seed', timestamp: Date.now() })
@@ -101,7 +100,7 @@ describe('sendMessage durability', () => {
   }
 
   function readPersistedMessageIds(sessionId: string): string[] {
-    const path = getSessionFilePath(tmpRoot, sessionId)
+    const path = getSessionFilePath(testWorkspace.id, sessionId)
     const ids = new Set<string>()
     if (existsSync(path)) {
       for (const message of readSessionJsonl(path)?.messages ?? []) {
@@ -111,7 +110,7 @@ describe('sendMessage durability', () => {
 
     // In Pi tree mode, Mortise persists pre-Pi user message IDs in the sidecar
     // overlay while Pi owns the canonical transcript body.
-    const overlayPath = join(getSessionPath(tmpRoot, sessionId), 'overlay.json')
+    const overlayPath = join(getSessionPath(testWorkspace.id, sessionId), 'overlay.json')
     if (existsSync(overlayPath)) {
       const overlay = JSON.parse(readFileSync(overlayPath, 'utf-8')) as { messages?: Array<{ id?: unknown }> }
       for (const message of overlay.messages ?? []) {
@@ -123,7 +122,7 @@ describe('sendMessage durability', () => {
   }
 
   function readPersistedQueuedMessageIds(sessionId: string): string[] {
-    const path = join(getSessionPath(tmpRoot, sessionId), 'pi-projection-v1.json')
+    const path = join(getSessionPath(testWorkspace.id, sessionId), 'pi-projection-v1.json')
     if (!existsSync(path)) return []
     const snapshot = JSON.parse(readFileSync(path, 'utf8')) as {
       entities?: Array<{ kind?: unknown; payload?: { messageId?: unknown; queueStatus?: unknown } }>
@@ -189,7 +188,7 @@ describe('sendMessage durability', () => {
   }
 
   function installFirstAssistantAgent(managed: ReturnType<typeof createManagedSession>, sessionId: string): string {
-    const sessionFile = getSessionFilePath(tmpRoot, sessionId, Date.now())
+    const sessionFile = getSessionFilePath(testWorkspace.id, sessionId, Date.now())
     const fakeAgent = {
       getModel: () => 'pi-test-model',
       setAllSources: mock(() => undefined),
@@ -278,7 +277,7 @@ describe('sendMessage durability', () => {
 
     expect(acked).toBe(false)
     expect((sm as unknown as { sessions: Map<string, unknown> }).sessions.has(sessionId)).toBe(false)
-    expect(existsSync(getSessionFilePath(tmpRoot, sessionId))).toBe(false)
+    expect(existsSync(getSessionFilePath(testWorkspace.id, sessionId))).toBe(false)
     // Provider/title resolution can happen during startup, but a failed first
     // turn has never become a Session and must not leak any session-scoped
     // renderer event. Global unread summaries may still be recomputed.
@@ -295,7 +294,7 @@ describe('sendMessage durability', () => {
     sm.setEventSink((_channel, _target, event) => events.push(event))
     expect(sm.getSessions('ws_test')).toEqual([])
 
-    const sessionFile = getSessionFilePath(tmpRoot, sessionId, Date.now())
+    const sessionFile = getSessionFilePath(testWorkspace.id, sessionId, Date.now())
     const fakeAgent = {
       getModel: () => 'pi-test-model',
       setAllSources: mock(() => undefined),
@@ -373,8 +372,8 @@ describe('sendMessage durability', () => {
     expect(factoryProvisional).toBe(true)
     expect(provisionalId).not.toBe('')
     expect(sm.getSessions(testWorkspace.id)).toEqual([])
-    expect(existsSync(getSessionFilePath(tmpRoot, provisionalId))).toBe(false)
-    expect(existsSync(getSessionPath(tmpRoot, provisionalId))).toBe(false)
+    expect(existsSync(getSessionFilePath(testWorkspace.id, provisionalId))).toBe(false)
+    expect(existsSync(getSessionPath(testWorkspace.id, provisionalId))).toBe(false)
   })
 
   it('marks an ordinary Session backend construction as non-provisional', async () => {
@@ -410,8 +409,8 @@ describe('sendMessage durability', () => {
     const createSessionBackend = mock((args: Parameters<SessionBackendFactory>[0]) => {
       provisionalId = args.coreConfig.session!.mortiseId
       const piSession = PiSessionManager.create(
-        testWorkspace.rootPath,
-        dirname(getSessionFilePath(tmpRoot, provisionalId, Date.now())),
+        tmpRoot,
+        dirname(getSessionFilePath(testWorkspace.id, provisionalId, Date.now())),
         { id: provisionalId },
       )
       sessionFile = piSession.getSessionFile()!
@@ -474,7 +473,7 @@ describe('sendMessage durability', () => {
       sessionFile = installFirstAssistantAgent(managed, managed.id)
       // A file at the Session sidecar path makes ensureSessionDir fail with a
       // real EEXIST/ENOTDIR error while Pi's canonical JSONL remains writable.
-      const blockedSessionPath = getSessionPath(tmpRoot, managed.id)
+      const blockedSessionPath = getSessionPath(testWorkspace.id, managed.id)
       mkdirSync(dirname(blockedSessionPath), { recursive: true })
       writeFileSync(blockedSessionPath, 'blocked Session directory', 'utf8')
     })
@@ -494,7 +493,7 @@ describe('sendMessage durability', () => {
       (event as { sessionId?: unknown }).sessionId === provisionalId
     ))).toEqual([])
     expect(existsSync(sessionFile)).toBe(false)
-    expect(existsSync(getSessionPath(tmpRoot, provisionalId))).toBe(false)
+    expect(existsSync(getSessionPath(testWorkspace.id, provisionalId))).toBe(false)
   })
 
   it('abandons first-turn publication when the overlay atomic rename fails', async () => {
@@ -511,7 +510,7 @@ describe('sendMessage durability', () => {
     }, managed => {
       provisionalId = managed.id
       sessionFile = installFirstAssistantAgent(managed, managed.id)
-      mkdirSync(join(getSessionPath(tmpRoot, managed.id), 'overlay.json'), { recursive: true })
+      mkdirSync(join(getSessionPath(testWorkspace.id, managed.id), 'overlay.json'), { recursive: true })
     })
 
     await expect(result).rejects.toMatchObject({
@@ -532,7 +531,7 @@ describe('sendMessage durability', () => {
       (event as { sessionId?: unknown }).sessionId === provisionalId
     ))).toEqual([])
     expect(existsSync(sessionFile)).toBe(false)
-    expect(existsSync(getSessionPath(tmpRoot, provisionalId))).toBe(false)
+    expect(existsSync(getSessionPath(testWorkspace.id, provisionalId))).toBe(false)
   })
 
   it('abandons createAndSendFirstTurn after a real projection rename failure', async () => {
@@ -571,7 +570,7 @@ describe('sendMessage durability', () => {
       })
       // rename(temp, target) cannot replace a directory. This exercises the
       // actual projection writer and its retained retry snapshot.
-      mkdirSync(join(getSessionPath(tmpRoot, managed.id), 'pi-projection-v1.json'), { recursive: true })
+      mkdirSync(join(getSessionPath(testWorkspace.id, managed.id), 'pi-projection-v1.json'), { recursive: true })
     })
 
     await expect(result).rejects.toMatchObject({
@@ -594,14 +593,14 @@ describe('sendMessage durability', () => {
       (event as { sessionId?: unknown }).sessionId === provisionalId
     ))).toEqual([])
     expect(existsSync(sessionFile)).toBe(false)
-    expect(existsSync(getSessionPath(tmpRoot, provisionalId))).toBe(false)
+    expect(existsSync(getSessionPath(testWorkspace.id, provisionalId))).toBe(false)
   })
 
   it('abandons a provisional Session with a failed projection retry during shutdown', async () => {
     const sessionId = 'provisional-shutdown-projection-failure'
     const managed = buildSession(sessionId)
     managed.publicationState = 'provisional'
-    const sessionPath = getSessionPath(tmpRoot, sessionId)
+    const sessionPath = getSessionPath(testWorkspace.id, sessionId)
     mkdirSync(join(sessionPath, 'pi-projection-v1.json'), { recursive: true })
     const snapshot = {
       schemaVersion: 1,
@@ -644,7 +643,7 @@ describe('sendMessage durability', () => {
     expect((managed as { publicationState?: string }).publicationState).toBe('abandoning')
 
     const timestamp = new Date().toISOString()
-    const sessionFile = getSessionFilePath(tmpRoot, sessionId, Date.now())
+    const sessionFile = getSessionFilePath(testWorkspace.id, sessionId, Date.now())
     writeFileSync(sessionFile, [
       JSON.stringify({ type: 'session', version: 3, id: sessionId, timestamp, cwd: tmpRoot }),
       JSON.stringify({
@@ -688,8 +687,8 @@ describe('sendMessage durability', () => {
     const sessionId = 'attachment-publication-target'
     buildSession(sessionId)
     const stagingId = `draft-${randomUUID()}`
-    const stagingAttachments = getSessionAttachmentsPath(tmpRoot, stagingId)
-    const targetAttachments = getSessionAttachmentsPath(tmpRoot, sessionId)
+    const stagingAttachments = getSessionAttachmentsPath(testWorkspace.id, stagingId)
+    const targetAttachments = getSessionAttachmentsPath(testWorkspace.id, sessionId)
     const sourcePath = join(stagingAttachments, 'document.txt')
     const markdownPath = join(stagingAttachments, 'document.md')
     mkdirSync(stagingAttachments, { recursive: true })
@@ -713,7 +712,7 @@ describe('sendMessage durability', () => {
       [{ id: 'attachment-1', name: 'document.txt', mimeType: 'text/plain', size: 6, storedPath: sourcePath, markdownPath }],
     )
 
-    expect(existsSync(getSessionPath(tmpRoot, stagingId))).toBe(false)
+    expect(existsSync(getSessionPath(testWorkspace.id, stagingId))).toBe(false)
     expect(readFileSync(join(targetAttachments, 'document.txt'), 'utf8')).toBe('source')
     expect(adopted.attachments[0].storedPath).toBe(join(targetAttachments, 'document.txt'))
     expect(adopted.attachments[0].markdownPath).toBe(join(targetAttachments, 'document.md'))
@@ -725,7 +724,7 @@ describe('sendMessage durability', () => {
     const sessionId = 'attachment-path-rejection'
     buildSession(sessionId)
     const stagingId = `draft-${randomUUID()}`
-    const stagingAttachments = getSessionAttachmentsPath(tmpRoot, stagingId)
+    const stagingAttachments = getSessionAttachmentsPath(testWorkspace.id, stagingId)
     mkdirSync(stagingAttachments, { recursive: true })
     const outsidePath = join(tmpRoot, 'outside.txt')
     writeFileSync(outsidePath, 'outside')
@@ -1298,7 +1297,7 @@ describe('sendMessage durability', () => {
     const sessionId = 'durability-projection-restored-baseline'
     const managed = buildSession(sessionId)
     managed.isProcessing = true
-    const sessionPath = getSessionPath(tmpRoot, sessionId)
+    const sessionPath = getSessionPath(testWorkspace.id, sessionId)
     const projectionPath = join(sessionPath, 'pi-projection-v1.json')
     mkdirSync(projectionPath, { recursive: true })
 

@@ -54,7 +54,7 @@ export function SessionItem({
 }: SessionItemProps) {
   const ctx = useSessionListContext()
   const { workspaces, isCompactMode } = useAppShellContext()
-  const hasRemoteWorkspaces = workspaces?.some(w => w.remoteServer) ?? false
+  const hasOtherWorkspaces = (workspaces?.length ?? 0) > 1
   const { hotkey: nextHotkey } = useActionLabel('chat.nextSearchMatch')
   const { hotkey: prevHotkey } = useActionLabel('chat.prevSearchMatch')
   const title = getSessionTitle(item)
@@ -119,7 +119,7 @@ export function SessionItem({
           onMarkUnread={() => ctx.onMarkUnread(item.id)}
           onOpenInNewWindow={ctx.onOpenInNewWindow ? () => ctx.onOpenInNewWindow?.(item) : undefined}
           onSendToWorkspace={ctx.onSendToWorkspace ? () => ctx.onSendToWorkspace!([item.id]) : undefined}
-          hasRemoteWorkspaces={hasRemoteWorkspaces}
+          hasOtherWorkspaces={hasOtherWorkspaces}
           onDelete={() => ctx.onDelete(item.id)}
         />
       }
@@ -132,7 +132,7 @@ export function SessionItem({
           trigger={null}
           title={title}
           item={item}
-          hasRemoteWorkspaces={hasRemoteWorkspaces}
+          hasOtherWorkspaces={hasOtherWorkspaces}
           onRename={() => ctx.onRenameClick(item.id, title)}
           onMarkUnread={() => ctx.onMarkUnread(item.id)}
           onOpenInNewWindow={ctx.onOpenInNewWindow ? () => ctx.onOpenInNewWindow?.(item) : undefined}

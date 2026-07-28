@@ -40,6 +40,7 @@ export {
   getPiNativeSessionDir,
   getPiNativeSessionFilePath,
   ensureSharedPiTreeSessionFileAsync,
+  adoptLegacyWorkspaceSessionBucket,
   ensureAttachmentsDir,
   // ID generation
   generateSessionId,

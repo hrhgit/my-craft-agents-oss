@@ -14,7 +14,6 @@ owns:
   - packages/shared/src/protocol/__tests__/extension-ui-validation.test.ts
   - apps/electron/src/renderer/components/extensions/**
   - docs/architecture/pi-extension-gui.md
-  - docs/architecture/pi-extension-gui-style-placement.md
 related: [apps/electron/src/renderer/components/app-shell/**, pi/packages/coding-agent/examples/extensions/**]
 depends_on: [extension-runtime, shared-contracts]
 collaborates_with: [extension-runtime, ui-validation-developer-kit]

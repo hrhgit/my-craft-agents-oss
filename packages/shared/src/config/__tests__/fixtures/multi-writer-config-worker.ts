@@ -6,7 +6,6 @@ if (!configDir || !field || value === undefined) {
 }
 
 const config = loadStoredConfig() ?? {
-  workspaces: [],
   activeWorkspaceId: null,
   activeSessionId: null,
 }

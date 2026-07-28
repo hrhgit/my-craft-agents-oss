@@ -19,7 +19,7 @@ export function BatchSessionMenu({ onSendToWorkspace }: BatchSessionMenuProps = 
   const setSendToWorkspace = useSetAtom(sendToWorkspaceAtom)
   const { clearMultiSelect } = useSessionSelection()
   const { onDeleteSession, workspaces } = useAppShellContext()
-  const hasRemoteWorkspaces = workspaces.some(workspace => workspace.remoteServer)
+  const hasOtherWorkspaces = workspaces.length > 1
 
   const handleSendToWorkspace = useCallback(() => {
     if (onSendToWorkspace) onSendToWorkspace()
@@ -44,7 +44,7 @@ export function BatchSessionMenu({ onSendToWorkspace }: BatchSessionMenuProps = 
         {t('multiSelect.selected.session', { count: selectedIds.size })}
       </div>
       <Separator />
-      {hasRemoteWorkspaces && (
+      {hasOtherWorkspaces && (
         <MenuItem onClick={handleSendToWorkspace}>
           <Send className="h-3.5 w-3.5" />
           <span className="flex-1">{t('sessionMenu.sendToWorkspace')}</span>

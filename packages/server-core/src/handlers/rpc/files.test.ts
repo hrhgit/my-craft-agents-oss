@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'bun:test'
 import { lstat, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, truncate, unlink, writeFile } from 'fs/promises'
 import { homedir, tmpdir } from 'os'
-import { dirname, join } from 'path'
+import { basename, dirname, join } from 'path'
 import { pathToFileURL } from 'url'
 import { EventEmitter } from 'events'
 import { RPC_CHANNELS } from '@mortise/shared/protocol'
+import { WorkspaceTopologyStore } from '@mortise/shared/workspaces'
 import type { HandlerFn, RequestContext, RpcServer } from '@mortise/server-core/transport'
 import type { HandlerDeps } from '../handler-deps'
 import {
@@ -22,6 +23,7 @@ const FILES_MODULE = pathToFileURL(join(import.meta.dir, 'files.ts')).href
 function createTestHarness(options?: {
   withWindowManager?: boolean
   workspaceRoot?: string
+  attachedWorkspaceRoot?: string
   secondWorkspaceRoot?: string
 }) {
   const handlers = new Map<string, HandlerFn>()
@@ -50,17 +52,48 @@ function createTestHarness(options?: {
     sessionManager: {
       getWorkspaces: () => [
         ...(options?.workspaceRoot ? [{
+          schemaVersion: 2 as const,
           id: 'ws-1',
+          revision: 0,
           name: 'Workspace',
+          nameSource: 'custom' as const,
           slug: 'workspace',
-          rootPath: options.workspaceRoot,
+          primaryLocationId: 'primary',
+          locations: [
+            {
+              id: 'primary',
+              name: 'Primary',
+              rootName: basename(options.workspaceRoot),
+              endpoint: { kind: 'local' as const, rootPath: options.workspaceRoot },
+            },
+            ...(options.attachedWorkspaceRoot
+              ? [{
+                  id: 'attached',
+                  name: 'Attached',
+                  rootName: basename(options.attachedWorkspaceRoot),
+                  endpoint: { kind: 'local' as const, rootPath: options.attachedWorkspaceRoot },
+                }]
+              : []),
+          ] as [
+            { id: string; name: string; rootName: string; endpoint: { kind: 'local'; rootPath: string } },
+            ...Array<{ id: string; name: string; rootName: string; endpoint: { kind: 'local'; rootPath: string } }>,
+          ],
           createdAt: Date.now(),
         }] : []),
         ...(options?.secondWorkspaceRoot ? [{
+          schemaVersion: 2 as const,
           id: 'ws-2',
+          revision: 0,
           name: 'Second Workspace',
+          nameSource: 'custom' as const,
           slug: 'second-workspace',
-          rootPath: options.secondWorkspaceRoot,
+          primaryLocationId: 'primary',
+          locations: [{
+            id: 'primary',
+            name: 'Primary',
+            rootName: basename(options.secondWorkspaceRoot),
+            endpoint: { kind: 'local' as const, rootPath: options.secondWorkspaceRoot },
+          }] as [{ id: string; name: string; rootName: string; endpoint: { kind: 'local'; rootPath: string } }],
           createdAt: Date.now(),
         }] : []),
       ],
@@ -95,7 +128,11 @@ function createTestHarness(options?: {
     }
   }
 
-  registerFilesHandlers(server, deps)
+  const topologyStore = new WorkspaceTopologyStore({
+    databasePath: ':memory:',
+    writerId: `files-test-${crypto.randomUUID()}`,
+  })
+  registerFilesHandlers(server, deps, topologyStore)
 
   const readUserAttachment = handlers.get(RPC_CHANNELS.file.READ_USER_ATTACHMENT)
   if (!readUserAttachment) {
@@ -177,6 +214,7 @@ function createTestHarness(options?: {
     ctx,
     warnings,
     pushes,
+    topologyStore,
   }
 }
 
@@ -300,6 +338,83 @@ describe('registerFilesHandlers workspace file browser', () => {
       await expect(listWorkspaceDirectory(ctx, '../')).rejects.toThrow('cannot traverse')
     } finally {
       await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('isolates attached locations by stable location identity and rejects implicit cross-location moves', async () => {
+    const primaryRoot = await mkdtemp(join(tmpdir(), 'mortise-workspace-primary-'))
+    const attachedRoot = await mkdtemp(join(tmpdir(), 'mortise-workspace-attached-'))
+    const configDir = await mkdtemp(join(tmpdir(), 'mortise-workspace-location-drafts-'))
+    const previousConfigDir = process.env.MORTISE_CONFIG_DIR
+    process.env.MORTISE_CONFIG_DIR = configDir
+    try {
+      await writeFile(join(primaryRoot, 'same.txt'), 'primary')
+      await writeFile(join(attachedRoot, 'same.txt'), 'attached')
+      await writeFile(join(primaryRoot, 'primary-only.txt'), 'primary')
+      await writeFile(join(attachedRoot, 'attached-only.txt'), 'attached')
+      const harness = createTestHarness({ workspaceRoot: primaryRoot, attachedWorkspaceRoot: attachedRoot })
+      const attachedRef = {
+        schemaVersion: 1 as const,
+        workspaceId: 'ws-1',
+        locationId: 'attached',
+        relativePath: '',
+      }
+
+      const primaryListing = await harness.listWorkspaceDirectory(harness.ctx, '') as {
+        entries: Array<{ name: string }>
+      }
+      const attachedListing = await harness.listWorkspaceDirectory(harness.ctx, attachedRef) as {
+        entries: Array<{ name: string }>
+      }
+      expect(primaryListing.entries.map(entry => entry.name)).toContain('primary-only.txt')
+      expect(primaryListing.entries.map(entry => entry.name)).not.toContain('attached-only.txt')
+      expect(attachedListing.entries.map(entry => entry.name)).toContain('attached-only.txt')
+      expect(attachedListing.entries.map(entry => entry.name)).not.toContain('primary-only.txt')
+
+      const primaryFile = { ...attachedRef, locationId: 'primary', relativePath: 'same.txt' }
+      const attachedFile = { ...attachedRef, relativePath: 'same.txt' }
+      await harness.setWorkspaceFileDraft(harness.ctx, primaryFile, 'primary draft', 'primary')
+      await harness.setWorkspaceFileDraft(harness.ctx, attachedFile, 'attached draft', 'attached')
+      await expect(harness.readWorkspaceFileDraft(harness.ctx, primaryFile)).resolves.toMatchObject({ content: 'primary draft' })
+      await expect(harness.readWorkspaceFileDraft(harness.ctx, attachedFile)).resolves.toMatchObject({ content: 'attached draft' })
+
+      await expect(harness.renameWorkspaceEntry(
+        harness.ctx,
+        primaryFile,
+        { ...attachedRef, relativePath: 'moved.txt' },
+      )).rejects.toThrow('explicit Workspace transfer')
+      expect(await readFile(join(primaryRoot, 'same.txt'), 'utf-8')).toBe('primary')
+      expect(await readFile(join(attachedRoot, 'same.txt'), 'utf-8')).toBe('attached')
+
+      await expect(harness.listWorkspaceDirectory(harness.ctx, {
+        ...attachedRef,
+        workspaceId: 'ws-2',
+      })).rejects.toThrow('Workspace mismatch')
+
+      harness.topologyStore.apply({
+        schemaVersion: 1,
+        workspaceId: 'ws-1',
+        operationId: 'replace-attached-with-remote',
+        expectedRevision: 0,
+        operation: 'replace-endpoint',
+        locationId: 'attached',
+        rootName: 'remote-attached',
+        endpoint: {
+          kind: 'remote',
+          url: 'wss://agent.example.test',
+          remoteWorkspaceId: 'remote-attached',
+          credentialRef: 'credential-attached',
+        },
+      })
+      await expect(harness.listWorkspaceDirectory(harness.ctx, attachedRef)).rejects.toThrow(
+        'remote and cannot be handled by the local file service',
+      )
+    } finally {
+      if (previousConfigDir === undefined) delete process.env.MORTISE_CONFIG_DIR
+      else process.env.MORTISE_CONFIG_DIR = previousConfigDir
+      await rm(primaryRoot, { recursive: true, force: true })
+      await rm(attachedRoot, { recursive: true, force: true })
+      await rm(configDir, { recursive: true, force: true })
     }
   })
 
@@ -997,8 +1112,13 @@ describe('registerFilesHandlers STORE_ATTACHMENT', () => {
         createWorkspaceAtPath(process.env.TEST_WORKSPACE_ROOT, 'Workspace')
         saveConfig({
           workspaces: [{
-            id: 'ws-1', name: 'Workspace', slug: 'workspace',
-            rootPath: process.env.TEST_WORKSPACE_ROOT, createdAt: Date.now(),
+            schemaVersion: 2, id: 'ws-1', revision: 0,
+            name: 'Workspace', nameSource: 'custom', slug: 'workspace', primaryLocationId: 'primary',
+            locations: [{
+              id: 'primary', name: 'Primary', rootName: 'workspace',
+              endpoint: { kind: 'local', rootPath: process.env.TEST_WORKSPACE_ROOT },
+            }],
+            createdAt: Date.now(),
           }],
           activeWorkspaceId: 'ws-1',
           activeSessionId: null,

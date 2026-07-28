@@ -34,6 +34,7 @@ import type { ModelFetchResult } from '../../config/model-fetcher.ts';
 // Model resolution utilities
 import { getModelProvider, DEFAULT_MODEL, normalizeDeprecatedModelId } from '../../config/models.ts';
 import { homedir } from 'node:os';
+import { basename } from 'node:path';
 import { getCredentialManager } from '../../credentials/index.ts';
 import type {
   BackendModelFetchCredentials,
@@ -507,8 +508,18 @@ export async function testBackendConnection(args: {
     const agent = createBackendFromResolvedContext({
       context,
       coreConfig: {
-        workspace: { id: '__test', name: 'Connection Test', slug: '__test', rootPath: cwd, createdAt: 0 },
-        session: { mortiseId: `test-${now}`, workspaceRootPath: cwd, createdAt: 0, lastUsedAt: 0 },
+        workspace: {
+          schemaVersion: 2,
+          id: '__test',
+          revision: 0,
+          primaryLocationId: 'primary',
+          locations: [{ id: 'primary', name: 'Primary', rootName: basename(cwd), endpoint: { kind: 'local', rootPath: cwd } }],
+          name: 'Connection Test',
+          nameSource: 'custom',
+          slug: '__test',
+          createdAt: 0,
+        },
+        session: { mortiseId: `test-${now}`, workspaceId: '__test', workspaceRootPath: cwd, createdAt: 0, lastUsedAt: 0 },
         isHeadless: true,
         miniModel: testModel,
         envOverrides: undefined,

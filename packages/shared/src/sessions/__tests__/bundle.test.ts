@@ -19,6 +19,7 @@ function makeTmpDir(): string {
 function makeStoredSession(overrides: Partial<StoredSession> = {}): StoredSession {
   return {
     mortiseId: '260101-test-session',
+    workspaceId: overrides.workspaceId ?? 'ws',
     workspaceRootPath: '/tmp/ws',
     createdAt: 1000,
     lastUsedAt: 2000,
@@ -57,11 +58,11 @@ async function setupSessionDir(workspaceRoot: string, session: StoredSession): P
   session.workspaceRootPath = workspaceRoot
   // Delegate both canonical header and message persistence to Pi's
   // SessionManager so fixtures exercise the production durability path.
-  await ensureSharedPiTreeSessionFileAsync(session)
+  await ensureSharedPiTreeSessionFileAsync(session, { workspaceId: session.workspaceId })
 
   // Create the sidecar directory (.mortise/{sessionId}/) for attachment/plan/data
   // files. The canonical materializer does not create this directory.
-  const sidecarDir = getSessionPath(workspaceRoot, session.mortiseId)
+  const sidecarDir = getSessionPath(session.workspaceId, session.mortiseId)
   mkdirSync(sidecarDir, { recursive: true })
   return sidecarDir
 }
@@ -90,7 +91,7 @@ describe('serializeSession', () => {
     const session = makeStoredSession()
     await setupSessionDir(tmpDir, session)
 
-    const bundle = serializeSession(tmpDir, session.mortiseId)
+    const bundle = serializeSession(session.workspaceId, session.mortiseId)
 
     expect(bundle).not.toBeNull()
     expect(bundle!.version).toBe(1)
@@ -110,7 +111,7 @@ describe('serializeSession', () => {
     mkdirSync(attachDir, { recursive: true })
     writeFileSync(join(attachDir, 'screenshot.png'), Buffer.from('fake-png-data'))
 
-    const bundle = serializeSession(tmpDir, session.mortiseId)
+    const bundle = serializeSession(session.workspaceId, session.mortiseId)
 
     expect(bundle).not.toBeNull()
     expect(bundle!.files).toHaveLength(1)
@@ -132,7 +133,7 @@ describe('serializeSession', () => {
     mkdirSync(join(sessionDir, 'data'), { recursive: true })
     writeFileSync(join(sessionDir, 'data', 'result.json'), '{"rows":[]}')
 
-    const bundle = serializeSession(tmpDir, session.mortiseId)
+    const bundle = serializeSession(session.workspaceId, session.mortiseId)
 
     expect(bundle).not.toBeNull()
     expect(bundle!.files).toHaveLength(2)
@@ -146,7 +147,7 @@ describe('serializeSession', () => {
 
     writeFileSync(join(sessionDir, 'notes.md'), '# My Notes\nSome notes here.')
 
-    const bundle = serializeSession(tmpDir, session.mortiseId)
+    const bundle = serializeSession(session.workspaceId, session.mortiseId)
 
     expect(bundle).not.toBeNull()
     const notesFile = bundle!.files.find(f => f.relativePath === 'notes.md')
@@ -161,7 +162,7 @@ describe('serializeSession', () => {
     mkdirSync(join(sessionDir, 'tmp'), { recursive: true })
     writeFileSync(join(sessionDir, 'tmp', 'cache.dat'), 'cached data')
 
-    const bundle = serializeSession(tmpDir, session.mortiseId)
+    const bundle = serializeSession(session.workspaceId, session.mortiseId)
 
     expect(bundle).not.toBeNull()
     const tmpFiles = bundle!.files.filter(f => f.relativePath.startsWith('tmp'))
@@ -174,7 +175,7 @@ describe('serializeSession', () => {
 
     writeFileSync(join(sessionDir, '.hidden'), 'secret')
 
-    const bundle = serializeSession(tmpDir, session.mortiseId)
+    const bundle = serializeSession(session.workspaceId, session.mortiseId)
 
     expect(bundle).not.toBeNull()
     const dotFiles = bundle!.files.filter(f => f.relativePath.startsWith('.'))
@@ -185,7 +186,7 @@ describe('serializeSession', () => {
     const session = makeStoredSession()
     await setupSessionDir(tmpDir, session)
 
-    const bundle = serializeSession(tmpDir, session.mortiseId)
+    const bundle = serializeSession(session.workspaceId, session.mortiseId)
 
     expect(bundle).not.toBeNull()
     const jsonlFiles = bundle!.files.filter(f => f.relativePath.includes('session.jsonl'))
@@ -193,7 +194,7 @@ describe('serializeSession', () => {
   })
 
   it('returns null for non-existent session', () => {
-    const bundle = serializeSession(tmpDir, 'non-existent')
+    const bundle = serializeSession('ws', 'non-existent')
     expect(bundle).toBeNull()
   })
 
@@ -203,7 +204,7 @@ describe('serializeSession', () => {
     })
     await setupSessionDir(tmpDir, session)
 
-    const bundle = serializeSession(tmpDir, session.mortiseId)
+    const bundle = serializeSession(session.workspaceId, session.mortiseId)
 
     expect(bundle).not.toBeNull()
   })

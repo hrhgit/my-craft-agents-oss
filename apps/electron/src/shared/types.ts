@@ -6,6 +6,13 @@ import type {
   AutomationChangedNotificationV1,
   BrowserHostDockNavigationCommand,
   WorkspaceCoordinationStatusV1,
+  WorkspaceRemotePrimaryCommandV1,
+  WorkspaceRemotePrimaryResultV1,
+  WorkspaceTopologyChangedV1,
+  WorkspaceTopologyCommandV1,
+  WorkspaceTopologyResultV1,
+  WorkspaceTransferRequestV1,
+  WorkspaceTransferResultV1,
 } from '@mortise/shared/protocol'
 
 // =============================================================================
@@ -19,8 +26,6 @@ import type {
   TypedError,
   TokenUsage as CoreTokenUsage,
   WorkspaceInfo as CoreWorkspaceInfo,
-  Workspace as CoreWorkspace,
-  RemoteServerConfig as CoreRemoteServerConfig,
   SessionMetadata as CoreSessionMetadata,
   StoredAttachment as CoreStoredAttachment,
   ContentBadge,
@@ -44,8 +49,6 @@ export type {
   TypedError,
   CoreTokenUsage as TokenUsage,
   CoreWorkspaceInfo as WorkspaceInfo,
-  CoreWorkspace as Workspace,
-  CoreRemoteServerConfig as RemoteServerConfig,
   CoreSessionMetadata as SessionMetadata,
   CoreStoredAttachment as StoredAttachment,
   ContentBadge,
@@ -161,7 +164,7 @@ export interface TransportConnectionState {
 // =============================================================================
 
 // Re-import types for ElectronAPI
-import type { WorkspaceInfo, Workspace, SessionMetadata, StoredAttachment as StoredAttachmentType } from '@mortise/core/types';
+import type { WorkspaceInfo, SessionMetadata, StoredAttachment as StoredAttachmentType } from '@mortise/core/types';
 
 // Import protocol types used by ElectronAPI (they come through the `export *` above,
 // but we need them in scope for the interface definition)
@@ -241,13 +244,6 @@ export interface ElectronAPI {
   // App lifecycle
   relaunchApp(): Promise<void>
   removeWorkspace(workspaceId: string): Promise<boolean>
-  invokeOnServer(
-    url: string,
-    token: string,
-    channel: string,
-    connection: { allowInsecureTls?: boolean },
-    ...args: any[]
-  ): Promise<any>
   /** Invoke a known ElectronAPI method against a trusted workspace runtime. */
   invokeWorkspaceApi(route: import('./app-layout').WorkspaceRoute, method: string, ...args: any[]): Promise<any>
   /** Subscribe to a known ElectronAPI listener on one trusted workspace runtime. */
@@ -256,10 +252,6 @@ export interface ElectronAPI {
     method: string,
     callback: (...args: any[]) => void,
   ): () => void
-
-  // Remote session transfer (main-process orchestrated, supports chunked upload)
-  transferSessionToWorkspace(sessionId: string, targetWorkspaceId: string, sessionIndex?: number, sessionCount?: number): Promise<{ sessionId: string }>
-  onTransferProgress(callback: (progress: { sessionIndex: number; sessionCount: number; chunkSent: number; chunkTotal: number }) => void): () => void
 
   // Session export/import (cross-workspace transfer)
   exportSession(sessionId: string): Promise<unknown>
@@ -273,11 +265,16 @@ export interface ElectronAPI {
   getSessionPermissionModeState(sessionId: string): Promise<PermissionModeState | null>
 
   // Workspace management
-  getWorkspaces(): Promise<Workspace[]>
-  createWorkspace(folderPath: string, name: string, remoteServer?: CoreRemoteServerConfig): Promise<Workspace>
+  getWorkspaces(): Promise<WorkspaceInfo[]>
+  getWorkspaceTopology(workspaceId?: string): Promise<WorkspaceInfo>
+  workspaceTopologyCommand(command: WorkspaceTopologyCommandV1): Promise<WorkspaceTopologyResultV1>
+  workspaceRemotePrimaryCommand(command: WorkspaceRemotePrimaryCommandV1): Promise<WorkspaceRemotePrimaryResultV1>
+  workspaceTransfer(request: WorkspaceTransferRequestV1): Promise<WorkspaceTransferResultV1>
+  onWorkspaceTopologyChanged(callback: (change: WorkspaceTopologyChangedV1) => void): () => void
+  setWorkspaceRemoteCredential(input: { workspaceId: string; credentialRef: string; token: string }): Promise<void>
+  deleteWorkspaceRemoteCredential(input: { workspaceId: string; credentialRef: string }): Promise<void>
+  createWorkspace(folderPath: string, name: string): Promise<WorkspaceInfo>
   checkWorkspaceSlug(slug: string): Promise<{ exists: boolean; path: string }>
-  updateWorkspaceRemoteServer(workspaceId: string, remoteServer: CoreRemoteServerConfig): Promise<{ success: boolean }>
-  onWorkspaceRemoteServerUpdated(callback: (data: { workspaceId: string }) => void): () => void
   getWorkspaceCoordinationStatus(): Promise<WorkspaceCoordinationStatusV1>
 
   // Server-level workspace operations (for thin client / remote workspace discovery)
@@ -288,9 +285,10 @@ export interface ElectronAPI {
     ok: boolean
     error?: string
     needsWorkspace?: boolean
-    remoteWorkspaces?: Array<{ id: string; name: string }>
+    remoteWorkspaces?: Array<{ id: string; name: string; rootName: string }>
     remoteWorkspaceId?: string   // auto-set when exactly one workspace
     remoteWorkspaceName?: string // auto-set when exactly one workspace
+    remoteWorkspaceRootName?: string
     serverVersion?: string       // server app version from handshake
   }>
 
@@ -316,7 +314,7 @@ export interface ElectronAPI {
   setTrafficLightsVisible(visible: boolean): Promise<void>
 
   // Client-wide dock layout (main-process authority)
-  getAppLayout(workspaceId?: string, serverId?: string): Promise<import('./app-layout').AppLayout>
+  getAppLayout(workspaceId?: string): Promise<import('./app-layout').AppLayout>
   saveAppLayout(layout: import('./app-layout').AppLayout, expectedRevision?: number): Promise<import('./app-layout').AppLayout>
   detachLayoutTab(tabId: string, bounds?: { x: number; y: number; width: number; height: number }): Promise<import('./app-layout').AppLayout>
   detachLayoutGroup(groupId: string, bounds?: { x: number; y: number; width: number; height: number }): Promise<import('./app-layout').AppLayout>

@@ -179,6 +179,7 @@ interface MortiseOverlayFile {
 }
 
 export interface TreeProjectionOptions {
+  workspaceId?: string;
   workspaceRootPath?: string;
   sessionFilePath?: string;
   sessionIdPrefix?: string;
@@ -1176,6 +1177,7 @@ function projectParsedTreeSessionAsStoredSession(
   const lastUsedAt = stat?.mtimeMs ?? createdAt;
   const workspaceRootPath = options.workspaceRootPath ?? parsed.header.mortise?.workspaceRootPath ?? parsed.header.cwd ?? dirname(sessionFile);
   const mortise = parsed.header.mortise ?? {}
+  const workspaceId = options.workspaceId ?? mortise.workspaceId ?? '';
   // on-disk mortise.id → 扁平 SessionHeader.mortiseId
   // 优先用 mortise.id（Mortise 人类可读 ID），无则退回 Pi 顶层 id + 前缀
   const mortiseId = getMortiseIdFromTreeHeader(parsed.header, options.sessionIdPrefix ?? '');
@@ -1193,6 +1195,7 @@ function projectParsedTreeSessionAsStoredSession(
   return {
     ...mortiseRest,
     mortiseId,
+    workspaceId,
     // Pi 原生字段（扁平化）
     type: parsed.header.type,
     version: parsed.header.version,
@@ -1245,6 +1248,7 @@ export function projectTreeSessionHeaderAsSessionHeader(
     ?? header.cwd
     ?? dirname(sessionFile);
   const mortise = header.mortise ?? {};
+  const workspaceId = options.workspaceId ?? mortise.workspaceId ?? '';
   const mortiseId = getMortiseIdFromTreeHeader(header, options.sessionIdPrefix ?? '');
   const {
     id: _onDiskId,
@@ -1254,6 +1258,7 @@ export function projectTreeSessionHeaderAsSessionHeader(
   return {
     ...mortiseRest,
     mortiseId,
+    workspaceId,
     type: header.type,
     version: header.version,
     piSessionId: header.id,
@@ -1282,6 +1287,7 @@ export function projectTreeSessionProjectionAsStoredSession(
     { header: projection.header, entries },
     sessionFile,
     {
+      workspaceId: options.workspaceId,
       workspaceRootPath: options.workspaceRootPath ?? projection.cwd,
       sessionFilePath: sessionFile,
       sessionIdPrefix: options.sessionIdPrefix,
@@ -1298,6 +1304,7 @@ export function readTreeSessionMetadata(
   sessionFile: string,
   workspaceRootPath?: string,
   sessionIdPrefix = '',
+  workspaceId?: string,
 ): SessionHeader | null {
   const header = readTreeSessionHeader(sessionFile);
   if (!header) return null;
@@ -1307,6 +1314,7 @@ export function readTreeSessionMetadata(
   // session during server startup and large histories can otherwise delay the
   // workspace-server ready signal beyond its startup timeout.
   return projectTreeSessionHeaderAsSessionHeader(header, sessionFile, {
+    workspaceId,
     workspaceRootPath: workspaceRootPath || undefined,
     sessionIdPrefix,
   });

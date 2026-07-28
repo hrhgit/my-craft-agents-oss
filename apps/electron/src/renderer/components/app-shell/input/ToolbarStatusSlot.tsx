@@ -25,6 +25,7 @@ import { browserInstancesAtom, filterInstancesForWorkspace } from '@/atoms/brows
 import { useAppShellContext } from '@/context/AppShellContext'
 import type { BrowserInstanceInfo } from '../../../../shared/types'
 import { canUseNativeBrowserPanes } from '@/lib/platform-capabilities'
+import { getPrimaryRemoteWorkspaceId } from '@/lib/workspace-info'
 
 interface ToolbarStatusSlotProps {
   /** Whether the escape interrupt overlay should be visible (highest priority) */
@@ -43,7 +44,7 @@ export function ToolbarStatusSlot({
   // workspace id (tabs stamped by the remote agent over the WS bridge).
   const { activeWorkspaceId, workspaces } = useAppShellContext()
   const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId)
-  const remoteWorkspaceId = activeWorkspace?.remoteServer?.remoteWorkspaceId ?? null
+  const remoteWorkspaceId = activeWorkspace ? getPrimaryRemoteWorkspaceId(activeWorkspace) ?? null : null
   const allInstances = useAtomValue(browserInstancesAtom)
   const browserInstances = React.useMemo(
     () => filterInstancesForWorkspace(allInstances, activeWorkspaceId, remoteWorkspaceId),

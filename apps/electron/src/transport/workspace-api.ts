@@ -14,12 +14,12 @@ export interface WorkspaceApiTransport {
 export function evictWorkspaceApiCache<T>(
   cache: Map<string, T>,
   workspaceId: string,
-  keepServerId?: string,
+  keepLocationId?: string,
 ): void {
-  const suffix = `::${encodeURIComponent(workspaceId)}`
-  const keepKey = keepServerId ? workspaceRouteKey({ serverId: keepServerId, workspaceId }) : null
+  const prefix = `${encodeURIComponent(workspaceId)}::`
+  const keepKey = keepLocationId ? workspaceRouteKey({ workspaceId, locationId: keepLocationId }) : null
   for (const key of cache.keys()) {
-    if (key.endsWith(suffix) && key !== keepKey) cache.delete(key)
+    if (key.startsWith(prefix) && key !== keepKey) cache.delete(key)
   }
 }
 
