@@ -88,8 +88,9 @@ describe('BaseAgent', () => {
         id: 'new-workspace',
         revision: 0,
         primaryLocationId: 'primary',
-        locations: [{ id: 'primary', name: 'Primary', endpoint: { kind: 'local', rootPath: '/new/path' } }],
+        locations: [{ id: 'primary', name: 'Primary', rootName: 'path', endpoint: { kind: 'local', rootPath: '/new/path' } }],
         name: 'New Workspace',
+        nameSource: 'custom',
         slug: 'path',
         createdAt: Date.now(),
       });

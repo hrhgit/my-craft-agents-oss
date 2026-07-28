@@ -34,6 +34,7 @@ import type { ModelFetchResult } from '../../config/model-fetcher.ts';
 // Model resolution utilities
 import { getModelProvider, DEFAULT_MODEL, normalizeDeprecatedModelId } from '../../config/models.ts';
 import { homedir } from 'node:os';
+import { basename } from 'node:path';
 import { getCredentialManager } from '../../credentials/index.ts';
 import type {
   BackendModelFetchCredentials,
@@ -512,8 +513,9 @@ export async function testBackendConnection(args: {
           id: '__test',
           revision: 0,
           primaryLocationId: 'primary',
-          locations: [{ id: 'primary', name: 'Primary', endpoint: { kind: 'local', rootPath: cwd } }],
+          locations: [{ id: 'primary', name: 'Primary', rootName: basename(cwd), endpoint: { kind: 'local', rootPath: cwd } }],
           name: 'Connection Test',
+          nameSource: 'custom',
           slug: '__test',
           createdAt: 0,
         },

@@ -28,8 +28,9 @@ function createTestWorkspace(): Workspace {
     id: 'test-workspace',
     revision: 0,
     primaryLocationId: 'primary',
-    locations: [{ id: 'primary', name: 'Primary', endpoint: { kind: 'local', rootPath: '/test/workspace' } }],
+    locations: [{ id: 'primary', name: 'Primary', rootName: 'workspace', endpoint: { kind: 'local', rootPath: '/test/workspace' } }],
     name: 'Test Workspace',
+    nameSource: 'custom',
     slug: 'workspace',
     createdAt: Date.now(),
   };
