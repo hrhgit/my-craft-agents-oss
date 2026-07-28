@@ -155,6 +155,11 @@ Mortise owns its version line; source builds are immutable and isolated; generat
 ## Architecture and entry points
 Root scripts orchestrate Bun and Pi workspaces; Electron scripts package desktop assets; CI runs repository validation and audits. `validate:production-node-bundles` is the non-writing high-frequency production compile, `validate:production-bundles` runs the complete Electron build, and `electron:dist:win`, `electron:dist:mac`, and `electron:dist:linux` own target-platform installer generation.
 
+### Runtime diagnostics
+The primary local diagnostic file is `%MORTISE_CONFIG_DIR%\logs\runtime.log` when `MORTISE_CONFIG_DIR` is set, otherwise `%USERPROFILE%\.mortise\logs\runtime.log`. It is JSONL and rotates to `runtime.log.1` at about 5 MB. `scope: "pi-rpc"` records Pi subprocess startup, capability handshake, lifecycle failures, and captured stderr; `scope: "session"` records Session chat failures with Session, Workspace, model, and structured error context. Check this file first for `Pi Process Exited`, `get_capabilities`, or Windows `EPERM` startup failures.
+
+`messaging-gateway.log`, `auto-update.log`, and the non-packaged debug-only `interceptor.log` remain specialized logs. Workspace `events.jsonl` is automation history, and Mortise/Pi Session JSONL files are Session state rather than main-process diagnostics.
+
 ## Collaboration
 Feature owners define their validation commands; developer-kit packaging remains version-matched and separately installable.
 

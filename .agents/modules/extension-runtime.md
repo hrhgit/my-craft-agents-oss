@@ -31,7 +31,7 @@ Maintain the Pi host manager, driver boundary, extension settings, reload interr
 Do not own extension-rendered GUI, Pi's internal extension API, or provider transport implementations.
 
 ## Contracts and invariants
-Extension manifests have one Mortise runtime contract and do not accept `targets` or `engines`; Mortise GlobalHost discovery and child processes are pinned to the runtime's explicit Mortise Agent root rather than inherited Pi defaults; reload interrupts running sessions only after confirmation; capability negotiation precedes use; parent runtime teardown owns every foreground and background child-task lease.
+Extension manifests have one Mortise runtime contract and do not accept `targets` or `engines`; Mortise GlobalHost discovery and child processes are pinned to the runtime's explicit Mortise Agent root rather than inherited Pi defaults; reload is initiated from Settings, applies immediately while Sessions are idle, and interrupts running Sessions only after explicit confirmation; capability negotiation precedes use; parent runtime teardown owns every foreground and background child-task lease. Extension authoring documentation follows Pi's runnable, API-oriented guide style, keeps constraints beside the relevant API, includes complete examples and an examples index, and leaves architecture rationale in separate architecture documents.
 
 ## Architecture and entry points
 Shared agent backends manage Pi hosts; server-core bridges extension contributions and interactions to connected clients.

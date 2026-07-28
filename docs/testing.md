@@ -30,6 +30,21 @@ bun run test:doc-tools
 
 `validate:dev` deliberately runs a smaller, fast validation set. Run `bun run test` before broad test-related changes; expanding CI coverage is a separate decision because it changes validation time and flake exposure. The isolated-test runner is a Bun script so the command works on Windows as well as POSIX shells.
 
+## Choosing a UI Validation Surface
+
+Choose the validation surface from the capability being changed. WebUI is useful only for workflows it actually supports; it is not a proxy for Electron-only behavior.
+
+- For behavior intentionally shared by WebUI and Electron, verify the shared state or domain boundary and exercise both client contracts in proportion to the change. Compare identical viewports and states only when the capability contract intends parity.
+- For WebUI behavior, run `start-webui.cmd` from the repository root. It starts the headless RPC server and Vite client, signs a localhost development browser in, and opens the portmux-assigned URL. Never enable this automatic login for a shared or production server.
+- For Electron-only behavior such as native dialogs, menus, IPC, filesystem access, subprocesses, and window management, use source-development Electron and the relevant smoke checks. Do not require equivalent WebUI coverage.
+- Keep reusable UI in `apps/electron/src/renderer` or `packages/ui`; keep `apps/webui/src` as the browser adapter and bootstrap layer.
+- AI-operated Electron validation defaults to background mode so it does not take over the desktop. Use foreground mode only when native menus, dialogs, or other visible-window behavior is the subject of the check.
+- Ordinary UI checks use the populated credential-free fixture profile. Use an empty isolated profile only for onboarding, and use an explicit clone when real provider or user configuration is required.
+- Quick-test launchers enable product-feature test mode against normal shared development data. Gated product changes must appear there before their production default changes; this mode remains separate from the privileged UI Test Host.
+- Validate product and runtime behavior through source Electron and the version-matched Developer Host. Run an installed application only for installation, installed-resource resolution that cannot be proven from artifacts, signing, update, or uninstall behavior.
+
+When AI-operated physical validation would be cumbersome or unstable but a human can verify it simply, designate the entire workflow for human validation and provide exact setup, actions, expected results, and cleanup. Do not mix human and automated steps inside one evidence workflow.
+
 ## Typed AppShell UI Scenarios
 
 The source-only UI Test Host includes a controlled production-component surface named `app-shell-scenario-host`. Open that playground component before applying AppShell scenarios. The renderer installs `__MORTISE_UI_VALIDATION_APP_SHELL_SCENARIOS_V1__` only when the Electron Test Host capability or WebUI validation bootstrap is present.

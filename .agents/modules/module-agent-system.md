@@ -32,13 +32,13 @@ Maintain the module registry, document parser, route scoring, strict diagnostics
 Do not implement an agent runtime, grant permissions, or store long-lived specialist conversations.
 
 ## Contracts and invariants
-Module Markdown is authoritative for semantic knowledge, ownership, relationships, and validation responsibilities. Generated scope digests live only in `.agents/module-lock.json`. Primary ownership is unique, related scopes may overlap, and digests include tracked and working-tree changes. Task plans freeze intent and ownership under ignored local state; validation receipts require identical repository, environment, toolchain, build mode, and source/build identities. Each module owns reproducible behavior regressions; contract providers own contract tests; the primary agent coordinates cross-module integration and acceptance. Physical UI validation stays with the business module and uses shared Developer Kit infrastructure.
+Module Markdown is authoritative for semantic knowledge, ownership, relationships, and validation responsibilities. Routing locates a problem, bounds its scope, and identifies ownership and dependencies; it does not by itself require task decomposition, delegation, or worktrees. Generated scope digests live only in `.agents/module-lock.json`. Primary ownership is unique, related scopes may overlap, and digests include tracked and working-tree changes. Task plans freeze intent and ownership under ignored local state; validation receipts require identical repository, environment, toolchain, build mode, and source/build identities. Each module owns reproducible behavior regressions; contract providers own contract tests; the primary agent coordinates cross-module integration and acceptance. Physical UI validation stays with the business module and uses shared Developer Kit infrastructure.
 
 ## Architecture and entry points
 Configuration starts at `.agents/module-system.yaml`; Markdown documents are scanned from `.agents/modules`; generated freshness state lives in `.agents/module-lock.json`; ignored task plans and receipts live under `output/module-agents`; the CLI lives under `scripts/module-agents`.
 
 ## Collaboration
-The primary agent dispatches specialists. Specialists may consult named collaborators but may not recursively create peers.
+The primary agent keeps tightly coupled and cross-owner integration work. It dispatches specialists only after proving that frozen assignments are mutually independent and that parallelism saves more than its setup, review, synchronization, and integration cost. At most three external writer worktrees may be active unless the user explicitly approves more. Specialists may consult named collaborators but may not recursively create peers.
 
 ## Validation
 Run module-agent unit tests, then strict repository validation and impact checks against a known Git base.
@@ -47,6 +47,7 @@ Run module-agent unit tests, then strict repository validation and impact checks
 Broad globs can conceal new capabilities; overly broad frozen owner sets can hide scope expansion; validation receipts are unsafe if an input identity omits a material environment or build dimension.
 
 ## Semantic history
+- 2026-07-28: Reframed module routing as problem, scope, ownership, and dependency discovery; delegation now requires proven independent frozen work and defaults to at most three active writer worktrees.
 - 2026-07-27: Bound reusable validation receipts to the complete hashed process environment and content fingerprints for the external command toolchain, and aligned shared leaf commands so cross-module validation can deduplicate without contradictory ordering.
 - 2026-07-27: Migrated the module protocol to v2: kept Markdown as the authoritative semantic and ownership record, moved generated scope digests into a single lock, added phase-frozen task plans, split structural from freshness validation, and introduced risk-tiered deduplicated validation with identity-bound receipts.
 - 2026-07-25: Removed the empty shared-runtime ownership pattern after sealed runtime authority moved to the session-tooling module, preserving strict one-owner coverage without a compatibility scope.

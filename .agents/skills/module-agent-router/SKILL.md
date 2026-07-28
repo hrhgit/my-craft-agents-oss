@@ -7,6 +7,8 @@ description: Route non-trivial repository investigation, implementation, and rev
 
 Use the Markdown module documents as durable specialist knowledge and the routing CLI as the discovery boundary. The generated `.agents/module-lock.json` records freshness only; it never replaces module prose, ownership, relationships, validation responsibilities, or Semantic history.
 
+Routing is primarily a discovery tool: use it to locate the problem, bound the affected scope, identify ownership, and expose dependency direction. A route that names multiple modules does not by itself justify task decomposition, subagents, worktrees, or parallel implementation.
+
 Operate one task through five explicit phases: discover, implement, integrate, accept, and archive. Route and freeze ownership once in discover, use focused feedback while implementing, freeze the diff before integration, run expensive acceptance against that frozen source once, and refresh generated state only during archive.
 
 ## Preconditions
@@ -38,7 +40,11 @@ Use the three specialist modes deliberately:
 
 Keep a root-owned agent topology. The primary agent creates specialists, assigns ownership, resolves conflicts, and integrates results. A specialist does not create another agent. It may message an already-active peer directly when their declared collaboration or dependency is relevant; when the peer is not active, it asks the primary agent to dispatch one.
 
+Keep tightly coupled sequential work and cross-owner integration with the primary agent. Delegate only after scope, architecture direction, interfaces, file ownership, and acceptance are frozen, the resulting assignments can proceed without affecting one another, and the expected parallel benefit exceeds setup, review, synchronization, and integration cost. Keep at most three external writer worktrees active unless the user explicitly approves wider parallelism. Read-only consultation and review do not require writer worktrees.
+
 Assign at most one writer to a primary module at a time. A specialist may inspect related or dependent scopes, but only the primary owner of a file edits it. Split cross-module work into owner-specific assignments and sequence changes when they share an interface. The primary agent owns the final synthesis and user-facing response.
+
+Every external writer uses a dedicated clean worktree pinned to a primary-supplied base commit and proves its path, exact `HEAD`, and empty tracked and untracked status before editing. Its handoff identifies the task, base and final commit, routed owner, completion state, requirement-to-change mapping, changed files with current anchors, architecture-boundary check, exact validation commands and outcomes, retained raw evidence with SHA-256, and unresolved risks or deviations. The final state must be a clean, scoped, inspectable commit range. Cross-boundary, asynchronous, persistence, or failure-path changes include a compact Mermaid flow; UI claims include bounded semantic action and result evidence, with screenshots only for visual or native claims. The writer ends with `ready for primary review` and never self-accepts.
 
 When assigning a specialist, include this runtime contract in substance:
 

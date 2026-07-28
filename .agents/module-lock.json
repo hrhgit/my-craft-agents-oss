@@ -11,7 +11,7 @@
     "file-workbench": "b64b99c23413a3c89a16744cf59b2f0bc7f96b1f",
     "headless-server-cli": "83d4738aee65998d60712a7483a622c08fbd5aed",
     "messaging": "e4db332e62a55d9ffa4e459f7b0f77e830dc5dcd",
-    "module-agent-system": "683dd8d63015bbbda800c83e24a11c9ac3cb9260",
+    "module-agent-system": "2045e2efd04140019193e1f243e08d1d30ff0156",
     "native-desktop": "d6b51000e1a4bb36a3bfd18d95a71efc0fb9f8a3",
     "pi-agent-engine": "8d8a94429d341350a40b555e8c9653e9d1e2feea",
     "pi-coding-runtime": "640616bacab007e8df1e7e05dabdda7c2b66d855",
@@ -22,7 +22,7 @@
     "shared-contracts": "dcda0e92e76972d36237952bb42a4d7efed4b2a3",
     "shared-ui-i18n": "984448a71b8bf19cc84d556fed10bbb791b40830",
     "sources-skills-mcp": "9e62f66765abba8c78fc17a6b9eb7303754e5249",
-    "ui-validation-developer-kit": "96655218bedc2909635b631b60d3b416b6306135",
+    "ui-validation-developer-kit": "9c6bb14c854bb4f0e4d230b4f16eb26099811f16",
     "universal-layout": "6f5aea13b98c55e3ca8b5a9e188c911bda0695d7",
     "web-viewer-clients": "4c62891ae325d9fa5aa191b104e8e23fd0c317d3",
     "workspace-state": "5e01913f464aaaab1ff56f08926332bdcd5c018b"

@@ -33,7 +33,7 @@ Maintain message cards, tool presentation hooks, answer submission, drafts integ
 Do not own session persistence, agent execution, generic dock layout, or extension backend lifecycle.
 
 ## Contracts and invariants
-All send actions use Lucide `ArrowUp`; the blank workspace draft contains a complete composer but no welcome or preset prompts. A new-conversation draft remains authoritative while the combined first turn is unpublished; clear it and navigate to the Session only after session-lifecycle confirms Pi's first assistant message is durable and the Session is published.
+All send actions use Lucide `ArrowUp`; slash commands remain visible only for capabilities without a Mortise GUI control. The blank workspace draft contains a complete composer but no welcome or preset prompts. A new-conversation draft remains authoritative while the combined first turn is unpublished; clear it and navigate to the Session only after session-lifecycle confirms Pi's first assistant message is durable and the Session is published.
 
 ## Architecture and entry points
 Reusable transcript components live in `packages/ui`; Electron composes them in `ChatPage`, `ChatDisplay`, and input components.
@@ -48,6 +48,7 @@ Run turn grouping, plan, annotation, composer, remote interaction, and chat page
 Event projections can create duplicate or prematurely terminal turns; rich extension content can disrupt composer focus.
 
 ## Semantic history
+- 2026-07-28: Kept the slash-command surface limited to capabilities without an equivalent Mortise GUI control.
 - 2026-07-24: Made first-turn publication await the ordered durable clear of the workspace draft before navigating, while keeping an already-published Session truthful if draft cleanup itself fails.
 - 2026-07-23: Removed legacy Pi and workspace Session-path tooltip compatibility; inline file badges now shorten only the current Mortise Agent sidecar layout.
 - 2026-07-23: Bound shared conversation-search navigation and match reporting to the focused panel, and made response/tool search targets semantically addressable with controlled reveal of collapsed activity groups.
