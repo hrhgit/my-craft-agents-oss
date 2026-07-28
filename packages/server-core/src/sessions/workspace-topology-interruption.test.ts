@@ -25,11 +25,12 @@ describe('SessionManager Workspace topology interruption', () => {
       id,
       revision: 1,
       name: id,
+      nameSource: 'custom',
       slug: id,
       primaryLocationId: 'primary',
       locations: [
-        { id: 'primary', name: 'Primary', endpoint: { kind: 'local', rootPath: root } },
-        { id: 'assets', name: 'Assets', endpoint: { kind: 'local', rootPath: root } },
+        { id: 'primary', name: 'Primary', rootName: 'primary', endpoint: { kind: 'local', rootPath: root } },
+        { id: 'assets', name: 'Assets', rootName: 'assets', endpoint: { kind: 'local', rootPath: root } },
       ],
       createdAt: 1,
     }

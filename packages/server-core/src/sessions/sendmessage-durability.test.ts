@@ -40,9 +40,10 @@ describe('sendMessage durability', () => {
       id: 'ws_test',
       revision: 0,
       name: 'Test Workspace',
+      nameSource: 'custom',
       slug: 'test-workspace',
       primaryLocationId: 'primary',
-      locations: [{ id: 'primary', name: 'Primary', endpoint: { kind: 'local', rootPath: tmpRoot } }],
+      locations: [{ id: 'primary', name: 'Primary', rootName: 'test-workspace', endpoint: { kind: 'local', rootPath: tmpRoot } }],
       createdAt: Date.now(),
     }
     sm = new SessionManager({

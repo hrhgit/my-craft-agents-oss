@@ -1,9 +1,9 @@
 import { existsSync } from 'node:fs'
 import { join } from 'path'
 import { homedir } from 'os'
-import { RPC_CHANNELS, redactWorkspaceInfo } from '@mortise/shared/protocol'
+import { RPC_CHANNELS } from '@mortise/shared/protocol'
 import { addWorkspace, setActiveWorkspace } from '@mortise/shared/config'
-import { getDefaultWorkspacesDir, ensureDefaultWorkspacesDir } from '@mortise/shared/workspaces'
+import { getDefaultWorkspaceTopologyStore, getDefaultWorkspacesDir, ensureDefaultWorkspacesDir } from '@mortise/shared/workspaces'
 import { WORKSPACE_SCHEMA_VERSION, type ServerHealth } from '@mortise/core/types'
 import type { RpcServer } from '@mortise/server-core/transport'
 import type { HandlerDeps } from '../handler-deps'
@@ -56,17 +56,19 @@ export function registerServerHandlers(
       schemaVersion: WORKSPACE_SCHEMA_VERSION,
       revision: 0,
       name: trimmed,
+      nameSource: 'custom',
       primaryLocationId: 'primary',
       locations: [{
         id: 'primary',
         name: 'Primary',
+        rootName: trimmed,
         endpoint: { kind: 'local', rootPath },
       }],
     })
     setActiveWorkspace(workspace.id)
     deps.platform.logger.info(`Created workspace "${trimmed}" at ${rootPath} (server:createWorkspace)`)
 
-    return redactWorkspaceInfo(workspace)
+    return getDefaultWorkspaceTopologyStore().getInfo(workspace.id)!
   })
 
   // -----------------------------------------------------------------------

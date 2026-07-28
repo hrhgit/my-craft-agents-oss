@@ -23,9 +23,10 @@ function createTestWorkspace(rootPath: string): Workspace {
     id: WORKSPACE_ID,
     revision: 0,
     name: 'Projection Workspace',
+    nameSource: 'custom',
     slug: 'projection-workspace',
     primaryLocationId: 'primary',
-    locations: [{ id: 'primary', name: 'Primary', endpoint: { kind: 'local', rootPath } }],
+    locations: [{ id: 'primary', name: 'Primary', rootName: 'projection-workspace', endpoint: { kind: 'local', rootPath } }],
     createdAt: Date.now(),
   }
 }

@@ -362,7 +362,6 @@ function ensureGlobalConfigExists(platform: PlatformServices): void {
   }
 
   saveConfig({
-    workspaces: [],
     activeWorkspaceId: null,
     activeSessionId: null,
   })
