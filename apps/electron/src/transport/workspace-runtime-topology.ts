@@ -1,4 +1,4 @@
-import type { WorkspaceInfo, WorkspaceLocationInfo } from '@mortise/core/types'
+import type { WorkspaceInfo } from '@mortise/core/types'
 import type { WorkspaceTopologyChangedV1 } from '@mortise/shared/protocol'
 import type { ResolvedWorkspaceRoute, WorkspaceRoute } from '../shared/app-layout'
 
@@ -45,11 +45,6 @@ export class WorkspaceRuntimeTopologyState {
     return {
       workspaceId: workspace.id,
       locationId,
-      serverId: endpointDisplayId(location),
     }
   }
-}
-
-function endpointDisplayId(location: WorkspaceLocationInfo): string {
-  return location.endpoint.kind === 'remote' ? location.endpoint.url : 'local'
 }

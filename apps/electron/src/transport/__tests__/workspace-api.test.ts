@@ -1,7 +1,7 @@
 import { describe, expect, it, mock } from 'bun:test'
 import { buildWorkspaceClientApi, evictWorkspaceApiCache, resolveWorkspaceApiMethod } from '../workspace-api'
 
-const route = { serverId: 'remote.example', workspaceId: 'workspace-a', locationId: 'remote' }
+const route = { workspaceId: 'workspace-a', locationId: 'remote' }
 
 describe('workspace client API', () => {
   it('routes invoke methods through the trusted workspace route', async () => {

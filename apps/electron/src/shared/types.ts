@@ -314,7 +314,7 @@ export interface ElectronAPI {
   setTrafficLightsVisible(visible: boolean): Promise<void>
 
   // Client-wide dock layout (main-process authority)
-  getAppLayout(workspaceId?: string, serverId?: string): Promise<import('./app-layout').AppLayout>
+  getAppLayout(workspaceId?: string): Promise<import('./app-layout').AppLayout>
   saveAppLayout(layout: import('./app-layout').AppLayout, expectedRevision?: number): Promise<import('./app-layout').AppLayout>
   detachLayoutTab(tabId: string, bounds?: { x: number; y: number; width: number; height: number }): Promise<import('./app-layout').AppLayout>
   detachLayoutGroup(groupId: string, bounds?: { x: number; y: number; width: number; height: number }): Promise<import('./app-layout').AppLayout>

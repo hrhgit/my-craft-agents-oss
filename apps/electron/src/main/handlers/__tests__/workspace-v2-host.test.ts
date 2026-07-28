@@ -3,33 +3,14 @@ import type { Workspace } from '@mortise/core/types'
 import { RPC_CHANNELS } from '@mortise/shared/protocol'
 import type { HandlerDeps } from '../handler-deps'
 
-let configWorkspaces: Workspace[] = []
 let topologyWorkspace: Workspace | null = null
 let remoteClientCreations = 0
 let remoteDiscoveryWorkspaces: unknown[] = []
-const transferWorkspaceFile = mock(async () => ({
-  workspaceId: 'workspace-local',
-  sourceLocationId: 'source',
-  destinationLocationId: 'destination',
-  revision: 3,
-  mode: 'copy' as const,
-  sha256: 'a'.repeat(64),
-  bytes: 12,
-  sourceRemoved: false,
-}))
 
 mock.module('@mortise/shared/config', () => ({
-  getWorkspaceByNameOrId: (workspaceId: string) => (
-    configWorkspaces.find(workspace => workspace.id === workspaceId) ?? null
-  ),
-  loadStoredConfig: () => ({
-    workspaces: configWorkspaces,
-    activeWorkspaceId: null,
-    activeSessionId: null,
-  }),
-  saveConfig: (config: { workspaces: Workspace[] }) => {
-    configWorkspaces = config.workspaces
-  },
+  getWorkspaceByNameOrId: () => { throw new Error('legacy config Workspace authority must not be read') },
+  loadStoredConfig: () => { throw new Error('legacy config Workspace authority must not be read') },
+  saveConfig: () => { throw new Error('legacy config Workspace authority must not be written') },
 }))
 
 mock.module('@mortise/shared/workspaces', () => ({
@@ -47,8 +28,6 @@ mock.module('@mortise/shared/credentials', () => ({
     getWorkspaceRemoteBearer: async () => 'secret-token',
   }),
 }))
-
-mock.module('@mortise/server-core/handlers/rpc/workspace-transfer', () => ({ transferWorkspaceFile }))
 
 mock.module('@mortise/server-core/transport', () => ({
   WsRpcClient: class {
@@ -94,35 +73,16 @@ function handlers() {
     handle: (channel: string, handler: Handler) => registered.set(channel, handler),
   }
   const deps = {
-    sessionManager: { getWorkspaces: () => configWorkspaces },
+    sessionManager: { getWorkspaces: () => [] },
     platform: { logger: console },
   } as unknown as HandlerDeps
   return { registered, server, deps }
 }
 
-function localWorkspace(): Workspace {
-  return {
-    schemaVersion: 2,
-    id: 'workspace-local',
-    revision: 3,
-    name: 'Local',
-    nameSource: 'custom',
-    slug: 'local',
-    primaryLocationId: 'source',
-    locations: [
-      { id: 'source', name: 'Source', rootName: 'source', endpoint: { kind: 'local', rootPath: 'C:\\source' } },
-      { id: 'destination', name: 'Destination', rootName: 'destination', endpoint: { kind: 'local', rootPath: 'C:\\destination' } },
-    ],
-    createdAt: 1,
-  }
-}
-
 beforeEach(() => {
-  configWorkspaces = []
   topologyWorkspace = null
   remoteClientCreations = 0
   remoteDiscoveryWorkspaces = []
-  transferWorkspaceFile.mockClear()
 })
 
 describe('Workspace V2 host handlers', () => {
@@ -171,7 +131,7 @@ describe('Workspace V2 host handlers', () => {
 
     expect(applied.status).toBe('applied')
     expect(duplicate.status).toBe('duplicate')
-    expect(configWorkspaces[0]).toMatchObject({
+    expect(topologyWorkspace).toMatchObject({
       id: 'workspace-logical',
       name: 'Remote Product',
       nameSource: 'custom',
@@ -187,29 +147,4 @@ describe('Workspace V2 host handlers', () => {
     expect(remoteClientCreations).toBe(1)
   })
 
-  it('returns a duplicate transfer receipt without repeating file I/O', async () => {
-    configWorkspaces = [localWorkspace()]
-    topologyWorkspace = configWorkspaces[0]
-    const harness = handlers()
-    const { registerWorkspaceGuiHandlers } = await import('../workspace')
-    registerWorkspaceGuiHandlers(harness.server as never, harness.deps)
-    const request = {
-      schemaVersion: 1,
-      operationId: 'transfer-1',
-      workspaceId: 'workspace-local',
-      expectedRevision: 3,
-      mode: 'copy',
-      source: { schemaVersion: 1, workspaceId: 'workspace-local', locationId: 'source', relativePath: 'a.txt' },
-      destination: { schemaVersion: 1, workspaceId: 'workspace-local', locationId: 'destination', relativePath: 'a.txt' },
-    }
-    const handler = harness.registered.get(RPC_CHANNELS.workspaces.TRANSFER)!
-
-    const [applied, duplicate] = await Promise.all([
-      handler({ workspaceId: 'workspace-local' }, request),
-      handler({ workspaceId: 'workspace-local' }, request),
-    ])
-    expect(applied).toMatchObject({ status: 'applied' })
-    expect(duplicate).toMatchObject({ status: 'duplicate' })
-    expect(transferWorkspaceFile).toHaveBeenCalledTimes(1)
-  })
 })

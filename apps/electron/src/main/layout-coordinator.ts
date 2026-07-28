@@ -18,7 +18,6 @@ import {
 export interface LayoutCoordinatorOptions {
   storagePath?: string
   authorizeContentRef?: (ref: ContentRef) => boolean
-  resolveServerId?: (workspaceId: string) => string | undefined
   onChanged?: (layout: AppLayout) => void
   persistSnapshot?: (storagePath: string, contents: string) => Promise<void>
 }
@@ -53,28 +52,15 @@ export class LayoutCoordinator {
     this.changedHandler = handler
   }
 
-  getSnapshot(workspaceId = '', serverId?: string): AppLayout {
-    const configuredServerId = this.options.resolveServerId?.(workspaceId)
-    if (configuredServerId && serverId && configuredServerId !== serverId) {
-      throw new Error(`Layout server mismatch for workspace ${workspaceId}`)
-    }
-    const trustedServerId = configuredServerId ?? serverId
-    const current = this.requireLayout(workspaceId, trustedServerId ?? 'local')
-    if (!trustedServerId || layoutUsesServer(current, trustedServerId)) return structuredClone(current)
-
-    const rebound = rebindLayoutServer(current, trustedServerId)
-    this.assertAuthorized(rebound)
-    this.layouts.set(workspaceId, rebound)
-    this.requestPersist()
-    this.changedHandler?.(structuredClone(rebound))
-    return structuredClone(rebound)
+  getSnapshot(workspaceId = ''): AppLayout {
+    return structuredClone(this.requireLayout(workspaceId))
   }
 
   saveSnapshot(input: unknown, expectedRevision?: number): AppLayout {
     assertInputWorkspaceRefs(input)
-    const sanitized = this.normalizeTrustedServer(sanitizeAppLayout(input))
+    const sanitized = sanitizeAppLayout(input)
     assertSingleWorkspaceLayout(sanitized)
-    const current = this.requireLayout(sanitized.workspaceId, firstServerId(sanitized))
+    const current = this.requireLayout(sanitized.workspaceId)
     if (expectedRevision !== undefined && expectedRevision !== current.revision) {
       throw new Error(`Layout revision conflict: expected ${expectedRevision}, current ${current.revision}`)
     }
@@ -93,9 +79,9 @@ export class LayoutCoordinator {
    */
   saveWindowSnapshot(layoutWindowId: string, input: unknown, expectedRevision?: number): AppLayout {
     assertInputWorkspaceRefs(input)
-    const view = this.normalizeTrustedServer(sanitizeWindowView(input))
+    const view = sanitizeWindowView(input)
     assertSingleWorkspaceLayout(view)
-    const current = this.requireLayout(view.workspaceId, firstServerId(view))
+    const current = this.requireLayout(view.workspaceId)
     if (expectedRevision !== undefined && expectedRevision !== current.revision) {
       throw new Error(`Layout revision conflict: expected ${expectedRevision}, current ${current.revision}`)
     }
@@ -177,11 +163,6 @@ export class LayoutCoordinator {
           this.needsPersistAfterLoad = true
           continue
         }
-        const configuredServerId = this.options.resolveServerId?.(restored.workspaceId)
-        if (configuredServerId && !layoutUsesServer(restored, configuredServerId)) {
-          restored = rebindLayoutServer(restored, configuredServerId)
-          this.needsPersistAfterLoad = true
-        }
         this.assertAuthorized(restored)
         layouts.set(restored.workspaceId, restored)
       } catch {
@@ -193,10 +174,10 @@ export class LayoutCoordinator {
     return layouts
   }
 
-  private requireLayout(workspaceId: string, serverId = 'local'): AppLayout {
+  private requireLayout(workspaceId: string): AppLayout {
     const existing = this.layouts.get(workspaceId)
     if (existing) return existing
-    const created = createDefaultAppLayout({ serverId, workspaceId })
+    const created = createDefaultAppLayout({ workspaceId })
     this.layouts.set(workspaceId, created)
     return created
   }
@@ -208,13 +189,6 @@ export class LayoutCoordinator {
         throw new Error(`Unauthorized content route for tab ${tab.id}`)
       }
     }
-  }
-
-  private normalizeTrustedServer(layout: AppLayout): AppLayout {
-    const configuredServerId = this.options.resolveServerId?.(layout.workspaceId)
-    return configuredServerId && !layoutUsesServer(layout, configuredServerId)
-      ? rebindLayoutServer(layout, configuredServerId)
-      : layout
   }
 
   getPersistenceState(): LayoutPersistenceState {
@@ -272,10 +246,6 @@ export class LayoutCoordinator {
       this.durablePersistRevision = targetRevision
     }
   }
-}
-
-function firstServerId(layout: AppLayout): string {
-  return Object.values(layout.tabs)[0]?.ref.serverId ?? 'local'
 }
 
 function sanitizeWindowView(input: unknown): AppLayout {
@@ -391,37 +361,6 @@ function mergeWindowView(current: AppLayout, layoutWindowId: string, view: AppLa
     windows,
     focusedTabId,
   }
-}
-
-function layoutUsesServer(layout: AppLayout, serverId: string): boolean {
-  return Object.values(layout.tabs).every(tab => tab.ref.serverId === serverId)
-}
-
-function rebindLayoutServer(layout: AppLayout, serverId: string): AppLayout {
-  const tabs = Object.fromEntries(Object.entries(layout.tabs).map(([tabId, tab]) => [
-    tabId,
-    { ...tab, ref: { ...tab.ref, serverId } },
-  ]))
-  const windows = Object.fromEntries(Object.entries(layout.windows).map(([windowId, window]) => [
-    windowId,
-    window.geometry === undefined ? window : { ...window, geometry: rewriteServerIds(window.geometry, serverId) },
-  ]))
-  return {
-    ...layout,
-    revision: layout.revision + 1,
-    geometry: rewriteServerIds(layout.geometry, serverId),
-    tabs,
-    windows,
-  }
-}
-
-function rewriteServerIds(value: unknown, serverId: string): unknown {
-  if (Array.isArray(value)) return value.map(item => rewriteServerIds(item, serverId))
-  if (!isRecord(value)) return value
-  return Object.fromEntries(Object.entries(value).map(([key, item]) => [
-    key,
-    key === 'serverId' && typeof item === 'string' ? serverId : rewriteServerIds(item, serverId),
-  ]))
 }
 
 function isPersistedLayoutCollection(value: unknown): value is { version: 1; layouts: Record<string, unknown> } {

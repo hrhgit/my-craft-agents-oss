@@ -27,8 +27,8 @@ export interface GeometryContentTab {
   groupId: string
   ref: {
     kind: string
-    serverId: string
     workspaceId: string
+    locationId?: string
     sessionId?: string
     resourceId?: string
   }
@@ -521,8 +521,8 @@ function createTabNode(tab: GeometryContentTab | undefined): GeometryNode | null
     component: 'mortise-content',
     config: {
       ...(workspaceContent ? {} : { route: tab.ref.resourceId }),
-      serverId: tab.ref.serverId,
       workspaceId: tab.ref.workspaceId,
+      locationId: tab.ref.locationId,
       contentKind: tab.ref.kind,
       resourceId: tab.ref.resourceId,
       sessionId: tab.ref.sessionId,

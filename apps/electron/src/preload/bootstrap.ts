@@ -105,16 +105,16 @@ if (isClientOnly) {
   client = wsClient
   workspaceApiTransport = {
     invoke: async (route, channel, ...args) => {
-      assertThinClientRoute(route, wsUrl, workspaceId)
+      assertThinClientRoute(route, workspaceId)
       return wsClient.invoke(channel, ...args)
     },
     on: (route, channel, callback) => {
-      assertThinClientRoute(route, wsUrl, workspaceId)
+      assertThinClientRoute(route, workspaceId)
       return wsClient.on(channel, callback)
     },
     isChannelAvailable: (route, channel) => {
       try {
-        assertThinClientRoute(route, wsUrl, workspaceId)
+        assertThinClientRoute(route, workspaceId)
         return wsClient.isChannelAvailable(channel)
       } catch {
         return false
@@ -221,7 +221,6 @@ if (isClientOnly) {
     const location = workspace.locations.find(candidate => candidate.id === locationId)
     if (!location) throw new Error(`Workspace location is not authorized: ${workspace.id}::${locationId}`)
     const route = topologyState.resolveRoute({
-      serverId: 'topology',
       workspaceId: workspace.id,
       locationId,
     })
@@ -280,7 +279,7 @@ if (isClientOnly) {
     locationId: string,
     mode: 'register' | 'replace',
   ): Promise<ResolvedWorkspaceRoute> => {
-    const route = topologyState.resolveRoute({ serverId: 'topology', workspaceId: workspace.id, locationId })
+    const route = topologyState.resolveRoute({ workspaceId: workspace.id, locationId })
     return queueRuntimeUpdate(workspaceRouteKey(route), () => installWorkspaceRuntime(workspace, locationId, mode))
   }
 
@@ -316,7 +315,6 @@ if (isClientOnly) {
       workspace,
       workspace.primaryLocationId,
       routedClient.hasWorkspaceRuntime(topologyState.resolveRoute({
-        serverId: 'topology',
         workspaceId: workspace.id,
         locationId: workspace.primaryLocationId,
       })) ? 'replace' : 'register',
@@ -340,7 +338,6 @@ if (isClientOnly) {
       const workspace = await loadWorkspaceTopology(result.workspaceId)
       await reconcileWorkspaceRuntimes(workspace)
       routedClient.activateWorkspaceRuntime(topologyState.resolveRoute({
-        serverId: 'topology',
         workspaceId: workspace.id,
         locationId: workspace.primaryLocationId,
       }))
@@ -586,8 +583,8 @@ if (__MORTISE_UI_VALIDATION_BUILD__ && process.env.MORTISE_UI_TEST_HOST === '1' 
 
 contextBridge.exposeInMainWorld('electronAPI', api)
 
-function assertThinClientRoute(route: WorkspaceRoute, serverUrl: string, workspaceId?: string): void {
-  if (!workspaceId || route.workspaceId !== workspaceId || (route.serverId !== serverUrl && route.serverId !== 'local')) {
+function assertThinClientRoute(route: WorkspaceRoute, workspaceId?: string): void {
+  if (!workspaceId || route.workspaceId !== workspaceId) {
     throw new Error('Workspace route is not available in thin-client mode')
   }
 }

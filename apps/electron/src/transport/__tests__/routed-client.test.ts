@@ -80,8 +80,8 @@ describe('RoutedClient', () => {
     const primary = stubClient({ invoke: mock(async () => 'primary') })
     const attached = stubClient({ invoke: mock(async () => 'attached') })
     const routed = new RoutedClient(local, initial)
-    const primaryRoute = { serverId: 'ignored-a', workspaceId: 'workspace-a', locationId: 'primary' }
-    const attachedRoute = { serverId: 'ignored-b', workspaceId: 'workspace-a', locationId: 'attached' }
+    const primaryRoute = { workspaceId: 'workspace-a', locationId: 'primary' }
+    const attachedRoute = { workspaceId: 'workspace-a', locationId: 'attached' }
     routed.registerWorkspaceRuntime({ route: primaryRoute, client: primary, generation: 'primary-1' })
     routed.registerWorkspaceRuntime({ route: attachedRoute, client: attached, generation: 'attached-1' })
     routed.setWorkspaceSwitchHandler(() => routed.activateWorkspaceRuntime(primaryRoute))
@@ -100,7 +100,7 @@ describe('RoutedClient', () => {
     const initial = stubClient()
     const remote = stubClient({ invoke: mock(async () => 'remote') })
     const routed = new RoutedClient(local, initial)
-    const route = { serverId: 'redacted', workspaceId: 'workspace-a', locationId: 'remote' }
+    const route = { workspaceId: 'workspace-a', locationId: 'remote' }
     routed.registerWorkspaceRuntime({
       route,
       client: remote,
@@ -121,7 +121,7 @@ describe('RoutedClient', () => {
     const initial = stubClient()
     const next = stubClient()
     const routed = new RoutedClient(stubClient(), initial)
-    const route = { serverId: 'redacted', workspaceId: 'workspace-a', locationId: 'next' }
+    const route = { workspaceId: 'workspace-a', locationId: 'next' }
     routed.registerWorkspaceRuntime({ route, client: next, generation: 'next-1' })
     const callback = mock(() => {})
     const capability = mock(() => undefined)
@@ -138,8 +138,8 @@ describe('RoutedClient', () => {
     const routed = new RoutedClient(stubClient(), stubClient())
     const first = stubClient()
     const second = stubClient()
-    const firstRoute = { serverId: 'one', workspaceId: 'workspace-a', locationId: 'one' }
-    const secondRoute = { serverId: 'two', workspaceId: 'workspace-a', locationId: 'two' }
+    const firstRoute = { workspaceId: 'workspace-a', locationId: 'one' }
+    const secondRoute = { workspaceId: 'workspace-a', locationId: 'two' }
     routed.registerWorkspaceRuntime({ route: firstRoute, client: first, generation: 'one-1' })
     routed.registerWorkspaceRuntime({ route: secondRoute, client: second, generation: 'two-1' })
     const callback = mock(() => {})

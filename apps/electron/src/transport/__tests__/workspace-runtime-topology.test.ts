@@ -53,13 +53,13 @@ describe('WorkspaceRuntimeTopologyState', () => {
   it('resolves omitted location identity to the current primary', () => {
     const state = new WorkspaceRuntimeTopologyState()
     state.set(workspace(1))
-    expect(state.resolveRoute({ serverId: 'stale-url', workspaceId: 'workspace-a' })).toEqual({
-      serverId: 'local', workspaceId: 'workspace-a', locationId: 'local',
+    expect(state.resolveRoute({ workspaceId: 'workspace-a' })).toEqual({
+      workspaceId: 'workspace-a', locationId: 'local',
     })
 
     expect(state.apply(change(1, 2))).toMatchObject({ status: 'applied' })
-    expect(state.resolveRoute({ serverId: 'local', workspaceId: 'workspace-a' })).toEqual({
-      serverId: 'wss://remote.example', workspaceId: 'workspace-a', locationId: 'remote',
+    expect(state.resolveRoute({ workspaceId: 'workspace-a' })).toEqual({
+      workspaceId: 'workspace-a', locationId: 'remote',
     })
   })
 
@@ -67,7 +67,7 @@ describe('WorkspaceRuntimeTopologyState', () => {
     const state = new WorkspaceRuntimeTopologyState()
     state.set(workspace(1))
     state.apply(change(1, 2))
-    expect(state.resolveRoute({ serverId: 'ignored', workspaceId: 'workspace-a', locationId: 'local' }).locationId).toBe('local')
+    expect(state.resolveRoute({ workspaceId: 'workspace-a', locationId: 'local' }).locationId).toBe('local')
   })
 
   it('ignores stale events and requires a host resync for revision gaps', () => {

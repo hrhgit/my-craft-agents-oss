@@ -540,9 +540,6 @@ app.whenReady().then(async () => {
     )
     layoutCoordinator = new LayoutCoordinator({
       authorizeContentRef: ref => ref.workspaceId === '' || !!getWorkspaceByNameOrId(ref.workspaceId),
-      resolveServerId: workspaceId => {
-        return !workspaceId || getWorkspaceByNameOrId(workspaceId) ? 'local' : undefined
-      },
     })
     windowManager.setAuxiliaryClosedHandler((windowId, workspaceId) => {
       layoutCoordinator?.redockWindow(windowId, workspaceId)

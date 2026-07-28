@@ -2,20 +2,14 @@ import {
   RPC_CHANNELS,
   parseWorkspaceRemotePrimaryCommandV1,
   parseWorkspaceRemotePrimaryResultV1,
-  parseWorkspaceTransferRequestV1,
-  parseWorkspaceTransferResultV1,
   parseWorkspaceV2,
   redactWorkspaceInfo,
   type WorkspaceRemotePrimaryCommandV1,
   type WorkspaceRemotePrimaryResultV1,
-  type WorkspaceTransferRequestV1,
-  type WorkspaceTransferResultV1,
 } from '@mortise/shared/protocol'
 import { getCredentialManager } from '@mortise/shared/credentials'
-import { getWorkspaceByNameOrId, loadStoredConfig, saveConfig } from '@mortise/shared/config'
 import { getDefaultWorkspaceTopologyStore } from '@mortise/shared/workspaces'
 import type { Workspace } from '@mortise/core/types'
-import { transferWorkspaceFile } from '@mortise/server-core/handlers/rpc/workspace-transfer'
 import type { RpcServer, WsRpcClient } from '@mortise/server-core/transport'
 import type { HandlerDeps } from './handler-deps'
 import { shouldRejectUnauthorizedTls, type RemoteTlsPolicy } from '../../shared/remote-tls'
@@ -23,7 +17,6 @@ import { shouldRejectUnauthorizedTls, type RemoteTlsPolicy } from '../../shared/
 export const GUI_HANDLED_CHANNELS = [
   RPC_CHANNELS.remote.TEST_CONNECTION,
   RPC_CHANNELS.workspaces.REMOTE_PRIMARY_COMMAND,
-  RPC_CHANNELS.workspaces.TRANSFER,
   RPC_CHANNELS.window.OPEN_WORKSPACE,
   RPC_CHANNELS.window.OPEN_SESSION_IN_NEW_WINDOW,
   RPC_CHANNELS.window.OPEN_CHILD_SESSION_WINDOW,
@@ -84,21 +77,14 @@ export function registerWorkspaceGuiHandlers(server: RpcServer, deps: HandlerDep
     command: WorkspaceRemotePrimaryCommandV1
     result: Promise<WorkspaceRemotePrimaryResultV1>
   }>()
-  const transferOperations = new Map<string, {
-    request: WorkspaceTransferRequestV1
-    result: Promise<WorkspaceTransferResultV1>
-  }>()
 
   const runRemotePrimaryCommand = async (
     command: WorkspaceRemotePrimaryCommandV1,
   ): Promise<WorkspaceRemotePrimaryResultV1> => {
-    const existing = getWorkspaceByNameOrId(command.workspaceId)
     const persistedTopology = topologyStore.get(command.workspaceId)
-    if (existing || persistedTopology) {
-      const workspace = persistedTopology ?? requireMatchingRemoteWorkspace(existing!, command)
+    if (persistedTopology) {
+      const workspace = persistedTopology
       requireMatchingRemoteWorkspace(workspace, command)
-      if (!persistedTopology) topologyStore.create(workspace, command.operationId)
-      if (!existing) persistWorkspace(workspace)
       return remotePrimaryResult(command, workspace, remoteWorkspaceId(workspace), 'duplicate', {
         status: 'unknown', reason: 'not-observed',
       }, unavailablePermissions())
@@ -120,7 +106,6 @@ export function registerWorkspaceGuiHandlers(server: RpcServer, deps: HandlerDep
 
       const workspace = createRemotePrimaryWorkspace(command, remoteId)
       topologyStore.create(workspace, command.operationId)
-      persistWorkspace(workspace)
       return remotePrimaryResult(
         command,
         workspace,
@@ -151,51 +136,6 @@ export function registerWorkspaceGuiHandlers(server: RpcServer, deps: HandlerDep
     } catch (error) {
       if (remotePrimaryOperations.get(command.operationId)?.result === result) {
         remotePrimaryOperations.delete(command.operationId)
-      }
-      throw error
-    }
-  })
-
-  server.handle(RPC_CHANNELS.workspaces.TRANSFER, async (ctx, requestValue: unknown) => {
-    const request = parseWorkspaceTransferRequestV1(requestValue)
-    if (ctx.workspaceId && ctx.workspaceId !== request.workspaceId) {
-      throw new Error(`Workspace mismatch: authenticated workspace (${ctx.workspaceId}) does not match requested (${request.workspaceId})`)
-    }
-    const existing = transferOperations.get(request.operationId)
-    if (existing) {
-      assertSameOperation(existing.request, request, 'transfer')
-      return parseWorkspaceTransferResultV1({ ...await existing.result, status: 'duplicate' })
-    }
-
-    const result = (async () => {
-      const candidate = getWorkspaceByNameOrId(request.workspaceId)
-        ?? deps.sessionManager.getWorkspaces().find(workspace => workspace.id === request.workspaceId)
-      if (!candidate) throw new Error(`Workspace not found: ${request.workspaceId}`)
-      const workspace = parseWorkspaceV2(candidate)
-      if (!topologyStore.get(workspace.id)) topologyStore.create(workspace)
-      const transfer = await transferWorkspaceFile(topologyStore, request)
-      return parseWorkspaceTransferResultV1({
-        schemaVersion: 1,
-        operationId: request.operationId,
-        status: 'applied',
-        workspaceId: transfer.workspaceId,
-        sourceLocationId: transfer.sourceLocationId,
-        destinationLocationId: transfer.destinationLocationId,
-        revision: transfer.revision,
-        mode: transfer.mode,
-        sha256: transfer.sha256,
-        bytes: transfer.bytes,
-        sourceRemoved: transfer.sourceRemoved,
-      })
-    })()
-    transferOperations.set(request.operationId, { request, result })
-    try {
-      const resolved = await result
-      trimOperationMap(transferOperations)
-      return resolved
-    } catch (error) {
-      if (transferOperations.get(request.operationId)?.result === result) {
-        transferOperations.delete(request.operationId)
       }
       throw error
     }
@@ -346,29 +286,6 @@ function createRemotePrimaryWorkspace(
     }],
     createdAt: Date.now(),
   })
-}
-
-function persistWorkspace(workspace: Workspace): void {
-  const config = loadStoredConfig()
-  if (!config) throw new Error('No config found')
-  const existing = config.workspaces.find(candidate => candidate.id === workspace.id)
-  if (existing) {
-    if (JSON.stringify(existing) !== JSON.stringify(workspace)) {
-      throw new Error(`Workspace identity is already owned by a different topology: ${workspace.id}`)
-    }
-    return
-  }
-  const primary = workspace.locations.find(location => location.id === workspace.primaryLocationId)!
-  const duplicateEndpoint = config.workspaces.some(candidate => candidate.locations.some(location => (
-    primary.endpoint.kind === 'remote'
-      && location.endpoint.kind === 'remote'
-      && location.endpoint.url === primary.endpoint.url
-      && location.endpoint.remoteWorkspaceId === primary.endpoint.remoteWorkspaceId
-  )))
-  if (duplicateEndpoint) throw new Error('Workspace location is already attached to another Workspace')
-  config.workspaces.push(workspace)
-  if (!config.activeWorkspaceId) config.activeWorkspaceId = workspace.id
-  saveConfig(config)
 }
 
 function requireMatchingRemoteWorkspace(

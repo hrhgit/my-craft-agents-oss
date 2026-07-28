@@ -84,6 +84,7 @@ Run main, IPC, transport parity, window lifecycle, close flushing, and Electron 
 Windows process and file semantics differ from Unix; IPC surface expansion can cross a privilege boundary.
 
 ## Semantic history
+- 2026-07-28: Removed legacy layout server identity, config topology dual writes, and Electron's duplicate transfer endpoint so shared Core remains the sole transfer authority.
 - 2026-07-28: Made Electron own remote-primary creation and explicit Workspace transfer channels, removed arbitrary token-bearing remote invocation from preload, and restored logical Workspace identity in nested remote results and events.
 - 2026-07-28: Made Electron renderer Workspace state consume redacted topology and derive remote presentation and Session identity only from the current primary location.
 - 2026-07-28: Made preload transport route concurrent Workspace locations by stable location identity, kept layout Workspace-scoped, and isolated remote credentials behind a private main-to-preload resolver boundary.
@@ -103,4 +104,3 @@ Windows process and file semantics differ from Unix; IPC surface expansion can c
 - 2026-07-21: Published an immutable versioned Electron platform-capability snapshot through the preload `ElectronAPI` boundary for shared renderer feature gating.
 - 2026-07-21: Moved Electron Automation ingress and Messaging publisher, workspace initialization, and fan-out setup into the shared pre-listen runtime transaction with rollback cleanup.
 - 2026-07-21: Extended the Electron skill API and channel map for a local folder picker import action while keeping the privileged path out of WebUI.
-- 2026-07-20: Updated handler registration coverage for workspace coordination and isolated Electron test files from cross-module mocks.
