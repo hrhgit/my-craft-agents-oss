@@ -14,11 +14,13 @@ function createHarness(candidate: Workspace | LegacyWorkspaceV1 | null) {
   const pushes: Array<{ channel: string; target: unknown; args: unknown[] }> = []
   const interruptions: unknown[] = []
   const topologyUpdates: Workspace[] = []
+  const lifecycle: string[] = []
   const server: RpcServer = {
     handle(channel, handler) {
       handlers.set(channel, handler)
     },
     push(channel, target, ...args) {
+      lifecycle.push('publish')
       pushes.push({ channel, target, args })
     },
     async invokeClient() {
@@ -35,10 +37,23 @@ function createHarness(candidate: Workspace | LegacyWorkspaceV1 | null) {
     sessionManager: {
       getWorkspaces: () => candidate ? [candidate] : [],
       async interruptWorkspaceSessionsForTopologyChange(target: unknown) {
+        lifecycle.push('session-interrupt')
         interruptions.push(target)
       },
       updateWorkspaceTopology(workspace: Workspace) {
+        lifecycle.push('session-update')
         topologyUpdates.push(workspace)
+      },
+      getAutomationHost() {
+        return {
+          async interruptForWorkspaceTopologyChange() {
+            lifecycle.push('automation-interrupt')
+            return { interruptedRunIds: [] }
+          },
+          async resumeAfterWorkspaceTopologyChange() {
+            lifecycle.push('automation-resume')
+          },
+        }
       },
     },
     platform: {
@@ -46,8 +61,13 @@ function createHarness(candidate: Workspace | LegacyWorkspaceV1 | null) {
     },
   } as unknown as HandlerDeps
   const store = new WorkspaceTopologyStore({ databasePath: ':memory:', writerId: 'workspace-topology-rpc-test' })
+  const apply = store.apply.bind(store)
+  store.apply = (command) => {
+    lifecycle.push('apply')
+    return apply(command)
+  }
   registerWorkspaceTopologyHandlers(server, deps, store)
-  return { handlers, pushes, interruptions, topologyUpdates, store }
+  return { handlers, pushes, interruptions, topologyUpdates, lifecycle, store }
 }
 
 describe('Workspace topology RPC', () => {
@@ -167,11 +187,71 @@ describe('Workspace topology RPC', () => {
       await expect(handler(context, command)).resolves.toMatchObject({ status: 'applied' })
       await expect(handler(context, command)).resolves.toMatchObject({ status: 'duplicate' })
       expect(harness.interruptions).toEqual([{ workspaceId: 'workspace-1', scope: 'workspace' }])
+      expect(harness.lifecycle).toEqual([
+        'automation-interrupt',
+        'session-interrupt',
+        'apply',
+        'session-update',
+        'publish',
+        'automation-resume',
+      ])
       expect(harness.topologyUpdates).toHaveLength(1)
       expect(harness.topologyUpdates[0]).toMatchObject({
         primaryLocationId: 'attached',
         name: basename(attached),
       })
+      harness.store.close()
+    } finally {
+      await rm(primary, { recursive: true, force: true })
+      await rm(attached, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps the scheduler paused until a failed topology mutation is definitive', async () => {
+    const primary = await mkdtemp(join(tmpdir(), 'mortise-topology-rpc-failure-primary-'))
+    const attached = await mkdtemp(join(tmpdir(), 'mortise-topology-rpc-failure-attached-'))
+    try {
+      const candidate: Workspace = {
+        schemaVersion: 2,
+        id: 'workspace-1',
+        revision: 0,
+        name: 'primary',
+        nameSource: 'derived',
+        slug: 'workspace',
+        primaryLocationId: 'primary',
+        locations: [
+          { id: 'primary', name: 'Primary', rootName: 'primary', endpoint: { kind: 'local', rootPath: primary } },
+          { id: 'attached', name: 'Attached', rootName: 'attached', endpoint: { kind: 'local', rootPath: attached } },
+        ],
+        createdAt: 1,
+      }
+      const harness = createHarness(candidate)
+      harness.store.apply = () => {
+        harness.lifecycle.push('apply-failed')
+        throw new Error('planned topology failure')
+      }
+      const handler = harness.handlers.get(RPC_CHANNELS.workspaces.TOPOLOGY_COMMAND)!
+
+      await expect(handler({
+        clientId: 'client-1',
+        workspaceId: 'workspace-1',
+        webContentsId: null,
+      }, {
+        schemaVersion: 1,
+        workspaceId: 'workspace-1',
+        operationId: 'set-primary-failure',
+        expectedRevision: 0,
+        operation: 'set-primary',
+        locationId: 'attached',
+      })).rejects.toThrow('planned topology failure')
+      expect(harness.lifecycle).toEqual([
+        'automation-interrupt',
+        'session-interrupt',
+        'apply-failed',
+        'automation-resume',
+      ])
+      expect(harness.topologyUpdates).toEqual([])
+      expect(harness.pushes).toEqual([])
       harness.store.close()
     } finally {
       await rm(primary, { recursive: true, force: true })

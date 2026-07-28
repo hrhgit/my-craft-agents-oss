@@ -1,4 +1,3 @@
-import type { Workspace } from '@mortise/core/types'
 import {
   RPC_CHANNELS,
   WORKSPACE_TOPOLOGY_CHANGE_SCHEMA_VERSION,
@@ -12,15 +11,11 @@ import {
   type LegacyWorkspaceV1,
 } from '@mortise/shared/workspaces'
 import { pushTyped, type RpcServer } from '../../transport'
+import type { WorkspaceTopologySessionCoordinator } from '../../domain'
 import type { HandlerDeps } from '../handler-deps'
+import type { ISessionManager } from '../session-manager-interface'
 
-interface WorkspaceTopologySessionCoordinator {
-  interruptWorkspaceSessionsForTopologyChange(target:
-    | { workspaceId: string; scope: 'workspace' }
-    | { workspaceId: string; scope: 'location'; locationId: string }
-  ): Promise<unknown>
-  updateWorkspaceTopology(workspace: Workspace): void
-}
+type WorkspaceTopologyHandlerDeps = HandlerDeps<ISessionManager & WorkspaceTopologySessionCoordinator>
 
 export const WORKSPACE_TOPOLOGY_HANDLED_CHANNELS = [
   RPC_CHANNELS.workspaces.GET_TOPOLOGY,
@@ -29,7 +24,7 @@ export const WORKSPACE_TOPOLOGY_HANDLED_CHANNELS = [
 
 export function registerWorkspaceTopologyHandlers(
   server: RpcServer,
-  deps: HandlerDeps,
+  deps: WorkspaceTopologyHandlerDeps,
   store: WorkspaceTopologyStore = getDefaultWorkspaceTopologyStore(),
 ): void {
   server.handle(RPC_CHANNELS.workspaces.GET_TOPOLOGY, async (ctx, requestedWorkspaceId?: string) => {
@@ -63,34 +58,40 @@ export function registerWorkspaceTopologyHandlers(
     if (replay) return replay
 
     const interruption = topologyInterruption(command)
-    const coordinator = deps.sessionManager as unknown as Partial<WorkspaceTopologySessionCoordinator>
-    if (typeof coordinator.updateWorkspaceTopology !== 'function') {
-      throw new Error('Workspace topology Session projection coordinator is unavailable')
-    }
-    if (interruption) {
-      if (typeof coordinator.interruptWorkspaceSessionsForTopologyChange !== 'function') {
-        throw new Error('Workspace topology interruption coordinator is unavailable')
+    const automationHost = interruption
+      ? deps.sessionManager.getAutomationHost(command.workspaceId)
+      : null
+    let automationInterruptionRequested = false
+    try {
+      if (interruption) {
+        automationInterruptionRequested = automationHost !== null
+        const automationInterruption = automationHost?.interruptForWorkspaceTopologyChange()
+        const sessionInterruption = deps.sessionManager.interruptWorkspaceSessionsForTopologyChange(interruption)
+        await Promise.all([automationInterruption, sessionInterruption])
       }
-      await coordinator.interruptWorkspaceSessionsForTopologyChange(interruption)
-    }
-    const result = store.apply(command)
-    if (result.status === 'applied') {
-      const persisted = store.get(command.workspaceId)
-      if (!persisted) throw new Error(`Workspace topology not found after mutation: ${command.workspaceId}`)
-      coordinator.updateWorkspaceTopology(persisted)
-      const change: WorkspaceTopologyChangedV1 = {
-        schemaVersion: WORKSPACE_TOPOLOGY_CHANGE_SCHEMA_VERSION,
-        workspaceId: command.workspaceId,
-        operationId: command.operationId,
-        operation: command.operation,
-        previousRevision: result.previousRevision,
-        revision: result.workspace.revision,
-        changedLocationIds: [command.locationId],
-        workspace: result.workspace,
+      const result = store.apply(command)
+      if (result.status === 'applied') {
+        const persisted = store.get(command.workspaceId)
+        if (!persisted) throw new Error(`Workspace topology not found after mutation: ${command.workspaceId}`)
+        deps.sessionManager.updateWorkspaceTopology(persisted)
+        const change: WorkspaceTopologyChangedV1 = {
+          schemaVersion: WORKSPACE_TOPOLOGY_CHANGE_SCHEMA_VERSION,
+          workspaceId: command.workspaceId,
+          operationId: command.operationId,
+          operation: command.operation,
+          previousRevision: result.previousRevision,
+          revision: result.workspace.revision,
+          changedLocationIds: [command.locationId],
+          workspace: result.workspace,
+        }
+        pushTyped(server, RPC_CHANNELS.workspaces.TOPOLOGY_CHANGED, { to: 'all', exclude: ctx.clientId }, change)
       }
-      pushTyped(server, RPC_CHANNELS.workspaces.TOPOLOGY_CHANGED, { to: 'all', exclude: ctx.clientId }, change)
+      return result
+    } finally {
+      if (automationInterruptionRequested) {
+        await automationHost!.resumeAfterWorkspaceTopologyChange()
+      }
     }
-    return result
   })
 }
 
