@@ -29,7 +29,7 @@ import {
 } from '@mortise/shared/agent/backend'
 import { alternateMidStreamBehavior, readPiGlobalProviders, readPiGlobalSettings, getDefaultThinkingLevel, getMidStreamBehavior, resetManagedAnthropicAuthEnvVars, getPersistedUiLanguage, resolveTitleLanguageName, listSubagentTemplates, type PiExtensionReloadActiveSession, type PiExtensionReloadResult } from '@mortise/shared/config'
 import { PrivilegedExecutionBroker, SessionShareTransferService } from '@mortise/server-core/services'
-import { InitGate } from '@mortise/server-core/domain'
+import { InitGate, type WorkspaceTopologySessionCoordinator } from '@mortise/server-core/domain'
 import { i18n } from '@mortise/shared/i18n'
 import {
   getWorkspaces,
@@ -41,7 +41,7 @@ import {
   type WorkspaceInfo,
 } from '@mortise/shared/config'
 import type { ActiveSessionInfo, SessionProcessingStatus } from '@mortise/core/types'
-import { loadWorkspaceConfig } from '@mortise/shared/workspaces'
+import { getDefaultWorkspaceTopologyStore, loadWorkspaceConfig } from '@mortise/shared/workspaces'
 import {
   // Session persistence functions
   listSessions as listStoredSessions,
@@ -83,7 +83,7 @@ import {
 import { ConfigWatcher, type ConfigWatcherCallbacks } from '@mortise/shared/config'
 import { getLastApiError } from '@mortise/shared/interceptor'
 import { restoreFiles } from '@mortise/shared/utils/bundle-files'
-import { type Session, type SessionEvent, type FileAttachment, type SendMessageOptions, type UnreadSummary, type PiProjectionEventV1, type PiProjectionSnapshotV1, type ExtensionInteractionResponseV1, RPC_CHANNELS, SESSION_SETTLEMENT_ERROR_CODE, generateMessageId, redactWorkspaceInfo } from '@mortise/shared/protocol'
+import { type Session, type SessionEvent, type FileAttachment, type SendMessageOptions, type UnreadSummary, type PiProjectionEventV1, type PiProjectionSnapshotV1, type ExtensionInteractionResponseV1, RPC_CHANNELS, SESSION_SETTLEMENT_ERROR_CODE, generateMessageId } from '@mortise/shared/protocol'
 import {
   ConversationProjector,
   resolvePiBranchTarget,
@@ -1230,7 +1230,7 @@ function managedToSession(
   } as Session
 }
 
-export class SessionManager implements ISessionManager {
+export class SessionManager implements ISessionManager, WorkspaceTopologySessionCoordinator {
   /** Canonical resolver; tests may inject an isolated workspace without mutating global config. */
   private readonly resolveWorkspaceByNameOrId: (nameOrId: string) => Workspace | null
   /** Session backend construction boundary; production uses the canonical shared factory. */
@@ -2349,7 +2349,7 @@ export class SessionManager implements ISessionManager {
   }
 
   getWorkspacesInfo(): WorkspaceInfo[] {
-    return getWorkspaces().map(redactWorkspaceInfo)
+    return getDefaultWorkspaceTopologyStore().listInfo()
   }
 
   getActiveSessionCount(workspaceId?: string): number {

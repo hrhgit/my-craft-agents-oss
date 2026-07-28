@@ -63,6 +63,7 @@ Run server-core, server smoke, CLI command, streaming, spawner, and transport te
 Client/server version skew affects capabilities; stale endpoint discovery can connect a client to the wrong backend.
 
 ## Semantic history
+- 2026-07-28: Published the formal Session coordinator contract for Workspace topology changes and made SessionManager explicitly implement durable interruption plus snapshot adoption without automatic work resume.
 - 2026-07-25: Made headless platform construction validate the sealed runtime layout once and propagate it through backend, search, Session, and script-runtime consumers so immutable builds cannot fall back to process PATH or live checkout resources.
 - 2026-07-24: Made RPC listener allocation reject Fetch-blocked WebSocket ports and retry browser-unsafe ephemeral bindings before advertising readiness to Electron or WebUI clients.
 - 2026-07-24: Made server registration parse only complete protocol-v2 records and remove live legacy or unsupported-version registrations instead of treating them as current locks.
@@ -82,4 +83,3 @@ Client/server version skew affects capabilities; stale endpoint discovery can co
 - 2026-07-21: Added a host-only first-turn publication hook so external gateways can install bindings before public Session events without creating empty Sessions.
 - 2026-07-21: Made listener binding the bootstrap readiness commit and added rollback for partially initialized server resources and registrations.
 - 2026-07-20: Removed Data Sources commands, flags, and current-product documentation from the headless CLI while preserving generic MCP and extension interaction support.
-- 2026-07-20: Required confirmation for automation reads that expose prompts, webhook configuration, run snapshots, or isolated-Agent output.

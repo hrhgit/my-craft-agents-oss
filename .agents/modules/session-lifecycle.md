@@ -47,7 +47,7 @@ Run session storage, persistence queue, projection, send durability, and draft t
 Publishing metadata or projection before Pi's assistant-backed JSONL exists can create visible phantom sessions; event ordering can make a running session appear terminated.
 
 ## Semantic history
-- 2026-07-28: Added Workspace-topology interruption and authoritative topology refresh for Session work with start-time primary-location attribution, synchronous recovery fences, durable queued-work retirement, pending-plan/auth cleanup, and parent-owned runtime teardown before topology mutation.
+- 2026-07-28: Added Workspace-topology interruption and authoritative topology refresh for Session work with start-time primary-location attribution, synchronous recovery fences, durable queued-work retirement, pending-plan/auth cleanup, parent-owned runtime teardown before topology mutation, an explicit coordinator contract, and canonical client-safe topology projections.
 - 2026-07-27: Made core subagents parent-owned persistent child tasks with sidecar JSONL history, durable adjustment inboxes, idempotent background completion delivery, and explicit deletion failure semantics.
 - 2026-07-25: Propagated the host-validated immutable runtime layout through Session backend construction so Session execution uses the same sealed runtime authority as the owning Electron or headless host.
 - 2026-07-24: Made explicit Session-create thinking levels reject retired or invalid values instead of silently falling back, and removed the retired namespaced session-tool display reader from current projections.
