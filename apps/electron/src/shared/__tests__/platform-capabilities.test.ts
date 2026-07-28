@@ -23,7 +23,6 @@ describe('Electron platform capability contract', () => {
       'gitBashConfiguration',
       'localSkillManagement',
       'powerSaveBlocker',
-      'crossServerRpc',
     ])
     expect(Object.values(ELECTRON_PLATFORM_CAPABILITIES.capabilities).every(
       descriptor => descriptor.status === 'supported',

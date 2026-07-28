@@ -4,6 +4,7 @@ import type { ExtensionUISurface } from '@mortise/shared/protocol'
 import { ContributionStore, SurfaceLayoutManager } from './extension-contribution-store'
 import { extensionValidationStore } from './extension-validation-store'
 import { useOptionalAppShellContext } from '@/context/AppShellContext'
+import { getPrimaryRemoteWorkspaceId } from '@/lib/workspace-info'
 
 export const extensionContributionStore = new ContributionStore()
 export const extensionSurfaceLayout = new SurfaceLayoutManager()
@@ -37,9 +38,9 @@ export function useExtensionContributions(
   ensureHostSubscription()
   const appShell = useOptionalAppShellContext()
   const activeWorkspace = appShell?.workspaces.find(workspace => workspace.id === appShell.activeWorkspaceId)
-  const activeContributionWorkspaceId = activeWorkspace?.remoteServer?.remoteWorkspaceId
-    ?? appShell?.activeWorkspaceId
-    ?? undefined
+  const activeContributionWorkspaceId = (
+    activeWorkspace ? getPrimaryRemoteWorkspaceId(activeWorkspace) : undefined
+  ) ?? appShell?.activeWorkspaceId ?? undefined
   const resolvedWorkspaceId = workspaceId === undefined ? activeContributionWorkspaceId : workspaceId
   const hasTarget = target !== undefined
   const targetTurnId = target?.turnId

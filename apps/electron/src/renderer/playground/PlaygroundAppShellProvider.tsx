@@ -10,14 +10,24 @@
 
 import * as React from 'react'
 import { AppShellProvider, type AppShellContextType } from '../context/AppShellContext'
-import type { Workspace } from '../../shared/types'
+import type { WorkspaceInfo } from '../../shared/types'
 
-export const PLAYGROUND_WORKSPACE: Workspace = {
+export const PLAYGROUND_WORKSPACE: WorkspaceInfo = {
+  schemaVersion: 2,
   id: 'playground-workspace',
+  revision: 0,
   name: 'Playground',
+  nameSource: 'custom',
   slug: 'playground',
-  rootPath: '/mock/workspaces/playground-workspace',
-  createdAt: Date.now(),
+  primaryLocationId: 'primary',
+  locations: [{
+    id: 'primary',
+    name: 'Primary',
+    rootName: 'playground-workspace',
+    endpoint: { kind: 'local' },
+    availability: { status: 'available', observedAt: 0 },
+    permissions: { read: true, write: true, search: true, runCommands: true },
+  }],
 }
 
 function logCall(method: string) {

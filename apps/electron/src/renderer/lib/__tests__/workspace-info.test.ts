@@ -8,14 +8,23 @@ import {
   isPrimaryWorkspaceRemote,
 } from '../workspace-info'
 
-function workspace(locations: WorkspaceInfo['locations'], primaryLocationId: string): WorkspaceInfo {
+function workspace(
+  locations: Array<Pick<WorkspaceInfo['locations'][number], 'id' | 'name' | 'endpoint'> & Partial<WorkspaceInfo['locations'][number]>>,
+  primaryLocationId: string,
+): WorkspaceInfo {
   return {
     schemaVersion: 2,
     id: 'workspace-a',
     revision: 3,
     primaryLocationId,
-    locations,
+    locations: locations.map(location => ({
+      rootName: location.rootName ?? location.name.toLowerCase(),
+      availability: location.availability ?? { status: 'unknown', reason: 'not-observed' },
+      permissions: location.permissions ?? { read: true, write: true, search: true, runCommands: true },
+      ...location,
+    })) as WorkspaceInfo['locations'],
     name: 'Workspace A',
+    nameSource: 'custom',
     slug: 'workspace-a',
   }
 }
@@ -29,7 +38,6 @@ describe('workspace info routing', () => {
 
     expect(getPrimaryWorkspaceLocationInfo(value).id).toBe('local-a')
     expect(getPrimaryWorkspaceRoute(value)).toEqual({
-      serverId: 'local',
       workspaceId: 'workspace-a',
       locationId: 'local-a',
     })
@@ -44,7 +52,6 @@ describe('workspace info routing', () => {
     ], 'remote-a')
 
     expect(getPrimaryWorkspaceRoute(value)).toEqual({
-      serverId: 'https://remote.test',
       workspaceId: 'workspace-a',
       locationId: 'remote-a',
     })

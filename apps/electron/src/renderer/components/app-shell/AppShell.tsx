@@ -144,6 +144,7 @@ import {
   getPrimaryRemoteWorkspaceId,
   getPrimaryWorkspaceLocationInfo,
   getPrimaryWorkspaceRoute,
+  getPrimaryWorkspaceServerId,
   isPrimaryWorkspaceLocal,
 } from "@/lib/workspace-info"
 import {
@@ -1892,7 +1893,7 @@ function AppShellContent({
                   key={activeWorkspaceId ?? 'no-workspace'}
                   activeWorkspaceId={activeWorkspaceId}
                   workspaceTransition={workspaceTransition}
-                  serverId={activeWorkspaceRoute?.serverId ?? 'local'}
+                  serverId={activeWorkspace ? getPrimaryWorkspaceServerId(activeWorkspace) : 'local'}
                   locationId={activeWorkspaceRoute?.locationId}
                   sessionId={effectiveSessionId}
                   isLeadingChromeHidden={isPrimarySidebarHidden}

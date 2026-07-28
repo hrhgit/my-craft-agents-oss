@@ -10,7 +10,7 @@ import {
 } from '../coordinated-layout-client'
 
 function layout(revision: number): AppLayout {
-  return { ...createDefaultAppLayout({ serverId: 'local', workspaceId: 'workspace' }), revision }
+  return { ...createDefaultAppLayout({ workspaceId: 'workspace' }), revision }
 }
 
 describe('coordinated layout client', () => {

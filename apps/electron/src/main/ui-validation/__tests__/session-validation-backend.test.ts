@@ -1,17 +1,19 @@
 import { afterEach, describe, expect, it, mock } from 'bun:test'
 import { SessionManager as PiSessionManager } from '@mortise/pi-coding-agent/host-facade'
-import { getSessionFilePath, getSessionPath, tryGetSessionFilePath } from '@mortise/shared/sessions'
+import { getSessionFilePath, getSessionPath, setSharedPiSessionsDirForTests, tryGetSessionFilePath } from '@mortise/shared/sessions'
 import { spawn } from 'node:child_process'
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { SessionValidationController } from '../session-validation-backend'
+import type { Workspace } from '@mortise/core/types'
 
 const envKeys = ['MORTISE_UI_TEST_HOST', 'MORTISE_UI_RUN_ID', 'MORTISE_UI_PROFILE_MODE', 'MORTISE_UI_PROFILE_DIR', 'PI_CODING_AGENT_DIR'] as const
 const original = Object.fromEntries(envKeys.map(key => [key, process.env[key]]))
 let profile: string | undefined
 
 afterEach(() => {
+  setSharedPiSessionsDirForTests(undefined)
   if (profile) rmSync(profile, { recursive: true, force: true })
   profile = undefined
   for (const key of envKeys) {
@@ -112,7 +114,7 @@ describe('Session validation backend', () => {
     }))
 
     const first = await backend.chat('durable user').next()
-    const sessionFile = tryGetSessionFilePath(workspaceRoot, sessionId)
+    const sessionFile = tryGetSessionFilePath('ws-a', sessionId)
 
     expect(first.value).toEqual({ type: 'pi_user_message_persisted' })
     expect(sessionFile).not.toBeNull()
@@ -130,7 +132,7 @@ describe('Session validation backend', () => {
     const workspaceRoot = join(profile!, 'workspace')
     const sessionId = 'session-settlement'
     mkdirSync(workspaceRoot, { recursive: true })
-    const sessionFile = getSessionFilePath(workspaceRoot, sessionId, Date.now())
+    const sessionFile = getSessionFilePath('ws-a', sessionId, Date.now())
     const piSession = PiSessionManager.create(workspaceRoot, dirname(sessionFile), { id: sessionId })
     piSession.appendMessage({ role: 'user', content: [{ type: 'text', text: 'baseline' }], timestamp: Date.now() })
     piSession.appendMessage({
@@ -147,7 +149,7 @@ describe('Session validation backend', () => {
       timestamp: Date.now(),
     })
     await piSession.flush()
-    const projectionPath = join(getSessionPath(workspaceRoot, sessionId), 'pi-projection-v1.json')
+    const projectionPath = join(getSessionPath('ws-a', sessionId), 'pi-projection-v1.json')
     const projectionBackupPath = join(dirname(projectionPath), 'pi-projection-v1.session-validation-backup-v1.json')
     mkdirSync(dirname(projectionPath), { recursive: true })
     writeFileSync(projectionPath, 'baseline projection', 'utf8')
@@ -197,6 +199,7 @@ function setupController(): SessionValidationController {
   profile = mkdtempSync(join(tmpdir(), 'session-validation-'))
   process.env.MORTISE_UI_PROFILE_DIR = profile
   process.env.PI_CODING_AGENT_DIR = join(profile, 'pi-agent')
+  setSharedPiSessionsDirForTests(join(profile, 'agent', 'sessions'))
   return new SessionValidationController()
 }
 
@@ -208,11 +211,30 @@ function backendArgs(
   const sessionId = Object.prototype.hasOwnProperty.call(options, 'sessionId') ? options.sessionId : 'session-a'
   return {
     coreConfig: {
-      workspace: { id: workspaceId, rootPath: options.workspaceRoot ?? 'C:/workspace' },
+      workspace: validationWorkspace(workspaceId, options.workspaceRoot ?? 'C:/workspace'),
       ...(sessionId ? { session: { mortiseId: sessionId } } : {}),
     },
     provisional: options.provisional ?? true,
     createDefaultBackend,
+  }
+}
+
+function validationWorkspace(id: string, rootPath: string): Workspace {
+  return {
+    schemaVersion: 2,
+    id,
+    revision: 0,
+    name: id,
+    nameSource: 'custom',
+    slug: id,
+    primaryLocationId: 'primary',
+    locations: [{
+      id: 'primary',
+      name: 'Primary',
+      rootName: 'workspace',
+      endpoint: { kind: 'local', rootPath },
+    }],
+    createdAt: 0,
   }
 }
 

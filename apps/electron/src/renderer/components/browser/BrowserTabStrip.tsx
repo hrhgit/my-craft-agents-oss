@@ -32,6 +32,7 @@ import { BrowserTabBadge } from './BrowserTabBadge'
 import type { BrowserInstanceInfo } from '../../../shared/types'
 import { getHostname } from './utils'
 import { navigate, routes } from '@/lib/navigate'
+import { getPrimaryRemoteWorkspaceId } from '@/lib/workspace-info'
 
 const DEFAULT_MAX_VISIBLE_BADGES = 3
 
@@ -52,7 +53,7 @@ export function BrowserTabStrip({
   // opened manual tabs use), so we accept either.
   const { activeWorkspaceId, workspaces } = useAppShellContext()
   const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId)
-  const remoteWorkspaceId = activeWorkspace?.remoteServer?.remoteWorkspaceId ?? null
+  const remoteWorkspaceId = activeWorkspace ? getPrimaryRemoteWorkspaceId(activeWorkspace) ?? null : null
   const allInstances = useAtomValue(browserInstancesAtom)
   const instances = useMemo(
     () => filterInstancesForWorkspace(allInstances, activeWorkspaceId, remoteWorkspaceId),

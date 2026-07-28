@@ -17,6 +17,7 @@ import { SkillAvatar } from '@/components/ui/skill-avatar'
 import { routes, navigate } from '@/lib/navigate'
 import { useActiveWorkspace } from '@/context/AppShellContext'
 import { getFileManagerName } from '@/lib/platform'
+import { isPrimaryWorkspaceLocal } from '@/lib/workspace-info'
 import {
   Info_Page,
   Info_Section,
@@ -36,7 +37,7 @@ export default function SkillInfoPage({ skillSlug, workspaceId }: SkillInfoPageP
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const activeWorkspace = useActiveWorkspace()
-  const canRevealLocally = !activeWorkspace?.remoteServer
+  const canRevealLocally = activeWorkspace ? isPrimaryWorkspaceLocal(activeWorkspace) : false
 
   // Load skill data
   useEffect(() => {

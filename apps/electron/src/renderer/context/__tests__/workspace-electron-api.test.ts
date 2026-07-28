@@ -1,7 +1,7 @@
 import { describe, expect, it, mock } from 'bun:test'
 import { createWorkspaceElectronApi } from '../WorkspaceElectronApiContext'
 
-const route = { serverId: 'remote.example', workspaceId: 'workspace-a', locationId: 'location-a' }
+const route = { workspaceId: 'workspace-a', locationId: 'location-a' }
 
 describe('workspace Electron API context', () => {
   it('scopes remote-eligible methods and keeps local window methods on the host API', async () => {

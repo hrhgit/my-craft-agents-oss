@@ -73,6 +73,7 @@ export async function reconnectWorkspaceRemoteLocation(
       operationId,
       expectedRevision: current.revision,
       locationId: location.id,
+      rootName: location.rootName,
       endpoint,
     })
     return result.workspace

@@ -19,13 +19,17 @@ function workspace(overrides: Partial<WorkspaceInfo> = {}): WorkspaceInfo {
     id: 'workspace-a',
     revision: 7,
     name: 'Product',
+    nameSource: 'custom',
     slug: 'product',
     primaryLocationId: 'primary',
     locations: [
-      { id: 'primary', name: 'Primary', endpoint: { kind: 'local' } },
+      { id: 'primary', name: 'Primary', rootName: 'primary', availability: { status: 'unknown', reason: 'not-observed' }, permissions: { read: true, write: true, search: true, runCommands: true }, endpoint: { kind: 'local' } },
       {
         id: 'docs/remote',
         name: 'Docs',
+        rootName: 'remote-docs',
+        availability: { status: 'unknown', reason: 'not-observed' },
+        permissions: { read: true, write: true, search: true, runCommands: true },
         endpoint: {
           kind: 'remote',
           url: 'wss://agent.example.test',

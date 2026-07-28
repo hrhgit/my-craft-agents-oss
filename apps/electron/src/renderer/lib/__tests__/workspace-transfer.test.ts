@@ -8,8 +8,9 @@ function workspace(id: string, locationId: string, endpoint: WorkspaceInfo['loca
     id,
     revision: 1,
     primaryLocationId: locationId,
-    locations: [{ id: locationId, name: locationId, endpoint }],
+    locations: [{ id: locationId, name: locationId, rootName: locationId, endpoint, availability: { status: 'unknown', reason: 'not-observed' }, permissions: { read: true, write: true, search: true, runCommands: true } }],
     name: id,
+    nameSource: 'custom',
     slug: id,
   }
 }
@@ -23,11 +24,12 @@ const target = workspace('target-workspace', 'target-location', {
 
 describe('workspace transfer routing', () => {
   it('copies each session through source export and target fork import', async () => {
-    const invokeWorkspaceApi = mock(async (_route: unknown, method: string, ...args: unknown[]) => {
+    const invokeWorkspaceApi = mock(async (...callArgs: unknown[]) => {
+      const [, method, ...args] = callArgs as [unknown, string, ...unknown[]]
       if (method === 'exportSession') return { exported: args[0] }
       return { sessionId: `copy-${(args[1] as { exported: string }).exported}` }
     })
-    const progress = mock(() => undefined)
+    const progress = mock((_completed: number, _total: number) => undefined)
 
     await expect(copySessionsToWorkspace(
       { invokeWorkspaceApi } as any,
@@ -37,23 +39,24 @@ describe('workspace transfer routing', () => {
       progress,
     )).resolves.toEqual(['copy-session-a', 'copy-session-b'])
     expect(invokeWorkspaceApi.mock.calls).toEqual([
-      [{ serverId: 'local', workspaceId: source.id, locationId: 'source-location' }, 'exportSession', 'session-a'],
-      [{ serverId: 'https://target.test', workspaceId: target.id, locationId: 'target-location' }, 'importSession', target.id, { exported: 'session-a' }, 'fork'],
-      [{ serverId: 'local', workspaceId: source.id, locationId: 'source-location' }, 'exportSession', 'session-b'],
-      [{ serverId: 'https://target.test', workspaceId: target.id, locationId: 'target-location' }, 'importSession', target.id, { exported: 'session-b' }, 'fork'],
+      [{ workspaceId: source.id, locationId: 'source-location' }, 'exportSession', 'session-a'],
+      [{ workspaceId: target.id, locationId: 'target-location' }, 'importSession', target.id, { exported: 'session-a' }, 'fork'],
+      [{ workspaceId: source.id, locationId: 'source-location' }, 'exportSession', 'session-b'],
+      [{ workspaceId: target.id, locationId: 'target-location' }, 'importSession', target.id, { exported: 'session-b' }, 'fork'],
     ])
     expect(progress.mock.calls).toEqual([[1, 2], [2, 2]])
   })
 
   it('copies resources without renderer credentials or a direct server channel', async () => {
-    const bundle = { version: 1, exportedAt: 1, sourceWorkspaceId: source.id, resources: {} }
+    const bundle = { version: 2 as const, exportedAt: 1, sourceWorkspaceId: source.id, resources: {} }
     const importResult = {
       skills: { imported: ['skill-a'], skipped: [], failed: [], warnings: [] },
       automations: { imported: [], skipped: [], failed: [], warnings: [] },
     }
-    const invokeWorkspaceApi = mock(async (_route: unknown, method: string) => (
-      method === 'exportResources' ? { bundle, warnings: [] } : importResult
-    ))
+    const invokeWorkspaceApi = mock(async (...callArgs: unknown[]) => {
+      const [, method] = callArgs as [unknown, string]
+      return method === 'exportResources' ? { bundle, warnings: [] } : importResult
+    })
 
     await expect(copyResourcesToWorkspace(
       { invokeWorkspaceApi } as any,
@@ -63,8 +66,8 @@ describe('workspace transfer routing', () => {
       'skip',
     )).resolves.toEqual({ exportResult: { bundle, warnings: [] }, importResult })
     expect(invokeWorkspaceApi.mock.calls).toEqual([
-      [{ serverId: 'local', workspaceId: source.id, locationId: 'source-location' }, 'exportResources', source.id, { skills: ['skill-a'] }],
-      [{ serverId: 'https://target.test', workspaceId: target.id, locationId: 'target-location' }, 'importResources', target.id, bundle, 'skip'],
+      [{ workspaceId: source.id, locationId: 'source-location' }, 'exportResources', source.id, { skills: ['skill-a'] }],
+      [{ workspaceId: target.id, locationId: 'target-location' }, 'importResources', target.id, bundle, 'skip'],
     ])
   })
 })

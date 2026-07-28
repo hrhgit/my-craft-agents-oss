@@ -58,6 +58,7 @@ import {
   subscribeNativeViewOcclusion,
   useNativeViewOccluded,
 } from '@/context/NativeViewOcclusionContext'
+import { getPrimaryRemoteWorkspaceId } from '@/lib/workspace-info'
 
 const FileWorkbench = React.lazy(async () => {
   const module = await import('./FileWorkbench')
@@ -165,8 +166,8 @@ export function useWorkbenchTools(
   const { activeWorkspaceId, workspaces } = useAppShellContext()
   const resolvedWorkspaceId = workspaceId ?? activeWorkspaceId
   const resolvedWorkspace = workspaces.find(workspace => workspace.id === resolvedWorkspaceId)
-  const contributionWorkspaceId = resolvedWorkspace?.remoteServer?.remoteWorkspaceId ?? resolvedWorkspaceId
-  const remoteWorkspaceId = resolvedWorkspace?.remoteServer?.remoteWorkspaceId ?? null
+  const remoteWorkspaceId = resolvedWorkspace ? getPrimaryRemoteWorkspaceId(resolvedWorkspace) ?? null : null
+  const contributionWorkspaceId = remoteWorkspaceId ?? resolvedWorkspaceId
   const browserRegistrySyncKey = browserRegistryWorkspaceSyncKey(resolvedWorkspaceId, remoteWorkspaceId)
   const allBrowserInstances = useAtomValue(browserInstancesAtom)
   const browserInstances = React.useMemo(
@@ -325,7 +326,7 @@ export function BrowserWorkbench({
   const { activeWorkspaceId, workspaces } = useAppShellContext()
   const resolvedWorkspaceId = workspaceId ?? activeWorkspaceId
   const activeWorkspace = workspaces.find(workspace => workspace.id === resolvedWorkspaceId)
-  const remoteWorkspaceId = activeWorkspace?.remoteServer?.remoteWorkspaceId ?? null
+  const remoteWorkspaceId = activeWorkspace ? getPrimaryRemoteWorkspaceId(activeWorkspace) ?? null : null
   const allInstances = useAtomValue(browserInstancesAtom)
   const instances = React.useMemo(
     () => filterInstancesForWorkspace(allInstances, resolvedWorkspaceId, remoteWorkspaceId),

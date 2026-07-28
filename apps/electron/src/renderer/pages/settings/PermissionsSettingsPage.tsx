@@ -16,7 +16,7 @@ import { PanelHeader } from '@/components/app-shell/PanelHeader'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { HeaderMenu } from '@/components/ui/HeaderMenu'
 import { Loader2 } from 'lucide-react'
-import { useAppShellContext, useActiveWorkspace } from '@/context/AppShellContext'
+import { useAppShellContext } from '@/context/AppShellContext'
 import { type PermissionsConfigFile } from '@mortise/shared/agent/modes'
 import {
   PermissionsDataTable,
@@ -121,7 +121,6 @@ function buildCustomPermissionsData(config: PermissionsConfigFile, fallbackLabel
 export default function PermissionsSettingsPage() {
   const { t } = useTranslation()
   const { activeWorkspaceId } = useAppShellContext()
-  const activeWorkspace = useActiveWorkspace()
 
   // Loading and data state
   const [isLoading, setIsLoading] = useState(true)
@@ -270,17 +269,13 @@ export default function PermissionsSettingsPage() {
                     action={
                       (() => {
                         // Get centralized edit config - all strings defined in EditPopover.tsx
-                        const { context, example, displayLabel } = getEditConfig('workspace-permissions', activeWorkspace?.rootPath || '')
+                        const { context, example, displayLabel } = getEditConfig('workspace-permissions', '.')
                         return (
                           <EditPopover
                             trigger={<EditButton />}
                             example={example}
                             context={context}
                             displayLabel={displayLabel}
-                            secondaryAction={activeWorkspace ? {
-                              label: t("common.editFile"),
-                              filePath: `${activeWorkspace.rootPath}/permissions.json`,
-                            } : undefined}
                           />
                         )
                       })()

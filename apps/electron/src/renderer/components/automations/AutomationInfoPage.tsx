@@ -77,10 +77,10 @@ export function AutomationInfoPage({
     }
   }, [automation.telegramTopic])
 
-  const editActions = workspace?.rootPath ? (
+  const editActions = workspace ? (
     <EditPopover
       trigger={<EditButton />}
-      {...getEditConfig('automation-config', workspace.rootPath)}
+      {...getEditConfig('automation-config', '.')}
     />
   ) : undefined
 

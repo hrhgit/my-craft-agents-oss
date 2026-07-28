@@ -12,11 +12,15 @@ function remoteWorkspace(overrides: Partial<WorkspaceInfo> = {}): WorkspaceInfo 
     id: 'workspace-1',
     revision: 4,
     name: 'Remote project',
+    nameSource: 'custom',
     slug: 'remote-project',
     primaryLocationId: 'remote-primary',
     locations: [{
       id: 'remote-primary',
       name: 'Primary',
+      rootName: 'remote-primary',
+      availability: { status: 'unknown', reason: 'not-observed' },
+      permissions: { read: true, write: true, search: true, runCommands: true },
       endpoint: {
         kind: 'remote',
         url: 'wss://old.example.test',
@@ -51,7 +55,7 @@ describe('Workspace remote reconnect', () => {
     expect(getPrimaryRemoteLocation(remoteWorkspace())?.id).toBe('remote-primary')
     expect(getPrimaryRemoteLocation(remoteWorkspace({
       primaryLocationId: 'local-primary',
-      locations: [{ id: 'local-primary', name: 'Primary', endpoint: { kind: 'local' } }],
+      locations: [{ id: 'local-primary', name: 'Primary', rootName: 'local-primary', availability: { status: 'unknown', reason: 'not-observed' }, permissions: { read: true, write: true, search: true, runCommands: true }, endpoint: { kind: 'local' } }],
     }))).toBeNull()
   })
 
@@ -121,6 +125,9 @@ describe('Workspace remote reconnect', () => {
         locations: [{
           id: 'remote-primary',
           name: 'Primary',
+          rootName: 'remote-primary',
+          availability: { status: 'unknown', reason: 'not-observed' },
+          permissions: { read: true, write: true, search: true, runCommands: true },
           endpoint: {
             kind: 'remote',
             url: 'wss://next.example.test',
@@ -144,7 +151,7 @@ describe('Workspace remote reconnect', () => {
   it('rejects a stale location identity before storing credentials', async () => {
     const { api, calls } = apiHarness(remoteWorkspace({
       primaryLocationId: 'local-primary',
-      locations: [{ id: 'local-primary', name: 'Primary', endpoint: { kind: 'local' } }],
+      locations: [{ id: 'local-primary', name: 'Primary', rootName: 'local-primary', availability: { status: 'unknown', reason: 'not-observed' }, permissions: { read: true, write: true, search: true, runCommands: true }, endpoint: { kind: 'local' } }],
     }))
 
     await expect(reconnectWorkspaceRemoteLocation(api, {

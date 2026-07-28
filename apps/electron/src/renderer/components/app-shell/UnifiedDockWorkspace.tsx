@@ -295,7 +295,7 @@ export function UnifiedDockWorkspace({
       ? effectiveSnapshot.focusedTabId
       : panelIds[0] ?? null
     setFocusedPanelId(focusedId)
-    const nextModel = createDockModelFromSnapshot(effectiveSnapshot, layoutWindowId)
+    const nextModel = createDockModelFromSnapshot(effectiveSnapshot, layoutWindowId, serverId)
     const nextFingerprint = dockModelFingerprint(nextModel)
     if (dockModelFingerprint(model) === nextFingerprint) return
 
@@ -320,7 +320,7 @@ export function UnifiedDockWorkspace({
     if (layoutReadOnly || workspaceLayoutTransitioning) return
     if (!window.electronAPI.isChannelAvailable('layout:get')) return
     let cancelled = false
-    void window.electronAPI.getAppLayout(activeWorkspaceId ?? '', serverId).then(snapshot => {
+    void window.electronAPI.getAppLayout(activeWorkspaceId ?? '').then(snapshot => {
       if (cancelled) return
       applyCoordinatorSnapshotRef.current(snapshot)
     }).catch(error => {
@@ -329,7 +329,7 @@ export function UnifiedDockWorkspace({
     return () => {
       cancelled = true
     }
-  }, [activeWorkspaceId, layoutReadOnly, serverId, workspaceLayoutTransitioning])
+  }, [activeWorkspaceId, layoutReadOnly, workspaceLayoutTransitioning])
 
   React.useEffect(() => {
     if (layoutReadOnly) return
@@ -632,7 +632,7 @@ export function UnifiedDockWorkspace({
         expectedRevision,
         save: (next, revision) => window.electronAPI.saveAppLayout(next, revision),
         loadLatest: async () => {
-          const latest = await window.electronAPI.getAppLayout(activeWorkspaceId ?? '', serverId)
+          const latest = await window.electronAPI.getAppLayout(activeWorkspaceId ?? '')
           if (
             coordinatorScopeRef.current === saveScope
             && shouldApplyCoordinatorRevision(coordinatorRevision.current, latest.revision)
@@ -1093,7 +1093,7 @@ function DockedToolPanel({
   const tool = usePersistedWorkbenchTool({ resourceId, sessionId, workspaceId })
   if (tool && (nativeBrowserPanesAvailable || !isNativeBrowserWorkbenchToolId(tool.id))) {
     return (
-      <WorkspaceElectronApiProvider route={{ serverId, workspaceId, locationId }}>
+      <WorkspaceElectronApiProvider route={{ workspaceId, locationId }}>
         <div data-mortise-semantic-id={`workspace.content.${tool.id}`} className="h-full min-h-0 bg-background">
           <WorkbenchToolContent
             tool={tool}
@@ -1133,7 +1133,7 @@ function DockedContentPanel({
   const navState = route ? parseRouteToNavigationState(route) : null
   const tabWorkspaceId = workspaceId || activeWorkspaceId || ''
   return (
-    <WorkspaceElectronApiProvider route={{ serverId, workspaceId: tabWorkspaceId, locationId }}>
+    <WorkspaceElectronApiProvider route={{ workspaceId: tabWorkspaceId, locationId }}>
       <DockedContentRuntime
         navState={navState}
         workspaceId={tabWorkspaceId}
@@ -1229,7 +1229,7 @@ function createDockModel(
   })
 }
 
-function createDockModelFromSnapshot(snapshot: AppLayout, windowId: string): Model {
+function createDockModelFromSnapshot(snapshot: AppLayout, windowId: string, defaultServerId: string): Model {
   const windowGeometry = windowId === PRIMARY_LAYOUT_WINDOW_ID
     ? snapshot.geometry
     : snapshot.windows[windowId]?.geometry
@@ -1238,7 +1238,7 @@ function createDockModelFromSnapshot(snapshot: AppLayout, windowId: string): Mod
       return Model.fromJson(sanitizeSavedGeometry(
         windowGeometry as IJsonModel,
         panelEntriesForWindow(snapshot, windowId),
-        snapshot.tabs[snapshot.focusedTabId ?? '']?.ref.serverId ?? 'local',
+        defaultServerId,
         snapshot.tabs[snapshot.focusedTabId ?? '']?.ref.workspaceId ?? '',
         snapshot.tabs[snapshot.focusedTabId ?? '']?.ref.locationId,
         new Set(contentTabIdsForWindow(snapshot, windowId)),
@@ -1289,7 +1289,7 @@ function createDockModelFromSnapshot(snapshot: AppLayout, windowId: string): Mod
             weight: 100 / rootGroups.length,
             children: group.tabIds.flatMap(tabId => {
               const tab = snapshot.tabs[tabId]
-              return tab ? [jsonTabFromContent(tab)] : []
+              return tab ? [jsonTabFromContent(tab, defaultServerId)] : []
             }),
           }))
         : [{ type: 'tabset', id: MAIN_TABSET_ID, enableDeleteWhenEmpty: false, children: [] }],
@@ -1298,7 +1298,7 @@ function createDockModelFromSnapshot(snapshot: AppLayout, windowId: string): Mod
   return Model.fromJson(modelJson)
 }
 
-function jsonTabFromContent(tab: ContentTab) {
+function jsonTabFromContent(tab: ContentTab, defaultServerId: string) {
   const source = isWorkspaceContentKind(tab.ref.kind) ? 'workspace-content' : 'panel'
   return {
     type: 'tab',
@@ -1307,7 +1307,7 @@ function jsonTabFromContent(tab: ContentTab) {
     component: CONTENT_COMPONENT,
     config: {
       route: source === 'panel' ? tab.ref.resourceId : undefined,
-      serverId: tab.ref.serverId,
+      serverId: defaultServerId,
       workspaceId: tab.ref.workspaceId,
       locationId: tab.ref.locationId,
       contentKind: tab.ref.kind,
@@ -1381,7 +1381,7 @@ function sanitizeSavedGeometry(
       claimedPanelIds.add(entry.id)
       const canonical = canonicalTabs?.[entry.id]
       if (canonical) {
-        Object.assign(tab, jsonTabFromContent(canonical))
+        Object.assign(tab, jsonTabFromContent(canonical, serverId))
       } else {
         const normalized = toJsonTab(
           entry,
@@ -1404,7 +1404,7 @@ function sanitizeSavedGeometry(
     if (!validWorkspaceContent) return false
     const canonical = canonicalTabs?.[tab.id]
     if (canonical) {
-      Object.assign(tab, jsonTabFromContent(canonical))
+      Object.assign(tab, jsonTabFromContent(canonical, serverId))
     } else {
       tab.config = { ...config, serverId, workspaceId: workspaceId ?? '', locationId }
     }
@@ -1664,7 +1664,6 @@ function buildAppLayoutSnapshot(
   geometry: IJsonModel = model.toJson(),
 ): AppLayout {
   const base = createDefaultAppLayout({
-    serverId: defaultServerId,
     workspaceId: defaultWorkspaceId,
     locationId: defaultLocationId,
   })
@@ -1700,7 +1699,6 @@ function buildAppLayoutSnapshot(
           groupId: id,
           ref: {
             kind: config.contentKind,
-            serverId: config.serverId || defaultServerId,
             workspaceId: defaultWorkspaceId,
             ...((config.locationId ?? defaultLocationId) ? { locationId: config.locationId ?? defaultLocationId } : {}),
             ...(config.sessionId ? { sessionId: config.sessionId } : {}),
@@ -1725,7 +1723,6 @@ function buildAppLayoutSnapshot(
         groupId: id,
         ref: {
           kind: contentKind,
-          serverId: config.serverId || defaultServerId,
           workspaceId: defaultWorkspaceId,
           ...((config.locationId ?? defaultLocationId) ? { locationId: config.locationId ?? defaultLocationId } : {}),
           ...(sessionId ? { sessionId } : {}),

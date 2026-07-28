@@ -32,6 +32,7 @@ import {
   type NewConversationDraftOptions,
 } from '@/lib/new-conversation'
 import { cn } from '@/lib/utils'
+import { isPrimaryWorkspaceRemote } from '@/lib/workspace-info'
 import { DEFAULT_THINKING_LEVEL, normalizeThinkingLevel } from '@mortise/shared/agent/thinking-levels'
 import { parsePermissionMode } from '@mortise/shared/agent/mode-types'
 import type { FileAttachment } from '../../shared/types'
@@ -144,7 +145,7 @@ function WorkspaceDraftSwitcher() {
     ? Loader2
     : activeItem?.isDisconnected
       ? CloudOff
-      : workspace.remoteServer
+      : isPrimaryWorkspaceRemote(workspace)
         ? Cloud
         : Folder
   return (
@@ -171,7 +172,7 @@ function WorkspaceDraftSwitcher() {
             ? Loader2
             : item.isDisconnected
               ? CloudOff
-              : item.workspace.remoteServer
+              : isPrimaryWorkspaceRemote(item.workspace)
                 ? Cloud
                 : Folder
           return (
@@ -431,7 +432,6 @@ const NewConversationPage = React.memo(function NewConversationPage({ draftId }:
           onAttachmentsChange={handleAttachmentsChange}
           skills={skills}
           workspaceId={workspaceId}
-          workspaceRoot={workspace.rootPath}
           isEmptySession
           compactMode={!!isCompactMode}
           enableCompactModelPicker={!!isCompactMode}

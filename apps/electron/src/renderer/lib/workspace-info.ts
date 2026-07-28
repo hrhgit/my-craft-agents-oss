@@ -12,10 +12,18 @@ export function getPrimaryWorkspaceLocationInfo(workspace: WorkspaceInfo): Works
 export function getPrimaryWorkspaceRoute(workspace: WorkspaceInfo): ResolvedWorkspaceRoute {
   const location = getPrimaryWorkspaceLocationInfo(workspace)
   return {
-    serverId: location.endpoint.kind === 'remote' ? location.endpoint.url : 'local',
     workspaceId: workspace.id,
     locationId: location.id,
   }
+}
+
+/**
+ * FlexLayout still carries endpoint display metadata while its persisted
+ * content references use only Workspace and location identity.
+ */
+export function getPrimaryWorkspaceServerId(workspace: WorkspaceInfo): string {
+  const endpoint = getPrimaryWorkspaceLocationInfo(workspace).endpoint
+  return endpoint.kind === 'remote' ? endpoint.url : 'local'
 }
 
 export function getPrimaryRemoteWorkspaceId(workspace: WorkspaceInfo): string | undefined {
