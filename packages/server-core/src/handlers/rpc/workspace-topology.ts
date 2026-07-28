@@ -1,3 +1,4 @@
+import type { Workspace } from '@mortise/core/types'
 import {
   RPC_CHANNELS,
   WORKSPACE_TOPOLOGY_CHANGE_SCHEMA_VERSION,
@@ -11,11 +12,7 @@ import {
   type LegacyWorkspaceV1,
 } from '@mortise/shared/workspaces'
 import { pushTyped, type RpcServer } from '../../transport'
-import type { WorkspaceTopologySessionCoordinator } from '../../domain'
 import type { HandlerDeps } from '../handler-deps'
-import type { ISessionManager } from '../session-manager-interface'
-
-type WorkspaceTopologyHandlerDeps = HandlerDeps<ISessionManager & WorkspaceTopologySessionCoordinator>
 
 export const WORKSPACE_TOPOLOGY_HANDLED_CHANNELS = [
   RPC_CHANNELS.workspaces.GET_TOPOLOGY,
@@ -24,7 +21,7 @@ export const WORKSPACE_TOPOLOGY_HANDLED_CHANNELS = [
 
 export function registerWorkspaceTopologyHandlers(
   server: RpcServer,
-  deps: WorkspaceTopologyHandlerDeps,
+  deps: HandlerDeps,
   store: WorkspaceTopologyStore = getDefaultWorkspaceTopologyStore(),
 ): void {
   server.handle(RPC_CHANNELS.workspaces.GET_TOPOLOGY, async (ctx, requestedWorkspaceId?: string) => {
