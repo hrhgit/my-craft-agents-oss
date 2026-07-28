@@ -208,7 +208,6 @@ For TLS connections (`wss://`), use `--tls-ca <path>` for self-signed certificat
 | `workspaces` | List workspaces |
 | `sessions` | List sessions in workspace |
 | `connections` | List LLM connections |
-| `session create` | Create a session (`--name`, `--mode`) |
 | `session messages <id>` | Print session message history |
 | `session delete <id>` | Delete a session |
 | `send <id> <message>` | Send message and stream AI response |
@@ -354,7 +353,6 @@ Configuration is stored at `~/.mortise/`:
     └── {id}/
         ├── config.json      # Workspace settings
         ├── theme.json       # Workspace theme override
-        ├── automations.json  # Event-driven automations
         └── statuses/        # Status configuration
 ```
 
@@ -373,28 +371,7 @@ Automations let you automate workflows by triggering actions when events happen 
 - "Track permission mode changes and summarise them"
 - "Every Friday at 5pm, summarise this week's completed tasks"
 
-Or configure manually in `~/.mortise/workspaces/{id}/automations.json`:
-
-```json
-{
-  "version": 2,
-  "automations": {
-    "SchedulerTick": [
-      {
-        "cron": "0 9 * * 1-5",
-        "timezone": "America/New_York",
-        "actions": [
-          { "type": "prompt", "prompt": "Summarize open issues assigned to me" }
-        ]
-      }
-    ]
-  }
-}
-```
-
-**Prompt actions** create a new agent session with a prompt. They support skill mentions, and environment variables like `$MORTISE_EVENT` and `$MORTISE_SESSION_ID` are expanded automatically.
-
-**Supported events:** `PermissionModeChange`, `SchedulerTick`, `PreToolUse`, `PostToolUse`, `SessionStart`, `SessionEnd`, and more.
+You can also create and manage definitions from the Automations interface. Prompt actions use normal Session semantics: they create a new Session by default, or explicitly deliver to an existing or event Session with `followUp` or `steer`.
 
 See the [bundled Automations documentation](apps/electron/resources/docs/automations.md) for the full reference.
 

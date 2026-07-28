@@ -70,7 +70,6 @@ mortise-cli providers         # List AI providers
 ### Session Operations
 
 ```bash
-mortise-cli session create [--name <n>] [--mode <m>]  # Create session
 mortise-cli session messages <id>                       # Print message history
 mortise-cli session delete <id>                         # Delete session
 mortise-cli cancel <id>                                 # Cancel processing
@@ -253,15 +252,6 @@ for ws in $WORKSPACES; do
   COUNT=$(mortise-cli --json --workspace "$ws" sessions | jq length)
   echo "$ws: $COUNT sessions"
 done
-
-# Create a session and capture its ID
-SESSION_ID=$(mortise-cli --json session create --name "CI Run" | jq -r '.id')
-
-# Send a message and wait for completion
-mortise-cli send "$SESSION_ID" "Run the test suite and report results"
-
-# Clean up
-mortise-cli session delete "$SESSION_ID"
 ```
 
 ## TLS / wss://

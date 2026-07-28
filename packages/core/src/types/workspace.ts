@@ -1,61 +1,97 @@
 /**
- * Workspace and authentication types
+ * Workspace and authentication types.
+ *
+ * Workspace identity is independent from every path, endpoint, name, and
+ * remote server identity. Only `Workspace.id` is a durable Workspace identity.
  */
 
-/**
- * How MCP server should be authenticated (workspace-level)
- */
+export const WORKSPACE_SCHEMA_VERSION = 2 as const;
+
+/** How an MCP server should be authenticated at Workspace scope. */
 export type McpAuthType = 'workspace_oauth' | 'workspace_bearer' | 'public';
 
-/**
- * Configuration for a remote Mortise Agent Server.
- * When set on a workspace, handler calls are proxied over WebSocket.
- */
-export interface RemoteServerConfig {
-  url: string;              // ws://host:port or wss://host:port
-  token: string;            // Auth token for the remote server
-  remoteWorkspaceId: string; // ID of the workspace on the remote server
+export interface LocalWorkspaceEndpoint {
+  kind: 'local';
+  /** Server-internal absolute path. Never include this field in WorkspaceInfo. */
+  rootPath: string;
+}
+
+export interface RemoteWorkspaceEndpoint {
+  kind: 'remote';
+  url: string;
+  remoteWorkspaceId: string;
+  /** Opaque reference into the credential authority, never credential material. */
+  credentialRef: string;
   /** Explicit opt-in for self-signed or otherwise untrusted TLS certificates. */
   allowInsecureTls?: boolean;
 }
 
-/**
- * Client-facing workspace DTO — safe to send over RPC to remote clients.
- * Does not expose server-internal filesystem paths.
- */
-export interface WorkspaceInfo {
+export type WorkspaceEndpoint = LocalWorkspaceEndpoint | RemoteWorkspaceEndpoint;
+export type NonEmptyArray<Value> = [Value, ...Value[]];
+
+export interface WorkspaceLocation {
+  id: string;
+  /** User-visible name. Names are unique within one Workspace, but are not identities. */
+  name: string;
+  endpoint: WorkspaceEndpoint;
+}
+
+/** Redacted endpoint projection safe to expose to clients. */
+export type WorkspaceEndpointInfo =
+  | { kind: 'local' }
+  | {
+      kind: 'remote';
+      url: string;
+      remoteWorkspaceId: string;
+      allowInsecureTls?: boolean;
+    };
+
+/** Redacted location projection safe to expose to clients. */
+export interface WorkspaceLocationInfo {
   id: string;
   name: string;
-  slug: string;              // Server-computed from rootPath basename
+  endpoint: WorkspaceEndpointInfo;
+}
+
+interface WorkspaceDisplayMetadata {
+  name: string;
+  /** Display/navigation slug only. It is not a Workspace identity. */
+  slug: string;
   lastAccessedAt?: number;
   iconUrl?: string;
   mcpUrl?: string;
   mcpAuthType?: McpAuthType;
-  remoteServer?: RemoteServerConfig;
 }
 
-/**
- * Full workspace with server-internal details.
- * Used by server code and local Electron renderer (LOCAL_ONLY channels).
- */
-export interface Workspace extends WorkspaceInfo {
-  rootPath: string;        // Absolute path to local workspace folder (metadata, config). Auto-created for remote workspaces.
+/** Client-facing Workspace DTO with paths and credential references removed. */
+export interface WorkspaceInfo extends WorkspaceDisplayMetadata {
+  schemaVersion: typeof WORKSPACE_SCHEMA_VERSION;
+  id: string;
+  revision: number;
+  primaryLocationId: string;
+  locations: NonEmptyArray<WorkspaceLocationInfo>;
+}
+
+/** Canonical Workspace record used by trusted host/storage boundaries. */
+export interface Workspace extends WorkspaceDisplayMetadata {
+  schemaVersion: typeof WORKSPACE_SCHEMA_VERSION;
+  id: string;
+  revision: number;
+  primaryLocationId: string;
+  locations: NonEmptyArray<WorkspaceLocation>;
   createdAt: number;
 }
 
 /**
- * Authentication type for AI provider
- * - api_key: Anthropic API key
- * - oauth_token: Claude Max OAuth (Anthropic)
- * - codex_oauth: ChatGPT Plus OAuth via Codex app-server
- * - codex_api_key: OpenAI API key via Codex (OpenRouter, Vercel AI Gateway compatible)
+ * Source-compatibility name for callers while they migrate to location
+ * endpoints. The old token-bearing shape is intentionally not preserved.
  */
+export type RemoteServerConfig = RemoteWorkspaceEndpoint;
+
+/** Authentication type for an AI provider. */
 export type AuthType = 'api_key' | 'oauth_token' | 'codex_oauth' | 'codex_api_key';
 
-/**
- * OAuth credentials from a fresh authentication flow.
- * Used for temporary state in UI components before saving to credential store.
- */
+/** Credentials returned by a fresh OAuth flow before secure persistence. */
 export interface OAuthCredentials {
   accessToken: string;
   refreshToken?: string;
@@ -64,12 +100,11 @@ export interface OAuthCredentials {
   tokenType: string;
 }
 
-// Config stored in JSON file (credentials stored in encrypted file, not here)
+// Config stored in JSON/SQLite; credentials are stored by a credential authority.
 export interface StoredConfig {
   authType?: AuthType;
   workspaces: Workspace[];
   activeWorkspaceId: string | null;
-  activeSessionId: string | null;  // Currently active session (primary scope)
+  activeSessionId: string | null;
   model?: string;
 }
-

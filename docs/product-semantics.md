@@ -2,7 +2,7 @@
 
 状态：初始参考
 
-更新日期：2026-07-27
+更新日期：2026-07-28
 
 ## 用途
 
@@ -10,7 +10,7 @@
 
 它是产品与架构判断的参考，不是任务流程、开发检查表、API 手册或功能清单。使用它不需要为每次修改填写固定模板或报告。
 
-本文档只把有明确依据的内容写入正文。最后的“开放问题”不是已接受语义，也不能用来推导实现。
+本文档只把有明确依据的内容写入正文。文中明确标注为仍需决定的问题不是已接受语义，也不能用来推导实现。
 
 ## 参考边界
 
@@ -56,7 +56,6 @@ flowchart TD
     Extension --> Contribution
     Contribution --> Content
     Automation -->|"prompt delivery"| Session
-    Automation -->|"isolated execution"| Runtime
 ```
 
 该图只表达产品概念关系，不表达代码依赖方向或存储结构。
@@ -67,6 +66,7 @@ flowchart TD
 
 Workspace 是 Mortise 的顶层用户上下文，也是内容和布局的长期归属边界。它不等同于文件夹，但始终有且只有一个主位置，并可以同时连接零个或多个附加位置；每个位置都指向一个本地或远程文件根。
 
+- Workspace 允许用户设置自己的显示名称。用户没有设置名称时，默认使用当前主位置根目录的最后一级文件夹名；这是派生的默认名称，不是 Workspace identity。切换主位置后，未自定义的名称随新的主文件夹更新，用户自定义名称则保持不变。
 - Session、Files 工作台、Browser 实例、侧任务、Extension 完整工具和 Dock 布局都带有 Workspace 归属。
 - 主位置是 Agent 默认使用的工作位置，决定未明确指定位置时的命令行目录和相对路径起点。附加位置不会改变这个默认值。
 - 本地主位置可以由用户主动选择。用户未选择时，Mortise 在默认 Workspace 目录下为它创建独立、持久的根目录；该目录不是临时目录或能力受限的 fallback，Agent 可以正常使用文件工具和命令行。远程主位置由对应的远程 Agent Server 提供。
@@ -174,7 +174,7 @@ Session 是已跨过 publication boundary 的可恢复对话实体。内嵌 Agen
 ### Turn、attempt 与 logical run
 
 - **Turn** 是一次 assistant response cycle，包括它的 tool call 和 tool result。`turn_end` 只结束当前 turn。
-- **Attempt** 是一次底层 Agent execution，通常从 `agent_start` 到 `agent_end`。它目前主要用于解释内部恢复，不必然是用户可见实体。
+- **Attempt** 是一次底层 Agent execution，通常从 `agent_start` 到 `agent_end`。它用于区分重试、恢复和诊断中的不同执行段，不是普通用户需要理解或操作的产品实体。
 - **Logical run** 是从一次 prompt 被接受开始，经过运行时继续处理，直到内嵌 Agent runtime 发出 `agent_settled` 的连续运行。Mortise 在此之后仍要完成 host settlement，才能向客户端投影最终完成。
 
 一个 logical run 可以包含多个 turn、provider auto-retry、compaction continuation 和运行时接受的后续投递。`agent_end` 只是底层 attempt 边界，不是 Mortise 的最终完成信号。
@@ -184,7 +184,24 @@ Session 是已跨过 publication boundary 的可恢复对话实体。内嵌 Agen
 - **Retry** 表达在不改变用户意图的前提下恢复未完成运行。Provider auto-retry 是当前 logical run 的内部恢复，中间 `agent_end` 不得被 UI 投影为最终完成。
 - **Stop/abort** 终止当前运行，并在必要 settlement 完成后投影为 interrupted。晚到事件不能越过该边界将运行改回 completed。
 
-Stop 对 native steer/follow-up queue 的最终处理政策尚未确定，见开放问题。
+用户主动 Stop 只终止当前运行，不丢弃尚未被 Agent 消费的 steer、follow-up 或 host fallback 消息。这些消息按原顺序退回 Session 的持久待发送状态，保留消息 identity、附件和其他投递 metadata；已经进入 Agent context 的消息属于正式历史，不能再退回。Stop 后待发送消息不会自动回放，新的明确发送或继续动作才能重新投递它们。
+
+UI 将 follow-up 待发送区固定放在 composer 正上方，而不是把尚未投递的内容显示成正式 transcript 中的用户气泡。每条消息使用一行紧凑预览，长内容可以省略显示，但完整内容、附件和其他 metadata 仍由持久队列保存；运行中显示“已排队”，Stop 后显示“待发送”。消息真正进入 Agent context 后，才离开待发送区并成为 transcript 中的用户消息。
+
+每条待发送消息右侧只提供三个直接操作：使用 Lucide `ArrowUp` 的发送、编辑和删除。三个按钮均使用图标并提供 tooltip；不增加复制、更多菜单或其他常驻操作。发送表示明确重新投递该消息，编辑修改的是这条待发送记录，删除只移除尚未投递的记录。客户端不能静默丢弃消息，也不能只把纯文本复制回 composer 来代替完整队列状态。
+
+### 中断与恢复
+
+恢复未完成的运行时，Mortise 不向正式 transcript 追加一条伪造的“继续”用户消息。恢复也不承诺外部模型能够保留中断请求的内部状态或从某个 token 精确续写；它从 Session tree 当前分支中最后一个已经持久化且一致的输入位置重新开始 execution。Tree 的 `parentId` 路径是恢复位置的规范来源，不另建一套平行的恢复历史。
+
+最后一条中断 assistant 回复中已经完整产生的可见内容应继续属于同一条用户可见回复，并在模型能力允许时作为续写参考。完整的历史消息、已经完成的 tool call 和 tool result 继续保留；不完整的 thinking、tool call、provider signature 和其他协议片段不能作为可靠上下文。当前 Provider 无法可靠续写时，可以退回最后一个完整输入重新生成，但不能伪装成精确续写。
+
+一次恢复可以产生新的 attempt，但不因此创建新的用户任务或新的 assistant 对话消息。UI 按以下方式表达：
+
+- 尚未出现可见 assistant 内容时，自动重试只显示临时运行状态，不增加隔断。
+- 已出现部分内容或经历应用断开后恢复时，在同一条 assistant 回复内保留一个轻量的“已从中断处恢复”边界，然后继续显示内容；不新开消息，也不完全无痕拼接。
+- 连接或运行错误属于该回复的执行状态，不是 assistant 正文。恢复成功后错误状态收束为轻量恢复标记；最终无法恢复时才保留“已中断”状态和继续入口。
+- Attempt 细节可以出现在诊断或展开信息中，但普通对话只呈现同一个 logical run 和同一条 assistant 回复。
 
 ## Extension 语义
 
@@ -192,16 +209,20 @@ Extension 是 Mortise 可扩展性的一级提供者；Mortise 尽量保持通�
 
 - 产品中只有 Mortise Extension，不再存在 `pi`、`mortise` 两种 Extension target。Extension manifest 不需要用 target 表达宿主身份，Mortise 也不应继续解析、筛选或兼容两套 target；迁移完成后删除相关 target、engine、catalog 字段和分支，不保留别名或 fallback。
 - Extension 统一运行在 Mortise 的内嵌 headless Agent runtime 中。它可以注册工具、命令、Provider、生命周期处理或其他后台能力，也可以选择向 Mortise GUI 发布 contribution；GUI 是可选能力，不是另一种运行模式，也不是每个 Extension 的必需条件。
-- Extension backend 当前是用户选择安装的受信任本地代码，以用户系统权限在子进程中运行。UI sandbox 不会同时将 backend 变成 sandboxed code。
+- Extension 的安装和基础可用范围属于应用全局。默认情况下，已安装的 Extension 能力对所有 Workspace 可用；Workspace 不单独保存一套 Extension 开启和关闭状态。
+- 未来引入“模式”后，由模式配置在该模式下启用或关闭哪些 Extension 能力。这是模式对全局能力集的选择，不是 Workspace 自己拥有另一套 Extension 管理。
+- Extension backend 是用户主动选择安装和启用的受信任本地代码，以用户系统权限在子进程中运行；这是长期信任模型，不是等待未来权限沙箱替代的过渡状态。安装界面应明确显示来源并说明其本地代码权限，但不能用并不具备强制隔离能力的权限开关制造安全错觉。
+- Extension GUI 仍只能通过 Mortise 的版本化 contribution API 进入产品界面，但这个 UI 边界不会同时将 backend 变成 sandboxed code，也不限制 backend 直接使用当前用户拥有的文件、网络和进程能力。
 - Extension GUI 是 Extension runtime 发布的版本化、可序列化 contribution，不是 Extension 代码进入 Mortise renderer。
 - Mortise 信任 host/RPC 注入的 Workspace、Session、runtime 和 Extension identity，不信任 contribution 内容自报身份。
 - Host-rendered UI 是默认边界。需要自由应用 UI 时使用宿主分配区域内的隔离 sandbox；sandbox 不获得父 DOM、凭据、Electron IPC、任意网络或文件系统权限。
 - Extension 声明内容归属、placement intent 和优先级；Mortise 决定共享区域的实际位置、容量、顺序、overflow、focus、冲突和响应式退化。
 - 对话相关 UI 默认归属产生它的 message、tool 或 turn；影响下一条消息的 UI 归属 composer；需要脱离对话长期操作的完整工具使用 `workspace.content`。
 - `workspace.content` 只使工具可被用户打开，不自动打开或抢占焦点。Extension 的初始放置偏好不得覆盖用户之后的移动、分组、detach 和保存布局。
-- Contribution 属于发布它的 runtime 生命周期。Reload、断连、Session replacement 或进程失败后旧 contribution 必须清理，恢复时由新 runtime 重新发布。
+- Extension 可以为 `workspace.content` 选择临时或持久生命周期。Mortise 提供 Workspace-owned 的稳定 identity、状态存储和恢复基础，使持久内容可以跨 Session 保存状态并重新打开；是否使用持久化、保存哪些可序列化状态以及如何恢复，由 Extension 自己声明和实现。
+- 持久化不会让旧 runtime 或旧 contribution 实例继续存活。Reload、断连、Session replacement 或进程失败后旧投影必须清理；恢复时由新的兼容 runtime 读取 Workspace 状态并重新发布。
 
-Extension backend 的受信任模型、完整 Workspace 工具是否应脱离 Session runtime 长期存活，以及 replace 类高自由 surface 的长期边界，仍需要产品决定。
+replace 类高自由 surface 的长期边界仍需要产品决定。
 
 ## Automations 语义
 
@@ -210,14 +231,19 @@ Mortise Automations 是唯一的自动化系统。它统一拥有定义、调度
 - Extension、CLI、Agent tool、Electron 和 WebUI 是同一 host-owned Automation capability 的 typed client，不能各自拥有第二套 scheduler、store、history、retry queue 或 fallback runtime。
 - 外部程序是 event producer，不是另一套自动化产品；外发 webhook 是 action，不是 event ingress。
 - 当前 trigger 类型是时间和事件。时间 trigger 包含 `cron`、`once` 和 `interval`；action 是 prompt 或 outbound webhook。
-- Prompt delivery 必须明确选择新 Session、已有/事件 Session 的 `followUp` 或 `steer`，或 isolated Agent execution。
-- Isolated Agent 不创建普通侧栏 Session；它的 action 保持 running，直到 Agent 结束。
+- Automation 的 Agent 动作始终使用 Session 语义。默认目标是创建一个新 Session；用户也可以明确选择已有或事件 Session，并使用 `followUp` 或 `steer` 投递。
+- Mortise 不提供脱离 Session 存在的 Isolated Agent 作为 Automation target，也不为后台 Agent 执行建立另一套用户可见的记录、继续或提升语义。
+- Automation run history 记录它创建或投递到的 Session 及动作结果，完整对话和后续交互仍属于该 Session，不在 run history 中复制第二份对话。
 - Automation 不重新解释 Agent Loop。`followUp`、`steer`、interrupt、retry、queue 和 turn ordering 继承内嵌 Agent runtime 语义。
 - 事件或时间 occurrence 必须先持久化，再进行匹配、claim 和执行。Adapter 不能绕过定义匹配、run claim 和历史直接向 Session 注入 prompt。
-- Action 成功的含义取决于目标：新 Session 要跨过 publication；existing Session 是 follow-up durable queued 或 steer accepted；isolated Agent 要等到结束；webhook 要达到最终 retry 结果。
+- Action 成功的含义取决于目标：新 Session 要跨过 publication；existing Session 是 follow-up durable queued 或 steer accepted；webhook 要达到最终 retry 结果。
 - Automation 只使用 Mortise 规范存储，不读取 `.pi`、旧 `automations.json` 或 Extension registry 作为运行时数据源。
+- Agent 和 Extension 可以通过同一 host-owned capability 自由创建、修改、删除和启停 Automation，不要为这些变更增加额外的用户确认步骤。操作仍必须经过规范 schema、Workspace identity、operation identity 和并发修订检查，并在 Automation 管理界面中可见。
+- 所有 Automation 定义都可以导出和导入，不因 trigger、condition、action 或外部依赖的种类拒绝导出，也不在导出时静默删除不可移植部分。导出物保留完整定义和依赖声明，但不包含秘密值、运行历史、已接收事件、排队或运行中任务、执行锁和数据库查询索引。
+- 导入时自动连接当前 Workspace 中能确定找到的依赖。依赖完整的 Automation 可以保留原启用状态；缺少 Session、Extension、秘密、事件源或其他必需依赖时，仍导入完整定义，但标记为配置不完整并保持关闭，直到用户补齐或重新选择依赖。
+- 批量导入是 Automation 可移植能力的必需部分。用户可以在一次操作中选择多个定义文件或一个包含多条定义的 bundle；Mortise 统一校验并给出逐条结果，单条冲突、缺失依赖或失败不阻止其他有效条目导入，也不要求用户为每条重复一套导入流程。
 
-Automations 是否应被定义为可随 Workspace 导出/同步的共同资源，Agent 和 Extension 对关键变更是否必须经过用户确认，以及 isolated Agent 结果是否可以提升为普通 Session，目前尚未由协议回答。
+Automation 的导出和导入是明确的用户操作，不等于直接复制或同步运行时 SQLite 数据库，也不自动承诺版本控制或实时同步。
 
 ## 设置与模型选择
 
@@ -242,18 +268,6 @@ Electron 和 WebUI 是同一 Mortise 产品的不同平台投影，但不以功�
 - 不同版本的已安装和源码开发 backend 可以共享同一 Mortise config/data directory 并存运行。共享数据层使用原子事务、幂等 operation identity、乐观并发、版本化 schema 和 capability negotiation 作为安全边界。
 - 不兼容的写能力只限制为 read-only，而不是依赖全局 backend lock 或为每个 backend 创建不同的可变用户数据副本。
 
-## 开放问题
-
-本节只记录影响整体产品模型的真实缺口，不是已接受语义或默认实施方向。
-
-1. **Logical run 的公开语义**：Native steer/follow-up、provider retry 和 compaction continuation 是否都明确属于同一 logical run？Attempt 是否需要成为用户可见概念？
-2. **Stop 与待处理投递**：用户 Stop 时，Pi native steer/follow-up queue 中的消息应全部丢弃，还是保留到下次继续？
-3. **中断历史**：Abort 前已产生的 partial assistant/tool/error entry 是正式 transcript 的一部分，还是只保留 interrupted 状态而不算最终消息？
-4. **Extension 的信任模型**：Backend 以用户权限运行是长期信任模型，还是未来需要收紧的过渡状态？
-5. **Extension 工具的生命周期**：`workspace.content` 是发布它的 Session runtime 的 UI 投影，还是安装后可脱离 Session 长期存活的 Workspace/Application 工具？
-6. **Automation 资源与授权**：Automation 定义是可随 Workspace 导出、同步或版本控制的共同资源，还是当前用户的本地配置？Agent/Extension 对创建、修改和启用的权限是否需要额外的用户确认？
-7. **Isolated Agent 的用户可见性**：结果是否只属于 Automation run history，还是应支持用户打开、追踪或提升为普通 Session？
-
 ## 已接受的详细参考
 
 - [The Red Line: bottom layer vs scaffolding](architecture/red-line.md)
@@ -261,10 +275,8 @@ Electron 和 WebUI 是同一 Mortise 产品的不同平台投影，但不以功�
 - [Pi Extension GUI Architecture](architecture/pi-extension-gui.md)
 - [Mortise Extension Authoring Guide](../apps/electron/resources/docs/pi-extensions.md)
 
-## 已知陈旧参考
+## 已知实现偏差
 
-以下资料中的特定描述已落后于当前接受语义，不应被用来反向覆盖本文档或现行专题规范：
+以下实现尚未对齐当前接受语义，不能被用来反向覆盖本文档或现行专题规范：
 
-- `README.md` 和 `docs/cli.md` 仍将 `session create` 描述为普通空 Session 创建入口。当前普通 New 必须经过首轮 publication，直接 create 仅存在 hidden/branch 等显式例外。
-- `README.md` 仍展示旧 Automations V2 格式，并将 prompt action 简化为始终创建新 Session。现行语义由 Automations V3 规范定义。
-- `architecture/pi-extension-gui-style-placement.md` 同时包含已发布的 `workspace.content` 语义和尚未实现的 V2 提案，不应被整篇当作当前产品语义。
+- 当前 Automation schema/runtime 仍包含 `isolated-agent` target。该 target 已被产品语义取消；后续实现对齐应删除它，不能将现有代码当作保留这一概念的产品依据。

@@ -63,6 +63,9 @@ export const RPC_CHANNELS = {
     CHECK_SLUG: 'workspaces:checkSlug',
     UPDATE_REMOTE: 'workspaces:updateRemote',
     REMOTE_UPDATED: 'workspaces:remoteUpdated',
+    GET_TOPOLOGY: 'workspaces:getTopology',
+    TOPOLOGY_COMMAND: 'workspaces:topologyCommand',
+    TOPOLOGY_CHANGED: 'workspaces:topologyChanged',
   },
   window: {
     GET_WORKSPACE: 'window:getWorkspace',

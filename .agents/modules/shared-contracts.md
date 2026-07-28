@@ -66,6 +66,7 @@ Run protocol and utility tests, shared type checking, and channel-map parity che
 A convenient shared helper can accumulate feature policy; protocol changes can compile locally while breaking older concurrent backends.
 
 ## Semantic history
+- 2026-07-28: Published the strict Workspace V2 identity, multi-location topology, redacted client projection, marker/path reference, topology command/event, routing, and stable failure-code contracts.
 - 2026-07-26: Preserved Automation run/history cursor query fingerprints and frozen pagination bounds across strict command and result DTO parsing, rejecting incomplete or mismatched cursor envelopes before they reach the indexed store.
 - 2026-07-25: Kept shared environment sanitization as a consumer of the host-neutral sealed-runtime contract and removed the empty shared runtime ownership after canonical runtime authority moved to `session-tools-core`.
 - 2026-07-22: Moved runtime-log locking, rotation, and append work to ordered asynchronous filesystem I/O, with bounded queue high-water and persistence-failure metrics plus orderly flush coverage.

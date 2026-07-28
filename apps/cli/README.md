@@ -108,7 +108,6 @@ versions               Show server runtime versions
 workspaces             List workspaces
 sessions               List sessions in workspace
 providers              List AI providers
-session create         Create a session (--name, --mode)
 session messages <id>  Print session message history
 session delete <id>    Delete a session
 send <id> <message>    Send message and stream AI response

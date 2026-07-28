@@ -152,7 +152,6 @@ Prompt delivery is explicit:
 
 - `new-session` creates a normal assistant-backed Session.
 - `session` targets `event-session` or a fixed Session and chooses `followUp` or `steer`.
-- `isolated-agent` runs without publishing a Session and may optionally notify a Session.
 
 Example fixed Session delivery:
 

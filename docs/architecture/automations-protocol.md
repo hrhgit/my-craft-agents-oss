@@ -6,7 +6,7 @@ Canonical document version: `3`
 
 Runtime event envelope: CloudEvents `1.0` structured content mode
 
-Last updated: 2026-07-23
+Last updated: 2026-07-28
 
 This document is the normative architecture and protocol specification for
 Mortise Automations. The terms MUST, MUST NOT, REQUIRED, SHOULD, SHOULD NOT,
@@ -24,8 +24,8 @@ The unified system supports:
 - time triggers: cron, once, and interval;
 - event triggers from Mortise, the Agent runtime, and authenticated external
   programs;
-- prompt actions targeting a new Session, an existing Session by follow-up or
-  steer delivery, or an isolated Agent;
+- prompt actions targeting a new Session or an existing Session by follow-up
+  or steer delivery;
 - outbound webhook actions;
 - one durable run history correlated from trigger occurrence through every
   action attempt.
@@ -72,7 +72,7 @@ time scheduler | Mortise adapter | Agent adapter | external ingress
                               |
                       ordered action executor
                               |
-            Session delivery | isolated Agent | webhook
+                      Session delivery | webhook
                               |
                     canonical run history
 ```
@@ -355,17 +355,6 @@ interface PromptActionV3 {
         session: 'event-session' | { id: string }
         delivery: 'followUp' | 'steer'
       }
-    | {
-        kind: 'isolated-agent'
-        provider?: string
-        model?: string
-        thinkingLevel?: string
-        permissionMode?: 'safe' | 'ask' | 'allow-all'
-        notify?: {
-          session: 'event-session' | { id: string }
-          delivery: 'followUp' | 'steer'
-        }
-      }
 }
 ```
 
@@ -385,12 +374,6 @@ create a new Session.
 cannot be delivered before the turn ends follows Pi's normal undelivered-steer
 requeue behavior. Automations MUST NOT redefine turn ordering, interrupt,
 retry, or queue semantics.
-
-An `isolated-agent` target runs in an isolated in-memory Agent context and does
-not create a normal sidebar Session. Its action remains running until the
-isolated Agent terminates. `notify`, when present, delivers the bounded result
-to its explicit Session target. Failure to notify is recorded separately from
-the isolated Agent result and can make the action partial.
 
 Environment and event-data expansion occurs exactly once before dispatch. The
 rendered prompt and a redacted reference to its input event are recorded for
@@ -548,7 +531,6 @@ Prompt action terminal meaning is target-specific:
 
 - new Session: the first-turn transaction crossed durable publication;
 - existing Session: follow-up was durably queued or steer was accepted by Pi;
-- isolated Agent: the Agent completed or failed;
 - webhook: the outbound request reached its terminal retry result.
 
 Run aggregation is deterministic:
@@ -697,7 +679,8 @@ An explicitly selected independent Pi `schedule-prompts.json` file may be
 converted offline as follows:
 
 - cron, once, and interval become matching time triggers;
-- a job with a model becomes an isolated-Agent prompt action;
+- a job with a model becomes a new-Session prompt action with its model
+  selection preserved;
 - a job bound to an existing Session becomes a fixed Session follow-up action;
 - an unbound scheduled job becomes a new-Session prompt action;
 - a job bound to a missing Session is converted as disabled with a conversion
@@ -752,8 +735,8 @@ Contract acceptance requires automated coverage for:
 - overlap `skip` and `queue-one` behavior;
 - action ordering, continue/stop failure policy, and overall partial status;
 - new Session publication boundary, fixed and event Session validation,
-  follow-up, steer, undelivered-steer requeue, Session deletion, isolated-Agent
-  completion/abort/notify, and model/provider fallback diagnostics;
+  follow-up, steer, undelivered-steer requeue, Session deletion, and
+  model/provider fallback diagnostics;
 - webhook success, terminal failure, immediate/deferred retry, stable attempt
   identities, response truncation, secret redaction, and unknown-outcome crash
   recovery;

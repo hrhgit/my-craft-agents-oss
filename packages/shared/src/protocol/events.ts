@@ -15,6 +15,7 @@ import type {
   DeepLinkNavigation,
 } from './dto'
 import type { PiProjectionEventV1 } from './pi-projection'
+import type { WorkspaceTopologyChangedV1 } from './workspace-topology'
 
 export interface BroadcastEventMap {
   // Session events (workspace-scoped via broadcastToWorkspace)
@@ -29,6 +30,7 @@ export interface BroadcastEventMap {
   [RPC_CHANNELS.skills.CHANGED]: [workspaceId: string, skills: LoadedSkill[]]
   [RPC_CHANNELS.permissions.DEFAULTS_CHANGED]: [value: null]
   [RPC_CHANNELS.workspaces.REMOTE_UPDATED]: [data: { workspaceId: string }]
+  [RPC_CHANNELS.workspaces.TOPOLOGY_CHANGED]: [change: WorkspaceTopologyChangedV1]
 
   // Pi global config (~/.mortise/agent/) change broadcast
   [RPC_CHANNELS.pi.GLOBAL_CHANGED]: []
