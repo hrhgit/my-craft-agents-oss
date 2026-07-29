@@ -97,7 +97,12 @@ export class PiEventAdapter extends BaseEventAdapter {
    */
   *adaptEvent(event: PiEvent): Generator<MortiseAgentEvent> {
     if ((event as { type?: string }).type === 'pi_user_message_persisted') {
-      yield { type: 'pi_user_message_persisted' };
+      const persisted = event as { clientMutationId?: unknown; entryId?: unknown };
+      yield {
+        type: 'pi_user_message_persisted',
+        ...(typeof persisted.clientMutationId === 'string' ? { clientMutationId: persisted.clientMutationId } : {}),
+        ...(typeof persisted.entryId === 'string' ? { entryId: persisted.entryId } : {}),
+      };
       return;
     }
 

@@ -478,9 +478,9 @@ describe("createBranchedSession", () => {
 			const newFile = session.createBranchedSession(id1);
 			expect(newFile).toBeDefined();
 
-			// The branched path has no assistant, so the file should not exist yet
-			// (deferred to _persist on first assistant, matching newSession() contract)
-			expect(existsSync(newFile!)).toBe(false);
+			// The complete user entry is itself the canonical publication boundary.
+			await session.flush();
+			expect(existsSync(newFile!)).toBe(true);
 
 			// Simulate extension adding entry before assistant (like preset on turn_start)
 			session.appendCustomEntry("preset-state", { name: "plan" });

@@ -1418,10 +1418,10 @@ export class SessionManager {
 
 	private _rewriteFile(): void {
 		if (!this.persist || !this.sessionFile) return;
-		const hasAssistant = this.fileEntries.some((entry) =>
-			entry.type === "message" ? entry.message.role === "assistant" : false,
+		const hasUserMessage = this.fileEntries.some((entry) =>
+			entry.type === "message" ? entry.message.role === "user" : false,
 		);
-		if (!this.flushed && !hasAssistant) return;
+		if (!this.flushed && !hasUserMessage) return;
 		this.requestPersistence(true);
 	}
 
@@ -1557,10 +1557,10 @@ export class SessionManager {
 	_persist(): void {
 		if (!this.persist || !this.sessionFile) return;
 
-		const hasAssistant = this.fileEntries.some((candidate) =>
-			candidate.type === "message" ? candidate.message.role === "assistant" : false,
+		const hasUserMessage = this.fileEntries.some((candidate) =>
+			candidate.type === "message" ? candidate.message.role === "user" : false,
 		);
-		if (!hasAssistant) {
+		if (!this.flushed && !hasUserMessage) {
 			return;
 		}
 		this.requestPersistence(!this.flushed);
@@ -2094,13 +2094,11 @@ export class SessionManager {
 			this.persistenceError = undefined;
 			this._buildIndex();
 
-			// Only write the file now if it contains an assistant message.
-			// Otherwise defer to _persist(), which creates the file on the
-			// first assistant response, matching the newSession() contract
-			// and avoiding the duplicate-header bug when _persist()'s
-			// no-assistant guard later resets flushed to false.
-			const hasAssistant = this.fileEntries.some((e) => e.type === "message" && e.message.role === "assistant");
-			if (hasAssistant) {
+			// A branch containing a user message is already a canonical Session.
+			// Header-only branches remain unpublished until a complete user message
+			// is appended (or the explicit hidden-Session boundary is used).
+			const hasUserMessage = this.fileEntries.some((e) => e.type === "message" && e.message.role === "user");
+			if (hasUserMessage) {
 				this._rewriteFile();
 				this.flushed = true;
 			} else {

@@ -16,8 +16,8 @@ async function createSessionFile(path: string): Promise<void> {
 	};
 	writeFileSync(path, `${JSON.stringify(header)}\n`, "utf8");
 
-	// SessionManager only persists once it has seen at least one assistant message.
-	// Add a minimal assistant entry so subsequent appends are persisted.
+	// The pre-existing file is already published; append an assistant entry so the
+	// timestamp fixture covers both transcript roles.
 	const mgr = SessionManager.open(path);
 	mgr.appendMessage({
 		role: "assistant",

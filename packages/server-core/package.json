@@ -22,6 +22,7 @@
     "./handlers/rpc": "./src/handlers/rpc/index.ts",
     "./handlers/rpc/*": "./src/handlers/rpc/*.ts",
     "./sessions": "./src/sessions/index.ts",
+    "./session-control": "./src/session-control/index.ts",
     "./webui": "./src/webui/index.ts"
   },
   "scripts": {

@@ -1,61 +1,59 @@
 ---
-schema: module-agent/v2
+schema: project-module/v1
 id: web-viewer-clients
 name: Web and Viewer Clients
 summary: Browser adapter, WebUI bootstrap, read-only viewer, and local WebUI launch lifecycle.
 status: active
-keywords: [webui, viewer, browser-client, adapter, localhost, websocket]
-owns:
-  - apps/webui/**
-  - apps/viewer/**
-  - scripts/start-webui.ps1
-  - scripts/start-webui-client.ps1
-  - scripts/start-webui-instance.ps1
-  - scripts/stop-webui.ps1
-  - scripts/webui-process-utils.ps1
-  - scripts/webui-process-utils.test.ts
-  - start-webui.cmd
-  - stop-webui.cmd
-related: [packages/server-core/src/webui/**, apps/electron/src/renderer/**]
-depends_on: [headless-server-cli, shared-contracts, shared-ui-i18n]
-collaborates_with: [headless-server-cli]
+when_to_read:
+  - WebUI, browser adapters, read-only viewer, localhost authentication, or launch lifecycle changes
+tags:
+  - webui
+  - viewer
+  - browser-client
+  - adapter
+  - localhost
+  - websocket
+entrypoints:
+  - apps/webui/src/main.tsx
+  - apps/webui/src/adapter/web-api.ts
+  - apps/viewer/src/main.tsx
+depends_on:
+  - headless-server-cli
+  - shared-contracts
+  - shared-ui-i18n
+related:
+  - headless-server-cli
 validation:
-  - { id: web-client-regression, kind: unit, command: "bun test apps/webui apps/viewer scripts/webui-process-utils.test.ts", description: "Run WebUI, viewer, and process utility regressions.", triggers: [owned-change], required: true, evidence: "Bun test exit status and output." }
-  - { id: web-client-contract, kind: contract, command: "bun run lint:webui", description: "Verify WebUI client contracts and lint rules.", triggers: [contract-change], required: true, evidence: "Lint exit status and diagnostics." }
+  - bun test apps/webui apps/viewer scripts/webui-process-utils.test.ts
+  - bun run lint:webui
 ---
 
-## Purpose
+# Purpose
+
 Offer intentionally bounded browser clients over Mortise's shared backend contracts.
 
-## Specialist mandate
-Own WebUI bootstrap and browser API adapter, viewer behavior, localhost launcher lifecycle, and browser-specific degradation.
+# Boundary
 
-## Responsibilities
 Maintain sign-in bootstrap, routed workspace API, connection state, browser shims, client startup, cleanup, and viewer navigation.
 
-## Non-goals
 Do not duplicate the main renderer layout or emulate Electron-only native capabilities.
 
-## Contracts and invariants
-WebUI is an explicit subset; development auto-login is localhost-only; reusable UI remains outside `apps/webui/src`.
+# Capabilities
 
-## Architecture and entry points
+Own WebUI bootstrap and browser API adapter, viewer behavior, localhost launcher lifecycle, and browser-specific degradation.
+
 The browser adapter maps shared client contracts to Web APIs; PowerShell launchers start server and Vite through portmux.
 
-## Collaboration
+# Invariants
+
+WebUI is an explicit subset; development auto-login is localhost-only; reusable UI remains outside `apps/webui/src`.
+
+# Change Impact
+
 Backend capabilities come from `headless-server-cli`; shared workflows coordinate with their feature UI owners.
 
-## Validation
-Run WebUI type/lint tests, adapter tests, launcher process tests, and browser interaction checks for supported workflows.
-
-## Known risks
 Browser security policy differs from Electron; development auto-login must never escape the localhost launcher boundary.
 
-## Semantic history
-- 2026-07-22: Declared the viewer's direct shared i18n dependency so source imports no longer rely on root-workspace dependency leakage.
-- 2026-07-22: Made the WebUI capability snapshot immutable on the adapter API and generate all typed unsupported-operation overrides from one checked mapping.
-- 2026-07-21: Added a versioned WebUI platform-capability snapshot and typed `CAPABILITY_UNAVAILABLE` failures for unsupported native operations instead of false-success shims.
-- 2026-07-21: Kept local skill import explicitly desktop-only in the WebUI adapter.
-- 2026-07-20: Removed the WebUI adapter's retired Data Sources OAuth orchestration.
-- 2026-07-12: Unified WebUI session projection with the shared runtime.
-- 2026-07-18: Stabilized WebUI launch and process cleanup in monorepo validation.
+# Validation
+
+Run WebUI type/lint tests, adapter tests, launcher process tests, and browser interaction checks for supported workflows.

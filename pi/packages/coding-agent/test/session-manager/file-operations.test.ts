@@ -283,7 +283,7 @@ describe("SessionManager session file locking", () => {
 		rmSync(tempDir, { recursive: true, force: true });
 	});
 
-	it("clears stale write locks before first persisted assistant message", async () => {
+	it("clears stale write locks before the first persisted user message", async () => {
 		const session = SessionManager.create(tempDir, tempDir);
 		const sessionFile = session.getSessionFile();
 		if (!sessionFile) {
@@ -295,6 +295,8 @@ describe("SessionManager session file locking", () => {
 		utimesSync(`${sessionFile}.lock`, staleTime, staleTime);
 
 		session.appendMessage({ role: "user", content: "hello", timestamp: Date.now() });
+		await session.flush();
+		expect(existsSync(`${sessionFile}.lock`)).toBe(false);
 		session.appendMessage({
 			role: "assistant",
 			content: [{ type: "text", text: "hi" }],

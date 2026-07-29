@@ -410,6 +410,7 @@ export async function createSession(
   workspaceId: string,
   workspaceRootPath: string,
   options?: {
+    sessionId?: string;
     name?: string;
     permissionMode?: SessionHeader['permissionMode'];
     model?: string;
@@ -423,7 +424,7 @@ export async function createSession(
   ensureSessionsDir(workspaceId);
 
   const now = Date.now();
-  const sessionId = generateSessionId(workspaceId);
+  const sessionId = options?.sessionId ?? generateSessionId(workspaceId);
 
   // Create session directory with all subdirectories (plans, attachments)
   ensureSessionDir(workspaceId, sessionId);

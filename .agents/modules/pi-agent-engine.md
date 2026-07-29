@@ -1,47 +1,55 @@
 ---
-schema: module-agent/v2
+schema: project-module/v1
 id: pi-agent-engine
 name: Pi Agent Engine
 summary: Model-independent agent loop, message state, tool execution, and retry behavior.
 status: active
-keywords: [agent-loop, tool-call, retry, stream, state, steering]
-owns:
-  - pi/packages/agent/**
-related: [pi/packages/ai/**, packages/shared/src/agent/**]
-depends_on: [provider-model-runtime]
-collaborates_with: []
+when_to_read:
+  - model-independent agent loop, tool execution, retry, stream, steering, or state changes
+tags:
+  - agent-loop
+  - tool-call
+  - retry
+  - stream
+  - state
+  - steering
+entrypoints:
+  - pi/packages/agent/src/index.ts
+  - pi/packages/agent/src/agent.ts
+  - pi/packages/agent/src/agent-loop.ts
+depends_on:
+  - provider-model-runtime
+related: []
 validation:
-  - { id: pi-agent-regression, kind: unit, command: "npm --prefix pi test --workspace @mortise/pi-agent-core", description: "Run Pi agent engine regressions.", triggers: [owned-change], required: true, evidence: "Workspace test exit status and output." }
+  - npm --prefix pi test --workspace @mortise/pi-agent-core
 ---
 
-## Purpose
+# Purpose
+
 Run the reusable stateful agent loop over model streams and tool calls.
 
-## Specialist mandate
-Own loop state transitions, prompts, tool execution, steering, follow-ups, retry, and transport-neutral agent events.
+# Boundary
 
-## Responsibilities
 Maintain `Agent`, `agentLoop`, message conversion, proxy helpers, and their behavioral tests.
 
-## Non-goals
 Do not own terminal UI, filesystem tools, provider implementations, or Mortise renderer state.
 
-## Contracts and invariants
-State updates and emitted events remain ordered; abort and retry paths preserve a coherent message history.
+# Capabilities
 
-## Architecture and entry points
+Own loop state transitions, prompts, tool execution, steering, follow-ups, retry, and transport-neutral agent events.
+
 The public package entry exports the agent state machine; loop internals consume Pi AI streams and registered tools.
 
-## Collaboration
+# Invariants
+
+State updates and emitted events remain ordered; abort and retry paths preserve a coherent message history.
+
+# Change Impact
+
 `pi-coding-runtime` supplies concrete tools and modes; Mortise session code projects engine events into durable sessions.
 
-## Validation
-Run the Pi agent package tests and downstream host integration tests after event-shape changes.
-
-## Known risks
 Small event-order changes can break RPC clients, retry presentation, or persisted transcript reconstruction.
 
-## Semantic history
-- 2026-07-06: Mortise unified its runtime integration around Pi agent semantics.
-- 2026-07-18: Pi history and packages became part of the Mortise monorepo.
-- 2026-07-21: Node harness resource discovery now preserves platform-correct file names and relative paths on Windows while retaining PowerShell as the canonical default shell.
+# Validation
+
+Run the Pi agent package tests and downstream host integration tests after event-shape changes.

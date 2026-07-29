@@ -1,57 +1,61 @@
 ---
-schema: module-agent/v2
+schema: project-module/v1
 id: extension-ui
 name: Extension UI
 summary: Versioned host-rendered extension contributions, interactions, sandbox surfaces, and placement contracts.
 status: active
-keywords: [extension-ui, contribution, remote-ui, sandbox, slot, interaction]
-owns:
-  - packages/shared/src/protocol/extension-contributions.ts
-  - packages/shared/src/protocol/extension-contributions.test.ts
-  - packages/shared/src/protocol/extension-interactions.ts
-  - packages/shared/src/protocol/extension-interactions.test.ts
-  - packages/shared/src/protocol/extension-ui-validation.ts
-  - packages/shared/src/protocol/__tests__/extension-ui-validation.test.ts
-  - apps/electron/src/renderer/components/extensions/**
+when_to_read:
+  - extension-contributed GUI, interactions, sandbox surfaces, placement, or validation semantics
+tags:
+  - extension-ui
+  - contribution
+  - remote-ui
+  - sandbox
+  - slot
+  - interaction
+entrypoints:
   - docs/architecture/pi-extension-gui.md
-related: [apps/electron/src/renderer/components/app-shell/**, pi/packages/coding-agent/examples/extensions/**]
-depends_on: [extension-runtime, shared-contracts]
-collaborates_with: [extension-runtime, ui-validation-developer-kit]
+  - packages/shared/src/protocol/extension-contributions.ts
+  - packages/shared/src/protocol/extension-interactions.ts
+depends_on:
+  - extension-runtime
+  - shared-contracts
+related:
+  - extension-runtime
+  - ui-validation-developer-kit
 validation:
-  - { id: extension-ui-regression, kind: unit, command: "bun test --isolate apps/electron/src/renderer/components/extensions packages/shared/src/protocol/extension-contributions.test.ts", description: "Run extension contribution UI regressions with per-file module isolation.", triggers: [owned-change], required: true, evidence: "Bun test exit status and output." }
-  - { id: extension-ui-physical, kind: physical, command: "bun run test:ui-validation:extension", description: "Exercise extension UI through the shared Developer Kit host.", triggers: [ui-change, extension-contract-change, release], required: false, evidence: "Developer Kit run output and retained extension UI evidence." }
+  - >-
+    bun test --isolate apps/electron/src/renderer/components/extensions
+    packages/shared/src/protocol/extension-contributions.test.ts
+  - bun run test:ui-validation:extension
 ---
 
-## Purpose
+# Purpose
+
 Let extensions add rich GUI while the host preserves stability, semantics, and shared-region policy.
 
-## Specialist mandate
-Own contribution schemas, renderer stores, sandbox hosts, remote interaction routing, and extension placement documentation.
+# Boundary
 
-## Responsibilities
 Maintain versioned contribution validation, lifecycle state, composer integration, slots, focus semantics, and fallbacks.
 
-## Non-goals
 Do not hard-code extension-specific screens in core or grant arbitrary global positioning and z-index.
 
-## Contracts and invariants
-Extensions declare placement intent; Mortise owns ordering, overflow, collapse, focus, conflict resolution, and host-rendered safety.
+# Capabilities
 
-## Architecture and entry points
+Own contribution schemas, renderer stores, sandbox hosts, remote interaction routing, and extension placement documentation.
+
 Shared protocol defines wire schemas; renderer extension components translate validated contributions into host surfaces.
 
-## Collaboration
+# Invariants
+
+Extensions declare placement intent; Mortise owns ordering, overflow, collapse, focus, conflict resolution, and host-rendered safety. Contribution runtimes and projections are backend-owned. Closing a tab does not unload the Extension, and a persisted layout reference whose Extension is unavailable remains an unavailable placeholder.
+
+# Change Impact
+
 Coordinate conversation slots with `conversation-ui`, workspace tabs with `universal-layout`, and semantic hooks with the developer kit.
 
-## Validation
+Contribution version skew can leave stale interaction state; excessive freedom can compromise host layout or accessibility. Current contribution identity and storage still include Session/runtime-shaped ownership, so backend-type persistence remains an accepted implementation gap.
+
+# Validation
+
 Run contribution protocol, interaction store, sandbox, renderer routing, and extension validation tests.
-
-## Known risks
-Contribution version skew can leave stale interaction state; excessive freedom can compromise host layout or accessibility.
-
-## Semantic history
-- 2026-07-25: Published host-rendered interaction fields, options, text inputs, and actions through stable protocol-ID semantic identities and the canonical input primitive capability declarations.
-- 2026-07-25: Isolated extension UI test files so a component mock cannot contaminate another file's production export contract during module validation.
-- 2026-07-21: Removed legacy widget and RemoteUI renderer models, retaining one versioned contribution surface and one typed interaction composer with queued lifecycle handling.
-- 2026-07-13: Added versioned Pi extension UI contributions and placement policy.
-- 2026-07-14: Synchronized extension interaction state and validation semantics.

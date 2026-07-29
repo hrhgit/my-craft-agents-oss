@@ -51,18 +51,19 @@ describe("SessionManager async durability", () => {
 		return SessionManager.create(dir, dir);
 	}
 
-	it("keeps a draft unpublished until the first assistant and atomically flushes the ordered prefix", async () => {
+	it("publishes on the first durable user message and appends each later AgentMessage", async () => {
 		const session = createSession();
 		const file = session.getSessionFile()!;
 		const userId = session.appendMessage({ role: "user", content: "hello", timestamp: Date.now() });
 		session.setMortiseMetadata({ workspaceId: "workspace-1" });
 
 		await session.flush();
-		expect(existsSync(file)).toBe(false);
-		await expect(session.getPersistedEntry(userId)).resolves.toBeUndefined();
+		expect(existsSync(file)).toBe(true);
+		await expect(session.getPersistedEntry(userId)).resolves.toMatchObject({ id: userId });
+		expect(readJsonl(file).map((entry) => entry.type)).toEqual(["session", "message"]);
 
 		const assistantId = session.appendMessage(assistantMessage("reply"));
-		expect(existsSync(file)).toBe(false);
+		expect(existsSync(file)).toBe(true);
 		expect(session.getDurabilityState()).toMatchObject({ queuedOperations: 1, failed: false });
 
 		await session.flush();
@@ -80,13 +81,9 @@ describe("SessionManager async durability", () => {
 		});
 	});
 
-	it("publishes a user-only Session only through the explicit hidden boundary", async () => {
+	it("publishes an ordinary user-only Session while keeping header-only hidden publication explicit", async () => {
 		const session = createSession();
 		const file = session.getSessionFile()!;
-		session.appendMessage({ role: "user", content: "internal task", timestamp: Date.now() });
-
-		await session.flush();
-		expect(existsSync(file)).toBe(false);
 		await expect(session.publishHiddenSession()).rejects.toThrow(
 			"Header-only publication is restricted to explicitly hidden Sessions",
 		);
@@ -97,9 +94,8 @@ describe("SessionManager async durability", () => {
 		await session.publishHiddenSession();
 
 		const entries = readJsonl(file);
-		expect(entries).toHaveLength(2);
+		expect(entries).toHaveLength(1);
 		expect(entries[0]).toMatchObject({ type: "session", mortise: { hidden: true, owner: "automation" } });
-		expect(entries[1]).toMatchObject({ type: "message", message: { role: "user", content: "internal task" } });
 	});
 
 	it("coalesces a streaming burst into one bounded writer while preserving append order", async () => {
@@ -185,7 +181,7 @@ describe("SessionManager async durability", () => {
 		expect(session.getDurabilityState().pendingEntries).toBe(0);
 	});
 
-	it("resets durability accounting when branching a long published session to a short draft", async () => {
+	it("resets durability accounting when branching a long published session to a short user branch", async () => {
 		const session = createSession();
 		const branchId = session.appendMessage({ role: "user", content: "branch root", timestamp: Date.now() });
 		session.appendMessage(assistantMessage("published"));
@@ -195,8 +191,9 @@ describe("SessionManager async durability", () => {
 		await session.flush();
 
 		session.createBranchedSession(branchId);
-		expect(session.getDurabilityState()).toMatchObject({ pendingEntries: 2, pendingRevisions: 0 });
-		for (let index = 0; index < SESSION_PERSISTENCE_MAX_PENDING_ENTRIES - 2; index++) {
+		expect(session.getDurabilityState()).toMatchObject({ pendingEntries: 2, pendingRevisions: 1 });
+		await session.flush();
+		for (let index = 0; index < SESSION_PERSISTENCE_MAX_PENDING_ENTRIES; index++) {
 			session.appendCustomEntry("branched-backpressure", index);
 		}
 

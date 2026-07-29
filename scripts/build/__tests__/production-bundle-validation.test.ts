@@ -50,7 +50,7 @@ function expandPackageScript(name: string, scripts: Record<string, string>, stac
   if (!command) throw new Error(`Missing package script: ${name}`)
   return command.split(/\s*&&\s*/).flatMap(part => {
     const match = part.match(/^bun run ([a-zA-Z0-9:_-]+)(.*)$/)
-    const compositeScripts = new Set(['validate:ci', 'validate:dev', 'module:validate', 'module-agent', 'test:module-agents'])
+    const compositeScripts = new Set(['validate:ci', 'validate:dev'])
     if (!match || !scripts[match[1]!] || !compositeScripts.has(match[1]!)) return [part]
     const expanded = expandPackageScript(match[1]!, scripts, [...stack, name])
     const suffix = match[2]!
@@ -61,8 +61,8 @@ function expandPackageScript(name: string, scripts: Record<string, string>, stac
 }
 
 function moduleValidationCommands(path: string): string[] {
-  const parsed = matter(readSource(path)).data as { validation?: Array<{ command?: string }> }
-  return (parsed.validation ?? []).map(entry => entry.command).filter((command): command is string => Boolean(command))
+  const parsed = matter(readSource(path)).data as { validation?: unknown[] }
+  return (parsed.validation ?? []).filter((command): command is string => typeof command === 'string')
 }
 
 function readSource(path: string): string {
@@ -119,6 +119,7 @@ describe('production bundle validation composition', () => {
     const scripts = packageScripts()
     const buildModulePath = resolve(repositoryRoot, '.agents/modules/build-release-observability.md')
     const buildModule = readSource(buildModulePath)
+    const moduleCommands = moduleValidationCommands(buildModulePath)
     expect(scripts['bootstrap:ci']).toContain('bun run pi:build:binary')
     expect(scripts['electron:build']).toBe('bun run scripts/build/produce-electron-build.ts')
     expect(scripts['electron:build:source']).toContain('bun run electron:build:resources')
@@ -132,9 +133,8 @@ describe('production bundle validation composition', () => {
     expect(buildModule).not.toContain('command: "bun run validate:dev"')
     expect(buildModule).not.toContain('command: "bun run validate:ci"')
     for (const command of [
+      'bun run module:lint',
       'bun run validate:production-node-bundles',
-      'bun run scripts/module-agents/cli.ts validate --strict',
-      'bun test scripts/module-agents/__tests__',
       'bun run typecheck:all',
       'bun run test:shared:all',
       'bun run test:doc-tools',
@@ -144,11 +144,10 @@ describe('production bundle validation composition', () => {
       'bun run lint:i18n:parity',
       'bun run lint:i18n:sorted',
     ]) {
-      expect(buildModule).toContain(`command: "${command}"`)
+      expect(moduleCommands).toContain(command)
     }
 
     const ciLeaves = expandPackageScript('validate:ci', scripts)
-    const moduleCommands = moduleValidationCommands(buildModulePath)
     const moduleOnly = [
       'git diff --check',
       'bun run pi:build && bun run pi:check',
@@ -158,8 +157,9 @@ describe('production bundle validation composition', () => {
     expect(new Set(moduleCommands).size).toBe(moduleCommands.length)
     expect(moduleCommands.filter(command => !moduleOnly.includes(command)).sort()).toEqual([...ciLeaves].sort())
 
-    const moduleAgentCommands = moduleValidationCommands(resolve(repositoryRoot, '.agents/modules/module-agent-system.md'))
-    expect(moduleCommands.filter(command => moduleAgentCommands.includes(command))).toEqual(moduleAgentCommands)
+    expect(scripts['module-agent']).toBeUndefined()
+    expect(scripts['module:validate']).toBeUndefined()
+    expect(scripts['test:module-agents']).toBeUndefined()
   })
 
   test('pins embedded build lifecycle tools to the producer Bun runtime', () => {

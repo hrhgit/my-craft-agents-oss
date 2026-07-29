@@ -19,9 +19,19 @@ describe('SessionManager runtime teardown', () => {
 
   function injectManagedSession(sessionId: string) {
     const workspace = {
+      schemaVersion: 2,
       id: 'ws_test',
+      revision: 0,
       name: 'Test Workspace',
-      rootPath: tmpRoot,
+      nameSource: 'custom',
+      slug: 'test-workspace',
+      primaryLocationId: 'primary',
+      locations: [{
+        id: 'primary',
+        name: 'Primary',
+        rootName: 'test-workspace',
+        endpoint: { kind: 'local', rootPath: tmpRoot },
+      }],
       createdAt: Date.now(),
     }
     const managed = createManagedSession(
@@ -29,7 +39,7 @@ describe('SessionManager runtime teardown', () => {
       workspace as never,
       { messagesLoaded: true },
     ) as any
-    const agent = { dispose: jest.fn() }
+    const agent = { dispose: jest.fn(), isProcessing: jest.fn(() => false) }
     managed.agent = agent
     ;(sm as unknown as { sessions: Map<string, unknown> }).sessions.set(sessionId, managed)
 
@@ -77,6 +87,26 @@ describe('SessionManager runtime teardown', () => {
     expect(first.agent.dispose).toHaveBeenCalledTimes(1)
     expect(second.agent.dispose).toHaveBeenCalledTimes(1)
     expect((sm as unknown as { sessions: Map<string, unknown> }).sessions.size).toBe(0)
+  })
+
+  it('cleanup releases each backend turn handle after finite runtime disposal', async () => {
+    const { managed } = injectManagedSession('cleanup-control')
+    const release = jest.fn(async () => undefined)
+    managed.turnControl = {
+      sessionId: managed.id,
+      backendId: 'test-backend',
+      handleId: 'handle-cleanup',
+      attemptId: 'attempt-cleanup',
+      acquiredAt: Date.now(),
+      valid: true,
+      assertValid: () => undefined,
+      setState: async () => undefined,
+      release,
+    }
+
+    await sm.cleanup()
+
+    expect(release).toHaveBeenCalledTimes(1)
   })
 
   it('cleanup flushes projection persistence before clearing runtime state', async () => {

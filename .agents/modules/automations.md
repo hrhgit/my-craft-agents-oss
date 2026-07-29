@@ -1,60 +1,58 @@
 ---
-schema: module-agent/v2
+schema: project-module/v1
 id: automations
 name: Automations
 summary: Scheduled and event-driven automation definitions, execution, persistence, and UI.
 status: active
-keywords: [automation, schedule, cron, event, trigger, run]
-owns:
-  - packages/shared/src/automations/**
-  - packages/shared/src/scheduler/**
+when_to_read:
+  - scheduled or event-driven automation definitions, execution, persistence, or UI changes
+tags:
+  - automation
+  - schedule
+  - cron
+  - event
+  - trigger
+  - run
+entrypoints:
+  - packages/shared/src/automations/index.ts
+  - packages/shared/src/scheduler/index.ts
   - packages/server-core/src/handlers/rpc/automations.ts
-  - apps/electron/src/renderer/components/automations/**
-  - apps/electron/resources/docs/automations.md
-  - docs/architecture/automations-protocol.md
-  - docs/architecture/automations-protocol-candidates.json
-  - scripts/benchmarks/automations-index.ts
-related: [packages/shared/src/sessions/**, packages/server-core/src/runtime/**]
-depends_on: [workspace-state, session-lifecycle]
-collaborates_with: []
+depends_on:
+  - workspace-state
+  - session-lifecycle
+related: []
 validation:
-  - { id: regression, kind: unit, command: "bun test packages/shared/src/automations packages/shared/src/scheduler apps/electron/src/renderer/components/automations", description: "Run automation and scheduler regressions.", triggers: [owned-change], required: true, evidence: "Bun test exit status and output." }
+  - >-
+    bun test packages/shared/src/automations packages/shared/src/scheduler
+    apps/electron/src/renderer/components/automations
 ---
 
-## Purpose
+# Purpose
+
 Run durable scheduled or event-triggered agent work with visible execution history.
 
-## Specialist mandate
-Own automation schemas, schedule calculation, persistence, runner lifecycle, RPC, and management UI.
+# Boundary
 
-## Responsibilities
-Maintain idempotent operations, next-run calculation, enablement, interruption, recovery, automation session linkage, indexed query projections, and the representative query-performance workload.
+Maintain idempotent operations, next-run calculation, enablement, interruption, backend-owned scheduler/run lifecycle, automation session linkage, indexed query projections, and the representative query-performance workload.
 
-## Non-goals
 Do not own general session execution, messaging transports, or operating-system schedulers.
 
-## Contracts and invariants
-Automation writes are atomic and operation-identified; repeated delivery cannot create duplicate durable transitions. Canonical V3 records and their SQLite query projections commit in one transaction, migrations schema-validate every durable record before enabling writes, immutable index identities cannot drift, lease recovery uses the observed record version as its CAS boundary, and bounded cursors are bound to a normalized query fingerprint.
+# Capabilities
 
-## Architecture and entry points
+Own automation schemas, schedule calculation, persistence, runner lifecycle, RPC, and management UI.
+
 `docs/architecture/automations-protocol.md` defines the normative versioned contract; shared automation storage and scheduler feed server handlers and the renderer automation page.
 
-## Collaboration
+# Invariants
+
+Automation writes are atomic and operation-identified; repeated delivery cannot create duplicate durable transitions. Concurrent backend-owned schedulers use stable occurrence identity and an atomic claim so one occurrence has at most one normal run. No scheduler survives after every backend closes, and trigger boundaries missed with no active backend are not replayed. Canonical V3 records and their SQLite query projections commit in one transaction, migrations schema-validate every durable record before enabling writes, immutable index identities cannot drift, and bounded cursors are bound to a normalized query fingerprint.
+
+# Change Impact
+
 Automation-created sessions use `session-lifecycle`; outbound notifications coordinate with `messaging`.
 
-## Validation
+Clock changes and process downtime affect schedules; concurrent backends must agree on operation identity and version. The current scheduler implementation and tests still include missed-once recovery and interval coalescing, which must be aligned with the accepted skip-while-no-backend contract. Projection corruption, stale leases, cursor reuse under different filters, and mixed-version writers must fail explicitly instead of looping or overwriting a newer transition.
+
+# Validation
+
 Run scheduler edge cases, persistence concurrency, RPC, and management UI tests.
-
-## Known risks
-Clock changes and process downtime affect schedules; concurrent backends must agree on operation identity and version. Projection corruption, stale leases, cursor reuse under different filters, and mixed-version writers must fail explicitly instead of looping, skipping records, or overwriting a newer transition.
-
-## Semantic history
-- 2026-07-28: Added a reusable Workspace topology interruption boundary that generation-fences acceptance and draining, durably cancels queued and running V3 runs, waits for active settlement, fails closed on incomplete teardown, and resumes future work with a fresh abort signal without changing definitions.
-- 2026-07-26: Made the SQLite projection the transactional indexed query authority for runs, history, leases, and due occurrences; schema-validated migration and immutable identities fail closed, lease recovery commits against the observed CAS version, cursors bind their query fingerprint, and cross-process/dual-host/fault tests cover the concurrency boundary.
-- 2026-07-23: Closed the runtime migration window: Mortise Automations never reads `.pi`; historical scheduled-prompt or external-trigger conversion is an explicit offline operation, while V3 remains the sole runtime authority.
-- 2026-07-21: Made the V3 SQLite protocol the only Automations runtime authority; removed the former scheduler, event bus, handlers, JSONL history/retry queue, compatibility RPC adapter, and all V2/prompt-automation migration readers; restart recovery now coalesces `queue-one` backlog before execution and incompatible writers enter read-only mode without initializing storage.
-- 2026-07-20: Removed the obsolete active Data Sources field from the automation runtime options; prompt mentions now describe skills rather than built-in Sources.
-- 2026-07-20: Fenced Automations writes by definitions/ingress/runs/history capability versions and made skipped once misfires durable without disabling unrelated triggers.
-- 2026-07-20: Implemented the V3 core contract with strict schemas, atomic V2 migration, MultiWriterStore-backed definitions/events/runs, CloudEvents idempotency, precise cron/once/interval recovery, and callback-owned action execution.
-- 2026-07-20: Accepted the unified Automations v3 architecture, CloudEvents ingress, deterministic run protocol, and prompt-automation migration boundary.
-- 2026-07-18: Hardened automation persistence for concurrent backend writes.

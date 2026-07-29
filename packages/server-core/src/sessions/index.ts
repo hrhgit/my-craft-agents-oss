@@ -5,3 +5,4 @@ export type {
   WorkspaceSessionInterruptionResult,
   WorkspaceSessionInterruptionTarget,
 } from './SessionManager'
+export * from '../session-control'

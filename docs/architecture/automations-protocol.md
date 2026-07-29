@@ -6,7 +6,7 @@ Canonical document version: `3`
 
 Runtime event envelope: CloudEvents `1.0` structured content mode
 
-Last updated: 2026-07-28
+Last updated: 2026-07-29
 
 This document is the normative architecture and protocol specification for
 Mortise Automations. The terms MUST, MUST NOT, REQUIRED, SHOULD, SHOULD NOT,
@@ -15,9 +15,12 @@ and MAY are to be interpreted as described by RFC 2119.
 ## 1. Decision And Scope
 
 Mortise owns one automation system. It owns the canonical definitions,
-scheduler, event ingress, run coordination, execution history, management RPC,
-and management UI. The former `prompt-automation` extension is
-not a second automation product, scheduler, store, or execution authority.
+scheduler contract, event ingress, run coordination, execution history,
+management RPC, and management UI. Each Electron or WebUI backend owns its own
+scheduler and run processes while it is alive; the canonical store and atomic
+occurrence claim keep those runtime instances in one product authority. The
+former `prompt-automation` extension is not a second automation product, data
+model, store, or execution authority.
 
 The unified system supports:
 
@@ -86,6 +89,11 @@ Automations owns orchestration state. Session creation and prompt/steer/follow-
 up behavior remain owned by `session-lifecycle` and the current repository Pi
 runtime. Webhook transport uses host networking policy. Shared-data concurrency
 uses `workspace-state` storage primitives.
+
+There is no scheduler service that survives after every backend closes. A
+backend stops its owned scheduler and active run processes during bounded
+shutdown. When several backends are active, each may observe an occurrence, but
+only the backend that wins the canonical atomic occurrence claim may execute it.
 
 ## 4. Versioning And Capabilities
 
@@ -317,18 +325,17 @@ when present, MUST be an IANA timezone. The scheduler computes exact future
 occurrences; it MUST NOT model time by publishing a public `SchedulerTick`
 event every minute.
 
-Default misfire behavior is:
-
-- cron: `skip`; missed occurrences are not replayed;
-- once: `run-once`; the host runs one missed occurrence after recovery unless
-  `expiresAt` has passed, then records it as expired and completes the trigger;
-- interval: coalesce at most one missed occurrence and preserve `anchorAt`.
+An occurrence whose scheduled instant passed while no Mortise backend was
+active is skipped and MUST NOT be claimed or replayed when a backend later
+starts. This rule applies to cron, once, and interval schedules regardless of a
+stored `misfire` value. A concrete history projection MAY record that a boundary
+was skipped, but that record cannot create a run or make the occurrence eligible
+for execution.
 
 For interval schedules, the next future occurrence is always calculated from
 `anchorAt + n * everyMs`. Restart time and prior execution duration MUST NOT
-become a new implicit anchor. Multiple missed intervals produce no more than
-one recovery run. The scheduler then advances to the first future anchored
-boundary.
+become a new implicit anchor. On startup, the scheduler advances directly to the
+first future anchored boundary without coalescing missed intervals into a run.
 
 Once triggers become completed after their one occurrence is durably claimed,
 whether the run succeeds or fails. Re-enabling a completed once trigger
@@ -359,9 +366,9 @@ interface PromptActionV3 {
 ```
 
 `new-session` uses the server-owned first-turn transaction. The action succeeds
-only when the Session crosses the repository's assistant-backed durable
-publication boundary. A failure before that boundary leaves no stored Session
-and fails the action.
+only when the first UserMessage is durably appended and the Session crosses the
+repository publication boundary. A failure before that boundary leaves no
+stored Session and fails the action.
 
 `session` targets an existing Session. `event-session` resolves only from a
 trusted event context. Validation MUST reject `event-session` when any trigger
@@ -370,10 +377,13 @@ event Session. A fixed Session ID that no longer exists blocks the action and
 produces a diagnostic; the host MUST NOT substitute the active UI Session or
 create a new Session.
 
-`followUp` and `steer` inherit Pi's current Agent Loop behavior. A steer that
-cannot be delivered before the turn ends follows Pi's normal undelivered-steer
-requeue behavior. Automations MUST NOT redefine turn ordering, interrupt,
-retry, or queue semantics.
+`followUp` and `steer` inherit Session control behavior. A steer accepted during
+the current turn stays within that turn. A steer that cannot be delivered before
+the turn ends becomes a next-turn pending message only through the Session
+fallback contract. A follow-up does not extend the current turn: after release,
+it must compete for the next turn, and a conflict leaves it unaccepted.
+Automations MUST NOT redefine turn ordering, interrupt, retry, or pending-message
+semantics.
 
 Environment and event-data expansion occurs exactly once before dispatch. The
 rendered prompt and a redacted reference to its input event are recorded for
@@ -530,7 +540,8 @@ non-terminal state.
 Prompt action terminal meaning is target-specific:
 
 - new Session: the first-turn transaction crossed durable publication;
-- existing Session: follow-up was durably queued or steer was accepted by Pi;
+- existing Session: follow-up won next-turn control and became a durable
+  UserMessage, or steer was accepted for the active turn;
 - webhook: the outbound request reached its terminal retry result.
 
 Run aggregation is deterministic:
@@ -599,16 +610,16 @@ The scheduler MUST satisfy all of these invariants:
 3. Daylight-saving transitions follow the chosen IANA timezone and scheduler
    library semantics, while deduplication remains based on scheduled UTC
    instant.
-4. Cron skips missed occurrences by default.
-5. Once recovers one missed, unexpired occurrence and then completes.
-6. Interval coalesces any number of missed boundaries into at most one recovery
-   run without changing its anchor.
+4. An occurrence missed while no backend is active is never replayed.
+5. Once does not recover a missed occurrence after all backends were closed.
+6. Interval preserves its anchor but advances to the first future boundary
+   without creating a recovery run for missed boundaries.
 7. Disabling a definition prevents new claims but does not erase history.
 8. Updating a schedule produces future occurrence keys from the new revision;
    it does not reinterpret already claimed occurrences.
-9. Shutdown stops new claims, aborts or hands off owned work using durable
-   leases, and never reports an in-flight action as successful without its
-   terminal transition.
+9. Backend shutdown stops new claims, ends its owned scheduler and run processes
+   within the shutdown bound, and never reports an in-flight action as
+   successful without its terminal transition.
 
 Leases, if used for crash recovery, identify the claiming backend and expire.
 Lease takeover may resume an internally idempotent transition. It MUST NOT
@@ -705,7 +716,9 @@ independent Pi source.
 
 The cutover is complete:
 
-- V3 is the only Mortise scheduler, store, history, and idempotency authority;
+- V3 is the only Mortise scheduler contract, store, history, and idempotency
+  authority; multiple backend-owned scheduler instances do not create another
+  automation product;
 - the former scheduler, `delegatePromptAutomation` setting and fallback,
   `prompt-automation` runtime, and migration readers are absent;
 - Mortise exposes only the unified UI, RPC, CLI, and authenticated ingress;
@@ -713,8 +726,8 @@ The cutover is complete:
   external program, it may explicitly submit a typed event to authenticated
   Mortise ingress, but Mortise never discovers or reads Pi files to do so.
 
-There is no supported dual-scheduler, dual-write, runtime import, or legacy
-fallback state.
+There is no supported legacy scheduler, dual-write, runtime import, or fallback
+state.
 
 ## 12. Validation And Acceptance
 
@@ -728,14 +741,14 @@ Contract acceptance requires automated coverage for:
   authentication, same-ID replay, different-payload conflict, persistence
   before `202`, request limits, and rate diagnostics;
 - five- and six-field cron, IANA timezones, DST gaps/overlaps, clock rollback,
-  once recovery/expiry, interval anchoring/coalescing, disable/update, and
-  process restart;
+  once expiry, interval anchoring, disable/update, backend shutdown, and proof
+  that occurrences missed with no active backend are not replayed;
 - two concurrent compatible backends observing one occurrence and producing
   exactly one claimed normal run;
 - overlap `skip` and `queue-one` behavior;
 - action ordering, continue/stop failure policy, and overall partial status;
 - new Session publication boundary, fixed and event Session validation,
-  follow-up, steer, undelivered-steer requeue, Session deletion, and
+  follow-up recompetition, steer and next-turn fallback, Session deletion, and
   model/provider fallback diagnostics;
 - webhook success, terminal failure, immediate/deferred retry, stable attempt
   identities, response truncation, secret redaction, and unknown-outcome crash

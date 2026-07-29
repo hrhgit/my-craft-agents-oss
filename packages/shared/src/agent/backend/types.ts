@@ -641,6 +641,13 @@ export interface AgentBackend {
   /** Called when a tool requires permission */
   onPermissionRequest: PermissionCallback | null;
 
+  /** Backend-owned fence invoked before the Agent Loop may execute a tool. */
+  onBeforeToolExecution?: ((request: {
+    toolCallId: string;
+    toolName: string;
+    input: Record<string, unknown>;
+  }) => Promise<{ allowed: true } | { allowed: false; reason: string }>) | null;
+
   /** Called when agent submits a plan */
   onPlanSubmitted: PlanCallback | null;
 

@@ -1,69 +1,61 @@
 ---
-schema: module-agent/v2
+schema: project-module/v1
 id: session-lifecycle
 name: Session Lifecycle
 summary: Session creation, persistence, projection, execution state, and transcript durability.
 status: active
-keywords: [session, transcript, draft, persistence, projection, unread]
-owns:
-  - packages/shared/src/sessions/**
-  - packages/shared/src/coordination/**
-  - packages/server-core/src/sessions/**
-  - packages/server-core/src/projection/**
-  - packages/server-core/src/handlers/rpc/sessions.ts
-  - packages/server-core/src/handlers/rpc/session*.ts
-related: [packages/shared/src/agent/**, apps/electron/src/renderer/pages/ChatPage.tsx]
-depends_on: [workspace-state, pi-agent-engine]
-collaborates_with: [conversation-ui]
+when_to_read:
+  - Session creation, persistence, projection, drafts, execution state, unread, or transcript durability
+tags:
+  - session
+  - transcript
+  - draft
+  - persistence
+  - projection
+  - unread
+entrypoints:
+  - packages/server-core/src/projection/index.ts
+  - packages/server-core/src/sessions/index.ts
+  - packages/server-core/src/session-control/index.ts
+  - packages/shared/src/coordination/index.ts
+depends_on:
+  - workspace-state
+  - pi-agent-engine
+related:
+  - conversation-ui
 validation:
-  - { id: session-lifecycle-regression, kind: unit, command: "bun test packages/shared/src/sessions packages/shared/tests/persistence-queue.test.ts packages/server-core/src/sessions packages/server-core/src/handlers/rpc/sessions apps/electron/src/renderer/lib/__tests__/drafts.test.ts", description: "Run session lifecycle, durability queue, projection, Session RPC, and draft regressions.", triggers: [owned-change], required: true, evidence: "Bun test exit status and output." }
+  - >-
+    bun test packages/shared/src/sessions packages/shared/tests/persistence-queue.test.ts
+    packages/server-core/src/sessions packages/server-core/src/handlers/rpc/sessions
+    apps/electron/src/renderer/lib/__tests__/drafts.test.ts
 ---
 
-## Purpose
+# Purpose
+
 Persist and project conversations without leaking draft or hidden-session implementation details into clients.
 
-## Specialist mandate
-Own session files, tree JSONL, persistence queues, server session management, projection, and renderer session state.
+# Boundary
 
-## Responsibilities
 Maintain create/send/interrupt lifecycle, transcript durability, sidecar handling, unread state, and empty-draft publication behavior.
 
-## Non-goals
 Do not own agent loop internals, message rendering, or tool implementations.
 
-## Contracts and invariants
-A normal UI draft and its provisional first-turn runtime are not a Session until Pi atomically persists the first assistant message; failures before that boundary leave no stored Session. Core subagent tasks persist below the owning parent Session sidecar, never enter the ordinary Session list, and use durable inbox and completion-delivery records so accepted messages and background results survive runtime replacement without duplicate delivery. Hidden internal sessions retain their invisible persisted semantics until separately migrated.
+# Capabilities
 
-## Architecture and entry points
-Shared session storage is consumed by server `SessionManager`; ordinary first turns enter through the combined `createAndSendFirstTurn` transaction, while projection and Mortise metadata remain memory-only until Pi's first-assistant JSONL publication gate.
+Own session files, tree JSONL, persistence queues, server session management, projection, and renderer session state.
 
-## Collaboration
+Shared session storage is consumed by server `SessionManager`; ordinary first turns enter through the combined `createAndSendFirstTurn` transaction and publish when the first UserMessage is durably appended. Projection and Mortise metadata cannot publish a Session before that canonical message boundary.
+
+# Invariants
+
+A normal UI draft is not a Session until the first UserMessage is durably appended; failures before that boundary leave no stored Session. Every complete AgentMessage becomes shared only after its own append, flush, and durable acknowledgement. Core subagent tasks persist below the owning parent Session sidecar and never enter the ordinary Session list; their inbox and completion records are capabilities of that concrete task type, not a platform guarantee for every child task. Hidden internal sessions retain their invisible persisted semantics until separately migrated.
+
+# Change Impact
+
 Coordinate send semantics with `conversation-ui`, runtime events with `pi-agent-engine`, and remote channels with `messaging`.
 
-## Validation
+Publishing metadata or projection before the first durable UserMessage can create visible phantom sessions; event ordering can make a running session appear terminated.
+
+# Validation
+
 Run session storage, persistence queue, projection, send durability, and draft tests.
-
-## Known risks
-Publishing metadata or projection before Pi's assistant-backed JSONL exists can create visible phantom sessions; event ordering can make a running session appear terminated.
-
-## Semantic history
-- 2026-07-28: Added Workspace-topology interruption and authoritative topology refresh for Session work with start-time primary-location attribution, synchronous recovery fences, durable queued-work retirement, pending-plan/auth cleanup, parent-owned runtime teardown before topology mutation, an explicit coordinator contract, and canonical client-safe topology projections.
-- 2026-07-27: Made core subagents parent-owned persistent child tasks with sidecar JSONL history, durable adjustment inboxes, idempotent background completion delivery, and explicit deletion failure semantics.
-- 2026-07-25: Propagated the host-validated immutable runtime layout through Session backend construction so Session execution uses the same sealed runtime authority as the owning Electron or headless host.
-- 2026-07-24: Made explicit Session-create thinking levels reject retired or invalid values instead of silently falling back, and removed the retired namespaced session-tool display reader from current projections.
-- 2026-07-24: Rejected invalid or retired thinking metadata at Session restore and JSONL ingress, and separated pristine unconfigured authentication from configured-but-missing provider errors.
-- 2026-07-23: Moved Mortise Session storage to the Mortise-owned Agent root without importing or falling back to independent Pi Session history.
-- 2026-07-23: Made canonical Session metadata and Mortise overlay writes fully async; cold metadata updates now merge against the latest lock-scoped Pi JSONL so concurrent active appends survive, ordinary drafts remain fileless until first-assistant publication, and only explicitly hidden Sessions may publish header-only state.
-- 2026-07-22: Made compaction completion sidecar persistence an awaited part of turn settlement; Host completion cannot overtake it, persistent failures retain a settlement-only retry, and pending-plan memory stays aligned with durable state.
-- 2026-07-22: Made Pi projection settlement choose recoverable displaced-file replacement up front for existing Windows sidecars so a pending rename-over-existing cannot block completion, with durable preparation and deterministic artifact cleanup; also removed duplicate awaited remote browser cleanup.
-- 2026-07-22: Made post-accept turn settlement a single-flight retryable durability boundary with a payload-free retry command, typed failure event, and same-Host snapshot projection; metadata/projection failures keep the Session non-ready, cannot re-enter generic chat cleanup, and block completion, queued replay, and later sends until settlement succeeds.
-- 2026-07-22: Made canonical metadata/overlay writes reject swallowed failures and signature mismatches, and delayed ordinary Session send acceptance until Pi confirms its canonical user-message write with a typed terminal retry outcome when that boundary is not reached.
-- 2026-07-22: Marked injected Session backend construction as provisional or ordinary so one-shot validation backends cannot consume first-turn leases for persisted Session runtimes.
-- 2026-07-22: Added a constructor-injected Session backend factory boundary so source-development validation can exercise the real first-turn transaction with a deterministic backend while production remains on the canonical shared factory.
-- 2026-07-22: Removed the obsolete `listActiveSessions` alias and Session bundle re-exports of shared file primitives; callers now use `listSessions`, while bundle file types and limits remain owned by shared utilities.
-- 2026-07-21: Session interaction responses now accept only validated Extension Interaction V1 payloads; nullable scalar responses and legacy cancellation reasons are rejected at RPC ingress.
-- 2026-07-21: Isolated pre-message runtime persistence tests from the real user Pi session store so module validation cannot mutate active data.
-- 2026-07-21: Closed a false-success path where rejected canonical headers were treated as durable metadata writes; critical flush now fails with a typed persistence error.
-- 2026-07-21: Unified new Pi transcript filenames and headers on `mortiseId`; `sdkSessionId` remains backend resume metadata and no longer creates files the canonical locator cannot rediscover.
-- 2026-07-21: Made first-turn metadata/projection durability failures typed, retryable request outcomes with an explicit terminal unpublished attempt, routed provisional shutdown through abandonment, and covered real directory/rename faults.
-- 2026-07-21: Rejected retired Session metadata at the tree JSONL boundary, removed header-scan filename fallback and provider-lock migration, and removed the old metadata-picker alias.

@@ -1,75 +1,58 @@
 ---
-schema: module-agent/v2
+schema: project-module/v1
 id: shared-ui-i18n
 name: Shared UI and Internationalization
 summary: Reusable UI primitives, icons, themes, localization, styling, and platform-neutral presentation helpers.
 status: active
-keywords: [ui, component, i18n, locale, theme, icon, accessibility]
-owns:
-  - packages/ui/package.json
-  - packages/ui/tsconfig.json
-  - packages/ui/eslint.config.mjs
-  - packages/ui/eslint-rules/**
+when_to_read:
+  - shared UI primitives, icons, themes, localization, accessibility, or presentation helpers
+tags:
+  - ui
+  - component
+  - i18n
+  - locale
+  - theme
+  - icon
+  - accessibility
+entrypoints:
   - packages/ui/src/index.ts
-  - packages/ui/src/components/icons/**
-  - packages/ui/src/components/terminal/**
-  - packages/ui/src/components/tooltip.tsx
-  - packages/ui/src/components/ui/**
-  - packages/ui/src/context/**
-  - packages/ui/src/lib/**
-  - packages/ui/src/styles/**
-  - packages/shared/src/colors/**
-  - packages/shared/src/i18n/**
-  - packages/shared/src/icons/**
-  - apps/electron/src/renderer/components/icons/**
-  - apps/electron/src/renderer/components/ui/**
-  - apps/electron/src/renderer/components/shiki/**
-  - apps/electron/src/renderer/assets/**
-  - apps/electron/src/renderer/index.css
-  - apps/electron/src/renderer/utils/**
-  - scripts/check-i18n-parity.ts
-  - scripts/sort-locales.ts
-related: [apps/electron/src/renderer/components/**, packages/ui/src/components/chat/**]
-depends_on: [shared-contracts]
-collaborates_with: [conversation-ui]
+  - packages/shared/src/colors/index.ts
+  - packages/shared/src/i18n/index.ts
+depends_on:
+  - shared-contracts
+related:
+  - conversation-ui
 validation:
-  - { id: shared-ui-regression, kind: unit, command: "bun test packages/ui", description: "Run shared UI regressions.", triggers: [owned-change], required: true, evidence: "Bun test exit status and output." }
-  - { id: i18n-contract, kind: contract, command: "bun run lint:i18n:parity && bun run lint:i18n:sorted", description: "Verify locale parity and deterministic sorting.", triggers: [locale-change, contract-change], required: true, evidence: "Lint exit status and diagnostics." }
+  - bun test packages/ui
+  - bun run lint:i18n:parity && bun run lint:i18n:sorted
 ---
 
-## Purpose
+# Purpose
+
 Keep shared presentation coherent, accessible, themeable, and translated across supported clients.
 
-## Specialist mandate
-Own generic primitives, visual tokens, icons, localization catalogs, terminal rendering, and non-feature-specific UI helpers.
+# Boundary
 
-## Responsibilities
 Maintain public component exports, dismiss behavior, focus semantics, theme tokens, locale parity and sorting, and reusable controls.
 
-## Non-goals
 Do not own feature workflows, transcript semantics, rich file previews, or workspace layout policy.
 
-## Contracts and invariants
-Primitives expose stable accessible identity and actions; locale keys remain in parity; shared UI stays platform-neutral.
+# Capabilities
 
-## Architecture and entry points
+Own generic primitives, visual tokens, icons, localization catalogs, terminal rendering, and non-feature-specific UI helpers.
+
 `@mortise/ui` provides reusable React surfaces; shared i18n and icon packages supply product data to clients.
 
-## Collaboration
+# Invariants
+
+Primitives expose stable accessible identity and actions; locale keys remain in parity; shared UI stays platform-neutral.
+
+# Change Impact
+
 Feature specialists compose primitives and contribute translations without duplicating generic controls.
 
-## Validation
-Run package tests, ESLint rules, type checking, locale parity, and locale ordering checks.
-
-## Known risks
 Primitive changes have a wide visual blast radius; translation drift and focus regressions are easy to miss in unit tests.
 
-## Semantic history
-- 2026-07-27: Made locale ordering validation accept consistent LF or CRLF checkouts while preserving the existing line-ending style during rewrites, so Windows Git conversion cannot fail the canonical monorepo gate or conceal real key and formatting drift.
-- 2026-07-21: Deferred PDF and Mermaid/ELK preview engines until matching content is rendered, with stable busy placeholders and explicit lightweight PDF overlay export.
-- 2026-07-21: Retired legacy RemoteUI locale keys and retained only the current extension interaction submission label across all locales.
-- 2026-07-21: Forwarded refs through the shared Popover trigger so stacked Tooltip and Popover `asChild` primitives preserve focus ownership without React runtime warnings.
-- 2026-07-21: Removed namespaced session-tool parsing in UI cards and retained plan annotations only on canonical assistant artifact responses.
-- 2026-07-21: Added locale-parity strings for discovered-skill selection and confirmed subset-import feedback.
-- 2026-07-14: Added stable semantic identities to UI primitives for validation.
-- 2026-07-20: Removed the Data Sources locale contract and narrowed mention-menu copy to files and skills.
+# Validation
+
+Run package tests, ESLint rules, type checking, locale parity, and locale ordering checks.

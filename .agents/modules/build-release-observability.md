@@ -1,158 +1,58 @@
 ---
-schema: module-agent/v2
+schema: project-module/v1
 id: build-release-observability
 name: Build Release and Observability
 summary: Monorepo configuration, CI, packaging, installers, resources, logging, versioning, and release metadata.
 status: active
-keywords: [build, release, ci, package, installer, log, version]
-owns:
-  - .claude-plugin/plugin.json
-  - .codex/config.toml
-  - .dockerignore
-  - .env.example
-  - .github/**
-  - .gitignore
-  - .mortise-config.sync
-  - .portmux.json
-  - bun.lock
-  - bunfig.toml
-  - build-developer-kit.cmd
-  - build-package.cmd
-  - CODE_OF_CONDUCT.md
-  - config.json
-  - CONTRIBUTING.md
-  - Dockerfile.server
-  - LICENSE
-  - NOTICE
+when_to_read:
+  - builds, CI, packaging, installers, runtime logging, versioning, or release metadata changes
+tags:
+  - build
+  - release
+  - ci
+  - package
+  - installer
+  - log
+  - version
+entrypoints:
   - package.json
-  - 'path.resolve(workspace'
-  - README.md
-  - SECURITY.md
-  - start-quick-test.cmd
-  - tsconfig.base.json
-  - tsconfig.json
-  - UPSTREAM-TRADEMARK.md
-  - apps/electron/*.json
-  - apps/electron/*.yml
-  - apps/electron/*.md
-  - apps/electron/*.ts
-  - apps/electron/.gitignore
-  - apps/electron/.portmux.json
-  - apps/electron/build/**
-  - apps/electron/eslint-rules/**
-  - apps/electron/eslint.config.mjs
-  - apps/electron/scripts/**
-  - apps/electron/resources/*
-  - apps/electron/resources/bin/**
-  - apps/electron/resources/icon.icon/**
-  - apps/electron/resources/docs/permissions.md
-  - apps/electron/resources/docs/themes.md
-  - apps/electron/resources/docs/tool-icons.md
-  - apps/electron/resources/release-notes/**
-  - apps/electron/resources/scripts/**
-  - apps/electron/resources/themes/**
-  - apps/electron/resources/tool-icons/**
-  - packages/shared/src/docs/**
-  - packages/shared/src/resources/**
-  - packages/shared/src/version/**
-  - packages/shared/src/interceptor-common.ts
-  - packages/shared/src/interceptor-request-utils.ts
-  - packages/shared/src/unified-network-interceptor.ts
-  - packages/shared/src/__tests__/**
-  - packages/shared/eslint-rules/**
-  - packages/shared/eslint.config.mjs
-  - packages/shared/src/search/**
-  - packages/shared/tests/content-validators.test.ts
-  - packages/shared/tests/mode-manager.test.ts
-  - packages/shared/tests/persistence-queue.test.ts
-  - packages/shared/tests/session-validation.test.ts
-  - docs/architecture/logging-candidates.json
-  - docs/architecture/legacy-cleanup-inventory.md
-  - docs/architecture/optimization-acceptance-checklist.md
-  - docs/architecture/optimization-completed-archive.md
-  - docs/architecture/optimization-evidence/**
-  - docs/architecture/optimization-task-packets.md
-  - docs/architecture/pi-session-sidecar-cleanup-manifest-*.md
-  - docs/architecture/user-data-cleanup-manifest-*.md
-  - docs/architecture/red-line.md
-  - docs/future-todo.md
-  - scripts/build/**
-  - scripts/build-developer-kit.ps1
-  - scripts/build-developer-kit.ts
-  - scripts/build-package.ps1
-  - scripts/build-server.ts
-  - scripts/build-source-snapshot.ts
-  - scripts/build-wa-worker.ts
-  - scripts/docker-smoke-test.sh
-  - scripts/electron-build-*.ts
-  - scripts/electron-clean.ts
-  - scripts/electron-dev.ts
-  - scripts/electron-start.ts
-  - scripts/e2e/electron-chat/**
-  - scripts/generate-dev-cert.sh
-  - scripts/install-app.ps1
-  - scripts/install-app.sh
-  - scripts/install-server.sh
-  - scripts/mortise-logs/**
-  - scripts/run-isolated-tests.ts
-  - scripts/shared-backend-discovery*.ts
-  - scripts/start-quick-test.ps1
-  - scripts/smoke-developer-kit.ps1
-  - scripts/stage-developer-kit-for-installer.ts
-  - pi/.gitattributes
-  - pi/.github/**
-  - pi/.gitignore
-  - pi/.husky/**
-  - pi/.npmrc
-  - pi/.pi/**
-  - pi/AGENTS.md
-  - pi/*.ps1
-  - pi/*.sh
-  - pi/biome.json
-  - pi/CONTRIBUTING.md
-  - pi/dev/**
-  - pi/LICENSE
-  - pi/package-lock.json
-  - pi/package.json
-  - pi/README.md
-  - pi/scripts/**
-  - pi/tsconfig*.json
-related: [apps/electron/src/main/logger.ts, packages/shared/src/utils/runtime-log.ts]
-depends_on: [shared-contracts]
-collaborates_with: [module-agent-system, ui-validation-developer-kit]
+  - scripts/build/validate-production-bundles.ts
+  - apps/electron/src/main/logger.ts
+depends_on:
+  - shared-contracts
+related:
+  - project-modules
+  - ui-validation-developer-kit
 validation:
-  - { id: diff-check, kind: unit, command: "git diff --check", description: "Reject malformed working-tree patches.", triggers: [owned-change], required: true, evidence: "Git exit status and whitespace diagnostics." }
-  - { id: production-node-bundles, kind: unit, command: "bun run validate:production-node-bundles", description: "Compile production workspace-server, Electron-main, and preload bundles in memory through the production protocol entry.", triggers: [owned-change], required: true, evidence: "Per-target in-memory esbuild completion and elapsed time." }
-  - { id: monorepo-contract, kind: contract, command: "bun run pi:build && bun run pi:check", description: "Build the embedded Pi workspaces and verify their package, import, shrinkwrap, and browser-smoke contracts.", triggers: [contract-change], required: true, evidence: "Pi workspace build and contract-check exit status and diagnostics." }
-  - { id: pi-workspace-regression, kind: integration, command: "bun run pi:test", description: "Run the embedded Pi workspace regression suites without composing a second CI run.", triggers: [release, runtime-change], required: true, evidence: "Pi package regression exit status and output." }
-  - { id: module-regression, kind: integration, command: "bun test scripts/module-agents/__tests__", description: "Run module-agent regressions as an independently receipted CI leaf gate.", triggers: [ci-change, release], required: true, evidence: "Module-agent test exit status and output." }
-  - { id: module-contract, kind: integration, command: "bun run scripts/module-agents/cli.ts validate --strict", description: "Verify strict module ownership and freshness using the same leaf command as the module-agent owner.", triggers: [ci-change, release], required: true, evidence: "Structured strict validation result." }
-  - { id: repository-typecheck, kind: integration, command: "bun run typecheck:all", description: "Verify repository TypeScript contracts as an independently receipted CI leaf gate.", triggers: [ci-change, release], required: true, evidence: "Repository type-check exit status and diagnostics." }
-  - { id: shared-regression, kind: integration, command: "bun run test:shared:all", description: "Run shared regressions as an independently receipted CI leaf gate.", triggers: [ci-change, release], required: true, evidence: "Shared regression exit status and output." }
-  - { id: document-tools, kind: integration, command: "bun run test:doc-tools", description: "Run document-tool regressions as an independently receipted CI leaf gate.", triggers: [ci-change, release], required: true, evidence: "Document-tool test exit status and output." }
-  - { id: build-validation, kind: integration, command: "bun run test:build-validation", description: "Run build boundary, graph, and stale-input regressions as an independently receipted CI leaf gate.", triggers: [ci-change, release], required: true, evidence: "Build-validation exit status and output." }
-  - { id: production-bundles, kind: integration, command: "bun run validate:production-bundles", description: "Run the complete production Electron build consumed by packaging.", triggers: [ci-change, release], required: true, evidence: "Production main, workspace server, preload, renderer, and resource build exit status." }
-  - { id: ui-validation-fast, kind: integration, command: "bun run test:ui-validation:fast", description: "Run the fast UI-validation contract as an independently receipted CI leaf gate.", triggers: [ci-change, release], required: true, evidence: "UI-validation fast-contract exit status and output." }
-  - { id: i18n-parity, kind: integration, command: "bun run lint:i18n:parity", description: "Verify locale parity as an independently receipted CI leaf gate.", triggers: [ci-change, release], required: true, evidence: "Locale parity exit status and diagnostics." }
-  - { id: i18n-sorted, kind: integration, command: "bun run lint:i18n:sorted", description: "Verify deterministic locale ordering as an independently receipted CI leaf gate.", triggers: [ci-change, release], required: true, evidence: "Locale ordering exit status and diagnostics." }
+  - git diff --check
+  - bun run module:lint
+  - bun run validate:production-node-bundles
+  - bun run pi:build && bun run pi:check
+  - bun run pi:test
+  - bun run typecheck:all
+  - bun run test:shared:all
+  - bun run test:doc-tools
+  - bun run test:build-validation
+  - bun run validate:production-bundles
+  - bun run test:ui-validation:fast
+  - bun run lint:i18n:parity
+  - bun run lint:i18n:sorted
 ---
 
-## Purpose
+# Purpose
+
 Build, validate, package, diagnose, and release the independently versioned Mortise monorepo.
 
-## Specialist mandate
-Own workspace manifests, CI, build scripts, packaging metadata, bundled resources, installers, runtime logging, and version lineage.
+# Boundary
 
-## Responsibilities
 Maintain reproducible builds, package boundaries, audit workflows, source snapshots, installers, release notes, log sinks, and validation entry points.
 
-## Non-goals
 Do not import former upstream changes without explicit direction or own feature behavior merely because it is packaged.
 
-## Contracts and invariants
-Mortise owns its version line; source builds are immutable and isolated; generated artifacts stay outside live inputs; runtime failures use structured logs.
+# Capabilities
 
-## Architecture and entry points
+Own workspace manifests, CI, build scripts, packaging metadata, bundled resources, installers, runtime logging, and version lineage.
+
 Root scripts orchestrate Bun and Pi workspaces; Electron scripts package desktop assets; CI runs repository validation and audits. `validate:production-node-bundles` is the non-writing high-frequency production compile, `validate:production-bundles` runs the complete Electron build, and `electron:dist:win`, `electron:dist:mac`, and `electron:dist:linux` own target-platform installer generation.
 
 ### Runtime diagnostics
@@ -160,33 +60,16 @@ The primary local diagnostic file is `%MORTISE_CONFIG_DIR%\logs\runtime.log` whe
 
 `messaging-gateway.log`, `auto-update.log`, and the non-packaged debug-only `interceptor.log` remain specialized logs. Workspace `events.jsonl` is automation history, and Mortise/Pi Session JSONL files are Session state rather than main-process diagnostics.
 
-## Collaboration
+# Invariants
+
+Mortise owns its version line; source builds are immutable and isolated; generated artifacts stay outside live inputs; runtime failures use structured logs.
+
+# Change Impact
+
 Feature owners define their validation commands; developer-kit packaging remains version-matched and separately installable.
 
-## Validation
-Run the in-memory production Node bundle gate frequently, retain the complete production Electron build in canonical CI, run target-platform packaging separately, and include strict module validation, monorepo build/check/tests, and `git diff --check` where applicable.
-
-## Known risks
 Bundled binaries and lockfiles are large shared surfaces; concurrent regeneration can overwrite another build's artifacts.
 
-## Semantic history
-- 2026-07-27: Decomposed the module's nested CI invocation into independently receipted leaf gates, preserving the canonical `validate:ci` entrypoint while preventing repeated production bundles and allowing unchanged integration evidence to be reused until the one final fresh acceptance run.
-- 2026-07-27: Made application and Developer Host uninstall preserve user-owned Electron AppData, kept disposable profiles under bounded CLI cleanup, aligned packaged-runtime and CI Bun producers on 1.3.14, and archived the completed R11 acceptance set.
-- 2026-07-27: Bound immutable Electron manifests to their recorded Bun version and executable hash, made cross-toolchain cache validation use the producing identity, and added fail-closed expected-build packaging that never rebuilds a missing or changed acceptance artifact.
-- 2026-07-27: Reorganized the r11 architecture closeout around one frozen code candidate, serial noise-isolated performance gates, and one shared Windows installer workflow, with a revisioned handoff that separates implemented invariants from unrun acceptance evidence.
-- 2026-07-26: Made Windows production-build validation teardown retry transient locked-directory removal after nested npm lifecycle processes exit, so successful canonical Bun probes cannot fail the monorepo gate on recoverable `EBUSY` cleanup races.
-- 2026-07-26: Made the build-root Bun toolchain the single verified command authority for Electron, installer, and Developer Kit source-capsule stages: publish the producer executable atomically under its version/platform/architecture/SHA-256 identity, bind both build systems to that content identity, revalidate every reuse, repair corruption, and drive outer stages, nested npm lifecycles, dependency installation, and packaging workers from the canonical command.
-- 2026-07-26: Made the production dependency DAG executable and fail-closed: install and build the Pi workspace and binary before root dependencies exist, then materialize the lockfile-integrity-checked root view and build Electron, preventing ancestor hoists or Windows root-directory locks from influencing the embedded runtime build.
-- 2026-07-26: Bounded immutable source-capsule dependency preparation to 600 seconds with attributed timeout failure, retained the capsule-local dependency view and Pi npm cache, and moved root Bun downloads to Bun's concurrency-safe global content-addressed cache after isolated private-cache candidates stalled while the canonical cache completed in 94 seconds.
-- 2026-07-26: Converged production validation and packaging on the canonical compiled Pi runtime producer and four-file stage, rejected stale/ignored inputs, fallback artifacts, and undeclared dependency hoists in clean checkouts, and made the optional Developer Kit NSIS page abort in silent mode so unattended installed-app validation cannot hang.
-- 2026-07-25: Made source identity derive from an empty temporary Git index populated only by declared build inputs, so unrelated tracked files and commit-state transitions cannot enter the immutable capsule or change its identity.
-- 2026-07-25: Converged production validation, target packaging, Developer Kit staging, and UI validation on one build-owned immutable Electron producer with closed Bun/Pi dependency capsules, verified external-toolchain caching, SHA-256 artifact manifests, lease-held staging, and no live-checkout fallback; decomposed the full module gate into separately attributed Pi contract, Pi regression, production, and CI commands instead of nesting a duplicate CI run inside one timeout-bound command.
-- 2026-07-24: Made the non-writing production Node bundle gate resolve declared Pi workspace exports from their source entries, so a frozen clean checkout compiles every production boundary without pre-existing generated `dist` files.
-- 2026-07-24: Replaced the CI package-graph gate's full TypeScript AST traversal with deterministic concurrent source pre-reading, structured dependency preprocessing, and constant-time workspace package resolution, restoring the frozen scan budget without weakening supported import forms.
-- 2026-07-24: Archived OPT-010 after current-owner contracts and isolated Electron runs proved workspace-root authority, assistant-backed publication, rejection recovery, restart persistence, and complete cleanup.
-- 2026-07-24: Added durable architecture-v2 acceptance manifests so archived optimization claims bind code revisions, routed ownership, reproducible commands, and hashed local evidence without treating ignored output paths as the acceptance record.
-- 2026-07-24: Reconciled the legacy cleanup inventory with the completed canonical contracts and kept future user-owned data deletion outside runtime acceptance behind fresh exact-path confirmation.
-- 2026-07-24: Removed ownership declarations for the deleted Craft user-data migration scripts and made the packaged workspace thinking default a current Mortise value.
-- 2026-07-23: Reframed the active recovery queue as two independently recoverable external packets for a host-neutral schema fix and clean-checkout build/source-start evidence; retained isolated Electron acceptance with the primary because the typed fixture does not seed reserved workspace skill metadata.
-- 2026-07-23: Expanded external delegation beyond low-judgment work when scope, architecture direction, acceptance, and recovery are frozen, including complete isolated physical-validation workflows with primary evidence review.
-- 2026-07-23: Made external write delegation fail closed on invalid assignment worktrees: primary-supplied clean bases, dedicated worktrees, scoped final commits, clean handoffs, and pre-candidate raw performance baselines are now mandatory acceptance inputs.
+# Validation
+
+Run the in-memory production Node bundle gate frequently, retain the complete production Electron build in canonical CI, run target-platform packaging separately, and include lightweight project-module lint, monorepo build/check/tests, and `git diff --check` where applicable.

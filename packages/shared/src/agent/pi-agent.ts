@@ -1512,6 +1512,13 @@ export class PiAgent extends BaseAgent {
     const debugSessionId = this.config.session?.mortiseId || this._sessionId;
     this.debug(`PreToolUse request from Pi RpcClient: ${toolName} (${req.id}, sessionId=${debugSessionId})`);
 
+    if (this.onBeforeToolExecution) {
+      const authorization = await this.onBeforeToolExecution({ toolCallId, toolName, input });
+      if (!authorization.allowed) {
+        return { action: 'block', reason: authorization.reason };
+      }
+    }
+
     // Capture metadata BEFORE centralized checks strip it out.
     // This bridge is deterministic and avoids relying solely on same-process store lookups.
     const preIntent = typeof input._intent === 'string' ? input._intent : undefined;

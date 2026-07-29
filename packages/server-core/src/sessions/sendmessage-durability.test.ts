@@ -5,6 +5,9 @@ import { tmpdir } from 'os'
 import { dirname, join } from 'path'
 import { SessionManager as PiSessionManager } from '@mortise/pi-coding-agent/host-facade'
 import type { AgentBackend } from '@mortise/shared/agent/backend'
+import { getMidStreamBehavior } from '@mortise/shared/config'
+import type { SessionTurnControl, SessionTurnControlHandle } from '../session-control'
+import { LocalSessionControlClient } from '../session-control'
 import type { Workspace } from '@mortise/core/types'
 import { getSessionAttachmentsPath, getSessionFilePath, getSessionPath, readSessionJsonl, setSharedPiSessionsDirForTests } from '@mortise/shared/sessions'
 import {
@@ -12,6 +15,7 @@ import {
   SessionProjectionPersistenceError,
   SessionSendDurabilityError,
   SessionSettlementDurabilityError,
+  MAX_PENDING_FOLLOW_UPS,
   createManagedSession,
   type SessionBackendFactory,
 } from './SessionManager.ts'
@@ -31,6 +35,7 @@ describe('sendMessage durability', () => {
   let tmpRoot: string
   let sm: SessionManager
   let testWorkspace: Workspace
+  let sessionTurnControl: SessionTurnControl
 
   beforeEach(() => {
     tmpRoot = mkdtempSync(join(tmpdir(), 'sm-durability-'))
@@ -46,8 +51,36 @@ describe('sendMessage durability', () => {
       locations: [{ id: 'primary', name: 'Primary', rootName: 'test-workspace', endpoint: { kind: 'local', rootPath: tmpRoot } }],
       createdAt: Date.now(),
     }
+    const active = new Map<string, SessionTurnControlHandle>()
+    sessionTurnControl = {
+      backendId: 'test-backend',
+      acquire: async sessionId => {
+        if (active.get(sessionId)?.valid) throw new Error(`test conflict: ${sessionId}`)
+        let valid = true
+        const handle: SessionTurnControlHandle = {
+          sessionId,
+          backendId: 'test-backend',
+          handleId: randomUUID(),
+          attemptId: randomUUID(),
+          acquiredAt: Date.now(),
+          get valid() { return valid },
+          assertValid: () => { if (!valid) throw new Error('invalid test handle') },
+          setState: async () => undefined,
+          release: async () => {
+            valid = false
+            if (active.get(sessionId) === handle) active.delete(sessionId)
+          },
+        }
+        active.set(sessionId, handle)
+        return handle
+      },
+      close: async () => {
+        await Promise.all([...active.values()].map(handle => handle.release()))
+      },
+    }
     sm = new SessionManager({
       resolveWorkspaceByNameOrId: workspaceId => workspaceId === testWorkspace.id ? testWorkspace : null,
+      sessionTurnControl,
     })
   })
 
@@ -134,6 +167,14 @@ describe('sendMessage durability', () => {
         ? [entity.payload.messageId]
         : []
     )) ?? []
+  }
+
+  async function waitUntil(predicate: () => boolean, label: string): Promise<void> {
+    const deadline = Date.now() + 3_000
+    while (!predicate()) {
+      if (Date.now() >= deadline) throw new Error(`Timed out waiting for ${label}`)
+      await new Promise(resolve => setTimeout(resolve, 5))
+    }
   }
 
   const overlayOptions = {
@@ -348,7 +389,7 @@ describe('sendMessage durability', () => {
     )
   })
 
-  it('uses an injected backend factory without bypassing first-turn abandonment', async () => {
+  it('uses an injected non-provisional backend without bypassing unaccepted first-turn cleanup', async () => {
     let provisionalId = ''
     let factoryProvisional: boolean | undefined
     const createSessionBackend = mock((args: Parameters<SessionBackendFactory>[0]) => {
@@ -361,6 +402,7 @@ describe('sendMessage durability', () => {
     sm = new SessionManager({
       resolveWorkspaceByNameOrId: workspaceId => workspaceId === testWorkspace.id ? testWorkspace : null,
       createSessionBackend,
+      sessionTurnControl,
     })
 
     await expect(sm.createAndSendFirstTurn({
@@ -369,7 +411,7 @@ describe('sendMessage durability', () => {
     })).rejects.toThrow('deterministic pre-assistant failure')
 
     expect(createSessionBackend).toHaveBeenCalledTimes(1)
-    expect(factoryProvisional).toBe(true)
+    expect(factoryProvisional).toBe(false)
     expect(provisionalId).not.toBe('')
     expect(sm.getSessions(testWorkspace.id)).toEqual([])
     expect(existsSync(getSessionFilePath(testWorkspace.id, provisionalId))).toBe(false)
@@ -387,6 +429,7 @@ describe('sendMessage durability', () => {
     sm = new SessionManager({
       resolveWorkspaceByNameOrId: workspaceId => workspaceId === testWorkspace.id ? testWorkspace : null,
       createSessionBackend,
+      sessionTurnControl,
     })
 
     const session = await sm.createSession(testWorkspace.id, { hidden: true })
@@ -402,7 +445,7 @@ describe('sendMessage durability', () => {
     expect(factoryProvisional).toBe(false)
   })
 
-  it('publishes an injected backend first turn through Pi atomic persistence', async () => {
+  it('accepts an injected backend first turn after Pi persists the user entry', async () => {
     let provisionalId = ''
     let sessionFile = ''
     let fileExistedBeforeAssistant = true
@@ -414,9 +457,11 @@ describe('sendMessage durability', () => {
         { id: provisionalId },
       )
       sessionFile = piSession.getSessionFile()!
-      return createInjectedAgent(provisionalId, async function* (message) {
+      const agent = createInjectedAgent(provisionalId, async function* (message) {
         piSession.appendMessage({ role: 'user', content: [{ type: 'text', text: message }], timestamp: Date.now() })
+        await piSession.flush()
         fileExistedBeforeAssistant = existsSync(sessionFile)
+        yield { type: 'pi_user_message_persisted' }
         piSession.appendMessage({
           role: 'assistant',
           api: 'openai-completions',
@@ -438,10 +483,13 @@ describe('sendMessage durability', () => {
         yield { type: 'text_complete', text: 'deterministic first answer', isIntermediate: false }
         yield { type: 'complete' }
       })
+      agent.getSessionId = () => null
+      return agent
     })
     sm = new SessionManager({
       resolveWorkspaceByNameOrId: workspaceId => workspaceId === testWorkspace.id ? testWorkspace : null,
       createSessionBackend,
+      sessionTurnControl,
     })
 
     const result = await sm.createAndSendFirstTurn({
@@ -451,14 +499,19 @@ describe('sendMessage durability', () => {
     })
 
     expect(createSessionBackend).toHaveBeenCalledTimes(1)
-    expect(fileExistedBeforeAssistant).toBe(false)
+    expect(fileExistedBeforeAssistant).toBe(true)
     expect(existsSync(sessionFile)).toBe(true)
     expect(result.session.id).toBe(provisionalId)
     expect(sm.getSessions(testWorkspace.id).map(session => session.id)).toEqual([provisionalId])
+    expect(readSessionJsonl(sessionFile)?.messages.map(message => message.type)).toEqual(['user'])
+    const managed = (sm as unknown as {
+      sessions: Map<string, ReturnType<typeof createManagedSession>>
+    }).sessions.get(provisionalId)!
+    await waitUntil(() => !managed.isProcessing, 'first turn host settlement')
     expect(readSessionJsonl(sessionFile)?.messages.map(message => message.type)).toEqual(['user', 'assistant'])
   })
 
-  it('abandons createAndSendFirstTurn after a real publication metadata filesystem failure', async () => {
+  it('discards an unaccepted first turn after a real metadata filesystem failure', async () => {
     const events: unknown[] = []
     let provisionalId = ''
     let sessionFile = ''
@@ -478,25 +531,17 @@ describe('sendMessage durability', () => {
       writeFileSync(blockedSessionPath, 'blocked Session directory', 'utf8')
     })
 
-    await expect(result).rejects.toMatchObject({
-      name: 'SessionPublicationDurabilityError',
-      code: 'SESSION_PUBLICATION_DURABILITY_FAILED',
-      retryable: true,
-      terminal: true,
-      outcome: 'unpublished',
-      stage: 'metadata',
-    })
+    await expect(result).rejects.toBeInstanceOf(Error)
     expect(provisionalId).not.toBe('')
     expect(sm.getSessions(testWorkspace.id)).toEqual([])
     expect((sm as unknown as { sessions: Map<string, unknown> }).sessions.has(provisionalId)).toBe(false)
-    expect(events.filter(event => (
-      (event as { sessionId?: unknown }).sessionId === provisionalId
-    ))).toEqual([])
+    expect(events).not.toContainEqual({ type: 'session_created', sessionId: provisionalId })
+    expect(events).not.toContainEqual(expect.objectContaining({ type: 'complete', sessionId: provisionalId }))
     expect(existsSync(sessionFile)).toBe(false)
     expect(existsSync(getSessionPath(testWorkspace.id, provisionalId))).toBe(false)
   })
 
-  it('abandons first-turn publication when the overlay atomic rename fails', async () => {
+  it('discards an unaccepted first turn when the overlay atomic rename fails', async () => {
     const events: unknown[] = []
     let provisionalId = ''
     let sessionFile = ''
@@ -514,27 +559,19 @@ describe('sendMessage durability', () => {
     })
 
     await expect(result).rejects.toMatchObject({
-      name: 'SessionPublicationDurabilityError',
-      code: 'SESSION_PUBLICATION_DURABILITY_FAILED',
+      name: 'SessionPersistenceError',
+      code: 'SESSION_PERSISTENCE_FAILED',
       retryable: true,
-      terminal: true,
-      outcome: 'unpublished',
-      stage: 'metadata',
-      cause: expect.objectContaining({
-        name: 'SessionPersistenceError',
-        code: 'SESSION_PERSISTENCE_FAILED',
-      }),
     })
     expect(provisionalId).not.toBe('')
     expect(sm.getSessions(testWorkspace.id)).toEqual([])
-    expect(events.filter(event => (
-      (event as { sessionId?: unknown }).sessionId === provisionalId
-    ))).toEqual([])
+    expect(events).not.toContainEqual({ type: 'session_created', sessionId: provisionalId })
+    expect(events).not.toContainEqual(expect.objectContaining({ type: 'complete', sessionId: provisionalId }))
     expect(existsSync(sessionFile)).toBe(false)
     expect(existsSync(getSessionPath(testWorkspace.id, provisionalId))).toBe(false)
   })
 
-  it('abandons createAndSendFirstTurn after a real projection rename failure', async () => {
+  it('discards a first turn when Pi never acknowledges its user entry', async () => {
     const events: unknown[] = []
     let provisionalId = ''
     let sessionFile = ''
@@ -574,24 +611,17 @@ describe('sendMessage durability', () => {
     })
 
     await expect(result).rejects.toMatchObject({
-      name: 'SessionPublicationDurabilityError',
-      code: 'SESSION_PUBLICATION_DURABILITY_FAILED',
+      name: 'SessionSendDurabilityError',
+      code: 'SESSION_PERSISTENCE_FAILED',
       retryable: true,
       terminal: true,
-      outcome: 'unpublished',
-      stage: 'projection',
-      cause: expect.objectContaining({
-        name: 'SessionProjectionPersistenceError',
-        code: 'SESSION_PROJECTION_PERSISTENCE_FAILED',
-        retryable: true,
-      }),
+      outcome: 'unaccepted',
     })
     expect(provisionalId).not.toBe('')
     expect(sm.getSessions(testWorkspace.id)).toEqual([])
     expect((sm as unknown as { sessions: Map<string, unknown> }).sessions.has(provisionalId)).toBe(false)
-    expect(events.filter(event => (
-      (event as { sessionId?: unknown }).sessionId === provisionalId
-    ))).toEqual([])
+    expect(events).not.toContainEqual({ type: 'session_created', sessionId: provisionalId })
+    expect(events).not.toContainEqual(expect.objectContaining({ type: 'complete', sessionId: provisionalId }))
     expect(existsSync(sessionFile)).toBe(false)
     expect(existsSync(getSessionPath(testWorkspace.id, provisionalId))).toBe(false)
   })
@@ -809,49 +839,28 @@ describe('sendMessage durability', () => {
     expect(acked).toBe(false)
   })
 
-  it('user overlay is on disk before onAck fires (mid-stream / queued branch)', async () => {
+  it('keeps follow-up local and unaccepted until settlement releases control and replay persists it', async () => {
     const sessionId = 'durability-midstream'
     const managed = buildSession(sessionId)
     await publishExistingSession(sessionId)
-    // Force the mid-stream branch. The fake runtime declines redirect so the
-    // durable Host queue projection path runs.
     managed.isProcessing = true
-    const projectQueuedUser = mock((input: {
-      message: string
-      clientMutationId: string
-      messageId?: string
-      timestamp?: number
-    }) => {
-      sm.applyPiProjectionEvent({
-        schemaVersion: 1,
-        eventId: 'queued-event-1',
-        seq: 1,
-        sessionId,
-        runtimeId: 'runtime-1',
-        entityId: `content:user:${input.clientMutationId}`,
-        entityType: 'content_block',
-        entityVersion: 1,
-        kind: 'user_text',
-        occurredAt: input.timestamp,
-        payload: {
-          role: 'user',
-          text: input.message,
-          messageId: input.messageId ?? input.clientMutationId,
-          clientMutationId: input.clientMutationId,
-          queueStatus: 'queued',
-          source: 'host',
-          timestamp: input.timestamp,
-        },
-      })
+    const followUp = mock(async () => true)
+    const projectQueuedUser = mock(() => undefined)
+    const fakeAgent = createInjectedAgent(sessionId, async function* () {
+      yield { type: 'pi_user_message_persisted' }
+      yield { type: 'complete' }
     })
-    const followUp = mock(() => false)
-    managed.agent = { redirect: () => false, followUp, projectQueuedUser } as never
+    fakeAgent.getSessionId = () => null
+    fakeAgent.followUp = followUp
+    fakeAgent.projectQueuedUser = projectQueuedUser
+    managed.agent = fakeAgent
+    const firstControl = await (sm as unknown as {
+      acquireTurnControl: (session: typeof managed) => Promise<SessionTurnControlHandle>
+    }).acquireTurnControl(managed)
 
     let ackedMessageId: string | null = null
     let onDiskAtAck = false
-    let projectionOnDiskAtAck = false
-
-    await sm.sendMessage(
+    const pending = sm.sendMessage(
       sessionId,
       'queued message',
       undefined,
@@ -862,68 +871,91 @@ describe('sendMessage durability', () => {
       (messageId) => {
         ackedMessageId = messageId
         onDiskAtAck = readPersistedMessageIds(sessionId).includes(messageId)
-        projectionOnDiskAtAck = readPersistedQueuedMessageIds(sessionId).includes(messageId)
       },
     )
+    await new Promise(resolve => setTimeout(resolve, 0))
 
-    expect(projectQueuedUser).toHaveBeenCalledTimes(1)
-    expect(followUp).toHaveBeenCalledTimes(1)
+    expect(projectQueuedUser).not.toHaveBeenCalled()
+    expect(followUp).not.toHaveBeenCalled()
     expect(managed.messageQueue).toHaveLength(1)
+    expect(ackedMessageId).toBeNull()
+    expect(readPersistedQueuedMessageIds(sessionId)).toEqual([])
+    expect(managed.turnControl).toBe(firstControl)
+
+    await (sm as unknown as {
+      onProcessingStopped: (id: string, reason: 'complete') => Promise<void>
+    }).onProcessingStopped(sessionId, 'complete')
+    await pending
+
     expect(ackedMessageId).not.toBeNull()
     expect(onDiskAtAck).toBe(true)
-    expect(projectionOnDiskAtAck).toBe(true)
+    expect(managed.messageQueue).toHaveLength(0)
+    await waitUntil(() => !managed.isProcessing, 'follow-up host settlement')
   })
 
-  it('uses native follow-up without adding a host replay queue entry', async () => {
+  it('keeps multiple follow-ups ordered with independent identities and a finite limit', async () => {
     const sessionId = 'durability-native-follow-up'
     const managed = buildSession(sessionId)
     managed.isProcessing = true
     const followUp = mock(() => true)
-    const projectQueuedUser = mock((input: { message: string; clientMutationId: string; messageId?: string; timestamp?: number }) => {
-      sm.applyPiProjectionEvent({
-        schemaVersion: 1,
-        eventId: 'native-follow-up-event',
-        seq: 1,
-        sessionId,
-        runtimeId: 'runtime-1',
-        entityId: `content:user:${input.clientMutationId}`,
-        entityType: 'content_block',
-        entityVersion: 1,
-        kind: 'user_text',
-        occurredAt: input.timestamp,
-        payload: {
-          role: 'user', text: input.message,
-          messageId: input.messageId ?? input.clientMutationId,
-          clientMutationId: input.clientMutationId,
-          queueStatus: 'queued', source: 'host', timestamp: input.timestamp,
-        },
-      })
-    })
+    const projectQueuedUser = mock(() => undefined)
     managed.agent = { followUp, projectQueuedUser } as never
 
-    await sm.sendMessage(sessionId, 'native queued message')
+    const pending = Array.from({ length: MAX_PENDING_FOLLOW_UPS }, (_, index) => (
+      sm.sendMessage(sessionId, `queued-${index}`, undefined, undefined, {
+        optimisticMessageId: `follow-up-${index}`,
+      }).catch(error => error)
+    ))
+    await new Promise(resolve => setTimeout(resolve, 0))
 
-    expect(followUp).toHaveBeenCalledTimes(1)
-    expect(projectQueuedUser).toHaveBeenCalledTimes(1)
-    expect(managed.messageQueue).toHaveLength(0)
-    expect(managed.wasInterrupted).not.toBe(true)
+    expect(managed.messageQueue.map(item => [item.message, item.messageId])).toEqual(
+      Array.from({ length: MAX_PENDING_FOLLOW_UPS }, (_, index) => [`queued-${index}`, `follow-up-${index}`]),
+    )
+    await expect(sm.sendMessage(sessionId, 'overflow')).rejects.toMatchObject({
+      code: 'SESSION_FOLLOW_UP_QUEUE_FULL',
+      accepted: false,
+      limit: MAX_PENDING_FOLLOW_UPS,
+    })
+    expect(managed.messageQueue).toHaveLength(MAX_PENDING_FOLLOW_UPS)
+    expect(followUp).not.toHaveBeenCalled()
+    expect(projectQueuedUser).not.toHaveBeenCalled()
+
+    const queued = managed.messageQueue.splice(0)
+    for (const item of queued) item.onReject?.(new Error('test cleanup'))
+    await Promise.all(pending)
   })
 
-  it('falls back to the durable host queue when native follow-up is rejected', async () => {
+  it('downgrades an unaccepted steer to a visible next-turn pending message', async () => {
     const sessionId = 'durability-native-follow-up-rejected'
     const managed = buildSession(sessionId)
     managed.isProcessing = true
-    const followUp = mock(async () => { throw new Error('Pi runtime settled before follow-up') })
-    managed.agent = { followUp, projectQueuedUser: mock(() => undefined) } as never
+    const redirect = mock(() => false)
+    const followUp = mock(() => true)
+    managed.agent = { redirect, followUp, projectQueuedUser: mock(() => undefined) } as never
+    const events: unknown[] = []
+    sm.setEventSink((_channel, _target, event) => events.push(event))
+    const forceSteer = getMidStreamBehavior() === 'steer' ? 'default' : 'alternate'
 
-    await sm.sendMessage(sessionId, 'fallback queued message')
+    const pending = sm.sendMessage(sessionId, 'fallback queued message', undefined, undefined, {
+      midStreamSendIntent: forceSteer,
+    }).catch(error => error)
+    await new Promise(resolve => setTimeout(resolve, 0))
 
-    expect(followUp).toHaveBeenCalledTimes(1)
+    expect(redirect).toHaveBeenCalledTimes(1)
+    expect(followUp).not.toHaveBeenCalled()
     expect(managed.messageQueue).toHaveLength(1)
     expect(managed.messageQueue[0]?.message).toBe('fallback queued message')
+    expect(events).toContainEqual(expect.objectContaining({
+      type: 'info',
+      level: 'warning',
+      message: expect.stringContaining('pending as a normal next-turn message'),
+    }))
+
+    managed.messageQueue.shift()?.onReject?.(new Error('test cleanup'))
+    await pending
   })
 
-  it('passes native follow-up attachments through the backend contract', async () => {
+  it('keeps follow-up attachments in the backend-local pending entry', async () => {
     const sessionId = 'durability-native-follow-up-attachments'
     const managed = buildSession(sessionId)
     managed.isProcessing = true
@@ -932,19 +964,22 @@ describe('sendMessage durability', () => {
       base64: 'aW1hZ2U=', size: 5,
     }
     const stored = { id: 'attachment-1', name: 'image.png', mimeType: 'image/png', size: 5, originalSize: 5 }
-    const followUp = mock(async (_message: string, attachments?: unknown[], options?: { attachmentRefs?: unknown[] }) => {
-      expect(attachments).toHaveLength(1)
-      expect(options?.attachmentRefs).toEqual([
-        expect.objectContaining({ id: 'attachment-1', name: 'image.png', mediaType: 'image/png' }),
-      ])
-      return true
-    })
+    const followUp = mock(() => true)
     managed.agent = { followUp, projectQueuedUser: mock(() => undefined) } as never
 
-    await sm.sendMessage(sessionId, 'inspect image', [attachment as never], [stored as never])
+    const pending = sm.sendMessage(sessionId, 'inspect image', [attachment as never], [stored as never])
+      .catch(error => error)
+    await new Promise(resolve => setTimeout(resolve, 0))
 
-    expect(followUp).toHaveBeenCalledTimes(1)
-    expect(managed.messageQueue).toHaveLength(0)
+    expect(followUp).not.toHaveBeenCalled()
+    expect(managed.messageQueue).toHaveLength(1)
+    expect(managed.messageQueue[0]).toMatchObject({
+      message: 'inspect image',
+      attachments: [attachment],
+      storedAttachments: [stored],
+    })
+    managed.messageQueue.shift()?.onReject?.(new Error('test cleanup'))
+    await pending
   })
 
   it('settles a terminal complete after a stop request as interrupted', async () => {
@@ -999,7 +1034,7 @@ describe('sendMessage durability', () => {
     }
 
     const settling = internals.onProcessingStopped(sessionId, 'complete')
-    await Promise.resolve()
+    await new Promise(resolve => setTimeout(resolve, 0))
     expect(order).toEqual(['metadata:start'])
 
     metadataGate.resolve()
@@ -1421,16 +1456,123 @@ describe('sendMessage durability', () => {
     try {
       ;(sm as unknown as { processNextQueuedMessage: (id: string) => void }).processNextQueuedMessage(sessionId)
 
-      expect(managed.isProcessing).toBe(true)
+      expect(managed.isProcessing).toBe(false)
       expect(managed.replayingQueuedMessageId).toBe('queued-1')
 
-      await sm.sendMessage(sessionId, 'new arrival while replay is pending')
+      const pending = sm.sendMessage(sessionId, 'new arrival while replay is pending').catch(error => error)
+      await new Promise(resolve => setTimeout(resolve, 0))
 
       expect(replayCallback).toBeTruthy()
       expect(managed.messageQueue.map(q => q.message)).toEqual(['new arrival while replay is pending'])
+      managed.messageQueue.shift()?.onReject?.(new Error('test cleanup'))
+      await pending
     } finally {
       globalThis.setImmediate = originalSetImmediate
     }
+  })
+
+  it('keeps a follow-up locally rejected when the next turn loses the shared control race', async () => {
+    const controlRoot = mkdtempSync(join(tmpdir(), 'sm-control-race-'))
+    const firstControl = new LocalSessionControlClient({ backendId: 'backend-a', configDir: controlRoot })
+    const secondControl = new LocalSessionControlClient({ backendId: 'backend-b', configDir: controlRoot })
+    const firstManager = new SessionManager({
+      resolveWorkspaceByNameOrId: workspaceId => workspaceId === testWorkspace.id ? testWorkspace : null,
+      sessionTurnControl: firstControl,
+    })
+    const secondManager = new SessionManager({
+      resolveWorkspaceByNameOrId: workspaceId => workspaceId === testWorkspace.id ? testWorkspace : null,
+      sessionTurnControl: secondControl,
+    })
+    const managed = createManagedSession(
+      { mortiseId: 'shared-control-race', name: 'control race' },
+      testWorkspace,
+      { messagesLoaded: true },
+    )
+    const peer = createManagedSession(
+      { mortiseId: 'shared-control-race', name: 'control race' },
+      testWorkspace,
+      { messagesLoaded: true },
+    )
+    ;(firstManager as unknown as { sessions: Map<string, unknown> }).sessions.set(managed.id, managed)
+    ;(secondManager as unknown as { sessions: Map<string, unknown> }).sessions.set(peer.id, peer)
+    managed.isProcessing = true
+    managed.agent = createInjectedAgent(managed.id, async function* () {
+      yield { type: 'pi_user_message_persisted' }
+      yield { type: 'complete' }
+    })
+
+    const held = await firstControl.acquire(managed.id)
+    managed.turnControl = held
+    const pending = firstManager.sendMessage(managed.id, 'must stay pending', undefined, undefined, {
+      optimisticMessageId: 'race-follow-up',
+    }).catch(error => error)
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(managed.messageQueue).toHaveLength(1)
+
+    const originalRelease = (firstManager as unknown as {
+      releaseTurnControl: (session: typeof managed) => Promise<void>
+    }).releaseTurnControl.bind(firstManager)
+    ;(firstManager as unknown as {
+      releaseTurnControl: (session: typeof managed) => Promise<void>
+    }).releaseTurnControl = async session => {
+      await originalRelease(session)
+      await secondControl.acquire(session.id).then(handle => { peer.turnControl = handle })
+    }
+
+    await (firstManager as unknown as {
+      onProcessingStopped: (id: string, reason: 'complete') => Promise<void>
+    }).onProcessingStopped(managed.id, 'complete')
+    const rejection = await pending
+    expect(rejection).toMatchObject({ code: 'SESSION_CONTROL_NOT_ACQUIRED', accepted: false })
+    expect(managed.messageQueue).toHaveLength(1)
+    expect(managed.messageQueue[0]).toMatchObject({
+      message: 'must stay pending',
+      messageId: 'race-follow-up',
+      controlRejected: true,
+    })
+    expect(readPersistedQueuedMessageIds(managed.id)).toEqual([])
+
+    await peer.turnControl?.release()
+    await firstControl.close()
+    await secondControl.close()
+    rmSync(controlRoot, { recursive: true, force: true })
+  })
+
+  it('records SessionManager tool receipts and settles unfinished calls as outcome-unknown', async () => {
+    const records: Array<Record<string, unknown>> = []
+    const manager = new SessionManager({
+      resolveWorkspaceByNameOrId: workspaceId => workspaceId === testWorkspace.id ? testWorkspace : null,
+      toolSideEffectRecorderFactory: () => ({
+        record: async input => { records.push(input as unknown as Record<string, unknown>) },
+      }),
+    })
+    const managed = createManagedSession(
+      { mortiseId: 'tool-receipt-session', name: 'tool receipt' },
+      testWorkspace,
+      { messagesLoaded: true },
+    )
+    ;(manager as unknown as { sessions: Map<string, unknown> }).sessions.set(managed.id, managed)
+    const internals = manager as unknown as {
+      recordToolSideEffect: (session: typeof managed, input: {
+        attemptId: string
+        toolCallId: string
+        toolName: string
+        status: 'started' | 'completed' | 'outcome-unknown'
+      }) => Promise<void>
+      settleUnknownToolSideEffects: (session: typeof managed) => Promise<void>
+    }
+
+    await internals.recordToolSideEffect(managed, {
+      attemptId: 'attempt-1', toolCallId: 'tool-1', toolName: 'write_file', status: 'started',
+    })
+    managed.pendingToolSideEffects.set('tool-1', { attemptId: 'attempt-1', toolName: 'write_file' })
+    await internals.settleUnknownToolSideEffects(managed)
+
+    expect(records.map(record => [record.toolCallId, record.status])).toEqual([
+      ['tool-1', 'started'],
+      ['tool-1', 'outcome-unknown'],
+    ])
+    expect(managed.pendingToolSideEffects.size).toBe(0)
   })
 
   it('rejects with a terminal retryable outcome if chat fails before Pi persistence', async () => {
@@ -1484,6 +1626,7 @@ describe('sendMessage durability', () => {
     expect(fakeAgent.chat).toHaveBeenCalled()
     expect(projectRuntimeError).toHaveBeenCalledWith({
       phase: 'send',
+      code: 'canonical_user_message_not_persisted',
       message: 'chat failed before iterator',
       retryable: true,
     })

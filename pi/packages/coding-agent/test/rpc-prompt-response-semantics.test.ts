@@ -278,10 +278,11 @@ describe("RPC prompt response semantics", () => {
 					),
 				).toBe(true);
 			});
-			expect(parseOutputLines(rpcIo.outputLines).some((record) => record.type === "pi_user_message_persisted")).toBe(
-				false,
-			);
-			expect(existsSync(getSessionFile()!)).toBe(false);
+			await vi.waitFor(() => {
+				const records = parseOutputLines(rpcIo.outputLines);
+				expect(records.some((record) => record.type === "pi_user_message_persisted")).toBe(true);
+			});
+			expect(existsSync(getSessionFile()!)).toBe(true);
 
 			await vi.waitFor(() => {
 				const records = parseOutputLines(rpcIo.outputLines);
