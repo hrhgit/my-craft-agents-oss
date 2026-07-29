@@ -10,6 +10,8 @@ export * from './automation-capability'
 export * from './extension-contributions'
 export * from './extension-interactions'
 export * from './workspace-topology'
+export * from './workspace-transfer-endpoint'
+export * from './execution-routing'
 export type * from './extension-ui-validation'
 
 /** Reject any unexpected validation event if an old extension sends one in production. */

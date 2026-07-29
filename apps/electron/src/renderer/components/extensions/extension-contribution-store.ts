@@ -3,6 +3,7 @@ import { validateExtensionContributionDeltaV1 } from '@mortise/shared/protocol'
 
 export interface RegisteredExtensionContribution {
   extensionId: string
+  backendType: 'electron' | 'webui'
   sessionId: string
   runtimeId: string
   workspaceId?: string
@@ -11,14 +12,15 @@ export interface RegisteredExtensionContribution {
 }
 
 const workspaceKey = (workspaceId?: string) => workspaceId ?? ''
-const routeKey = (delta: ExtensionContributionDeltaV1) =>
-  `${workspaceKey(delta.workspaceId)}\0${delta.sessionId}\0${delta.runtimeId}\0${delta.extensionId}`
-const routePrefix = (item: Pick<RegisteredExtensionContribution, 'workspaceId' | 'sessionId' | 'runtimeId' | 'extensionId'>) =>
-  `${workspaceKey(item.workspaceId)}\0${item.sessionId}\0${item.runtimeId}\0${item.extensionId}\0`
+const backendKey = (backendType?: string) => backendType ?? 'electron'
+const ownerPrefix = (item: Pick<RegisteredExtensionContribution, 'workspaceId' | 'backendType' | 'extensionId'>) =>
+  `${workspaceKey(item.workspaceId)}\0${backendKey(item.backendType)}\0${item.extensionId}\0`
+const revisionKey = (delta: ExtensionContributionDeltaV1) =>
+  `${workspaceKey(delta.workspaceId)}\0${backendKey(delta.backendType)}\0${delta.extensionId}\0${delta.sessionId}\0${delta.runtimeId}`
 const itemKey = (
-  item: Pick<RegisteredExtensionContribution, 'workspaceId' | 'sessionId' | 'runtimeId' | 'extensionId'>,
+  item: Pick<RegisteredExtensionContribution, 'workspaceId' | 'backendType' | 'extensionId'>,
   id: string,
-) => `${routePrefix(item)}${id}`
+) => `${ownerPrefix(item)}${id}`
 
 export class ContributionStore {
   private readonly items = new Map<string, RegisteredExtensionContribution>()
@@ -28,19 +30,23 @@ export class ContributionStore {
 
   apply(delta: ExtensionContributionDeltaV1): boolean {
     if (validateExtensionContributionDeltaV1(delta) !== null) return false
-    const route = routeKey(delta)
+    if (!delta.workspaceId || !delta.backendType) return false
+    const route = revisionKey(delta)
     if (delta.revision <= (this.revisions.get(route) ?? 0)) return false
     this.revisions.set(route, delta.revision)
     if (delta.operation === 'snapshot') {
-      const prefix = routePrefix(delta)
-      for (const key of this.items.keys()) if (key.startsWith(prefix)) this.items.delete(key)
+      const prefix = ownerPrefix({ ...delta, backendType: delta.backendType })
+      for (const [key, item] of this.items) {
+        if (key.startsWith(prefix) && item.sessionId === delta.sessionId && item.runtimeId === delta.runtimeId) this.items.delete(key)
+      }
       for (const contribution of delta.contributions) {
-        const item: RegisteredExtensionContribution = { extensionId: delta.extensionId, sessionId: delta.sessionId, runtimeId: delta.runtimeId, workspaceId: delta.workspaceId, revision: delta.revision, contribution }
+        const item: RegisteredExtensionContribution = { extensionId: delta.extensionId, backendType: delta.backendType, sessionId: delta.sessionId, runtimeId: delta.runtimeId, workspaceId: delta.workspaceId, revision: delta.revision, contribution }
         this.items.set(itemKey(item, contribution.id), item)
       }
     } else if (delta.operation === 'upsert') {
       const item: RegisteredExtensionContribution = {
         extensionId: delta.extensionId,
+        backendType: delta.backendType,
         sessionId: delta.sessionId,
         runtimeId: delta.runtimeId,
         workspaceId: delta.workspaceId,
@@ -49,26 +55,29 @@ export class ContributionStore {
       }
       this.items.set(itemKey(item, delta.contribution.id), item)
     } else if (delta.operation === 'remove') {
-      this.items.delete(itemKey(delta, delta.contributionId))
+      this.items.delete(itemKey({ ...delta, backendType: delta.backendType }, delta.contributionId))
     } else {
-      const prefix = routePrefix(delta)
-      for (const key of this.items.keys()) if (key.startsWith(prefix)) this.items.delete(key)
+      const prefix = ownerPrefix({ ...delta, backendType: delta.backendType })
+      for (const [key, item] of this.items) {
+        if (key.startsWith(prefix) && item.sessionId === delta.sessionId && item.runtimeId === delta.runtimeId) this.items.delete(key)
+      }
     }
     this.version += 1
     for (const listener of this.listeners) listener()
     return true
   }
 
-  resetRuntime(sessionId: string, runtimeId: string, workspaceId?: string): void {
-    const prefix = `${workspaceKey(workspaceId)}\0${sessionId}\0${runtimeId}\0`
+  resetRuntime(sessionId: string, runtimeId: string, workspaceId?: string, backendType: 'electron' | 'webui' = 'electron'): void {
     let changed = false
-    for (const key of this.items.keys()) {
-      if (!key.startsWith(prefix)) continue
+    for (const [key, item] of this.items) {
+      if (item.workspaceId !== workspaceId || item.backendType !== backendType || item.sessionId !== sessionId || item.runtimeId !== runtimeId) continue
       this.items.delete(key)
       changed = true
     }
+    const revisionSuffix = `\0${sessionId}\0${runtimeId}`
+    const revisionPrefix = `${workspaceKey(workspaceId)}\0${backendType}\0`
     for (const key of this.revisions.keys()) {
-      if (!key.startsWith(prefix)) continue
+      if (!key.startsWith(revisionPrefix) || !key.endsWith(revisionSuffix)) continue
       this.revisions.delete(key)
       changed = true
     }
@@ -127,6 +136,9 @@ export class ContributionStore {
 
 export interface SurfaceLayout {
   visible: RegisteredExtensionContribution[]
+  menuOverflow: RegisteredExtensionContribution[]
+  collapsedOverflow: RegisteredExtensionContribution[]
+  /** Compatibility view for callers that only need all non-visible items. */
   overflow: RegisteredExtensionContribution[]
 }
 
@@ -202,7 +214,7 @@ export function selectMountableOverflow(layout: SurfaceLayout): RegisteredExtens
 }
 
 export class SurfaceLayoutManager {
-  resolve(surface: ExtensionUISurface, items: RegisteredExtensionContribution[]): SurfaceLayout {
+  resolve(surface: ExtensionUISurface, items: RegisteredExtensionContribution[], capacityOverride?: number): SurfaceLayout {
     const sorted = [...items].sort((a, b) =>
       (a.contribution.collapse === 'never' ? -1 : a.contribution.collapse === 'always' ? 1 : 0)
       - (b.contribution.collapse === 'never' ? -1 : b.contribution.collapse === 'always' ? 1 : 0)
@@ -214,22 +226,65 @@ export class SurfaceLayoutManager {
     const exclusive = sorted.filter(item => item.contribution.exclusive || item.contribution.surface.endsWith('.replace'))
     if (exclusive.length > 0) {
       const winner = exclusive[0]
-      return { visible: winner ? [winner] : [], overflow: sorted.filter(item => item !== winner && item.contribution.overflow !== 'hide') }
+      const remainder = sorted.filter(item => item !== winner && item.contribution.overflow !== 'hide')
+      return splitOverflow(surface, winner ? [winner] : [], remainder)
     }
-    const capacity = SURFACE_CAPACITY[surface] ?? Number.POSITIVE_INFINITY
+    const capacity = capacityOverride ?? SURFACE_CAPACITY[surface] ?? Number.POSITIVE_INFINITY
     const visible: RegisteredExtensionContribution[] = []
     const overflow: RegisteredExtensionContribution[] = []
     let activeSandboxApps = 0
-    for (const item of sorted) {
-      const isSandbox = isSandboxContribution(item)
-      const exceedsSandboxBudget = isSandbox && activeSandboxApps >= MAX_ACTIVE_SANDBOX_APPS_PER_SURFACE
-      if (item.contribution.collapse === 'always' || visible.length >= capacity || exceedsSandboxBudget) {
-        if (item.contribution.overflow !== 'hide') overflow.push(item)
-        continue
+    const blocks = groupAllocationBlocks(sorted)
+    for (const block of blocks) {
+      const sandboxCount = block.filter(isSandboxContribution).length
+      const forcedOverflow = block.some(item => item.contribution.collapse === 'always')
+      const exceedsCapacity = visible.length + block.length > capacity
+      const exceedsSandboxBudget = activeSandboxApps + sandboxCount > MAX_ACTIVE_SANDBOX_APPS_PER_SURFACE
+      if (forcedOverflow || exceedsCapacity || exceedsSandboxBudget) {
+        overflow.push(...block.filter(item => item.contribution.overflow !== 'hide'))
+      } else {
+        visible.push(...block)
+        activeSandboxApps += sandboxCount
       }
-      visible.push(item)
-      if (isSandbox) activeSandboxApps += 1
     }
-    return { visible, overflow }
+    return splitOverflow(surface, visible, overflow)
   }
+}
+
+function groupAllocationBlocks(items: RegisteredExtensionContribution[]): RegisteredExtensionContribution[][] {
+  const grouped = new Map<string, RegisteredExtensionContribution[]>()
+  const blocks: RegisteredExtensionContribution[][] = []
+  for (const item of items) {
+    const group = item.contribution.group
+    if (!group) {
+      blocks.push([item])
+      continue
+    }
+    const existing = grouped.get(group)
+    if (existing) existing.push(item)
+    else {
+      const block = [item]
+      grouped.set(group, block)
+      blocks.push(block)
+    }
+  }
+  return blocks
+}
+
+function splitOverflow(
+  surface: ExtensionUISurface,
+  visible: RegisteredExtensionContribution[],
+  overflow: RegisteredExtensionContribution[],
+): SurfaceLayout {
+  const compact = ['composer.toolbar', 'composer.status', 'window.topLeft', 'window.topRight', 'navigation.item', 'session.badge'].includes(surface)
+  const menuOverflow = overflow.filter(item => (item.contribution.overflow ?? (compact ? 'menu' : 'collapse')) === 'menu')
+  const collapsedOverflow = overflow.filter(item => (item.contribution.overflow ?? (compact ? 'menu' : 'collapse')) === 'collapse')
+  return { visible, menuOverflow, collapsedOverflow, overflow: [...menuOverflow, ...collapsedOverflow] }
+}
+
+export function responsiveSurfaceCapacity(surface: ExtensionUISurface, viewportWidth: number): number | undefined {
+  const base = SURFACE_CAPACITY[surface]
+  if (base === undefined) return undefined
+  if (!Number.isFinite(viewportWidth) || viewportWidth <= 0) return base
+  const unit = ['composer.toolbar', 'composer.status', 'window.topLeft', 'window.topRight'].includes(surface) ? 128 : 180
+  return Math.max(1, Math.min(base, Math.floor(viewportWidth / unit)))
 }

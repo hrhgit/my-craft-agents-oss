@@ -1,5 +1,6 @@
 import type { WsRpcClient } from '@mortise/server-core/transport'
-import { isLocalOnly } from '@mortise/shared/protocol'
+import { CodedError, EXECUTION_ROUTE_ERROR_CODES, isLocalOnly, requiredLocationPermission } from '@mortise/shared/protocol'
+import type { WorkspaceLocationAvailability, WorkspaceLocationPermissions } from '@mortise/core/types'
 import type { ResolvedWorkspaceRoute } from '../shared/app-layout'
 
 export interface WorkspaceRuntimeRegistration {
@@ -11,6 +12,8 @@ export interface WorkspaceRuntimeRegistration {
   generation?: string
   /** Release transport resources owned by this registration. */
   dispose?: () => void
+  availability?: WorkspaceLocationAvailability
+  permissions?: WorkspaceLocationPermissions
 }
 
 interface RuntimeEntry extends WorkspaceRuntimeRegistration {
@@ -134,9 +137,10 @@ export class WorkspaceRuntimeRegistry {
 
   async invoke(route: ResolvedWorkspaceRoute, channel: string, ...args: unknown[]): Promise<unknown> {
     if (isLocalOnly(channel)) {
-      throw new Error(`Workspace-scoped invocation cannot use local-only channel: ${channel}`)
+      throw new CodedError(EXECUTION_ROUTE_ERROR_CODES.unsupported, `Workspace-scoped invocation cannot use local-only channel: ${channel}`)
     }
     const runtime = this.requireRuntime(route)
+    this.assertRuntimeCanInvoke(runtime, channel)
     const translatedArgs = translateWorkspaceArgs(args, route.workspaceId, runtime.targetWorkspaceId)
     const result = await runtime.client.invoke(channel, ...translatedArgs)
     return translateRemoteWorkspaceIdentity(result, runtime.targetWorkspaceId, route.workspaceId)
@@ -174,8 +178,28 @@ export class WorkspaceRuntimeRegistry {
     validateRoute(route)
     const key = workspaceRouteKey(route)
     const runtime = this.runtimes.get(key)
-    if (!runtime) throw new Error(`Workspace runtime is not registered: ${key}`)
+    if (!runtime) throw new CodedError(EXECUTION_ROUTE_ERROR_CODES.targetUnavailable, `Workspace runtime is not registered: ${key}`)
     return runtime
+  }
+
+  private assertRuntimeCanInvoke(runtime: RuntimeEntry, channel: string): void {
+    if (runtime.availability?.status === 'unavailable') {
+      throw new CodedError(EXECUTION_ROUTE_ERROR_CODES.targetUnavailable, runtime.availability.reason ?? 'Workspace location is unavailable')
+    }
+    const connection = runtime.client.getConnectionState?.()
+    if (connection && connection.status !== 'connected') {
+      throw new CodedError(EXECUTION_ROUTE_ERROR_CODES.targetUnavailable, `Workspace location is not connected: ${workspaceRouteKey(runtime.route)}`)
+    }
+    if (runtime.targetWorkspaceId && !runtime.client.getServerVersion?.()) {
+      throw new CodedError(EXECUTION_ROUTE_ERROR_CODES.versionMismatch, 'Remote Workspace server did not advertise a compatible version')
+    }
+    if (!runtime.client.isChannelAvailable(channel)) {
+      throw new CodedError(EXECUTION_ROUTE_ERROR_CODES.unsupported, `Target backend does not support channel: ${channel}`)
+    }
+    const permission = requiredLocationPermission(channel)
+    if (permission && runtime.permissions?.[permission] === false) {
+      throw new CodedError(EXECUTION_ROUTE_ERROR_CODES.permissionDenied, `Workspace location does not grant ${permission} access`)
+    }
   }
 
   private addLease(key: string, entry: RuntimeEntry): () => void {

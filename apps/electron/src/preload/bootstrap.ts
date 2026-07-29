@@ -34,13 +34,15 @@ import {
   CLIENT_CONFIRM_DIALOG,
   CLIENT_OPEN_FILE_DIALOG,
   CLIENT_BROWSER_INVOKE,
+  CLIENT_ROUTE_WORKSPACE_MARKER_DETACH,
   LOCAL_CLIENT_CAPABILITIES,
 } from '@mortise/server-core/transport'
-import type { ConfirmDialogSpec, FileDialogSpec, BrowserCapabilityRequest } from '@mortise/server-core/transport'
+import type { ConfirmDialogSpec, FileDialogSpec, BrowserCapabilityRequest, WorkspaceMarkerDetachRouteRequest } from '@mortise/server-core/transport'
 import type { RpcClient } from '@mortise/server-core/transport'
 import type { WorkspaceInfo, WorkspaceLocationInfo } from '@mortise/core/types'
 import {
   RPC_CHANNELS,
+  BACKEND_TYPE_CAPABILITY,
   parseWorkspaceTransferEndpointCommitResultV1,
   parseWorkspaceTransferEndpointAccessResultV1,
   parseWorkspaceTransferEndpointCompleteResultV1,
@@ -63,6 +65,13 @@ import type { UiValidationRendererStateBatch } from '../shared/ui-validation-sta
 import type { WorkspaceLocationRuntimeConfig } from '../shared/workspace-runtime-config'
 import { allowsInsecureTlsFromEnvironment, shouldRejectUnauthorizedTls } from '../shared/remote-tls'
 
+const isClientOnly = !!process.env.MORTISE_SERVER_URL
+const ELECTRON_CLIENT_CAPABILITIES = [
+  ...LOCAL_CLIENT_CAPABILITIES,
+  ...(!isClientOnly ? [CLIENT_ROUTE_WORKSPACE_MARKER_DETACH] : []),
+  BACKEND_TYPE_CAPABILITY.electron,
+]
+
 // ---------------------------------------------------------------------------
 // Client interface — common surface for both RoutedClient and WsRpcClient
 // ---------------------------------------------------------------------------
@@ -79,12 +88,11 @@ interface TransportClient extends RpcClient {
 // ---------------------------------------------------------------------------
 
 const webContentsId: number = ipcRenderer.sendSync('__get-web-contents-id')
-const isClientOnly = !!process.env.MORTISE_SERVER_URL
-
 let client: TransportClient
 let workspaceApiTransport: import('../transport/workspace-api').WorkspaceApiTransport
 const workspaceApis = new Map<string, ElectronAPI>()
 let orchestrateWorkspaceTransfer: ((request: WorkspaceTransferRequestV1) => Promise<WorkspaceTransferResultV1>) | undefined
+let routeWorkspaceMarkerDetach: ((request: WorkspaceMarkerDetachRouteRequest) => Promise<unknown>) | undefined
 const workspaceTransferSingleFlight = new WorkspaceTransferSingleFlight()
 
 if (isClientOnly) {
@@ -116,7 +124,7 @@ if (isClientOnly) {
     webContentsId,
     autoReconnect: true,
     mode: 'remote',
-    clientCapabilities: [...LOCAL_CLIENT_CAPABILITIES],
+    clientCapabilities: ELECTRON_CLIENT_CAPABILITIES,
     tlsRejectUnauthorized: !allowInsecureTls,
   })
   wsClient.connect()
@@ -157,7 +165,7 @@ if (isClientOnly) {
     webContentsId,
     autoReconnect: true,
     mode: 'local',
-    clientCapabilities: [...LOCAL_CLIENT_CAPABILITIES],
+    clientCapabilities: ELECTRON_CLIENT_CAPABILITIES,
   })
 
   const localWorkspaceClient = localWorkspaceServerUrl
@@ -167,7 +175,7 @@ if (isClientOnly) {
         webContentsId,
         autoReconnect: true,
         mode: 'remote',
-        clientCapabilities: [...LOCAL_CLIENT_CAPABILITIES],
+        clientCapabilities: ELECTRON_CLIENT_CAPABILITIES,
       })
     : undefined
 
@@ -178,6 +186,11 @@ if (isClientOnly) {
   localClient.connect()
   localWorkspaceClient?.connect()
   client = routedClient
+  routeWorkspaceMarkerDetach = request => routedClient.invokeForWorkspace(
+    { workspaceId: request.workspaceId, locationId: request.locationId },
+    RPC_CHANNELS.workspaces.DETACH_MARKER,
+    { schemaVersion: 1, workspaceId: request.workspaceId, operationId: request.operationId },
+  )
 
   const topologyState = new WorkspaceRuntimeTopologyState()
   const runtimeGenerations = new WorkspaceRuntimeGenerationTracker()
@@ -267,7 +280,7 @@ if (isClientOnly) {
       webContentsId,
       autoReconnect: true,
       mode: config.kind === 'remote' || localWorkspaceServerUrl ? 'remote' : 'local',
-      clientCapabilities: [...LOCAL_CLIENT_CAPABILITIES],
+      clientCapabilities: ELECTRON_CLIENT_CAPABILITIES,
       ...(config.kind === 'remote'
         ? { tlsRejectUnauthorized: shouldRejectUnauthorizedTls(config) }
         : {}),
@@ -278,6 +291,8 @@ if (isClientOnly) {
       const registration = {
         route,
         client: runtime,
+        availability: location.availability,
+        permissions: location.permissions,
         targetWorkspaceId: config.kind === 'remote' ? config.remoteWorkspaceId : undefined,
         generation,
         dispose: () => runtime.destroy(),
@@ -731,6 +746,9 @@ client.handleCapability(CLIENT_OPEN_FILE_DIALOG, async (spec: FileDialogSpec) =>
 client.handleCapability(CLIENT_BROWSER_INVOKE, async (req: BrowserCapabilityRequest) => {
   return await ipcRenderer.invoke('__browser:invoke', req)
 })
+if (routeWorkspaceMarkerDetach) {
+  client.handleCapability(CLIENT_ROUTE_WORKSPACE_MARKER_DETACH, routeWorkspaceMarkerDetach)
+}
 
 // ---------------------------------------------------------------------------
 // Build ElectronAPI proxy

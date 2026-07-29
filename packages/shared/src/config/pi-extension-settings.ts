@@ -106,7 +106,7 @@ export interface PiExtensionConfigPatch {
 export interface PiExtensionConfigPatchResult {
   config: Record<string, unknown>;
   requiresReload: boolean;
-  reload?: PiExtensionReloadResult;
+  takesEffect: 'immediate' | 'next-backend-load';
 }
 
 /**
@@ -143,23 +143,9 @@ export interface PiExtensionCatalogResult {
   errors: PiExtensionCatalogError[];
 }
 
-export interface PiExtensionReloadActiveSession {
-  sessionId: string;
-  workspaceName: string;
-  title?: string;
+export interface PiExtensionSettingsWriteResult {
+  status: 'saved_for_next_backend_load';
 }
-
-export type PiExtensionReloadResult =
-  | {
-      status: 'confirmation_required';
-      activeSessions: PiExtensionReloadActiveSession[];
-    }
-  | {
-      status: 'reloaded';
-      interruptedSessionCount: number;
-      reloadedSessionCount: number;
-      deferredSessionCount: number;
-    };
 
 /**
  * Pi 扩展设置——仅 mortise GUI 专属字段。

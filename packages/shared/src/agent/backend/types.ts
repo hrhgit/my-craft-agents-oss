@@ -130,7 +130,7 @@ export type ExtensionBridgeEvent = {
   | { type: 'extension_status'; key?: string; status: string; source?: string }
   | { type: 'extension_contribution'; delta: ExtensionContributionDeltaV1 }
   | { type: 'extension_ui_validation'; delta: ExtensionUIValidationDeltaV1 }
-  | { type: 'extension_contributions_runtime_reset'; workspaceId?: string }
+  | { type: 'extension_contributions_runtime_reset'; workspaceId?: string; backendType?: 'electron' | 'webui' }
   | ExtensionInteractionBridgeRequestV1
   | ExtensionInteractionBridgeCancelV1
   | ExtensionInteractionBridgeSettledV1
@@ -569,6 +569,9 @@ export interface AgentBackend {
     childSessionId: string,
   ): Promise<import('../pi-agent.ts').PiSpawnChildSessionResult>;
 
+  /** Concrete child-task contract invoked before deleting the owning parent Session. */
+  prepareChildTasksForParentDeletion?(): Promise<{ childSessionIds: string[] }>;
+
   /**
    * Get a bound summarize callback for passing to API tool builders.
    */
@@ -615,9 +618,6 @@ export interface AgentBackend {
    * args 为 JSON 字符串。
    */
   sendExtensionCommandInvoke?(commandId: string, args?: string, ownerExtensionId?: string): Promise<ExtensionCommandResult>;
-
-  /** Reload the current Pi runtime's extension set without replacing the session. */
-  reloadExtensions?(): Promise<{ reloaded: boolean; deferred: boolean }>;
 
   /** Inspect the effective prompt and tool registry for settings UI. */
   getAgentProfile?(): Promise<AgentRuntimeProfile>;

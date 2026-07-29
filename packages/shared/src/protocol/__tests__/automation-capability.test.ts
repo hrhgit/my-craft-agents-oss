@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 import {
   AUTOMATION_WORKSPACE_OPERATIONS_V1,
+  createAutomationWorkspaceDescriptionV1,
   parseAutomationWorkspaceCapabilityRequestV1,
   parseAutomationWorkspaceCapabilityResultV1,
   parseAutomationWorkspaceCommandV1,
@@ -40,6 +41,14 @@ describe('automation.workspace/v1 requests', () => {
       'describe', 'list', 'get', 'validate', 'simulate', 'create', 'update', 'delete',
       'set-enabled', 'run', 'get-run', 'list-runs', 'list-changes', 'emit-event',
     ])
+    expect(createAutomationWorkspaceDescriptionV1()).toMatchObject({
+      operations: AUTOMATION_WORKSPACE_OPERATIONS_V1,
+      capabilities: {
+        'automations.definitions': { minRead: 4, maxRead: 4, minWrite: 4, maxWrite: 4 },
+        'automations.ingress': { minRead: 2, maxRead: 2, minWrite: 2, maxWrite: 2 },
+      },
+      targetKinds: ['new-session', 'session'],
+    })
   })
 
   it('parses strict versioned commands and preserves JSON round trips', () => {

@@ -6,12 +6,12 @@
  * storage reads/writes go through Pi's host facade.
  */
 
-import { existsSync, mkdirSync, watch, type FSWatcher } from 'fs';
 import { ResourceResolver, SettingsManager } from '@mortise/pi-coding-agent';
 import {
   deleteGlobalApiKey as deletePiHostGlobalApiKey,
   deleteGlobalProvider as deletePiHostGlobalProvider,
   deleteShellGuiEntry as deletePiHostShellGuiEntry,
+  getHostAgentDir as getPiHostAgentDir,
   hasGlobalProviderAuth as hasPiHostGlobalProviderAuth,
   maskApiKey as maskPiHostApiKey,
   readMortiseSettings as readPiHostMortiseSettings,
@@ -35,12 +35,14 @@ import {
   setGlobalDefault as setPiHostGlobalDefault,
   setGlobalModelDefaultSlot as setPiHostGlobalModelDefaultSlot,
   setShellGuiEntry as setPiHostShellGuiEntry,
+  subscribeGlobalConfig as subscribePiHostGlobalConfig,
   writeMortiseSettingsBulk as writePiHostMortiseSettingsBulk,
+  type HostGlobalConfigSubscription,
   type HostGlobalProvider,
 } from '@mortise/pi-coding-agent/host-facade';
 import { PI_MODEL_REFERENCE_CURRENT_SESSION, type PiExtensionCatalogEntry, type PiExtensionCatalogResult, type PiExtensionConfigPatch, type PiExtensionSettingField, type PiExtensionSettingScalar } from './pi-extension-settings.ts';
 import type { PiCustomApi, PiGlobalModel, PiGlobalProvider } from './pi-provider-models.ts';
-import { MORTISE_AGENT_DIR, MORTISE_PROJECT_DIR } from './paths';
+import { MORTISE_PROJECT_DIR } from './paths';
 import { DEFAULT_THINKING_LEVEL, type ThinkingLevel } from '../agent/thinking-levels.ts';
 
 export {
@@ -48,6 +50,11 @@ export {
   setPiProviderModelSupportsImages,
 } from './pi-provider-models.ts';
 export type { PiCustomApi, PiGlobalModel, PiGlobalProvider } from './pi-provider-models.ts';
+
+/** Resolve the Pi-owned Agent root through its typed host facade. */
+export function getPiAgentDir(): string {
+  return getPiHostAgentDir();
+}
 
 export interface PiGlobalModelsFile {
   providers?: Record<string, PiGlobalProvider>;
@@ -255,24 +262,12 @@ export function readPiGlobalProvidersForDisplay(): PiGlobalProviderForDisplay[] 
 
 // ===== Writes =====
 
-function ensurePiAgentDir(): void {
-  if (!existsSync(MORTISE_AGENT_DIR)) {
-    mkdirSync(MORTISE_AGENT_DIR, { recursive: true });
-  }
-}
-
-/**
- * Watch Mortise's Pi-runtime model/default-provider config without exposing
- * the Agent-root path to higher-level config watchers.
- */
-export function watchPiGlobalModelsFile(onModelsChanged: () => void): FSWatcher {
-  ensurePiAgentDir();
-  return watch(MORTISE_AGENT_DIR, (_eventType, filename) => {
-    if (!filename) return;
-    if (filename === 'models.json' || filename === 'settings.json' || filename === 'auth.json') {
-      onModelsChanged();
-    }
-  });
+/** Subscribe to Pi-owned provider/default/auth changes through its typed facade. */
+export function subscribePiGlobalConfig(
+  onChanged: () => void,
+  onError?: (error: Error) => void,
+): HostGlobalConfigSubscription {
+  return subscribePiHostGlobalConfig(() => onChanged(), onError);
 }
 
 /** Provider key must be a lowercase slug (a-z0-9 plus hyphens). */
@@ -603,7 +598,7 @@ export async function writePiExtensionConcurrency(name: string, concurrency: num
  */
 export async function getPiExtensionCatalog(options: { cwd?: string; agentDir?: string } = {}): Promise<PiExtensionCatalogResult> {
   const cwd = options.cwd ?? process.cwd();
-  const agentDir = options.agentDir ?? MORTISE_AGENT_DIR;
+  const agentDir = options.agentDir ?? getPiHostAgentDir();
   try {
     const settingsManager = SettingsManager.create(cwd, agentDir, MORTISE_PROJECT_DIR);
     const resourceResolver = new ResourceResolver({
@@ -701,7 +696,7 @@ export async function patchPiExtensionConfig(
   const { requiresReload } = validatePiExtensionConfigPatch(entry, patch);
   const settingsManager = SettingsManager.create(
     options.cwd ?? process.cwd(),
-    options.agentDir ?? MORTISE_AGENT_DIR,
+    options.agentDir ?? getPiHostAgentDir(),
     MORTISE_PROJECT_DIR,
   );
   const config = { ...(settingsManager.getExtensionConfig(patch.extensionId) as Record<string, unknown> | undefined) };

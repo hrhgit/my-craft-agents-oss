@@ -8,7 +8,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@morti
 import { useExtensionContributions } from './useExtensionContributions'
 import { Markdown } from '@/components/markdown'
 import { SandboxAppHost } from './SandboxAppHost'
-import { selectMountableOverflow } from './extension-contribution-store'
+import { responsiveSurfaceCapacity, selectMountableOverflow } from './extension-contribution-store'
 
 const icons = { activity: Activity, 'alert-circle': AlertCircle, check: Check, 'chevron-right': ChevronRight, circle: Circle, clock: Clock, info: Info, loader: Loader2, settings: Settings, sparkles: Sparkles, x: X }
 
@@ -22,35 +22,73 @@ export interface ExtensionContributionZoneProps {
 }
 
 export function ExtensionContributionZone({ sessionId, surface, className, target, hydrateRuntime = true }: ExtensionContributionZoneProps) {
-  const layout = useExtensionContributions(sessionId, surface, target, hydrateRuntime)
+  const [surfaceElement, setSurfaceElement] = React.useState<HTMLDivElement | null>(null)
+  const [capacity, setCapacity] = React.useState<number | undefined>()
+  React.useLayoutEffect(() => {
+    if (!surfaceElement) return
+    const update = () => setCapacity(responsiveSurfaceCapacity(surface, surfaceElement.getBoundingClientRect().width))
+    update()
+    if (typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(update)
+    observer.observe(surfaceElement)
+    return () => observer.disconnect()
+  }, [surface, surfaceElement])
+  const layout = useExtensionContributions(sessionId, surface, target, hydrateRuntime, undefined, capacity)
   const [overflowOpen, setOverflowOpen] = React.useState(false)
   const compact = isCompactSurface(surface)
   const mountableOverflow = selectMountableOverflow(layout)
+  const mountableKeys = React.useMemo(() => new Set(mountableOverflow.map(item => `${item.extensionId}\0${item.contribution.id}`)), [mountableOverflow])
+  const menuOverflow = layout.menuOverflow.filter(item => mountableKeys.has(`${item.extensionId}\0${item.contribution.id}`))
+  const collapsedOverflow = layout.collapsedOverflow.filter(item => mountableKeys.has(`${item.extensionId}\0${item.contribution.id}`))
+  const focusedSemanticId = React.useRef<string | null>(null)
+  const layoutIdentity = [...layout.visible, ...mountableOverflow].map(item => `${item.extensionId}:${item.contribution.id}`).join('|')
+  React.useLayoutEffect(() => {
+    const semanticId = focusedSemanticId.current
+    if (!semanticId || !surfaceElement || surfaceElement.contains(document.activeElement)) return
+    const replacement = Array.from(surfaceElement.querySelectorAll<HTMLElement>('[data-mortise-semantic-id]'))
+      .find(element => element.dataset.mortiseSemanticId === semanticId)
+    replacement?.focus()
+  }, [layoutIdentity, surfaceElement])
   if (layout.visible.length === 0 && mountableOverflow.length === 0) return null
   return (
     <div
+      ref={setSurfaceElement}
       className={cn('flex min-w-0 gap-1', compact ? 'relative max-h-8 w-full flex-row items-center' : 'flex-col', className)}
       data-extension-surface={surface}
       role={surface === 'composer.status' || surface === 'conversation.status' ? 'status' : undefined}
       aria-live={surface === 'composer.status' || surface === 'conversation.status' ? 'polite' : undefined}
+      onFocusCapture={(event) => {
+        focusedSemanticId.current = (event.target as HTMLElement).closest<HTMLElement>('[data-mortise-semantic-id]')?.dataset.mortiseSemanticId ?? null
+      }}
     >
       {layout.visible.map(item => (
         <div key={`${item.runtimeId}:${item.extensionId}:${item.contribution.id}`} className={cn('min-w-0', compact && 'max-w-[120px] overflow-hidden')} data-extension-id={item.extensionId}>
-          <ExtensionNode node={item.contribution.content} sessionId={sessionId} extensionId={item.extensionId} runtimeId={item.runtimeId} />
+          <ExtensionNode node={item.contribution.content} contributionId={item.contribution.id} sessionId={item.sessionId} extensionId={item.extensionId} runtimeId={item.runtimeId} />
         </div>
       ))}
-      {mountableOverflow.length > 0 && (
-        <details className={cn('text-xs text-muted-foreground', compact && 'relative shrink-0')} open={overflowOpen} onToggle={(event) => setOverflowOpen(event.currentTarget.open)}>
+      {menuOverflow.length > 0 && (
+        <details className="relative shrink-0 text-xs text-muted-foreground" open={overflowOpen} onToggle={(event) => setOverflowOpen(event.currentTarget.open)}>
           <summary
             className="inline-flex h-7 cursor-pointer list-none items-center gap-1 rounded px-2 hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             title="More extension items"
-            aria-label={`More extension items (${mountableOverflow.length})`}
+            aria-label={`More extension items (${menuOverflow.length})`}
           >
             <MoreHorizontal className="size-4" />
-            <span>{mountableOverflow.length}</span>
+            <span>{menuOverflow.length}</span>
           </summary>
-          <div className={cn('flex flex-col gap-1', compact ? 'absolute right-0 top-full z-popover mt-1 max-h-72 w-72 overflow-auto rounded border bg-popover p-2 shadow-strong' : 'mt-1 border-l pl-2')}>
-            {overflowOpen && mountableOverflow.map(item => <ExtensionNode key={`${item.runtimeId}:${item.extensionId}:${item.contribution.id}`} node={item.contribution.content} sessionId={sessionId} extensionId={item.extensionId} runtimeId={item.runtimeId} />)}
+          <div className="absolute right-0 top-full z-popover mt-1 flex max-h-72 w-72 flex-col gap-1 overflow-auto rounded border bg-popover p-2 shadow-strong">
+            {overflowOpen && menuOverflow.map(item => <ExtensionNode key={`${item.runtimeId}:${item.extensionId}:${item.contribution.id}`} node={item.contribution.content} contributionId={item.contribution.id} sessionId={item.sessionId} extensionId={item.extensionId} runtimeId={item.runtimeId} />)}
+          </div>
+        </details>
+      )}
+      {collapsedOverflow.length > 0 && (
+        <details className={cn('min-w-0 text-xs text-muted-foreground', compact && 'basis-full')}>
+          <summary className="inline-flex min-h-7 cursor-pointer list-none items-center gap-1 rounded px-2 hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+            <ChevronRight className="size-3.5 transition-transform [[open]>&]:rotate-90" />
+            <span>{collapsedOverflow.length}</span>
+          </summary>
+          <div className="mt-1 flex flex-col gap-1 border-l pl-2">
+            {collapsedOverflow.map(item => <ExtensionNode key={`${item.runtimeId}:${item.extensionId}:${item.contribution.id}`} node={item.contribution.content} contributionId={item.contribution.id} sessionId={item.sessionId} extensionId={item.extensionId} runtimeId={item.runtimeId} />)}
           </div>
         </details>
       )}
@@ -96,17 +134,18 @@ function SandboxReplaceContribution({ item, sessionId, className, children }: {
 function ContributionLayout({ layout, sessionId, surface, className }: { layout: ReturnType<typeof useExtensionContributions>; sessionId: string; surface: ExtensionUISurface; className?: string }) {
   return (
     <div className={cn('flex min-w-0 flex-col gap-1', className)} data-extension-surface={surface}>
-      {layout.visible.map(item => <div key={`${item.runtimeId}:${item.extensionId}:${item.contribution.id}`} className="min-w-0" data-extension-id={item.extensionId}><ExtensionNode node={item.contribution.content} sessionId={sessionId} extensionId={item.extensionId} runtimeId={item.runtimeId} /></div>)}
+      {layout.visible.map(item => <div key={`${item.runtimeId}:${item.extensionId}:${item.contribution.id}`} className="min-w-0" data-extension-id={item.extensionId}><ExtensionNode node={item.contribution.content} contributionId={item.contribution.id} sessionId={item.sessionId} extensionId={item.extensionId} runtimeId={item.runtimeId} /></div>)}
     </div>
   )
 }
 
-function ExtensionIcon({ name, label }: { name: ExtensionUIIconName; label?: string }) {
+function ExtensionIcon({ name, label, semanticId }: { name: ExtensionUIIconName; label?: string; semanticId?: string }) {
   const Icon = icons[name]
   return (
     <Icon
       className={cn('size-4 shrink-0', name === 'loader' && 'animate-spin')}
       {...(label ? { 'aria-label': label } : { 'aria-hidden': true })}
+      data-mortise-semantic-id={semanticId}
     />
   )
 }
@@ -116,27 +155,30 @@ export function ExtensionContributionContent({
   sessionId,
   extensionId,
   runtimeId,
+  contributionId = 'content',
   className,
 }: {
   node: ExtensionUINode
   sessionId: string
   extensionId: string
   runtimeId: string
+  contributionId?: string
   className?: string
 }) {
   return (
     <div className={cn('min-h-0 min-w-0', className)}>
-      <ExtensionNode node={node} sessionId={sessionId} extensionId={extensionId} runtimeId={runtimeId} />
+      <ExtensionNode node={node} contributionId={contributionId} sessionId={sessionId} extensionId={extensionId} runtimeId={runtimeId} />
     </div>
   )
 }
 
-function ExtensionNode({ node, sessionId, extensionId, runtimeId }: { node: ExtensionUINode; sessionId: string; extensionId: string; runtimeId: string }) {
-  if (node.type === 'text') return <span className={cn('break-words text-sm', node.tone === 'muted' && 'text-muted-foreground', node.tone === 'success' && 'text-emerald-600', node.tone === 'warning' && 'text-amber-600', node.tone === 'danger' && 'text-destructive')}>{node.text}</span>
-  if (node.type === 'markdown') return <div className="max-w-none break-words"><Markdown>{node.markdown}</Markdown></div>
-  if (node.type === 'icon') return <ExtensionIcon name={node.name} label={node.label} />
+function ExtensionNode({ node, contributionId, sessionId, extensionId, runtimeId }: { node: ExtensionUINode; contributionId: string; sessionId: string; extensionId: string; runtimeId: string }) {
+  const semanticId = node.semanticId ? `extension.${extensionId}.${contributionId}.${node.semanticId}` : undefined
+  if (node.type === 'text') return <span data-mortise-semantic-id={semanticId} className={cn('break-words text-sm', node.tone === 'muted' && 'text-muted-foreground', node.tone === 'success' && 'text-emerald-600', node.tone === 'warning' && 'text-amber-600', node.tone === 'danger' && 'text-destructive')}>{node.text}</span>
+  if (node.type === 'markdown') return <div data-mortise-semantic-id={semanticId} className="max-w-none break-words"><Markdown>{node.markdown}</Markdown></div>
+  if (node.type === 'icon') return <ExtensionIcon name={node.name} label={node.label} semanticId={semanticId} />
   if (node.type === 'badge') return (
-    <span className={cn(
+    <span data-mortise-semantic-id={semanticId} className={cn(
       'inline-flex h-6 max-w-full items-center rounded border px-2 text-xs',
       (!node.tone || node.tone === 'default') && 'border-border bg-muted/50 text-foreground',
       node.tone === 'info' && 'border-sky-500/25 bg-sky-500/10 text-sky-700 dark:text-sky-300',
@@ -145,8 +187,8 @@ function ExtensionNode({ node, sessionId, extensionId, runtimeId }: { node: Exte
       node.tone === 'danger' && 'border-destructive/25 bg-destructive/10 text-destructive',
     )}><span className="truncate">{node.label}</span></span>
   )
-  if (node.type === 'divider') return <hr className="border-border" />
-  if (node.type === 'step-progress') return <StepProgress node={node} sessionId={sessionId} extensionId={extensionId} />
+  if (node.type === 'divider') return <hr data-mortise-semantic-id={semanticId} className="border-border" />
+  if (node.type === 'step-progress') return <StepProgress node={node} sessionId={sessionId} extensionId={extensionId} semanticId={semanticId} />
   if (node.type === 'button') {
     const accessibleLabel = node.disabled && node.disabledReason
       ? `${node.label}. ${node.disabledReason}`
@@ -162,7 +204,7 @@ function ExtensionNode({ node, sessionId, extensionId, runtimeId }: { node: Exte
       )}
       title={node.disabledReason ?? node.label}
       aria-label={accessibleLabel}
-      data-mortise-semantic-id={`extension.${extensionId}.command.${node.action.command}`}
+      data-mortise-semantic-id={semanticId ?? `extension.${extensionId}.command.${node.action.command}`}
       onClick={() => void window.electronAPI?.invokeExtensionCommand?.(sessionId, node.action.command, node.action.args, extensionId)}
     >
       {node.icon && <ExtensionIcon name={node.icon} />}
@@ -184,14 +226,14 @@ function ExtensionNode({ node, sessionId, extensionId, runtimeId }: { node: Exte
       </TooltipProvider>
     )
   }
-  if (node.type === 'sandbox-app') return <SandboxAppHost node={node} sessionId={sessionId} extensionId={extensionId} runtimeId={runtimeId} />
+  if (node.type === 'sandbox-app') return <div data-mortise-semantic-id={semanticId}><SandboxAppHost node={node} sessionId={sessionId} extensionId={extensionId} runtimeId={runtimeId} /></div>
   const gap = node.gap === 'none' ? 'gap-0' : node.gap === 'medium' ? 'gap-3' : 'gap-1.5'
-  return <div className={cn('min-w-0', node.type === 'row' ? 'flex flex-wrap items-center' : 'flex flex-col', gap)}>{node.children.map((child, index) => <ExtensionNode key={index} node={child} sessionId={sessionId} extensionId={extensionId} runtimeId={runtimeId} />)}</div>
+  return <div data-mortise-semantic-id={semanticId} className={cn('min-w-0', node.type === 'row' ? 'flex flex-wrap items-center' : 'flex flex-col', gap)}>{node.children.map((child, index) => <ExtensionNode key={child.semanticId ?? index} node={child} contributionId={contributionId} sessionId={sessionId} extensionId={extensionId} runtimeId={runtimeId} />)}</div>
 }
 
 type StepProgressNode = Extract<ExtensionUINode, { type: 'step-progress' }>
 
-function StepProgress({ node, sessionId, extensionId }: { node: StepProgressNode; sessionId: string; extensionId: string }) {
+function StepProgress({ node, sessionId, extensionId, semanticId }: { node: StepProgressNode; sessionId: string; extensionId: string; semanticId?: string }) {
   const { t } = useTranslation()
   const [open, setOpen] = React.useState(false)
   const [pinned, setPinned] = React.useState(false)
@@ -237,7 +279,7 @@ function StepProgress({ node, sessionId, extensionId }: { node: StepProgressNode
           aria-label={`${node.label}: ${summary}, ${currentStep?.label ?? ''}`}
           aria-expanded={open}
           aria-haspopup="dialog"
-          data-mortise-semantic-id={`extension.${extensionId}.step-progress.${sessionId}`}
+          data-mortise-semantic-id={semanticId ?? `extension.${extensionId}.step-progress.${sessionId}`}
           onPointerEnter={() => { cancelClose(); setOpen(true) }}
           onPointerLeave={scheduleClose}
           onFocus={() => { cancelClose(); setOpen(true) }}

@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it, mock } from 'bun:test'
-import { SessionManager as PiSessionManager } from '@mortise/pi-coding-agent/host-facade'
-import { getSessionFilePath, getSessionPath, setSharedPiSessionsDirForTests, tryGetSessionFilePath } from '@mortise/shared/sessions'
+import { ensureSharedPiTreeSessionFileAsync, getSessionFilePath, getSessionPath, setSharedPiSessionsDirForTests, tryGetSessionFilePath } from '@mortise/shared/sessions'
 import { spawn } from 'node:child_process'
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -132,23 +131,20 @@ describe('Session validation backend', () => {
     const workspaceRoot = join(profile!, 'workspace')
     const sessionId = 'session-settlement'
     mkdirSync(workspaceRoot, { recursive: true })
-    const sessionFile = getSessionFilePath('ws-a', sessionId, Date.now())
-    const piSession = PiSessionManager.create(workspaceRoot, dirname(sessionFile), { id: sessionId })
-    piSession.appendMessage({ role: 'user', content: [{ type: 'text', text: 'baseline' }], timestamp: Date.now() })
-    piSession.appendMessage({
-      role: 'assistant',
-      api: 'openai-completions',
-      provider: 'ui-validation',
-      model: 'deterministic',
-      stopReason: 'stop',
-      usage: {
-        input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2,
-        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-      },
-      content: [{ type: 'text', text: 'baseline answer' }],
-      timestamp: Date.now(),
-    })
-    await piSession.flush()
+    const timestamp = Date.now()
+    const sessionFile = await ensureSharedPiTreeSessionFileAsync({
+      mortiseId: sessionId,
+      workspaceId: 'ws-a',
+      workspaceRootPath: workspaceRoot,
+      createdAt: timestamp,
+      lastUsedAt: timestamp,
+      lastMessageAt: timestamp + 1,
+      messages: [
+        { id: 'baseline-user', type: 'user', content: 'baseline', timestamp },
+        { id: 'baseline-assistant', type: 'assistant', content: 'baseline answer', timestamp: timestamp + 1 },
+      ],
+      tokenUsage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, contextTokens: 2, costUsd: 0 },
+    }, { workspaceId: 'ws-a' })
     const projectionPath = join(getSessionPath('ws-a', sessionId), 'pi-projection-v1.json')
     const projectionBackupPath = join(dirname(projectionPath), 'pi-projection-v1.session-validation-backup-v1.json')
     mkdirSync(dirname(projectionPath), { recursive: true })

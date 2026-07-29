@@ -248,12 +248,13 @@ describe('WorkspaceTopologyStore', () => {
     }, { expectedRevision: 1 }))).toThrow('name already exists')
   })
 
-  it('supports replace, set-primary, rename, and detach without deleting marker or user data', () => {
+  it('supports replace, set-primary, rename, and marker-only detach without deleting user data', () => {
     const { root, store } = harness()
     const primaryRoot = join(root, 'primary')
     const attachedRoot = join(root, 'attached')
     const replacementRoot = join(root, 'replacement')
     writeFixture(join(primaryRoot, 'primary.txt'), 'primary')
+    writeFixture(join(primaryRoot, '.mortise', 'preserved.txt'), 'preserved')
     writeFixture(join(attachedRoot, 'attached.txt'), 'attached')
     writeFixture(join(replacementRoot, 'replacement.txt'), 'replacement')
     store.create(localWorkspace(primaryRoot))
@@ -280,7 +281,8 @@ describe('WorkspaceTopologyStore', () => {
     expect(detached.workspace.locations[0].rootName).toBe('replacement')
     expect(detached.workspace.locations.map(location => location.id)).toEqual(['assets'])
     expect(existsSync(join(primaryRoot, 'primary.txt'))).toBe(true)
-    expect(existsSync(getWorkspaceMarkerPath(primaryRoot))).toBe(true)
+    expect(existsSync(getWorkspaceMarkerPath(primaryRoot))).toBe(false)
+    expect(existsSync(join(primaryRoot, '.mortise', 'preserved.txt'))).toBe(true)
     expect(existsSync(join(attachedRoot, 'attached.txt'))).toBe(true)
     expect(existsSync(getWorkspaceMarkerPath(attachedRoot))).toBe(true)
     expect(existsSync(join(replacementRoot, 'replacement.txt'))).toBe(true)

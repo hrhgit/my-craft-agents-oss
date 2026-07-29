@@ -15,6 +15,7 @@ import {
 	readFileSync,
 	renameSync,
 	rmSync,
+	watch,
 	writeFileSync,
 } from "node:fs";
 import { basename, dirname, join } from "node:path";
@@ -199,6 +200,17 @@ export interface HostGlobalConfig {
 	mortiseConnections: unknown[];
 }
 
+export type HostGlobalConfigChangeSource = "models" | "settings" | "auth";
+
+export interface HostGlobalConfigChangeV1 {
+	schemaVersion: 1;
+	source: HostGlobalConfigChangeSource;
+}
+
+export interface HostGlobalConfigSubscription {
+	close(): void;
+}
+
 export interface HostSessionProjection {
 	path?: string;
 	sessionDir: string;
@@ -211,6 +223,16 @@ export interface HostSessionProjection {
 	tree: SessionTreeNode[];
 	context: SessionContext;
 	messages: SessionContext["messages"];
+}
+
+export interface HostSessionUiMessageMetadataV1 {
+	messageId: string;
+	metadata: Record<string, unknown>;
+}
+
+export interface HostSessionUiMetadataV1 {
+	schemaVersion: 1;
+	messages: HostSessionUiMessageMetadataV1[];
 }
 
 export interface HostSkillSummary {
@@ -659,6 +681,34 @@ export function getGlobalConfig(): HostGlobalConfig {
 	};
 }
 
+/** Resolve Pi's configured Agent root without exposing storage constants to hosts. */
+export function getHostAgentDir(): string {
+	return getAgentDir();
+}
+
+/** Subscribe to typed changes in Pi-owned global configuration files. */
+export function subscribeGlobalConfig(
+	listener: (change: HostGlobalConfigChangeV1) => void,
+	onError?: (error: Error) => void,
+): HostGlobalConfigSubscription {
+	const agentDir = getAgentDir();
+	mkdirSync(agentDir, { recursive: true, mode: 0o700 });
+	const watcher = watch(agentDir, (_eventType, filename) => {
+		const normalized = filename;
+		const source =
+			normalized === "models.json"
+				? "models"
+				: normalized === "settings.json"
+					? "settings"
+					: normalized === "auth.json"
+						? "auth"
+						: null;
+		if (source) listener({ schemaVersion: 1, source });
+	});
+	if (onError) watcher.on("error", onError);
+	return { close: () => watcher.close() };
+}
+
 export function setGlobalApiKey(provider: string, apiKey: string): void {
 	assertProviderKey(provider);
 	createAuthStorage().set(provider, { type: "api_key", key: apiKey });
@@ -909,6 +959,88 @@ function toSessionProjection(manager: SessionManager): HostSessionProjection {
 		context,
 		messages: context.messages,
 	};
+}
+
+const EMPTY_SESSION_UI_METADATA: HostSessionUiMetadataV1 = {
+	schemaVersion: 1,
+	messages: [],
+};
+
+function sessionUiMetadataPath(sessionPath: string, projectionId: string): string {
+	if (!projectionId || projectionId.length > 256 || projectionId.trim() !== projectionId) {
+		throw new HostFacadeError("invalid_input", "Session UI metadata projectionId is invalid.");
+	}
+	const encodedId = Buffer.from(projectionId, "utf8").toString("base64url");
+	return join(dirname(sessionPath), ".pi-ui", `${encodedId}.v1.json`);
+}
+
+function normalizeSessionUiMetadata(value: unknown): HostSessionUiMetadataV1 {
+	if (!isPlainRecord(value) || value.schemaVersion !== 1 || !Array.isArray(value.messages)) {
+		throw new Error("Session UI metadata must use schema version 1.");
+	}
+	if (Object.keys(value).some((key) => key !== "schemaVersion" && key !== "messages")) {
+		throw new Error("Session UI metadata contains unknown fields.");
+	}
+	const messages = value.messages.map((entry) => {
+		if (
+			!isPlainRecord(entry) ||
+			typeof entry.messageId !== "string" ||
+			!entry.messageId ||
+			!isPlainRecord(entry.metadata) ||
+			Object.keys(entry).some((key) => key !== "messageId" && key !== "metadata")
+		) {
+			throw new Error("Session UI message metadata is invalid.");
+		}
+		let metadata: Record<string, unknown>;
+		try {
+			metadata = JSON.parse(JSON.stringify(entry.metadata)) as Record<string, unknown>;
+		} catch (error) {
+			throw new Error(
+				`Session UI message metadata must be JSON-safe: ${error instanceof Error ? error.message : String(error)}`,
+			);
+		}
+		return { messageId: entry.messageId, metadata };
+	});
+	return { schemaVersion: 1, messages };
+}
+
+/** Read one host UI metadata projection owned and validated by Pi. */
+export function readSessionUiMetadata(args: { sessionPath: string; projectionId: string }): HostSessionUiMetadataV1 {
+	const filePath = sessionUiMetadataPath(args.sessionPath, args.projectionId);
+	if (!existsSync(filePath)) return clone(EMPTY_SESSION_UI_METADATA);
+	try {
+		return parseJsonFile(filePath, EMPTY_SESSION_UI_METADATA, normalizeSessionUiMetadata);
+	} catch (error) {
+		throw new HostFacadeError("session", error instanceof Error ? error.message : String(error));
+	}
+}
+
+/** Atomically replace one complete host UI metadata projection. */
+export function writeSessionUiMetadata(args: {
+	sessionPath: string;
+	projectionId: string;
+	metadata: HostSessionUiMetadataV1;
+}): HostSessionUiMetadataV1 {
+	const filePath = sessionUiMetadataPath(args.sessionPath, args.projectionId);
+	const metadata = normalizeSessionUiMetadata(args.metadata);
+	try {
+		return withJsonFileLock(filePath, EMPTY_SESSION_UI_METADATA, normalizeSessionUiMetadata, () => ({
+			result: metadata,
+			next: metadata,
+		}));
+	} catch (error) {
+		throw new HostFacadeError("session", error instanceof Error ? error.message : String(error));
+	}
+}
+
+/** Remove one UI sidecar when its canonical Session is deleted. */
+export function deleteSessionUiMetadata(args: { sessionPath: string; projectionId: string }): void {
+	const filePath = sessionUiMetadataPath(args.sessionPath, args.projectionId);
+	try {
+		rmSync(filePath, { force: true });
+	} catch (error) {
+		throw new HostFacadeError("session", error instanceof Error ? error.message : String(error));
+	}
 }
 
 export function getSessionProjection(args: {

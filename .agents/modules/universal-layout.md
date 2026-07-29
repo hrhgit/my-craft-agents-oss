@@ -58,7 +58,7 @@ Switching workspace replaces the active backend's entire layout; full tools use 
 
 Content owners provide tab semantics; `native-desktop` implements auxiliary windows and native-view coordination.
 
-Current Electron persistence still uses one global `app-layout.v1.json`, and WebUI lacks its own persisted baseline; the accepted backend-type file boundary remains an implementation gap. Persisted layouts can reference removed content; native views can occlude drag targets and floating surfaces.
+Persisted layouts can reference unavailable content and must retain restorable placeholders; concurrent same-type backends can overwrite the shared baseline only through complete atomic snapshots; native views can occlude drag targets and floating surfaces.
 
 # Validation
 

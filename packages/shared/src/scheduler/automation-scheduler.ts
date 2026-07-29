@@ -3,7 +3,7 @@ import type { DueAutomationOccurrenceV1 } from '../automations/v3-index.ts'
 const MAX_TIMEOUT_MS = 2_147_000_000
 
 export interface AutomationSchedulerOptionsV1 {
-  listDueOccurrences(dueAtOrBefore: Date): DueAutomationOccurrenceV1[]
+  listDueOccurrences(dueAtOrBefore: Date, activeSince: Date): DueAutomationOccurrenceV1[]
   getNextDueAt(): Date | null
   onOccurrence(due: DueAutomationOccurrenceV1): Promise<void>
   now?: () => Date
@@ -15,6 +15,7 @@ export class AutomationSchedulerV3 {
   private timer: ReturnType<typeof setTimeout> | undefined
   private stopped = true
   private scanning = false
+  private activeSince: Date | undefined
 
   constructor(options: AutomationSchedulerOptionsV1) {
     this.options = options
@@ -23,6 +24,7 @@ export class AutomationSchedulerV3 {
   start(): void {
     if (!this.stopped) return
     this.stopped = false
+    this.activeSince = this.options.now?.() ?? new Date()
     void this.scan()
   }
 
@@ -30,6 +32,7 @@ export class AutomationSchedulerV3 {
     this.stopped = true
     if (this.timer) clearTimeout(this.timer)
     this.timer = undefined
+    this.activeSince = undefined
   }
 
   refresh(): void {
@@ -44,7 +47,9 @@ export class AutomationSchedulerV3 {
     this.scanning = true
     try {
       const now = this.options.now?.() ?? new Date()
-      for (const due of this.options.listDueOccurrences(now)) await this.options.onOccurrence(due)
+      const activeSince = this.activeSince ?? now
+      for (const due of this.options.listDueOccurrences(now, activeSince)) await this.options.onOccurrence(due)
+      this.activeSince = now
       if (!this.stopped) {
         const nearest = this.options.getNextDueAt()?.getTime()
         const delay = nearest === undefined

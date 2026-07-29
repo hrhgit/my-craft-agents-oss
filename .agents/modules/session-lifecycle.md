@@ -36,7 +36,7 @@ Persist and project conversations without leaking draft or hidden-session implem
 
 # Boundary
 
-Maintain create/send/interrupt lifecycle, transcript durability, sidecar handling, unread state, and empty-draft publication behavior.
+Maintain create/send/interrupt/delete lifecycle, transcript durability, typed Pi UI metadata sidecars, unread state, and empty-draft publication behavior.
 
 Do not own agent loop internals, message rendering, or tool implementations.
 
@@ -48,7 +48,7 @@ Shared session storage is consumed by server `SessionManager`; ordinary first tu
 
 # Invariants
 
-A normal UI draft is not a Session until the first UserMessage is durably appended; failures before that boundary leave no stored Session. Every complete AgentMessage becomes shared only after its own append, flush, and durable acknowledgement. Core subagent tasks persist below the owning parent Session sidecar and never enter the ordinary Session list; their inbox and completion records are capabilities of that concrete task type, not a platform guarantee for every child task. Hidden internal sessions retain their invisible persisted semantics until separately migrated.
+A normal UI draft is not a Session until the first UserMessage is durably appended; failures before that boundary leave no stored Session. Every complete AgentMessage becomes shared only after its own append, flush, and durable acknowledgement. Core subagent tasks persist below the owning parent Session sidecar and never enter the ordinary Session list; their inbox and completion records are capabilities of that concrete task type, not a platform guarantee for every child task. Parent deletion freezes new writes and child creation, invokes each registered child-task deletion contract, and retains a visible retryable `deleting` state when required settlement fails. Hidden internal sessions retain their invisible persisted semantics until separately migrated.
 
 # Change Impact
 

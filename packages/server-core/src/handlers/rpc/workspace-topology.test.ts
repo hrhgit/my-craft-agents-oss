@@ -1,15 +1,22 @@
 import { describe, expect, it } from 'bun:test'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import type { Workspace } from '@mortise/core/types'
 import { RPC_CHANNELS } from '@mortise/shared/protocol'
-import { WorkspaceTopologyStore, type LegacyWorkspaceV1 } from '@mortise/shared/workspaces'
+import { getWorkspaceMarkerPath, WorkspaceTopologyStore, type LegacyWorkspaceV1 } from '@mortise/shared/workspaces'
 import type { HandlerDeps } from '../handler-deps'
-import type { HandlerFn, RpcServer } from '../../transport'
+import { CLIENT_ROUTE_WORKSPACE_MARKER_DETACH, type HandlerFn, type RpcServer } from '../../transport'
 import { registerWorkspaceTopologyHandlers } from './workspace-topology'
 
-function createHarness(candidate: Workspace | LegacyWorkspaceV1 | null) {
+function createHarness(
+  candidate: Workspace | LegacyWorkspaceV1 | null,
+  options?: {
+    clientCapabilities?: string[]
+    invokeClient?: (clientId: string, channel: string, ...args: unknown[]) => Promise<unknown>
+  },
+) {
   const handlers = new Map<string, HandlerFn>()
   const pushes: Array<{ channel: string; target: unknown; args: unknown[] }> = []
   const interruptions: unknown[] = []
@@ -23,11 +30,11 @@ function createHarness(candidate: Workspace | LegacyWorkspaceV1 | null) {
       lifecycle.push('publish')
       pushes.push({ channel, target, args })
     },
-    async invokeClient() {
-      return undefined
+    async invokeClient(clientId, channel, ...args) {
+      return await options?.invokeClient?.(clientId, channel, ...args)
     },
-    hasClientCapability() {
-      return false
+    hasClientCapability(_clientId, capability) {
+      return options?.clientCapabilities?.includes(capability) ?? false
     },
     findClientsWithCapability() {
       return []
@@ -71,6 +78,102 @@ function createHarness(candidate: Workspace | LegacyWorkspaceV1 | null) {
 }
 
 describe('Workspace topology RPC', () => {
+  it('removes only the authenticated backend marker and treats a retry as already complete', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mortise-topology-rpc-marker-'))
+    try {
+      const candidate: Workspace = {
+        schemaVersion: 2,
+        id: 'workspace-1',
+        revision: 0,
+        name: 'Workspace',
+        nameSource: 'derived',
+        slug: 'workspace',
+        primaryLocationId: 'primary',
+        locations: [{
+          id: 'primary',
+          name: 'Primary',
+          rootName: 'Workspace',
+          endpoint: { kind: 'local', rootPath: root },
+        }],
+        createdAt: 1,
+      }
+      const harness = createHarness(candidate)
+      const context = { clientId: 'client-1', workspaceId: 'workspace-1', webContentsId: null }
+      await harness.handlers.get(RPC_CHANNELS.workspaces.GET_TOPOLOGY)!(context)
+      await writeFile(join(root, 'ordinary.txt'), 'preserved')
+      const detachMarker = harness.handlers.get(RPC_CHANNELS.workspaces.DETACH_MARKER)!
+      const request = { schemaVersion: 1, workspaceId: 'workspace-1', operationId: 'detach-marker' }
+
+      await expect(detachMarker(context, request)).resolves.toMatchObject({ status: 'removed' })
+      await expect(detachMarker(context, request)).resolves.toMatchObject({ status: 'already-absent' })
+      expect(existsSync(getWorkspaceMarkerPath(root))).toBe(false)
+      expect(existsSync(join(root, 'ordinary.txt'))).toBe(true)
+      harness.store.close()
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('routes remote marker removal to the selected backend before committing detach', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mortise-topology-rpc-remote-detach-'))
+    const routed: Array<{ clientId: string; channel: string; request: unknown }> = []
+    try {
+      const candidate: Workspace = {
+        schemaVersion: 2,
+        id: 'workspace-1',
+        revision: 0,
+        name: 'Workspace',
+        nameSource: 'derived',
+        slug: 'workspace',
+        primaryLocationId: 'primary',
+        locations: [
+          { id: 'primary', name: 'Primary', rootName: 'Workspace', endpoint: { kind: 'local', rootPath: root } },
+          {
+            id: 'remote',
+            name: 'Remote',
+            rootName: 'remote-root',
+            endpoint: {
+              kind: 'remote',
+              url: 'wss://remote.example',
+              remoteWorkspaceId: 'remote-workspace',
+              credentialRef: 'credential',
+            },
+          },
+        ],
+        createdAt: 1,
+      }
+      const harness = createHarness(candidate, {
+        clientCapabilities: [CLIENT_ROUTE_WORKSPACE_MARKER_DETACH],
+        invokeClient: async (clientId, channel, request) => {
+          harness.lifecycle.push('route-marker')
+          routed.push({ clientId, channel, request })
+          return { status: 'removed' }
+        },
+      })
+      const handler = harness.handlers.get(RPC_CHANNELS.workspaces.TOPOLOGY_COMMAND)!
+      await expect(handler(
+        { clientId: 'client-1', workspaceId: 'workspace-1', webContentsId: null },
+        {
+          schemaVersion: 1,
+          workspaceId: 'workspace-1',
+          operationId: 'detach-remote',
+          expectedRevision: 0,
+          operation: 'detach',
+          locationId: 'remote',
+        },
+      )).resolves.toMatchObject({ status: 'applied', workspace: { locations: [{ id: 'primary' }] } })
+      expect(routed).toEqual([{
+        clientId: 'client-1',
+        channel: CLIENT_ROUTE_WORKSPACE_MARKER_DETACH,
+        request: { workspaceId: 'workspace-1', locationId: 'remote', operationId: 'detach-remote' },
+      }])
+      expect(harness.lifecycle.indexOf('route-marker')).toBeLessThan(harness.lifecycle.indexOf('apply'))
+      harness.store.close()
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('migrates a legacy candidate once and serves later reads from topology state', async () => {
     const root = await mkdtemp(join(tmpdir(), 'mortise-topology-rpc-migrate-'))
     try {

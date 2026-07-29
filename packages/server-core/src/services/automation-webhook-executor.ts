@@ -17,6 +17,7 @@ export interface AutomationWebhookExecutorOptions {
 }
 
 const MAX_CAPTURE_BYTES = 16_384
+const SECRET_HEADER_REFERENCE = /^\$\{mortise-secret:([A-Za-z0-9][A-Za-z0-9._:-]{11,255})\}$/
 
 async function delay(ms: number, signal?: AbortSignal): Promise<void> {
   if (signal?.aborted) throw signal.reason ?? new Error('Automation action cancelled')
@@ -69,6 +70,16 @@ export function createAutomationWebhookExecutor(options: AutomationWebhookExecut
     context: AutomationExecutionContextV1 & { attemptId: string },
   ): Promise<AutomationActionExecutionResultV1> => {
     const headers = new Headers(action.headers)
+    for (const [name, value] of Object.entries(action.headers ?? {})) {
+      const match = SECRET_HEADER_REFERENCE.exec(value)
+      if (!match) continue
+      if (!options.resolveSecret) {
+        return { status: 'blocked', error: { code: 'secret_resolver_unavailable', message: 'Webhook secret resolver is not available', retryable: false } }
+      }
+      const secret = await options.resolveSecret.resolve({ provider: 'mortise-secrets', id: match[1]! }, context.workspaceId)
+      if (!secret) return { status: 'blocked', error: { code: 'secret_not_found', message: 'Webhook secret reference was not found', retryable: false } }
+      headers.set(name, secret)
+    }
     if (!headers.has('idempotency-key')) headers.set('idempotency-key', context.attemptId)
     if (action.auth) {
       if (!options.resolveSecret) {

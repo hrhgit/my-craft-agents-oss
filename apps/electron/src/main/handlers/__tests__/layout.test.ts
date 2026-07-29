@@ -46,6 +46,7 @@ function register(overrides: {
   }
   registerLayoutHandlers({
     handle(channel: string, handler: (...args: any[]) => any) { handlers.set(channel, handler) },
+    hasClientCapability() { return false },
   } as any, {
     layoutCoordinator: coordinator,
     windowManager,
@@ -54,6 +55,32 @@ function register(overrides: {
 }
 
 describe('layout handlers', () => {
+  it('routes WebUI clients to the independent WebUI layout coordinator', async () => {
+    const handlers = new Map<string, (...args: any[]) => any>()
+    const calls: string[] = []
+    const layout = { workspaceId: 'ws-a' } as AppLayout
+    const coordinator = (name: string) => ({
+      getSnapshot: () => { calls.push(name); return layout },
+      flush: async () => {},
+    })
+    registerLayoutHandlers({
+      handle(channel: string, handler: (...args: any[]) => any) { handlers.set(channel, handler) },
+      hasClientCapability(clientId: string, capability: string) {
+        return clientId === 'web-client' && capability === 'mortise.backend-type.webui'
+      },
+    } as any, {
+      layoutCoordinators: {
+        electron: coordinator('electron') as any,
+        webui: coordinator('webui') as any,
+      },
+    } as HandlerDeps)
+
+    await handlers.get(RPC_CHANNELS.layout.GET)!({
+      clientId: 'web-client', workspaceId: 'ws-a', webContentsId: null,
+    })
+    expect(calls).toEqual(['webui'])
+  })
+
   it('detaches one tab and creates its auxiliary window with resolved bounds', async () => {
     const { handlers, calls, bounds } = register()
     await handlers.get(RPC_CHANNELS.layout.DETACH_TAB)!(

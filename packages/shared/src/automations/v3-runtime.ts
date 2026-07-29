@@ -202,11 +202,7 @@ export class AutomationV3Runtime {
     occurrence: ScheduledOccurrenceV1,
     definitionRevision = this.store.initialize().revision,
   ): AutomationRunV1 {
-    if (occurrence.skipReason) {
-      const reason = occurrence.skipReason === 'expired' ? 'expired' : 'misfire-skip'
-      const run = initialRun(this.workspaceId, definition, definitionRevision, trigger, occurrence.occurrenceKey, { state: 'skipped', reason, scheduledAt: occurrence.scheduledAt })
-      return this.store.claimRun(run, automationIdentity('op_claim', run.occurrenceId)).run
-    }
+    if (occurrence.skipReason) throw new Error('Missed time occurrences cannot create Automation runs')
     return this.claimRun(definition, definitionRevision, trigger, occurrence.occurrenceKey, { scheduledAt: occurrence.scheduledAt })
   }
 

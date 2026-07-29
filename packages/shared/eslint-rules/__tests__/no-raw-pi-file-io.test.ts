@@ -95,15 +95,6 @@ describe('no-raw-pi-file-io', () => {
     expect(messages).toHaveLength(0)
   })
 
-  it('allows pi-global-config only the MORTISE_AGENT_DIR watcher seam', () => {
-    const messages = runRule(
-      "import { MORTISE_AGENT_DIR } from './paths'",
-      'packages/shared/src/config/pi-global-config.ts',
-    )
-
-    expect(messages).toHaveLength(0)
-  })
-
   it('blocks pi-global-config from reintroducing raw settings file access', () => {
     const messages = runRule(
       "import { MORTISE_SETTINGS_FILE } from './paths'",
@@ -112,6 +103,16 @@ describe('no-raw-pi-file-io', () => {
 
     expect(messages).toHaveLength(1)
     expect(messages[0]?.message).toContain('MORTISE_SETTINGS_FILE')
+  })
+
+  it('blocks pi-global-config from reintroducing raw Agent-root watching', () => {
+    const messages = runRule(
+      "import { MORTISE_AGENT_DIR } from './paths'",
+      'packages/shared/src/config/pi-global-config.ts',
+    )
+
+    expect(messages).toHaveLength(1)
+    expect(messages[0]?.message).toContain('MORTISE_AGENT_DIR')
   })
 
   it('flags raw global Pi skills paths outside the migration seam', () => {

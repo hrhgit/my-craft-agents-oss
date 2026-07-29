@@ -49,7 +49,11 @@ const store = new AutomationV3Store({
   writerId: ownerId,
 })
 const preparedDue = action === 'due'
-  ? store.listDueOccurrences(new Date('2027-01-01T00:00:00.000Z'), 1)[0]
+  ? store.listDueOccurrences(
+      new Date('2027-01-01T00:00:00.000Z'),
+      1,
+      new Date('2025-12-31T23:59:59.000Z'),
+    )[0]
   : undefined
 if (action === 'due' && !preparedDue) throw new Error('Expected one due occurrence before the concurrency gate')
 writeFileSync(gatePath + '.' + ownerId + '.ready', '')
@@ -154,7 +158,7 @@ function timeDefinition(id: string): AutomationDefinitionV3 {
     triggers: [{
       id: `trigger-${id}`,
       type: 'time',
-      schedule: { kind: 'once', at: '2026-01-01T00:00:00.000Z', misfire: 'run-once' },
+      schedule: { kind: 'once', at: '2026-01-01T00:00:00.000Z' },
     }],
   }
 }

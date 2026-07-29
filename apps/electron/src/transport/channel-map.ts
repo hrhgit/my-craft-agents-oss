@@ -9,7 +9,6 @@ import { RPC_CHANNELS } from '../shared/types'
 import type { ChannelMap } from './build-api'
 
 const SEND_MESSAGE_RPC_TIMEOUT_MS = 300_000
-const EXTENSION_RELOAD_RPC_TIMEOUT_MS = 120_000
 
 function invoke(
   channel: string,
@@ -322,7 +321,6 @@ export const CHANNEL_MAP = {
   updatePiExtensionSettings: invoke(RPC_CHANNELS.piExtensions.UPDATE_SETTINGS),
   getPiExtensionCatalog: invoke(RPC_CHANNELS.piExtensions.GET_CATALOG),
   patchPiExtensionConfig: invoke(RPC_CHANNELS.piExtensions.PATCH_EXTENSION_CONFIG),
-  reloadPiExtensions: invoke(RPC_CHANNELS.piExtensions.RELOAD, undefined, undefined, EXTENSION_RELOAD_RPC_TIMEOUT_MS),
   getPiExtensionStates: invoke(RPC_CHANNELS.piExtensions.GET_EXTENSION_STATES),
   setPiExtensionEnabled: invoke(RPC_CHANNELS.piExtensions.SET_EXTENSION_ENABLED),
 
@@ -331,6 +329,8 @@ export const CHANNEL_MAP = {
   respondToExtensionInteraction: invoke(RPC_CHANNELS.extensions.INTERACTION_RESPONSE),
   invokeExtensionCommand: invoke(RPC_CHANNELS.extensions.COMMAND_INVOKE),
   getExtensionCommands: invoke(RPC_CHANNELS.extensions.GET_COMMANDS),
+  getExtensionFileState: invoke(RPC_CHANNELS.extensions.GET_FILE_STATE),
+  setExtensionFileState: invoke(RPC_CHANNELS.extensions.SET_FILE_STATE),
 
   // Pi session tree — list child sessions spawned via spawn_session tool
   listChildSessions: invoke(RPC_CHANNELS.sessions.LIST_CHILD_SESSIONS),

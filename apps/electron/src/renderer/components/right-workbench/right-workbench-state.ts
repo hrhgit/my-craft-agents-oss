@@ -28,7 +28,7 @@ export function extensionWorkspaceContentId(item: RegisteredExtensionContributio
   const base = `extension:${extensionId}:${contributionId}`
   const scope = item.contribution.workspaceContent?.scope ?? 'session'
   if ((item.contribution.workspaceContent?.instancePolicy ?? 'singleton') === 'multiple') {
-    return `${base}:multiple:${encodeURIComponent(item.workspaceId ?? '')}:${encodeURIComponent(item.sessionId)}:${encodeURIComponent(item.runtimeId)}`
+    return `${base}:multiple`
   }
   if (scope === 'session') return `${base}:session:${encodeURIComponent(item.sessionId)}`
   if (scope === 'workspace') return `${base}:workspace:${encodeURIComponent(item.workspaceId ?? '')}`

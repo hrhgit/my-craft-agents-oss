@@ -54,7 +54,7 @@ Extensions declare placement intent; Mortise owns ordering, overflow, collapse, 
 
 Coordinate conversation slots with `conversation-ui`, workspace tabs with `universal-layout`, and semantic hooks with the developer kit.
 
-Contribution version skew can leave stale interaction state; excessive freedom can compromise host layout or accessibility. Current contribution identity and storage still include Session/runtime-shaped ownership, so backend-type persistence remains an accepted implementation gap.
+Contribution version skew can leave stale interaction state; excessive freedom can compromise host layout or accessibility. Backend-owned projection identity and backend-type state files must remain isolated when transports still carry Session/runtime lifecycle coordinates.
 
 # Validation
 

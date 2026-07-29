@@ -1,5 +1,7 @@
 import type { Workspace } from '@mortise/core/types'
 import {
+  CodedError,
+  EXECUTION_ROUTE_ERROR_CODES,
   RPC_CHANNELS,
   WORKSPACE_TOPOLOGY_CHANGE_SCHEMA_VERSION,
   parseWorkspaceTopologyCommandV1,
@@ -9,14 +11,22 @@ import {
 import {
   WorkspaceTopologyStore,
   getDefaultWorkspaceTopologyStore,
+  removeWorkspaceMarker,
+  WorkspaceTopologyError,
   type LegacyWorkspaceV1,
 } from '@mortise/shared/workspaces'
-import { pushTyped, type RpcServer } from '../../transport'
+import {
+  CLIENT_ROUTE_WORKSPACE_MARKER_DETACH,
+  pushTyped,
+  type RpcServer,
+  type WorkspaceMarkerDetachRouteRequest,
+} from '../../transport'
 import type { HandlerDeps } from '../handler-deps'
 
 export const WORKSPACE_TOPOLOGY_HANDLED_CHANNELS = [
   RPC_CHANNELS.workspaces.GET_TOPOLOGY,
   RPC_CHANNELS.workspaces.TOPOLOGY_COMMAND,
+  RPC_CHANNELS.workspaces.DETACH_MARKER,
 ] as const
 
 export function registerWorkspaceTopologyHandlers(
@@ -37,6 +47,37 @@ export function registerWorkspaceTopologyHandlers(
     const candidate = deps.sessionManager.getWorkspaces().find(workspace => workspace.id === workspaceId)
     if (!candidate) throw new Error(`Workspace not found: ${workspaceId}`)
     return ensureWorkspaceTopology(store, candidate)
+  })
+
+  server.handle(RPC_CHANNELS.workspaces.DETACH_MARKER, async (ctx, request: {
+    schemaVersion: 1
+    workspaceId: string
+    operationId: string
+  }) => {
+    if (!request || request.schemaVersion !== 1 || !request.operationId?.trim() || !request.workspaceId?.trim()) {
+      throw new TypeError('Invalid Workspace marker detach request')
+    }
+    if (!ctx.workspaceId || ctx.workspaceId !== request.workspaceId) {
+      throw new Error('Workspace marker detach requires the authenticated Workspace identity')
+    }
+    const workspace = store.get(request.workspaceId)
+    if (!workspace) throw new Error(`Workspace topology not found: ${request.workspaceId}`)
+    const primary = workspace.locations.find(location => location.id === workspace.primaryLocationId)
+    if (!primary || primary.endpoint.kind !== 'local') {
+      throw new CodedError(
+        EXECUTION_ROUTE_ERROR_CODES.unsupported,
+        'The target backend does not own a local Workspace marker',
+      )
+    }
+    try {
+      removeWorkspaceMarker(primary.endpoint.rootPath, workspace.id)
+      return { schemaVersion: 1 as const, operationId: request.operationId, status: 'removed' as const }
+    } catch (error) {
+      if (error instanceof WorkspaceTopologyError && error.code === 'WORKSPACE_MARKER_MISSING') {
+        return { schemaVersion: 1 as const, operationId: request.operationId, status: 'already-absent' as const }
+      }
+      throw error
+    }
   })
 
   server.handle(RPC_CHANNELS.workspaces.TOPOLOGY_COMMAND, async (ctx, commandValue: unknown) => {
@@ -62,9 +103,27 @@ export function registerWorkspaceTopologyHandlers(
     try {
       if (interruption) {
         automationInterruptionRequested = automationHost !== null
-        const automationInterruption = automationHost?.interruptForWorkspaceTopologyChange()
+        const automationInterruption = automationHost?.interruptForWorkspaceTopologyChange(interruption)
         const sessionInterruption = deps.sessionManager.interruptWorkspaceSessionsForTopologyChange(interruption)
         await Promise.all([automationInterruption, sessionInterruption])
+      }
+      if (command.operation === 'detach') {
+        const workspace = store.get(command.workspaceId)
+        const location = workspace?.locations.find(candidate => candidate.id === command.locationId)
+        if (location?.endpoint.kind === 'remote') {
+          if (!server.hasClientCapability(ctx.clientId, CLIENT_ROUTE_WORKSPACE_MARKER_DETACH)) {
+            throw new CodedError(
+              EXECUTION_ROUTE_ERROR_CODES.targetUnavailable,
+              `The requesting client cannot reach Workspace location ${command.locationId}`,
+            )
+          }
+          const request: WorkspaceMarkerDetachRouteRequest = {
+            workspaceId: command.workspaceId,
+            locationId: command.locationId,
+            operationId: command.operationId,
+          }
+          await server.invokeClient(ctx.clientId, CLIENT_ROUTE_WORKSPACE_MARKER_DETACH, request)
+        }
       }
       const result = store.apply(command)
       if (result.status === 'applied') {

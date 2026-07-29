@@ -4,6 +4,7 @@ import { createSystemNotificationProvider } from '../providers/system-notificati
 import { createFilePreviewProvider, createFilesProvider, FILE_PREVIEW_MAX_BYTES } from '../providers/files.ts'
 import { createBrowserCommandProvider, createBrowserControlProvider, createBrowserProvider } from '../providers/browser.ts'
 import type { CapabilityRequestV1 } from '../types.ts'
+import { CodedError } from '@mortise/shared/protocol'
 
 function request(overrides: Partial<CapabilityRequestV1> = {}): CapabilityRequestV1 {
   return {
@@ -78,6 +79,33 @@ describe('CapabilityRouter', () => {
     const router = new CapabilityRouter()
     expect(await router.invoke(request({ version: 2 as 1 }))).toMatchObject({ status: 'failed', error: { code: 'INVALID_REQUEST' } })
     expect(await router.invoke(request())).toMatchObject({ status: 'unsupported', error: { code: 'UNSUPPORTED_CAPABILITY' } })
+  })
+
+  it('distinguishes a missing requesting-client provider from an unknown capability', async () => {
+    const router = new CapabilityRouter()
+    expect(await router.invoke(request({ capability: 'files.pick' }))).toMatchObject({
+      status: 'unsupported', error: { code: 'NO_INTERACTIVE_CLIENT' },
+    })
+  })
+
+  it('rejects routing a native capability to a location backend', async () => {
+    const router = new CapabilityRouter()
+    router.register(createFilesProvider(async () => ({ cancelled: true, paths: [] })))
+    expect(await router.invoke(request({
+      capability: 'files.pick',
+      target: { owner: 'location-backend', workspaceId: 'workspace-1', locationId: 'location-1' },
+    }))).toMatchObject({ status: 'unsupported', error: { code: 'UNSUPPORTED' } })
+  })
+
+  it('preserves typed execution-route failures from providers', async () => {
+    const router = new CapabilityRouter()
+    router.register({
+      capability: 'test.echo',
+      invoke: async () => { throw new CodedError('TARGET_UNAVAILABLE', 'offline') },
+    })
+    expect(await router.invoke(request())).toMatchObject({
+      status: 'failed', error: { code: 'TARGET_UNAVAILABLE', message: 'offline' },
+    })
   })
 
   it('authorizes, reports progress, and audits without including input', async () => {

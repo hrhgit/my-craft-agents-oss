@@ -652,13 +652,71 @@ export class AutomationV3Store {
     ))
   }
 
-  listDueOccurrences(dueAtOrBefore: Date, limit = 100): DueAutomationOccurrenceV1[] {
+  listDueOccurrences(dueAtOrBefore: Date, limit = 100, activeSince = dueAtOrBefore): DueAutomationOccurrenceV1[] {
     return this.store.readTransaction(transaction => listDueOccurrences(
       transaction,
       this.workspaceId,
       dueAtOrBefore.getTime(),
+      activeSince.getTime(),
       limit,
     ))
+  }
+
+  recordMissedTimeOccurrence(due: DueAutomationOccurrenceV1): void {
+    if (due.occurrence.skipReason !== 'missed') {
+      throw new TypeError('Only missed time occurrences can be recorded without a run claim')
+    }
+    const namespace = `automations-schedule-observations:${this.workspaceId}`
+    const key = `${due.definition.id}:${due.trigger.id}`
+    const operationId = automationIdentity(
+      'op_schedule_missed',
+      this.workspaceId,
+      due.definition.id,
+      due.trigger.id,
+      due.occurrence.occurrenceKey,
+    )
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const result = this.store.writeTransaction({ requiredCapabilities: ['automations.runs'] }, transaction => {
+        const current = transaction.getRecord<Record<string, string>>(namespace, key)
+        const currentScheduledAt = current?.value.scheduledAt
+        if (currentScheduledAt && Date.parse(currentScheduledAt) >= Date.parse(due.occurrence.scheduledAt)) {
+          advanceScheduleProjection(
+            transaction,
+            this.workspaceId,
+            due.definition.id,
+            due.trigger.id,
+            currentScheduledAt,
+          )
+          return { status: 'observed' as const }
+        }
+        const mutation = transaction.mutateRecord({
+          capability: 'automations.runs',
+          namespace,
+          key,
+          value: json({
+            automationId: due.definition.id,
+            triggerId: due.trigger.id,
+            occurrenceKey: due.occurrence.occurrenceKey,
+            scheduledAt: due.occurrence.scheduledAt,
+            reason: 'missed',
+          }),
+          expectedVersion: current?.version ?? null,
+          operationId,
+        })
+        if (mutation.status === 'applied') {
+          advanceScheduleProjection(
+            transaction,
+            this.workspaceId,
+            due.definition.id,
+            due.trigger.id,
+            due.occurrence.scheduledAt,
+          )
+        }
+        return mutation
+      })
+      if (result.status === 'observed' || result.status === 'applied') return
+    }
+    throw new Error(`Failed to record missed occurrence ${due.occurrence.occurrenceKey}`)
   }
 
   getNextDueAt(): Date | null {
@@ -713,7 +771,9 @@ export class AutomationV3Store {
       })
       if (result.status !== 'applied' || result.replayed) return result
       projectRun(transaction, this.workspaceId, run, result.version)
-      if (input.advanceSchedule) advanceScheduleProjection(transaction, this.workspaceId, run)
+      if (input.advanceSchedule && run.scheduledAt) {
+        advanceScheduleProjection(transaction, this.workspaceId, run.automationId, run.triggerId, run.scheduledAt)
+      }
       this.appendHistoryInTransaction(
         transaction,
         input.historyType,

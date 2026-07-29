@@ -12,6 +12,20 @@ const contribution = {
 } as const
 
 describe('ExtensionContributionV1', () => {
+  it('accepts stable primitive semantic identities and rejects unstable values', () => {
+    expect(validateExtensionContributionV1({
+      schemaVersion: 1,
+      id: 'semantic',
+      surface: 'composer.toolbar',
+      content: { type: 'button', semanticId: 'primary.run', label: 'Run', action: { kind: 'command', command: 'run' } },
+    })).toBeNull()
+    expect(validateExtensionContributionV1({
+      schemaVersion: 1,
+      id: 'semantic',
+      surface: 'composer.toolbar',
+      content: { type: 'text', semanticId: 'not stable', text: 'Invalid' },
+    })).toContain('semanticId')
+  })
   it('accepts bounded declarative trees', () => {
     expect(validateExtensionContributionV1(contribution)).toBeNull()
   })

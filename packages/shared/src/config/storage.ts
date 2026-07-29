@@ -1034,17 +1034,6 @@ export async function removeWorkspace(workspaceId: string): Promise<boolean> {
   }
 
   saveConfig(config);
-
-  // Delete workspace data directory (sessions, plans, etc.)
-  const workspaceDataDir = join(WORKSPACES_DIR, workspaceId);
-  if (existsSync(workspaceDataDir)) {
-    try {
-      rmSync(workspaceDataDir, { recursive: true });
-    } catch (error) {
-      console.error(`[storage] Failed to delete workspace data directory: ${workspaceDataDir}`, error);
-    }
-  }
-
   return true;
 }
 

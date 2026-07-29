@@ -13,7 +13,8 @@ import {
 } from '@mortise/pi-coding-agent/host-facade';
 import type { LoadedSkill, SkillMetadata, SkillSource } from './types.ts';
 import { validateSlug } from '../config/validators.ts';
-import { MORTISE_AGENT_DIR, MORTISE_PROJECT_DIR } from '../config/paths.ts';
+import { getPiAgentDir } from '../config/pi-global-config.ts';
+import { MORTISE_PROJECT_DIR } from '../config/paths.ts';
 import { isPathWithinDirectory } from '../utils/paths.ts';
 import {
   validateIconValue,
@@ -62,7 +63,7 @@ function toLoadedSkill(skill: HostSkillSummary): LoadedSkill {
 function listHostSkills(projectRoot?: string): ReturnType<typeof listPiSkillsSync> {
   return listPiSkillsSync({
     cwd: projectRoot,
-    agentDir: MORTISE_AGENT_DIR,
+    agentDir: getPiAgentDir(),
     projectConfigDir: MORTISE_PROJECT_DIR,
   });
 }

@@ -9,3 +9,4 @@ export type {
   WorkspaceSessionInterruptionTarget,
   WorkspaceTopologySessionCoordinator,
 } from './workspace-topology-session-coordinator'
+export * from './workspace-location-activity-registry'

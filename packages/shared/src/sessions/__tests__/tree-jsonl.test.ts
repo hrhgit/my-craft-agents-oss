@@ -23,10 +23,13 @@ import {
   projectTreeSessionProjectionAsStoredSession,
   readTreeSessionHeader,
   readTreeSessionJsonl,
-  writeMortiseSessionOverlayAsync,
+  writeTreeSessionUiMetadataAsync,
 } from '../tree-jsonl'
 import { RemovedSessionFieldError } from '../types'
-import { SessionManager as PiSessionManager } from '@mortise/pi-coding-agent/host-facade'
+import {
+  readSessionUiMetadata as readPiSessionUiMetadata,
+  SessionManager as PiSessionManager,
+} from '@mortise/pi-coding-agent/host-facade'
 
 function tmpRoot(): string {
   const dir = join(tmpdir(), `tree-jsonl-test-${Date.now()}-${Math.random().toString(36).slice(2)}`)
@@ -471,7 +474,7 @@ plansFolderPath: C:\\Users\\32858\\.pi\\agent\\sessions\\demo\\.mortise\\plans
     expect(await Bun.file(sessionFile).text()).toBe(before)
   })
 
-  it('persists projection-derived computed metadata instead of recalculating it from overlays', async () => {
+  it('persists projection-derived computed metadata instead of recalculating it from UI sidecars', async () => {
     const stored = readSessionJsonl(sessionFile)
     expect(stored).not.toBeNull()
     stored!.messages = []
@@ -583,15 +586,17 @@ plansFolderPath: C:\\Users\\32858\\.pi\\agent\\sessions\\demo\\.mortise\\plans
       },
     ])
 
-    const overlayPath = join(dirname(sessionFile), '.mortise', stored!.mortiseId, 'overlay.json')
-    expect(existsSync(overlayPath)).toBe(true)
-    const overlay = JSON.parse(await Bun.file(overlayPath).text())
-    expect(overlay.messages[0].id).toBe('u1')
-    expect(overlay.messages[0].content).toBeUndefined()
-    expect(overlay.messages[0].attachments).toEqual([attachment])
+    const uiMetadata = readPiSessionUiMetadata({
+      sessionPath: sessionFile,
+      projectionId: stored!.mortiseId,
+    })
+    expect(uiMetadata.schemaVersion).toBe(1)
+    expect(uiMetadata.messages[0]?.messageId).toBe('u1')
+    expect(uiMetadata.messages[0]?.metadata.content).toBeUndefined()
+    expect(uiMetadata.messages[0]?.metadata.attachments).toEqual([attachment])
   })
 
-  it('materializes annotation overlays keyed by projection message identity', async () => {
+  it('materializes annotation metadata keyed by projection message identity', async () => {
     const stored = readSessionJsonl(sessionFile)
     expect(stored).not.toBeNull()
     const projectionMessageId = 'ts-1700000000000'
@@ -622,12 +627,12 @@ plansFolderPath: C:\\Users\\32858\\.pi\\agent\\sessions\\demo\\.mortise\\plans
     })
   })
 
-  it('sanitizes mortise ids before writing Mortise overlay files', async () => {
+  it('keeps Session UI metadata projection identities inside Pi-owned sidecar storage', async () => {
     const stored = readSessionJsonl(sessionFile)
     expect(stored).not.toBeNull()
 
-    const escapeId = 'escape-overlay'
-    await writeMortiseSessionOverlayAsync(sessionFile, {
+    const escapeId = 'escape-ui-metadata'
+    await writeTreeSessionUiMetadataAsync(sessionFile, {
       ...stored!,
       mortiseId: `../${escapeId}`,
       messages: [{
@@ -644,8 +649,10 @@ plansFolderPath: C:\\Users\\32858\\.pi\\agent\\sessions\\demo\\.mortise\\plans
       }],
     })
 
-    expect(existsSync(join(dirname(sessionFile), escapeId, 'overlay.json'))).toBe(false)
-    expect(existsSync(join(dirname(sessionFile), '.mortise', escapeId, 'overlay.json'))).toBe(true)
+    expect(readPiSessionUiMetadata({
+      sessionPath: sessionFile,
+      projectionId: `../${escapeId}`,
+    }).messages[0]?.metadata.attachments).toHaveLength(1)
   })
 
   it('reuses matching Pi entries instead of duplicating messages on import retry', async () => {

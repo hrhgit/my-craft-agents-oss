@@ -9,6 +9,7 @@ import { registerWorkspaceGuiHandlers } from './workspace'
 import { registerBrowserHandlers } from './browser'
 import { registerSettingsGuiHandlers } from './settings'
 import { registerLayoutHandlers } from './layout'
+export { registerLayoutHandlers } from './layout'
 
 export function registerGuiRpcHandlers(server: RpcServer, deps: HandlerDeps): void {
   registerSystemGuiHandlers(server, deps)

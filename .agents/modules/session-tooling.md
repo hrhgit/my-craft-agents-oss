@@ -46,7 +46,7 @@ Own tool definitions, handlers, templates, MCP session service, child-session co
 
 # Invariants
 
-Tool inputs validate before side effects; child-task spawn, list, inspect, message, resume, and interrupt actions remain scoped to their parent and workspace; resume adds no synthetic history, and attachments must be existing absolute paths readable through the child's allowed tools. Results are serializable.
+Tool inputs validate before side effects; child-task spawn, list, inspect, message, resume, interrupt, and parent-deletion preparation remain scoped to their parent and workspace; each child type owns only the settlement its deletion contract requires; resume adds no synthetic history, and attachments must be existing absolute paths readable through the child's allowed tools. Results are serializable.
 
 # Change Impact
 

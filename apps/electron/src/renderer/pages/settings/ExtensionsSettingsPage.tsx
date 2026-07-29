@@ -1,16 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-import { RotateCw } from 'lucide-react'
 import { PanelHeader } from '@/components/app-shell/PanelHeader'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { HeaderMenu } from '@/components/ui/HeaderMenu'
-import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { SettingsCard, SettingsCardContent, SettingsSection } from '@/components/settings'
 import { routes } from '@/lib/navigate'
 import type { DetailsPageMeta } from '@/lib/navigation-registry'
-import type { PiExtensionCatalogEntry, PiExtensionCatalogError, PiExtensionReloadActiveSession, PiExtensionSettingScalar } from '@mortise/shared/config'
+import type { PiExtensionCatalogEntry, PiExtensionCatalogError, PiExtensionSettingScalar } from '@mortise/shared/config'
 import { ExtensionListPanel } from './PiExtensionsSettingsPanel'
 import { ExtensionDetailPanel } from './ExtensionDetailPanel'
 import { usePiGlobalConfig } from '@/hooks/usePiGlobalConfig'
@@ -36,8 +32,6 @@ export default function ExtensionsSettingsPage() {
   const [extensionErrors, setExtensionErrors] = useState<PiExtensionCatalogError[]>([])
   const [extensionStates, setExtensionStates] = useState<Record<string, boolean>>({})
   const [selectedExtensionId, setSelectedExtensionId] = useState<string | null>(null)
-  const [reloadPending, setReloadPending] = useState(false)
-  const [reloadConfirmation, setReloadConfirmation] = useState<PiExtensionReloadActiveSession[] | null>(null)
   const configPatchQueues = useRef(new Map<string, Promise<void>>())
   const configPatchVersions = useRef(new Map<string, number>())
   const confirmedConfig = useRef(new Map<string, { present: boolean; value?: PiExtensionSettingScalar }>())
@@ -85,9 +79,6 @@ export default function ExtensionsSettingsPage() {
           extensionId,
           ...(value === undefined ? { unset: [key] } : { set: { [key]: value } }),
         })
-        if (result.reload?.status === 'confirmation_required') {
-          setReloadConfirmation(result.reload.activeSessions)
-        }
         const confirmedValue = isSettingScalar(result.config[key]) ? result.config[key] : undefined
         confirmedConfig.current.set(fieldId, confirmedValue === undefined ? { present: false } : { present: true, value: confirmedValue })
         if (configPatchVersions.current.get(fieldId) === version) {
@@ -96,8 +87,8 @@ export default function ExtensionsSettingsPage() {
       } catch (error) {
         let fallback = confirmedConfig.current.get(fieldId) ?? { present: false }
         try {
-          // Saving may have succeeded before a required runtime reload failed. Re-read
-          // persisted state so the UI does not falsely roll back a durable change.
+          // Saving may have succeeded before the response failed. Re-read persisted
+          // state so the UI does not falsely roll back a durable change.
           const catalog = await window.electronAPI.getPiExtensionCatalog()
           const persistedConfig = catalog.extensions.find((entry) => entry.id === extensionId)?.config ?? {}
           fallback = Object.prototype.hasOwnProperty.call(persistedConfig, key) && isSettingScalar(persistedConfig[key])
@@ -125,10 +116,7 @@ export default function ExtensionsSettingsPage() {
     toggleVersions.current.set(id, version)
     setExtensionStates(prev => ({ ...prev, [id]: enabled }))
     try {
-      const reload = await window.electronAPI.setPiExtensionEnabled(id, enabled)
-      if (reload.status === 'confirmation_required') {
-        setReloadConfirmation(reload.activeSessions)
-      }
+      await window.electronAPI.setPiExtensionEnabled(id, enabled)
     } catch (error) {
       if (toggleVersions.current.get(id) === version) {
         try {
@@ -145,30 +133,6 @@ export default function ExtensionsSettingsPage() {
   const handleBack = useCallback(() => {
     setSelectedExtensionId(null)
   }, [])
-
-  const handleReload = useCallback(async (interruptRunning: boolean) => {
-    setReloadPending(true)
-    if (interruptRunning) setReloadConfirmation(null)
-    try {
-      const result = await window.electronAPI.reloadPiExtensions(interruptRunning)
-      if (result.status === 'confirmation_required') {
-        setReloadConfirmation(result.activeSessions)
-        return
-      }
-      setReloadConfirmation(null)
-      await loadCatalog()
-      if (result.deferredSessionCount > 0) {
-        toast.warning(t('settings.extensions.reloadDeferred', { count: result.deferredSessionCount }))
-      } else {
-        toast.success(t('settings.extensions.reloadSuccess'))
-      }
-    } catch (error) {
-      console.error('Failed to reload Pi extensions:', error)
-      toast.error(t('settings.extensions.reloadFailed'))
-    } finally {
-      setReloadPending(false)
-    }
-  }, [loadCatalog, t])
 
   const selectedExtension = extensionCatalog.find((entry) => entry.id === selectedExtensionId)
   const isDetailView = selectedExtension !== undefined
@@ -192,23 +156,6 @@ export default function ExtensionsSettingsPage() {
             />
           ) : (
             <div className="space-y-6">
-              <SettingsSection
-                title={t('settings.extensions.runtimeTitle')}
-                description={t('settings.extensions.runtimeDescription')}
-              >
-                <SettingsCard>
-                  <SettingsCardContent className="flex items-center justify-between gap-4">
-                    <div className="min-w-0">
-                      <div className="text-sm font-medium">{t('settings.extensions.reload')}</div>
-                      <div className="mt-0.5 text-xs text-muted-foreground">{t('settings.extensions.reloadDescription')}</div>
-                    </div>
-                    <Button variant="outline" size="sm" disabled={reloadPending} onClick={() => void handleReload(false)}>
-                      <RotateCw className={reloadPending ? 'animate-spin' : undefined} />
-                      {t('settings.extensions.reload')}
-                    </Button>
-                  </SettingsCardContent>
-                </SettingsCard>
-              </SettingsSection>
               <ExtensionListPanel
                 extensions={extensionCatalog}
                 errors={extensionErrors}
@@ -220,33 +167,6 @@ export default function ExtensionsSettingsPage() {
           )}
         </div>
       </ScrollArea>
-      <Dialog open={reloadConfirmation !== null} onOpenChange={(open) => { if (!open && !reloadPending) setReloadConfirmation(null) }}>
-        <DialogContent showCloseButton={false}>
-          <DialogHeader>
-            <DialogTitle>{t('settings.extensions.reloadConfirmTitle')}</DialogTitle>
-            <DialogDescription>
-              {t('settings.extensions.reloadConfirmDescription', { count: reloadConfirmation?.length ?? 0 })}
-            </DialogDescription>
-          </DialogHeader>
-          {reloadConfirmation && reloadConfirmation.length > 0 && (
-            <div className="max-h-48 overflow-y-auto rounded-md border border-border/70">
-              {reloadConfirmation.map((session) => (
-                <div key={session.sessionId} className="border-b border-border/50 px-3 py-2 last:border-b-0">
-                  <div className="truncate text-sm font-medium">{session.title || t('settings.extensions.untitledSession')}</div>
-                  <div className="truncate text-xs text-muted-foreground">{session.workspaceName}</div>
-                </div>
-              ))}
-            </div>
-          )}
-          <DialogFooter>
-            <Button variant="outline" disabled={reloadPending} onClick={() => setReloadConfirmation(null)}>{t('common.cancel')}</Button>
-            <Button variant="destructive" disabled={reloadPending} onClick={() => void handleReload(true)}>
-              <RotateCw className={reloadPending ? 'animate-spin' : undefined} />
-              {t('settings.extensions.interruptAndReload')}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   )
 }

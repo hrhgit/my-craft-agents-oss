@@ -25,6 +25,15 @@ export const CLIENT_OPEN_FILE_DIALOG = 'client:openFileDialog'
 /** Capability: drive a local `BrowserPaneManager` instance for a remote agent. */
 export const CLIENT_BROWSER_INVOKE = 'client:browser:invoke'
 
+/** Capability: route marker removal to the backend that owns a selected location. */
+export const CLIENT_ROUTE_WORKSPACE_MARKER_DETACH = 'client:workspace:detachMarker'
+
+export interface WorkspaceMarkerDetachRouteRequest {
+  workspaceId: string
+  locationId: string
+  operationId: string
+}
+
 /** All capabilities a local Electron client advertises on handshake. */
 export const LOCAL_CLIENT_CAPABILITIES: readonly string[] = [
   CLIENT_OPEN_EXTERNAL,

@@ -3,7 +3,10 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { randomUUID } from 'crypto'
 import { tmpdir } from 'os'
 import { dirname, join } from 'path'
-import { SessionManager as PiSessionManager } from '@mortise/pi-coding-agent/host-facade'
+import {
+  readSessionUiMetadata as readPiSessionUiMetadata,
+  SessionManager as PiSessionManager,
+} from '@mortise/pi-coding-agent/host-facade'
 import type { AgentBackend } from '@mortise/shared/agent/backend'
 import { getMidStreamBehavior } from '@mortise/shared/config'
 import type { SessionTurnControl, SessionTurnControlHandle } from '../session-control'
@@ -24,7 +27,7 @@ import {
 // Pi-first transcript ownership:
 //
 //   sendMessage's `{ accepted, messageId }` ack contract must not return before
-//   the Mortise-owned attachment/badge overlay hits disk. A crash inside the
+//   the Pi-owned attachment/badge UI metadata sidecar hits disk. A crash inside the
 //   persistence debounce window would otherwise lose its Pi message identity.
 //
 // The fix added `await this.flushSession(managed.id)` between persistSession
@@ -141,13 +144,10 @@ describe('sendMessage durability', () => {
       }
     }
 
-    // In Pi tree mode, Mortise persists pre-Pi user message IDs in the sidecar
-    // overlay while Pi owns the canonical transcript body.
-    const overlayPath = join(getSessionPath(testWorkspace.id, sessionId), 'overlay.json')
-    if (existsSync(overlayPath)) {
-      const overlay = JSON.parse(readFileSync(overlayPath, 'utf-8')) as { messages?: Array<{ id?: unknown }> }
-      for (const message of overlay.messages ?? []) {
-        if (typeof message.id === 'string') ids.add(message.id)
+    // Pi owns the UI metadata sidecar while the JSONL body remains canonical.
+    if (existsSync(path)) {
+      for (const message of readPiSessionUiMetadata({ sessionPath: path, projectionId: sessionId }).messages) {
+        ids.add(message.messageId)
       }
     }
 
@@ -177,7 +177,7 @@ describe('sendMessage durability', () => {
     }
   }
 
-  const overlayOptions = {
+  const firstTurnOptions = {
     badges: [{ type: 'skill' as const, label: 'Linear', rawText: '@linear', start: 0, end: 7 }],
   }
 
@@ -262,7 +262,7 @@ describe('sendMessage durability', () => {
     return sessionFile
   }
 
-  it('user overlay is on disk before onAck fires (normal branch)', async () => {
+  it('user UI metadata is on disk before onAck fires (normal branch)', async () => {
     const sessionId = 'durability-normal'
     const managed = buildSession(sessionId)
     await publishExistingSession(sessionId)
@@ -281,7 +281,7 @@ describe('sendMessage durability', () => {
         'hello',
         undefined,
         undefined,
-        overlayOptions,
+        firstTurnOptions,
         undefined,
         undefined,
         (messageId) => {
@@ -541,7 +541,7 @@ describe('sendMessage durability', () => {
     expect(existsSync(getSessionPath(testWorkspace.id, provisionalId))).toBe(false)
   })
 
-  it('discards an unaccepted first turn when the overlay atomic rename fails', async () => {
+  it('discards an unaccepted first turn when the Pi UI metadata atomic write fails', async () => {
     const events: unknown[] = []
     let provisionalId = ''
     let sessionFile = ''
@@ -551,11 +551,11 @@ describe('sendMessage durability', () => {
       workspaceId: testWorkspace.id,
       message: 'first real message',
       createOptions: { name: 'Overlay failure' },
-      sendOptions: overlayOptions,
+      sendOptions: firstTurnOptions,
     }, managed => {
       provisionalId = managed.id
       sessionFile = installFirstAssistantAgent(managed, managed.id)
-      mkdirSync(join(getSessionPath(testWorkspace.id, managed.id), 'overlay.json'), { recursive: true })
+      writeFileSync(join(dirname(sessionFile), '.pi-ui'), 'blocked sidecar directory', 'utf8')
     })
 
     await expect(result).rejects.toMatchObject({
@@ -865,7 +865,7 @@ describe('sendMessage durability', () => {
       'queued message',
       undefined,
       undefined,
-      overlayOptions,
+      firstTurnOptions,
       undefined,
       undefined,
       (messageId) => {
@@ -1599,7 +1599,7 @@ describe('sendMessage durability', () => {
       'pi provider delayed ack',
       undefined,
       undefined,
-      overlayOptions,
+      firstTurnOptions,
       undefined,
       undefined,
       (messageId) => {

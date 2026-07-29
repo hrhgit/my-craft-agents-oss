@@ -34,7 +34,7 @@ function runIsolatedPiConfigScript<T>(piAgentDir: string, body: string): T {
       savePiGlobalProvider,
       readPiGlobalProvidersForDisplay,
       maskApiKey,
-      watchPiGlobalModelsFile,
+      subscribePiGlobalConfig,
     } from ${JSON.stringify(PI_GLOBAL_CONFIG_MODULE_PATH)};
     import { mkdirSync, readFileSync, writeFileSync } from 'fs';
     import { join } from 'path';
@@ -67,14 +67,14 @@ describe('pi-global-config auth storage', () => {
 
     const output = runIsolatedPiConfigScript<{ changed: boolean; filename: string }>(piAgentDir, `
       const result = await new Promise((resolve, reject) => {
-        let watcher;
+        let subscription;
         const timeout = setTimeout(() => {
-          watcher?.close();
+          subscription?.close();
           reject(new Error('auth.json watcher timed out'));
         }, 15000);
-        watcher = watchPiGlobalModelsFile(() => {
+        subscription = subscribePiGlobalConfig(() => {
           clearTimeout(timeout);
-          watcher.close();
+          subscription.close();
           resolve({ changed: true, filename: 'auth.json' });
         });
         setTimeout(() => {

@@ -12,63 +12,16 @@ import type {
   CloudEventV1,
 } from '../automations/v3-types.ts'
 import type { CapabilityRequestV1, CapabilityResultV1 } from './capabilities.ts'
+import {
+  AUTOMATION_PERMISSION_SCOPES_V1,
+  AUTOMATION_WORKSPACE_CAPABILITY_V1,
+  AUTOMATION_WORKSPACE_MUTATING_OPERATIONS_V1,
+  AUTOMATION_WORKSPACE_OPERATIONS_V1,
+  type AutomationWorkspaceDescriptionV1,
+  type AutomationWorkspaceOperationV1,
+} from '../automations/capability-contract.ts'
 
-export const AUTOMATION_WORKSPACE_CAPABILITY_V1 = 'automation.workspace' as const
-
-export const AUTOMATION_WORKSPACE_OPERATIONS_V1 = [
-  'describe',
-  'list',
-  'get',
-  'validate',
-  'simulate',
-  'create',
-  'update',
-  'delete',
-  'set-enabled',
-  'run',
-  'get-run',
-  'list-runs',
-  'list-changes',
-  'emit-event',
-] as const
-
-export type AutomationWorkspaceOperationV1 = typeof AUTOMATION_WORKSPACE_OPERATIONS_V1[number]
-
-export type AutomationPermissionScopeV1 =
-  | 'automations.read'
-  | 'automations.history.read'
-  | 'automations.write'
-  | 'automations.run'
-  | 'automations.events.emit'
-
-export interface AutomationCapabilityVersionRangeV1 {
-  minRead: number
-  maxRead: number
-  minWrite: number
-  maxWrite: number
-}
-
-export interface AutomationWorkspaceDescriptionV1 {
-  capability: typeof AUTOMATION_WORKSPACE_CAPABILITY_V1
-  schemaVersion: 1
-  capabilities: {
-    'automations.definitions': AutomationCapabilityVersionRangeV1
-    'automations.ingress': AutomationCapabilityVersionRangeV1
-    'automations.runs': AutomationCapabilityVersionRangeV1
-    'automations.history': AutomationCapabilityVersionRangeV1
-  }
-  triggerKinds: Array<'event' | 'cron' | 'once' | 'interval'>
-  actionKinds: Array<'prompt' | 'webhook'>
-  targetKinds: Array<'new-session' | 'session' | 'isolated-agent'>
-  limits: {
-    maxEventBytes: number
-    maxConditionDepth: number
-    maxMatcherLength: number
-    maxEventTypeLength: number
-    maxRunListLimit: number
-  }
-  permissionScopes: AutomationPermissionScopeV1[]
-}
+export * from '../automations/capability-contract.ts'
 
 export interface AutomationSimulationPlanV1 {
   automationId: string
@@ -359,6 +312,7 @@ const CapabilityVersionRangeV1Schema = z.object({
 const AutomationWorkspaceDescriptionV1Schema = z.object({
   capability: z.literal(AUTOMATION_WORKSPACE_CAPABILITY_V1),
   schemaVersion: z.literal(1),
+  operations: z.array(z.enum(AUTOMATION_WORKSPACE_OPERATIONS_V1)),
   capabilities: z.object({
     'automations.definitions': CapabilityVersionRangeV1Schema,
     'automations.ingress': CapabilityVersionRangeV1Schema,
@@ -367,7 +321,7 @@ const AutomationWorkspaceDescriptionV1Schema = z.object({
   }).strict(),
   triggerKinds: z.array(z.enum(['event', 'cron', 'once', 'interval'])),
   actionKinds: z.array(z.enum(['prompt', 'webhook'])),
-  targetKinds: z.array(z.enum(['new-session', 'session', 'isolated-agent'])),
+  targetKinds: z.array(z.enum(['new-session', 'session'])),
   limits: z.object({
     maxEventBytes: z.number().int().positive(),
     maxConditionDepth: z.number().int().positive(),
@@ -375,13 +329,7 @@ const AutomationWorkspaceDescriptionV1Schema = z.object({
     maxEventTypeLength: z.number().int().positive(),
     maxRunListLimit: z.number().int().positive(),
   }).strict(),
-  permissionScopes: z.array(z.enum([
-    'automations.read',
-    'automations.history.read',
-    'automations.write',
-    'automations.run',
-    'automations.events.emit',
-  ])),
+  permissionScopes: z.array(z.enum(AUTOMATION_PERMISSION_SCOPES_V1)),
 }).strict()
 
 const AutomationRunV1Schema = z.object({
@@ -413,20 +361,13 @@ const AutomationRunV1Schema = z.object({
     startedAt: z.string().datetime().optional(),
     completedAt: z.string().datetime().optional(),
     sessionId: z.string().min(1).max(256).optional(),
-    details: z.union([
-      z.object({
+    details: z.object({
         kind: z.literal('webhook'),
         statusCode: z.number().int().min(100).max(599).optional(),
         attempts: z.number().int().positive(),
         durationMs: z.number().nonnegative(),
         responseBody: z.string().max(16_384).optional(),
-      }).strict(),
-      z.object({
-        kind: z.literal('isolated-agent'),
-        output: z.string().max(65_536),
-        notification: z.enum(['none', 'delivered']),
-      }).strict(),
-    ]).optional(),
+      }).strict().optional(),
     error: z.object({ code: z.string().min(1).max(256), message: z.string().max(4096), retryable: z.boolean() }).strict().optional(),
   }).strict()),
 }).strict()
@@ -564,7 +505,7 @@ export function parseAutomationWorkspaceOperationResultV1<Operation extends Auto
 ): AutomationWorkspaceOperationResultV1<Operation> {
   const result = AutomationCapabilityResultBaseV1Schema.parse(value)
   if (result.data !== undefined) AutomationWorkspaceDataSchemasV1[operation].parse(result.data)
-  const sideEffecting = ['create', 'update', 'delete', 'set-enabled', 'run', 'emit-event'].includes(operation)
+  const sideEffecting = (AUTOMATION_WORKSPACE_MUTATING_OPERATIONS_V1 as readonly string[]).includes(operation)
   if (sideEffecting && result.operationId === undefined) {
     throw new z.ZodError([{ code: 'custom', path: ['operationId'], message: `${operation} results must echo operationId`, input: value }])
   }

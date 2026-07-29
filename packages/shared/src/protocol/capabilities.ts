@@ -8,6 +8,15 @@ export interface CapabilityRequestV1 {
   operation: string
   input: unknown
   timeoutMs?: number
+  /** Explicit execution owner. Absence preserves the provider's declared default. */
+  target?: import('./execution-routing.ts').CapabilityExecutionTargetV1
+}
+
+export type BackendType = 'electron' | 'webui'
+
+export const BACKEND_TYPE_CAPABILITY: Record<BackendType, string> = {
+  electron: 'mortise.backend-type.electron',
+  webui: 'mortise.backend-type.webui',
 }
 
 export interface CapabilityDeclarationV1 {

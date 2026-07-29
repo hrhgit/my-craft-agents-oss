@@ -23,6 +23,8 @@ function client(label: unknown) {
     },
     handleCapability: () => {},
     isChannelAvailable: () => true,
+    getConnectionState: () => ({ status: 'connected' }),
+    getServerVersion: () => 'test',
   }
 }
 
@@ -95,6 +97,66 @@ describe('WorkspaceRuntimeRegistry', () => {
 
     expect(registry.invoke({ workspaceId: 'b', locationId: 'primary' }, 'sessions:get')).rejects.toThrow('not registered')
     expect(registry.invoke({ workspaceId: 'a', locationId: 'primary' }, 'window:close')).rejects.toThrow('local-only')
+  })
+
+  it('returns typed availability, connection, version, channel, and permission failures without fallback', async () => {
+    const route = { workspaceId: 'workspace', locationId: 'remote' }
+    const fallbackRoute = { workspaceId: 'workspace', locationId: 'local' }
+
+    const assertFailure = async (
+      configure: (remote: ReturnType<typeof client>) => void,
+      registration: Record<string, unknown>,
+      channel: string,
+      code: string,
+    ) => {
+      const registry = new WorkspaceRuntimeRegistry()
+      const fallback = client('fallback')
+      const remote = client('remote')
+      configure(remote)
+      registry.register({ route: fallbackRoute, client: fallback as any })
+      registry.register({ route, client: remote as any, targetWorkspaceId: 'remote-workspace', ...registration })
+
+      expect(registry.invoke(route, channel, 'workspace')).rejects.toMatchObject({ code })
+      expect(fallback.calls).toHaveLength(0)
+      expect(remote.calls).toHaveLength(0)
+    }
+
+    await assertFailure(
+      () => {},
+      { availability: { status: 'unavailable', reason: 'offline' } },
+      'files:read',
+      'TARGET_UNAVAILABLE',
+    )
+    await assertFailure(
+      remote => { remote.getConnectionState = () => ({ status: 'disconnected' }) },
+      {},
+      'files:read',
+      'TARGET_UNAVAILABLE',
+    )
+    await assertFailure(
+      remote => { remote.getServerVersion = () => null as any },
+      {},
+      'files:read',
+      'LOCATION_VERSION_UNSUPPORTED',
+    )
+    await assertFailure(
+      remote => { remote.isChannelAvailable = () => false },
+      {},
+      'files:read',
+      'UNSUPPORTED',
+    )
+    await assertFailure(
+      () => {},
+      { permissions: { read: false, write: true, search: true, runCommands: true } },
+      'files:read',
+      'LOCATION_PERMISSION_DENIED',
+    )
+    await assertFailure(
+      () => {},
+      { permissions: { read: true, write: true, search: true, runCommands: false } },
+      'sessions:create',
+      'LOCATION_PERMISSION_DENIED',
+    )
   })
 
   it('uses leases so one tab cannot dispose a runtime still used by another tab', () => {

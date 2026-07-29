@@ -128,6 +128,12 @@ export function processEvent(
     case 'session_model_changed':
       return handleSessionModelChanged(state, event)
 
+    case 'session_deletion_changed':
+      return {
+        state: { ...state, session: { ...state.session, deletionState: event.state } },
+        effects: [],
+      }
+
     case 'provider_changed':
       return handleProviderChanged(state, event)
 

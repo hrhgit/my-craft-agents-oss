@@ -71,6 +71,12 @@ export {
 export { BaseEventAdapter } from './base-event-adapter.ts';
 export { EventQueue } from './event-queue.ts';
 export { piHostManager, PiHostManager, PiHostProtocolError } from './pi-host-manager.ts';
+export {
+  BackendExtensionRuntimeRegistry,
+  backendTypeFromProcess,
+  type BackendExtensionWorkspaceSnapshot,
+  type BackendExtensionRuntimeRegistryOptions,
+} from './backend-extension-runtime.ts';
 
 // Provider-specific event adapters
 export { PiEventAdapter } from './pi/event-adapter.ts';

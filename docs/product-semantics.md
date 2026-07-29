@@ -291,9 +291,3 @@ Electron 和 WebUI 是同一 Mortise 产品的不同平台投影，但不以功�
 - [Mortise Automations Architecture And Protocol](architecture/automations-protocol.md)
 - [Pi Extension GUI Architecture](architecture/pi-extension-gui.md)
 - [Mortise Extension Authoring Guide](../apps/electron/resources/docs/pi-extensions.md)
-
-## 已知实现偏差
-
-以下实现尚未对齐当前接受语义，不能被用来反向覆盖本文档或现行专题规范：
-
-- 当前 Automation schema/runtime 仍包含 `isolated-agent` target。该 target 已被产品语义取消；后续实现对齐应删除它，不能将现有代码当作保留这一概念的产品依据。

@@ -70,8 +70,10 @@ export function SessionItem({
   const messagingBindingsBySession = useAtomValue(messagingBindingsBySessionAtom)
   const sessionBindings = messagingBindingsBySession.get(item.id) ?? []
   const hasMessagingBinding = sessionBindings.length > 0
+  const isDeleting = item.deletionState === 'deleting'
 
   const handleClick = (e: React.MouseEvent) => {
+    if (isDeleting) return
     ctx.onFocusZone()
     if (e.button === 2) {
       if (ctx.isMultiSelectActive && !isInMultiSelect && onToggleSelect) onToggleSelect()
@@ -107,6 +109,7 @@ export function SessionItem({
           (itemProps as { className?: string }).className,
           !isCompactMode && "py-1.5",
         ),
+        'aria-disabled': isDeleting,
         onKeyDown: (e: React.KeyboardEvent) => {
           ;(itemProps as { onKeyDown: (event: React.KeyboardEvent) => void }).onKeyDown(e)
           ctx.onKeyDown(e, item)
@@ -145,11 +148,11 @@ export function SessionItem({
           <div className={cn(
             "flex items-center justify-center overflow-hidden gap-1",
             "transition-all duration-200 ease-out",
-            (item.isProcessing || hasUnreadMeta(item) || item.lastMessageRole === 'plan' || hasPendingPrompt)
+            (item.isProcessing || isDeleting || hasUnreadMeta(item) || item.lastMessageRole === 'plan' || hasPendingPrompt)
               ? "opacity-100 ml-0"
               : "!w-0 opacity-0 -ml-[10px]"
           )}>
-            {item.isProcessing && <Spinner className="text-[10px]" />}
+            {(item.isProcessing || isDeleting) && <Spinner className="text-[10px]" />}
             {hasUnreadMeta(item) && (
               <svg className="text-accent h-3.5 w-3.5" viewBox="0 0 25 24" fill="currentColor">
                 <g transform="translate(1.748, 0.7832)">

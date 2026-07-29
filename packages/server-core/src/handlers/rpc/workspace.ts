@@ -105,6 +105,7 @@ export function registerWorkspaceCoreHandlers(
     // legacy single-root record.
     const candidate = addWorkspace({ name, rootPath } as never) as unknown as LegacyWorkspaceV1
     const workspace = ensureWorkspaceTopology(topologyStore, candidate)
+    await deps.sessionManager.openWorkspaceExtensions?.(workspace)
     // Make it active
     setActiveWorkspace(workspace.id)
     deps.platform.logger.info(`Created workspace "${name}" at ${rootPath}`)

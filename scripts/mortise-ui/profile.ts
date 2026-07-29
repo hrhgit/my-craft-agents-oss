@@ -278,6 +278,7 @@ async function seedFixtureProfile(root: string, mortiseConfigDir: string, mortis
         }))
         const storedSession: StoredSession = {
           mortiseId: session.id,
+          workspaceId: workspace.id,
           workspaceRootPath: workspace.rootPath,
           name: session.name,
           createdAt,
@@ -291,7 +292,7 @@ async function seedFixtureProfile(root: string, mortiseConfigDir: string, mortis
           messages,
           tokenUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, contextTokens: 0, costUsd: 0 },
         }
-        const sessionFile = await ensureSharedPiTreeSessionFileAsync(storedSession)
+        const sessionFile = await ensureSharedPiTreeSessionFileAsync(storedSession, { workspaceId: workspace.id })
         sessionFiles.set(session.id, sessionFile)
         fixtureSessions.push({ id: session.id, parentSessionId: session.parentSessionId, sessionFile })
         const idMap = await appendStoredMessagesViaPiSessionManager(sessionFile, dirname(sessionFile), workspace.rootPath, messages)
@@ -301,7 +302,7 @@ async function seedFixtureProfile(root: string, mortiseConfigDir: string, mortis
             messages: messages.map(message => ({ ...message, id: idMap.get(message.id) ?? message.id })),
           })
         }
-        for (const file of session.files ?? []) writeFixtureFile(getSessionPath(workspace.rootPath, session.id), file)
+        for (const file of session.files ?? []) writeFixtureFile(getSessionPath(workspace.id, session.id), file)
       }
     }
     for (const child of fixtureSessions) {

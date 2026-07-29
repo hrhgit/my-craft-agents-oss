@@ -3,6 +3,7 @@ import { AlertTriangle, RotateCw } from 'lucide-react'
 import type { ExtensionUINode } from '@mortise/shared/protocol'
 import { cn } from '@/lib/utils'
 import { extensionValidationStore } from './extension-validation-store'
+import { useOptionalAppShellContext } from '@/context/AppShellContext'
 
 type SandboxNode = Extract<ExtensionUINode, { type: 'sandbox-app' }>
 
@@ -11,6 +12,7 @@ interface SandboxAppHostProps {
   sessionId: string
   extensionId: string
   runtimeId: string
+  workspaceId?: string
   onStatusChange?: (status: 'loading' | 'ready' | 'error') => void
 }
 
@@ -27,7 +29,6 @@ type SandboxMessage = {
   state?: unknown
 }
 
-const STORAGE_PREFIX = 'mortise.extensionSandbox.v1'
 const MAX_MESSAGE_BYTES = 32_768
 const MAX_STORAGE_BYTES = 65_536
 const RATE_WINDOW_MS = 10_000
@@ -135,26 +136,49 @@ function readTheme(): Record<string, string> {
   return Object.fromEntries(names.map(name => [name, style.getPropertyValue(name).trim()]))
 }
 
-function storageKey(extensionId: string, runtimeId: string, sessionId: string, appId: string): string {
-  return `${STORAGE_PREFIX}.${encodeURIComponent(extensionId)}.${encodeURIComponent(runtimeId)}.${encodeURIComponent(sessionId)}.${encodeURIComponent(appId)}`
+const extensionStateCache = new Map<string, Promise<import('@mortise/shared/protocol').ExtensionFileStateV1>>()
+const extensionStateWrites = new Map<string, Promise<void>>()
+
+function extensionStateKey(workspaceId: string, extensionId: string): string {
+  return `${workspaceId}\0${extensionId}`
 }
 
-function loadStorage(extensionId: string, runtimeId: string, sessionId: string, appId: string): Record<string, unknown> {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(storageKey(extensionId, runtimeId, sessionId, appId)) ?? '{}') as unknown
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {}
-  } catch {
-    return {}
+async function loadExtensionState(workspaceId: string, extensionId: string): Promise<import('@mortise/shared/protocol').ExtensionFileStateV1> {
+  const key = extensionStateKey(workspaceId, extensionId)
+  let pending = extensionStateCache.get(key)
+  if (!pending) {
+    pending = window.electronAPI?.getExtensionFileState?.(workspaceId, extensionId)
+      ?? Promise.resolve({ schemaVersion: 1 as const, apps: {} })
+    extensionStateCache.set(key, pending)
   }
+  return pending
 }
 
-function saveStorage(extensionId: string, runtimeId: string, sessionId: string, appId: string, value: Record<string, unknown>): void {
+async function loadStorage(workspaceId: string, extensionId: string, appId: string): Promise<Record<string, unknown>> {
+  const state = await loadExtensionState(workspaceId, extensionId)
+  return { ...(state.apps[appId] ?? {}) }
+}
+
+async function saveStorage(workspaceId: string, extensionId: string, appId: string, value: Record<string, unknown>): Promise<void> {
   const serialized = JSON.stringify(value)
   if (serialized.length > MAX_STORAGE_BYTES) throw new Error('Sandbox storage quota exceeded')
-  localStorage.setItem(storageKey(extensionId, runtimeId, sessionId, appId), serialized)
+  const key = extensionStateKey(workspaceId, extensionId)
+  const previous = extensionStateWrites.get(key) ?? Promise.resolve()
+  const write = previous.then(async () => {
+    const current = await loadExtensionState(workspaceId, extensionId)
+    const next = { schemaVersion: 1 as const, apps: { ...current.apps, [appId]: { ...value } } }
+    await window.electronAPI?.setExtensionFileState?.(workspaceId, extensionId, next)
+    extensionStateCache.set(key, Promise.resolve(next))
+  }).finally(() => {
+    if (extensionStateWrites.get(key) === write) extensionStateWrites.delete(key)
+  })
+  extensionStateWrites.set(key, write)
+  await write
 }
 
-export function SandboxAppHost({ node, sessionId, extensionId, runtimeId, onStatusChange }: SandboxAppHostProps) {
+export function SandboxAppHost({ node, sessionId, extensionId, runtimeId, workspaceId, onStatusChange }: SandboxAppHostProps) {
+  const appShell = useOptionalAppShellContext()
+  const resolvedWorkspaceId = workspaceId ?? appShell?.activeWorkspaceId ?? ''
   const iframeRef = React.useRef<HTMLIFrameElement | null>(null)
   const channelRef = React.useRef<MessageChannel | null>(null)
   const initializedNonceRef = React.useRef<string | null>(null)
@@ -233,7 +257,7 @@ export function SandboxAppHost({ node, sessionId, extensionId, runtimeId, onStat
     channelRef.current = channel
     const timestamps: number[] = []
     const respond = (requestId: string, ok: boolean, value?: unknown, error?: string) => channel.port1.postMessage({ type: 'response', requestId, ok, value, error })
-    channel.port1.onmessage = event => {
+    channel.port1.onmessage = async event => {
       if (!isAcceptableSandboxMessage(event.data)) return
       const now = Date.now()
       while (timestamps.length > 0 && (timestamps[0] ?? now) < now - RATE_WINDOW_MS) timestamps.shift()
@@ -273,11 +297,12 @@ export function SandboxAppHost({ node, sessionId, extensionId, runtimeId, onStat
       if (message.type === 'storage.get' || message.type === 'storage.set' || message.type === 'storage.delete') {
         if (!permissions.has('storage') || typeof message.key !== 'string' || !/^[A-Za-z0-9._-]{1,128}$/.test(message.key) || ['__proto__', 'prototype', 'constructor'].includes(message.key)) return respond(requestId, false, undefined, 'Storage access denied')
         try {
-          const current = loadStorage(extensionId, runtimeId, sessionId, node.appId)
+          if (!resolvedWorkspaceId) throw new Error('Extension storage requires a Workspace')
+          const current = await loadStorage(resolvedWorkspaceId, extensionId, node.appId)
           if (message.type === 'storage.get') return respond(requestId, true, current[message.key])
           if (message.type === 'storage.delete') delete current[message.key]
           else current[message.key] = message.value
-          saveStorage(extensionId, runtimeId, sessionId, node.appId, current)
+          await saveStorage(resolvedWorkspaceId, extensionId, node.appId, current)
           return respond(requestId, true, true)
         } catch (error) {
           return respond(requestId, false, undefined, error instanceof Error ? error.message : String(error))
@@ -358,7 +383,7 @@ export function SandboxAppHost({ node, sessionId, extensionId, runtimeId, onStat
         sandboxBridge: true,
       } : { schemaVersion: 1, available: false, protocolVersions: [], verificationLevels: [], scenarios: false, sandboxBridge: false },
     }, '*', [channel.port2])
-  }, [documentKey, extensionId, maxHeight, minHeight, nextValidationRevision, node.appId, nonce, onStatusChange, permissions, resetValidation, runtimeId, sandboxExtensionId, sessionId, validationEnabled])
+  }, [documentKey, extensionId, maxHeight, minHeight, nextValidationRevision, node.appId, nonce, onStatusChange, permissions, resetValidation, resolvedWorkspaceId, runtimeId, sandboxExtensionId, sessionId, validationEnabled])
 
   React.useEffect(() => {
     const handleBootstrapReady = (event: MessageEvent) => {

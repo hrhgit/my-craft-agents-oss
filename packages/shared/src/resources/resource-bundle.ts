@@ -12,7 +12,7 @@
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync } from 'fs'
 import { join } from 'path'
-import { randomUUID } from 'crypto'
+import { createHash, randomUUID } from 'crypto'
 import {
   type BundleFile,
   MAX_BUNDLE_SIZE_BYTES,
@@ -21,10 +21,16 @@ import {
   validateBundleFile,
 } from '../utils/bundle-files.ts'
 import { getWorkspaceSkillsPath } from '../workspaces/storage.ts'
-import { AutomationDefinitionV3Schema } from '../automations/v3-schemas.ts'
+import {
+  AutomationDefinitionV3Schema,
+  AutomationDependencyDeclarationV1Schema,
+} from '../automations/v3-schemas.ts'
 import type { AutomationWorkspaceHostV3 } from '../automations/v3-host-runtime.ts'
 import { debug } from '../utils/debug.ts'
-import type { AutomationDefinitionV3 } from '../automations/v3-types.ts'
+import type {
+  AutomationDefinitionV3,
+  AutomationDependencyDeclarationV1,
+} from '../automations/v3-types.ts'
 import type {
   ResourceBundle,
   SkillBundleEntry,
@@ -33,6 +39,8 @@ import type {
   ResourceImportMode,
   ResourceImportResult,
   ImportBucketResult,
+  PortableAutomationEntryV1,
+  AutomationDependencyResolverV1,
 } from './types.ts'
 
 // ============================================================
@@ -54,7 +62,7 @@ export function exportResources(
 ): ExportResult {
   const warnings: string[] = []
   const bundle: ResourceBundle = {
-    version: 2,
+    version: 3,
     exportedAt: Date.now(),
     resources: {},
   }
@@ -143,28 +151,57 @@ function exportSkills(
 
 const SECRET_HEADER_PATTERNS = [/^authorization$/i, /^proxy-authorization$/i, /api[-_]?key/i]
 
-function sanitizeAutomationDefinition(
+function portableSecretId(definitionId: string, actionId: string, field: string): string {
+  const digest = createHash('sha256').update(`${definitionId}\n${actionId}\n${field}`).digest('hex').slice(0, 32)
+  return `portable-secret-${digest}`
+}
+
+function portableAutomationDefinition(
   definition: AutomationDefinitionV3,
   warnings: string[],
-): AutomationDefinitionV3 {
+): PortableAutomationEntryV1 {
   const sanitized = structuredClone(definition)
-  for (const action of sanitized.actions) {
-    if (action.type !== 'webhook' || !action.headers) continue
-    for (const key of Object.keys(action.headers)) {
-      if (!SECRET_HEADER_PATTERNS.some(pattern => pattern.test(key))) continue
-      delete action.headers[key]
-      warnings.push(`Automation '${definition.name}': stripped webhook header '${key}'`)
-    }
-    if (Object.keys(action.headers).length === 0) delete action.headers
+  const dependencies: AutomationDependencyDeclarationV1[] = [
+    ...(sanitized.configuration?.missingDependencies ?? []),
+  ]
+  for (const trigger of sanitized.triggers) {
+    if (trigger.type !== 'event' || (trigger.source !== 'extension' && trigger.source !== 'external')) continue
+    dependencies.push({
+      kind: 'event-source',
+      id: `${trigger.source}:${trigger.eventType}`,
+      triggerId: trigger.id,
+      source: trigger.source,
+      required: true,
+    })
   }
-  return sanitized
+  for (const action of sanitized.actions) {
+    if (action.type === 'prompt' && action.target.kind === 'session' && action.target.session !== 'event-session') {
+      dependencies.push({ kind: 'session', id: action.target.session.id, actionId: action.id, required: true })
+      continue
+    }
+    if (action.type !== 'webhook') continue
+    if (action.auth?.type === 'basic') {
+      dependencies.push({ kind: 'secret', id: action.auth.password.id, actionId: action.id, field: 'auth.password', required: true })
+    } else if (action.auth?.type === 'bearer') {
+      dependencies.push({ kind: 'secret', id: action.auth.token.id, actionId: action.id, field: 'auth.token', required: true })
+    }
+    for (const key of Object.keys(action.headers ?? {})) {
+      if (!SECRET_HEADER_PATTERNS.some(pattern => pattern.test(key))) continue
+      const id = portableSecretId(definition.id, action.id, `headers.${key}`)
+      action.headers![key] = `\${mortise-secret:${id}}`
+      dependencies.push({ kind: 'secret', id, actionId: action.id, field: `headers.${key}`, required: true })
+      warnings.push(`Automation '${definition.name}': replaced webhook header '${key}' with a secret dependency`)
+    }
+  }
+  const deduplicated = [...new Map(dependencies.map(dependency => [JSON.stringify(dependency), dependency])).values()]
+  return { schemaVersion: 1, definition: sanitized, dependencies: deduplicated }
 }
 
 function exportAutomations(
   host: AutomationWorkspaceHostV3,
   selection: string[] | 'all',
   warnings: string[],
-): AutomationDefinitionV3[] {
+): PortableAutomationEntryV1[] {
     const allDefinitions = host.exportDefinitions()
     const selected: AutomationDefinitionV3[] = []
     if (selection === 'all') {
@@ -184,7 +221,7 @@ function exportAutomations(
         }
       }
     }
-    return selected.map(definition => sanitizeAutomationDefinition(definition, warnings))
+    return selected.map(definition => portableAutomationDefinition(definition, warnings))
 }
 
 // ============================================================
@@ -204,7 +241,7 @@ export function validateResourceBundle(bundle: unknown): { valid: boolean; error
 
   const b = bundle as Record<string, unknown>
 
-  if (b.version !== 2) {
+  if (b.version !== 3) {
     errors.push(`Unsupported bundle version: ${b.version}`)
   }
 
@@ -277,10 +314,25 @@ export function validateResourceBundle(bundle: unknown): { valid: boolean; error
           continue
         }
 
-        const parsed = AutomationDefinitionV3Schema.safeParse(entry)
-        if (!parsed.success) {
-          errors.push(`${prefix}: ${parsed.error.issues.map(issue => `${issue.path.join('.')}: ${issue.message}`).join('; ')}`)
+        const portable = entry as Record<string, unknown>
+        if (portable.schemaVersion !== 1) {
+          errors.push(`${prefix}: schemaVersion must be 1`)
           continue
+        }
+        const parsed = AutomationDefinitionV3Schema.safeParse(portable.definition)
+        if (!parsed.success) {
+          errors.push(`${prefix}.definition: ${parsed.error.issues.map(issue => `${issue.path.join('.')}: ${issue.message}`).join('; ')}`)
+          continue
+        }
+        if (!Array.isArray(portable.dependencies)) {
+          errors.push(`${prefix}.dependencies: must be an array`)
+          continue
+        }
+        for (const [dependencyIndex, dependency] of portable.dependencies.entries()) {
+          const dependencyResult = AutomationDependencyDeclarationV1Schema.safeParse(dependency)
+          if (!dependencyResult.success) {
+            errors.push(`${prefix}.dependencies[${dependencyIndex}]: ${dependencyResult.error.issues.map(issue => `${issue.path.join('.')}: ${issue.message}`).join('; ')}`)
+          }
         }
         if (ids.has(parsed.data.id)) {
           errors.push(`${prefix}: duplicate id '${parsed.data.id}'`)
@@ -346,12 +398,17 @@ export async function importResources(
   mode: ResourceImportMode,
   workspaceId = workspaceRootPath,
   automationHost?: AutomationWorkspaceHostV3,
+  dependencyResolver?: AutomationDependencyResolverV1,
 ): Promise<ResourceImportResult> {
   // Validate bundle first
   const validation = validateResourceBundle(bundle)
-  if (!validation.valid) {
-    const errorMsg = `Invalid bundle: ${validation.errors.join('; ')}`
-    const failedBucket = { imported: [], skipped: [], failed: [{ id: '*', error: errorMsg }], warnings: [] }
+  const fatalErrors = validation.errors.filter(error => !error.startsWith('automations['))
+  if (fatalErrors.length > 0) {
+    const errorMsg = `Invalid bundle: ${fatalErrors.join('; ')}`
+    const failedBucket = {
+      imported: [], skipped: [], failed: [{ id: '*', error: errorMsg }], warnings: [],
+      items: [{ id: '*', status: 'failed' as const, error: errorMsg }],
+    }
     return {
       skills: { ...failedBucket },
       automations: { ...failedBucket },
@@ -363,7 +420,7 @@ export async function importResources(
     : emptyBucketResult()
 
   const automationsResult = bundle.resources.automations?.length
-    ? importAutomations(workspaceId, bundle.resources.automations, mode, automationHost)
+    ? await importAutomations(workspaceId, bundle.resources.automations, mode, automationHost, dependencyResolver)
     : emptyBucketResult()
 
   return {
@@ -373,7 +430,7 @@ export async function importResources(
 }
 
 function emptyBucketResult(): ImportBucketResult {
-  return { imported: [], skipped: [], failed: [], warnings: [] }
+  return { imported: [], skipped: [], failed: [], warnings: [], items: [] }
 }
 
 // ============================================================
@@ -399,6 +456,7 @@ function importSkills(
 
       if (exists && mode === 'skip') {
         result.skipped.push(entry.slug)
+        result.items.push({ id: entry.slug, status: 'skipped' })
         continue
       }
 
@@ -425,6 +483,7 @@ function importSkills(
         // Atomic replace: rename temp → target
         renameSync(tmpDir, targetDir)
         result.imported.push(entry.slug)
+        result.items.push({ id: entry.slug, status: 'imported' })
       } catch (err) {
         // Clean up temp dir on failure
         if (existsSync(tmpDir)) {
@@ -435,6 +494,7 @@ function importSkills(
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       result.failed.push({ id: entry.slug, error: message })
+      result.items.push({ id: entry.slug, status: 'failed', error: message })
     }
   }
 
@@ -445,22 +505,62 @@ function importSkills(
 // Import: Automations
 // ============================================================
 
-function importAutomations(
+async function importAutomations(
   workspaceId: string,
-  entries: AutomationDefinitionV3[],
+  entries: PortableAutomationEntryV1[],
   mode: ResourceImportMode,
   host?: AutomationWorkspaceHostV3,
-): ImportBucketResult {
+  dependencyResolver?: AutomationDependencyResolverV1,
+): Promise<ImportBucketResult> {
   const result = emptyBucketResult()
-  try {
-    if (!host) throw new Error(`Automations V3 host is unavailable for workspace ${workspaceId}`)
-    const imported = host.importDefinitions(entries, mode)
-    result.imported = imported.imported
-    result.skipped = imported.skipped
-    return result
-  } catch (err) {
-    const error = err instanceof Error ? err.message : String(err)
-    result.failed.push(...entries.map(entry => ({ id: entry.name, error })))
-    return result
+  for (const rawEntry of entries as unknown[]) {
+    let id = 'unknown'
+    try {
+      if (!host) throw new Error(`Automations V3 host is unavailable for workspace ${workspaceId}`)
+      if (!rawEntry || typeof rawEntry !== 'object') throw new Error('Portable Automation entry must be an object')
+      const entry = rawEntry as PortableAutomationEntryV1
+      if (entry.schemaVersion !== 1) throw new Error('Portable Automation schemaVersion must be 1')
+      const parsed = AutomationDefinitionV3Schema.parse(entry.definition) as AutomationDefinitionV3
+      id = parsed.id
+      if (!Array.isArray(entry.dependencies)) throw new Error('Portable Automation dependencies must be an array')
+      const declaredDependencies = entry.dependencies.map(dependency => (
+        AutomationDependencyDeclarationV1Schema.parse(dependency) as AutomationDependencyDeclarationV1
+      ))
+      const normalized = portableAutomationDefinition(parsed, [])
+      const dependencies = [...new Map([
+        ...declaredDependencies,
+        ...normalized.dependencies,
+      ].map(dependency => [JSON.stringify(dependency), dependency])).values()]
+      const missing: AutomationDependencyDeclarationV1[] = []
+      for (const dependency of dependencies) {
+        if (!dependencyResolver || !await dependencyResolver.isAvailable(dependency)) missing.push(dependency)
+      }
+      const desiredEnabled = parsed.configuration?.desiredEnabled ?? parsed.enabled
+      const definition = structuredClone(normalized.definition)
+      if (missing.length > 0) {
+        definition.enabled = false
+        definition.configuration = { status: 'incomplete', desiredEnabled, missingDependencies: missing }
+      } else {
+        definition.enabled = desiredEnabled
+        delete definition.configuration
+      }
+      const imported = host.importDefinitions([definition], mode)
+      if (imported.skipped.length > 0) {
+        result.skipped.push(id)
+        result.items.push({ id, status: 'skipped' })
+      } else {
+        result.imported.push(id)
+        result.items.push({
+          id,
+          status: missing.length > 0 ? 'imported-disabled' : 'imported',
+          ...(missing.length > 0 ? { missingDependencies: missing } : {}),
+        })
+      }
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err)
+      result.failed.push({ id, error })
+      result.items.push({ id, status: 'failed', error })
+    }
   }
+  return result
 }

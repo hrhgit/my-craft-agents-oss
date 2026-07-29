@@ -27,7 +27,7 @@ import {
   type MultiWriterTransaction,
 } from '../storage/index.ts'
 import { getMortiseStateDatabasePath, MORTISE_STATE_WRITER_VERSION } from '../config/state-contract.ts'
-import { ensureWorkspaceMarker, readWorkspaceMarker, WorkspaceTopologyError } from './marker.ts'
+import { ensureWorkspaceMarker, readWorkspaceMarker, removeWorkspaceMarker, WorkspaceTopologyError } from './marker.ts'
 import {
   getWorkspaceTopologyOperationIdentity,
   getWorkspaceTopologyRecordIdentity,
@@ -372,6 +372,12 @@ export class WorkspaceTopologyStore {
         operationId: `${command.operationId}:receipt`,
       })
       if (receiptWrite.status !== 'applied') throw new Error(`Topology operation receipt conflicted: ${command.operationId}`)
+      if (command.operation === 'detach') {
+        const detached = requireLocation(current, command.locationId)
+        if (detached.endpoint.kind === 'local') {
+          removeWorkspaceMarker(detached.endpoint.rootPath, command.workspaceId)
+        }
+      }
       return receiptResult(command.operationId, receipt, 'applied', this.project(persisted))
     })
   }

@@ -1,5 +1,6 @@
 import { listSkillsSync as listPiSkillsSync } from '@mortise/pi-coding-agent/host-facade';
-import { MORTISE_AGENT_DIR, MORTISE_PROJECT_DIR } from '../config/paths.ts';
+import { getPiAgentDir } from '../config/pi-global-config.ts';
+import { MORTISE_PROJECT_DIR } from '../config/paths.ts';
 import { validateSkillSlug } from '../skills/storage.ts';
 
 export type PiSkillTier = 'global' | 'project';
@@ -25,7 +26,7 @@ export class PiSkillResolver {
   private listSkills() {
     return listPiSkillsSync({
       cwd: this.projectRoot,
-      agentDir: MORTISE_AGENT_DIR,
+      agentDir: getPiAgentDir(),
       projectConfigDir: MORTISE_PROJECT_DIR,
     });
   }

@@ -34,7 +34,29 @@ export interface ExtensionWorkspaceContentMetadataV1 {
   instancePolicy?: ExtensionWorkspaceContentInstancePolicy
   preferredGroup?: ExtensionWorkspaceContentPreferredGroup
 }
-export type ExtensionUINode =
+
+export interface ExtensionFileStateV1 {
+  schemaVersion: 1
+  apps: Record<string, Record<string, unknown>>
+}
+
+export function validateExtensionFileStateV1(value: unknown): value is ExtensionFileStateV1 {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const item = value as Record<string, unknown>
+  if (!onlyKeys(item, ['schemaVersion', 'apps']) || item.schemaVersion !== 1 || !item.apps || typeof item.apps !== 'object' || Array.isArray(item.apps)) return false
+  const apps = item.apps as Record<string, unknown>
+  if (Object.keys(apps).length > 64) return false
+  for (const [appId, state] of Object.entries(apps)) {
+    if (!boundedString(appId, 128) || !state || typeof state !== 'object' || Array.isArray(state)) return false
+  }
+  try {
+    const serialized = JSON.stringify(value)
+    return typeof serialized === 'string' && serialized.length <= 262_144
+  } catch {
+    return false
+  }
+}
+export type ExtensionUINode = ({ semanticId?: string } & (
   | { type: 'text'; text: string; tone?: Exclude<ExtensionUITone, 'info'> }
   | { type: 'markdown'; markdown: string }
   | { type: 'icon'; name: ExtensionUIIconName; label: string }
@@ -56,6 +78,7 @@ export type ExtensionUINode =
       permissions?: Array<'commands' | 'theme' | 'storage' | 'resize' | 'validation'>
     }
   | { type: 'row' | 'stack'; children: ExtensionUINode[]; gap?: 'none' | 'small' | 'medium' }
+))
 
 /** Serializable UI definition supplied by an extension. Host identity is deliberately absent. */
 export interface ExtensionContributionV1 {
@@ -82,6 +105,8 @@ export type ExtensionContributionDeltaV1 = {
   runtimeId: string
   /** Trusted workspace route injected by the host bridge. */
   workspaceId?: string
+  /** Trusted backend projection owner injected by the host bridge. */
+  backendType?: 'electron' | 'webui'
   revision: number
 } & (
   | { operation: 'upsert'; contribution: ExtensionContributionV1 }
@@ -99,28 +124,31 @@ function validateNode(value: unknown, depth = 0, count = { value: 0 }): string |
   if (!value || typeof value !== 'object' || Array.isArray(value)) return 'content must be a declarative node object'
   if (depth > 8 || ++count.value > 256) return 'content tree is too large'
   const node = value as Record<string, unknown>
+  if (node.semanticId !== undefined && (!boundedString(node.semanticId, 128) || !/^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(node.semanticId as string))) {
+    return 'semanticId must be a stable bounded identifier'
+  }
   if (node.type === 'text') {
-    if (!onlyKeys(node, ['type', 'text', 'tone'])) return 'Unsupported text node field'
+    if (!onlyKeys(node, ['type', 'text', 'tone', 'semanticId'])) return 'Unsupported text node field'
     if (node.tone !== undefined && !['default', 'muted', 'success', 'warning', 'danger'].includes(String(node.tone))) return 'Unsupported text tone'
     return boundedString(node.text, 20_000) ? null : 'text must be a bounded non-empty string'
   }
   if (node.type === 'markdown') {
-    if (!onlyKeys(node, ['type', 'markdown'])) return 'Unsupported markdown node field'
+    if (!onlyKeys(node, ['type', 'markdown', 'semanticId'])) return 'Unsupported markdown node field'
     return boundedString(node.markdown, 100_000) ? null : 'markdown must be a bounded non-empty string'
   }
-  if (node.type === 'divider') return onlyKeys(node, ['type']) ? null : 'Unsupported divider node field'
+  if (node.type === 'divider') return onlyKeys(node, ['type', 'semanticId']) ? null : 'Unsupported divider node field'
   if (node.type === 'icon') {
-    if (!onlyKeys(node, ['type', 'name', 'label'])) return 'Unsupported icon node field'
+    if (!onlyKeys(node, ['type', 'name', 'label', 'semanticId'])) return 'Unsupported icon node field'
     if (!iconSet.has(String(node.name))) return 'Unsupported icon name'
     return boundedString(node.label, 256) ? null : 'icon label is required'
   }
   if (node.type === 'badge') {
-    if (!onlyKeys(node, ['type', 'label', 'tone'])) return 'Unsupported badge node field'
+    if (!onlyKeys(node, ['type', 'label', 'tone', 'semanticId'])) return 'Unsupported badge node field'
     if (node.tone !== undefined && !['default', 'info', 'success', 'warning', 'danger'].includes(String(node.tone))) return 'Unsupported badge tone'
     return boundedString(node.label, 256) ? null : 'badge label is required'
   }
   if (node.type === 'button') {
-    if (!onlyKeys(node, ['type', 'label', 'icon', 'action', 'disabled', 'disabledReason', 'emphasis'])) return 'Unsupported button node field'
+    if (!onlyKeys(node, ['type', 'label', 'icon', 'action', 'disabled', 'disabledReason', 'emphasis', 'semanticId'])) return 'Unsupported button node field'
     if (!boundedString(node.label, 256)) return 'button label is required'
     if (node.icon !== undefined && !iconSet.has(String(node.icon))) return 'Unsupported button icon'
     if (!node.action || typeof node.action !== 'object' || Array.isArray(node.action)) return 'button action is required'
@@ -134,7 +162,7 @@ function validateNode(value: unknown, depth = 0, count = { value: 0 }): string |
     return null
   }
   if (node.type === 'step-progress') {
-    if (!onlyKeys(node, ['type', 'label', 'steps'])) return 'Unsupported step-progress node field'
+    if (!onlyKeys(node, ['type', 'label', 'steps', 'semanticId'])) return 'Unsupported step-progress node field'
     if (!boundedString(node.label, 256)) return 'step-progress label is required'
     if (!Array.isArray(node.steps) || node.steps.length === 0 || node.steps.length > 128) return 'step-progress steps must be a bounded non-empty array'
     const ids = new Set<string>()
@@ -150,7 +178,7 @@ function validateNode(value: unknown, depth = 0, count = { value: 0 }): string |
     return null
   }
   if (node.type === 'sandbox-app') {
-    if (!onlyKeys(node, ['type', 'appId', 'title', 'html', 'css', 'script', 'initialState', 'minHeight', 'maxHeight', 'preferredHeight', 'permissions'])) return 'Unsupported sandbox app field'
+    if (!onlyKeys(node, ['type', 'appId', 'title', 'html', 'css', 'script', 'initialState', 'minHeight', 'maxHeight', 'preferredHeight', 'permissions', 'semanticId'])) return 'Unsupported sandbox app field'
     if (!boundedString(node.appId, 128) || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(node.appId as string)) return 'sandbox appId must be a stable identifier'
     if (!boundedString(node.title, 256)) return 'sandbox title is required'
     if (typeof node.html !== 'string' || node.html.length > 524_288) return 'sandbox html is too large'
@@ -179,7 +207,7 @@ function validateNode(value: unknown, depth = 0, count = { value: 0 }): string |
     return null
   }
   if (node.type === 'row' || node.type === 'stack') {
-    if (!onlyKeys(node, ['type', 'children', 'gap'])) return 'Unsupported container node field'
+    if (!onlyKeys(node, ['type', 'children', 'gap', 'semanticId'])) return 'Unsupported container node field'
     if (!Array.isArray(node.children) || node.children.length > 64) return 'container children must be a bounded array'
     if (node.gap !== undefined && !['none', 'small', 'medium'].includes(String(node.gap))) return 'Unsupported container gap'
     for (const child of node.children) {
@@ -272,6 +300,7 @@ export function validateExtensionContributionDeltaV1(value: unknown): string | n
     if (!boundedString(item[key], 256)) return `${key} must be a non-empty bounded string`
   }
   if (item.workspaceId !== undefined && !boundedString(item.workspaceId, 256)) return 'workspaceId must be a bounded string'
+  if (item.backendType !== undefined && !['electron', 'webui'].includes(String(item.backendType))) return 'backendType must identify a supported backend projection'
   if (!Number.isSafeInteger(item.revision) || Number(item.revision) < 1) return 'revision must be a positive safe integer'
   if (item.operation === 'upsert') {
     const error = validateExtensionContributionV1(item.contribution)

@@ -29,8 +29,7 @@ To create a definition, save this current V3 document fragment as `automation.js
       "schedule": {
         "kind": "cron",
         "expression": "0 9 * * 1-5",
-        "timezone": "Asia/Shanghai",
-        "misfire": "run-once"
+        "timezone": "Asia/Shanghai"
       }
     }
   ],
@@ -94,8 +93,7 @@ Use a five- or six-field cron expression and an optional IANA timezone:
   "schedule": {
     "kind": "cron",
     "expression": "0 18 * * 1-5",
-    "timezone": "Europe/Berlin",
-    "misfire": "skip"
+    "timezone": "Europe/Berlin"
   }
 }
 ```
@@ -109,8 +107,7 @@ Use a five- or six-field cron expression and an optional IANA timezone:
   "schedule": {
     "kind": "once",
     "at": "2026-08-01T09:00:00.000Z",
-    "expiresAt": "2026-08-01T12:00:00.000Z",
-    "misfire": "run-once"
+    "expiresAt": "2026-08-01T12:00:00.000Z"
   }
 }
 ```
@@ -124,8 +121,7 @@ Use a five- or six-field cron expression and an optional IANA timezone:
   "schedule": {
     "kind": "interval",
     "everyMs": 900000,
-    "anchorAt": "2026-07-21T00:00:00.000Z",
-    "misfire": "skip"
+    "anchorAt": "2026-07-21T00:00:00.000Z"
   }
 }
 ```
@@ -192,7 +188,9 @@ Definitions containing a time trigger cannot use `event-session`, because no tri
 }
 ```
 
-Secrets are references to Mortise secret storage, never literal passwords or tokens in a definition. Resource bundle export removes sensitive literal headers while retaining safe secret references.
+Secrets are references to Mortise secret storage, never literal passwords or tokens in a definition. Resource bundle export replaces a sensitive literal header with an explicit secret dependency instead of silently dropping the field.
+
+Resource bundles carry each complete Automation definition with its required Session, secret, and external or Extension event-source dependencies. Import reconnects dependencies that can be identified in the target Workspace. An entry with missing dependencies is still imported, marked configuration-incomplete, and kept disabled. Batch import reports an isolated result for each entry, so one malformed or incomplete definition does not block valid definitions.
 
 ## Conditions
 
@@ -202,7 +200,7 @@ Definitions may use `time`, `state`, and nested `and` / `or` / `not` conditions.
 
 - `overlap: "skip"` records and skips an occurrence while a run is active.
 - `overlap: "queue-one"` retains only the newest queued occurrence.
-- Restart recovery coalesces stale `queue-one` claims before execution.
+- Boundaries missed while no backend is active are skipped without creating recovery runs.
 - `actionFailure: "stop"` stops at the first failed action.
 - `actionFailure: "continue"` runs remaining actions and records a partial result.
 

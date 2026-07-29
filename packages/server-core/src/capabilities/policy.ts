@@ -1,4 +1,8 @@
 import type { CapabilityAuthorization, CapabilityRequestV1 } from './types.ts'
+import {
+  AUTOMATION_WORKSPACE_CAPABILITY_V1,
+  AUTOMATION_WORKSPACE_OPERATIONS_V1,
+} from '@mortise/shared/protocol'
 
 export type CapabilityPolicyDecision = 'allow' | 'deny' | 'prompt'
 
@@ -60,8 +64,9 @@ export const ELECTRON_CAPABILITY_POLICY_V1: readonly CapabilityPolicyRule[] = [
   { capability: 'session.transfer', operations: ['export-summary', 'import-summary'], decision: 'prompt' },
   { capability: 'messaging.session', operations: ['status', 'list-bindings'], decision: 'allow' },
   { capability: 'messaging.session', operations: ['pair', 'unbind'], decision: 'prompt' },
-  { capability: 'automation.workspace', operations: ['describe', 'validate', 'simulate'], decision: 'allow' },
-  // Definitions and run snapshots contain prompts, webhook headers, and output summaries.
-  { capability: 'automation.workspace', operations: ['list', 'get', 'get-run', 'list-runs'], decision: 'prompt' },
-  { capability: 'automation.workspace', operations: ['create', 'update', 'delete', 'set-enabled', 'run', 'emit-event'], decision: 'prompt' },
+  {
+    capability: AUTOMATION_WORKSPACE_CAPABILITY_V1,
+    operations: AUTOMATION_WORKSPACE_OPERATIONS_V1,
+    decision: 'allow',
+  },
 ] as const

@@ -26,10 +26,13 @@ import {
   buildPiProjectionSnapshotFromHostProjection,
   PiProjectionBuilder,
   piHostManager,
+  BackendExtensionRuntimeRegistry,
+  backendTypeFromProcess,
+  type BackendExtensionWorkspaceSnapshot,
 } from '@mortise/shared/agent/backend'
-import { alternateMidStreamBehavior, readPiGlobalProviders, readPiGlobalSettings, getDefaultThinkingLevel, getMidStreamBehavior, resetManagedAnthropicAuthEnvVars, getPersistedUiLanguage, resolveTitleLanguageName, listSubagentTemplates, type PiExtensionReloadActiveSession, type PiExtensionReloadResult } from '@mortise/shared/config'
+import { alternateMidStreamBehavior, readPiGlobalProviders, readPiGlobalSettings, getDefaultThinkingLevel, getMidStreamBehavior, resetManagedAnthropicAuthEnvVars, getPersistedUiLanguage, resolveTitleLanguageName, listSubagentTemplates } from '@mortise/shared/config'
 import { PrivilegedExecutionBroker, SessionShareTransferService } from '@mortise/server-core/services'
-import { InitGate, type WorkspaceTopologySessionCoordinator } from '@mortise/server-core/domain'
+import { InitGate, WorkspaceLocationActivityRegistry, type WorkspaceTopologySessionCoordinator } from '@mortise/server-core/domain'
 import { i18n } from '@mortise/shared/i18n'
 import {
   getWorkspaces,
@@ -66,7 +69,7 @@ import {
   findPiSessionProjectionById,
   appendPiBranchMessagesViaSessionManager,
   appendStoredMessagesViaPiSessionManager,
-  writeMortiseSessionOverlayAsync,
+  writeTreeSessionUiMetadataAsync,
   projectTreeSessionProjectionAsStoredSession,
   serializeSession,
   validateBundle,
@@ -83,7 +86,7 @@ import {
 import { ConfigWatcher, type ConfigWatcherCallbacks } from '@mortise/shared/config'
 import { getLastApiError } from '@mortise/shared/interceptor'
 import { restoreFiles } from '@mortise/shared/utils/bundle-files'
-import { type Session, type SessionEvent, type FileAttachment, type SendMessageOptions, type UnreadSummary, type PiProjectionEventV1, type PiProjectionSnapshotV1, type ExtensionInteractionResponseV1, RPC_CHANNELS, SESSION_SETTLEMENT_ERROR_CODE, generateMessageId } from '@mortise/shared/protocol'
+import { type Session, type SessionEvent, type FileAttachment, type SendMessageOptions, type UnreadSummary, type PiProjectionEventV1, type PiProjectionSnapshotV1, type ExtensionInteractionResponseV1, type ExtensionFileStateV1, validateExtensionFileStateV1, RPC_CHANNELS, SESSION_SETTLEMENT_ERROR_CODE, generateMessageId } from '@mortise/shared/protocol'
 import {
   ConversationProjector,
   resolvePiBranchTarget,
@@ -409,7 +412,6 @@ export const AGENT_FLAGS = {
 const MAX_ADMIN_REMEMBER_MINUTES = 60
 const MAX_ANNOTATIONS_PER_MESSAGE = 200
 const MAX_ANNOTATION_JSON_BYTES = 32 * 1024
-const AUTOMATION_NOTIFICATION_MAX_CHARS = 8_000
 
 // Window during which fs.watch metadata-revert events from our own atomic write
 // are ignored, so the watcher does not roll back the in-memory mutation we
@@ -726,6 +728,7 @@ export interface SessionManagerOptions {
   createSessionBackend?: SessionBackendFactory
   sessionTurnControl?: SessionTurnControl
   toolSideEffectRecorderFactory?: (workspaceId: string, sessionId: string) => ToolSideEffectRecorder
+  extensionRuntime?: BackendExtensionRuntimeRegistry
 }
 
 export class SessionFollowUpQueueFullError extends Error {
@@ -1239,6 +1242,7 @@ function managedToSession(
     workspaceName: m.workspace.name,
     messages: [],
     isProcessing: m.isProcessing,
+    ...(m.deleting ? { deletionState: 'deleting' as const } : {}),
     ...(m.pendingSettlementReason || m.settlementPromise
       ? {
           pendingFailure: {
@@ -1271,7 +1275,6 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
   private readonly toolSideEffectRecorderFactory: (workspaceId: string, sessionId: string) => ToolSideEffectRecorder
   private readonly toolSideEffectWrites = new Map<string, Promise<void>>()
   private sessions: Map<string, ManagedSession> = new Map()
-  private extensionReloadPromise: Promise<PiExtensionReloadResult> | null = null
   private piProjectionBySession = new Map<string, ConversationProjector>()
   private piProjectionRetiredRuntimeIds = new Map<string, Set<string>>()
   private piProjectionWrites = new Map<string, Promise<void>>()
@@ -1280,6 +1283,7 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
   private subagentDeliveryWrites = new Map<string, Promise<void>>()
   private subagentDeliveryTasks = new Map<string, Promise<void>>()
   private subagentLifecycleTasks = new Map<string, Set<Promise<void>>>()
+  private readonly workspaceLocationActivities = new WorkspaceLocationActivityRegistry()
   private capabilityPrompt?: (request: import('@mortise/shared/protocol').CapabilityRequestV1) => Promise<boolean>
   private readonly capabilityRouter = new CapabilityRouter({
     requireDeclarations: true,
@@ -1371,6 +1375,7 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
   // Delta batching for performance - reduces IPC events from 50+/sec to ~20/sec
   // Config watchers for live updates - one per workspace
   private configWatchers: Map<string, ConfigWatcher> = new Map()
+  private readonly extensionRuntime: BackendExtensionRuntimeRegistry
   // Canonical V3 host runtime - one scheduler/store/ledger owner per workspace.
   private automationHosts: Map<string, AutomationWorkspaceHostV3> = new Map()
   private automationSessionMetadata = new Map<string, { permissionMode?: string; sessionName?: string }>()
@@ -1431,6 +1436,9 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
     this.resolveWorkspaceByNameOrId = options.resolveWorkspaceByNameOrId ?? getWorkspaceByNameOrId
     this.createSessionBackend = options.createSessionBackend ?? (args => args.createDefaultBackend())
     this.sessionTurnControl = options.sessionTurnControl ?? getDefaultSessionTurnControl()
+    this.extensionRuntime = options.extensionRuntime ?? new BackendExtensionRuntimeRegistry({
+      backendType: backendTypeFromProcess(),
+    })
     this.toolSideEffectRecorderFactory = options.toolSideEffectRecorderFactory
       ?? ((workspaceId, sessionId) => new FileToolSideEffectLedger(workspaceId, sessionId))
   }
@@ -1444,8 +1452,15 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
     const was = managed.isProcessing
     managed.isProcessing = processing
     if (!was && processing) {
+      this.workspaceLocationActivities.begin({
+        workspaceId: managed.workspace.id,
+        locationId: managed.activeWorkspaceLocationId ?? managed.workspace.primaryLocationId,
+        kind: 'session',
+        activityId: managed.id,
+      })
       sessionRuntimeHooks.onSessionStarted()
     } else if (was && !processing) {
+      this.workspaceLocationActivities.end('session', managed.id)
       sessionRuntimeHooks.onSessionStopped()
     }
     if (was !== processing) {
@@ -1861,6 +1876,7 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
           webhook: executeWebhook,
         },
         validateSession: (sessionId, expectedWorkspaceId) => this.sessions.get(sessionId)?.workspace.id === expectedWorkspaceId,
+        getCurrentLocationId: () => this.sessions.values().find(session => session.workspace.id === workspaceId)?.workspace.primaryLocationId,
         onChanged: change => this.broadcastAutomationsChanged(workspaceId, change),
         onError: error => sessionLog.error(`[Automations] ${workspaceId}:`, error),
       })
@@ -2295,6 +2311,7 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
       const workspaces = getWorkspaces()
       for (const workspace of workspaces) {
         this.setupConfigWatcher(requirePrimaryLocalWorkspaceRoot(workspace), workspace.id)
+        await this.openWorkspaceExtensions(workspace)
       }
 
       // Load existing sessions from disk
@@ -2447,6 +2464,27 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
 
   getWorkspaces(): Workspace[] {
     return getWorkspaces()
+  }
+
+  async openWorkspaceExtensions(workspace: Workspace | WorkspaceInfo): Promise<BackendExtensionWorkspaceSnapshot> {
+    return this.extensionRuntime.openWorkspace(
+      workspace.id,
+      requirePrimaryLocalWorkspaceRoot(workspace as Workspace),
+    )
+  }
+
+  getWorkspaceExtensionSnapshot(workspaceId: string): BackendExtensionWorkspaceSnapshot | null {
+    return this.extensionRuntime.getWorkspaceSnapshot(workspaceId)
+  }
+
+  getExtensionFileState(workspaceId: string, extensionId: string): ExtensionFileStateV1 {
+    return this.extensionRuntime.readExtensionState(workspaceId, extensionId, validateExtensionFileStateV1)
+      ?? { schemaVersion: 1, apps: {} }
+  }
+
+  async setExtensionFileState(workspaceId: string, extensionId: string, state: ExtensionFileStateV1): Promise<void> {
+    if (!validateExtensionFileStateV1(state)) throw new TypeError('Invalid Extension file state')
+    await this.extensionRuntime.writeExtensionState(workspaceId, extensionId, state, validateExtensionFileStateV1)
   }
 
   getWorkspacesInfo(): WorkspaceInfo[] {
@@ -3280,7 +3318,7 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
 
     // Branch: project the active Pi path up to the selected entry, then append
     // only canonical messages through Pi's public SessionManager API. Mortise
-    // retains UI-only overlay fields (annotations, attachments, badges).
+    // retains UI-only metadata fields (annotations, attachments, badges).
     if (validatedBranch) {
       try {
         const branchedStored = loadStoredSession(workspace.id, storedSession.mortiseId)
@@ -3761,6 +3799,7 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
         provisionalAwareEventSink,
         managed.workspace.id,
         managed.id,
+        this.extensionRuntime.backendType,
       )
       const onPiProjectionEvent = (event: PiProjectionEventV1) => {
         if (!this.hasTurnControl(managed)) {
@@ -3801,11 +3840,22 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
       )
       const onChildTaskBackgroundStarted = async (operation: ChildTaskBackgroundOperation) => {
         if (managed.deleting || this.sessions.get(managed.id) !== managed) return
+        this.workspaceLocationActivities.begin({
+          workspaceId: managed.workspace.id,
+          locationId: managed.activeWorkspaceLocationId ?? managed.workspace.primaryLocationId,
+          kind: 'child-task',
+          activityId: `${managed.id}:${operation.childSessionId}`,
+          ownerSessionId: managed.id,
+        })
         await this.trackSubagentLifecycleTask(managed, this.recordBackgroundChildOperation(managed, operation))
       }
       const onChildTaskSettled = async (operation: ChildTaskSettledOperation) => {
         if (managed.deleting || this.sessions.get(managed.id) !== managed) return
-        await this.trackSubagentLifecycleTask(managed, this.settleBackgroundChildOperation(managed, operation))
+        try {
+          await this.trackSubagentLifecycleTask(managed, this.settleBackgroundChildOperation(managed, operation))
+        } finally {
+          this.workspaceLocationActivities.end('child-task', `${managed.id}:${operation.childSessionId}`)
+        }
       }
 
       const getBranchFallbackMessages = () => {
@@ -4170,6 +4220,9 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
       // children via listChildSessions(spawnedFrom filter).
       // Backends without spawnChildSession are unsupported — onSpawnSession throws.
       managed.agent.onSpawnSession = async (request) => {
+        if (managed.deleting || this.sessions.get(managed.id) !== managed) {
+          throw new Error(`Session ${managed.id} is being deleted`)
+        }
         sessionLog.info(`Child task ${request.action} request from session ${managed.id}:`, request.name || request.sessionId || '(unnamed)')
 
         // Thin-wrapper path: delegate to pi's session tree.
@@ -5257,6 +5310,7 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
     // Session storage is keyed by stable Workspace identity.
     const workspaceId = managed.workspace.id
     managed.deleting = true
+    this.sendEvent({ type: 'session_deletion_changed', sessionId, state: 'deleting' }, workspaceId)
 
     try {
 
@@ -5294,6 +5348,9 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
     this.remoteBpms.delete(sessionId)
     this.browserHostByCanvas.delete(sessionId)
 
+    // Each child-task type owns its own stop and settlement contract.
+    await managed.agent?.prepareChildTasksForParentDeletion?.()
+
     // Dispose agent, pool server, MCP pool, and session-scoped callbacks via
     // the same runtime teardown path used for config-driven restarts.
     await this.disposeManagedAgentRuntime(managed, 'session deleted', { propagateFailure: true })
@@ -5308,7 +5365,6 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
 
     // Delete from disk too
     if (!await deleteStoredSession(workspaceId, sessionId)) {
-      managed.deleting = false
       throw new Error(`Failed to delete Session data: ${sessionId}`)
     }
 
@@ -5327,7 +5383,10 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
     // Clean up attachments directory (handled by deleteStoredSession for workspace-scoped storage)
     sessionLog.info(`Deleted session ${sessionId}`)
     } catch (error) {
-      if (this.sessions.get(sessionId) === managed) managed.deleting = false
+      if (this.sessions.get(sessionId) === managed) {
+        managed.deleting = true
+        this.sendEvent({ type: 'session_deletion_changed', sessionId, state: 'deleting' }, workspaceId)
+      }
       throw error
     }
   }
@@ -6335,9 +6394,17 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
   async interruptWorkspaceSessionsForTopologyChange(
     target: WorkspaceSessionInterruptionTarget,
   ): Promise<WorkspaceSessionInterruptionResult> {
+    const activeOwners = target.scope === 'location'
+      ? new Set(this.workspaceLocationActivities.list({
+          workspaceId: target.workspaceId,
+          locationId: target.locationId,
+        }).flatMap(activity => activity.ownerSessionId ?? (activity.kind === 'session' ? activity.activityId : [])))
+      : null
     const selected = Array.from(this.sessions.values()).filter((managed) => {
       if (managed.workspace.id !== target.workspaceId) return false
-      if (target.scope === 'location' && managed.activeWorkspaceLocationId !== target.locationId) return false
+      if (target.scope === 'location'
+        && !activeOwners?.has(managed.id)
+        && managed.activeWorkspaceLocationId !== target.locationId) return false
       return this.hasNonTerminalWorkspaceSessionWork(managed)
     })
 
@@ -6460,6 +6527,7 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
       managed.pendingProviderRuntimeRestart = false
       managed.pendingSettlementReason = undefined
       managed.backgroundShellCommands.clear()
+      this.workspaceLocationActivities.clearSession(sessionId)
 
       const bpm = this.getBrowserPaneManagerForSession(sessionId)
       bpm?.unbindAllForSession(sessionId)
@@ -6572,6 +6640,7 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
 
         // Clean up the stored command
         managed.backgroundShellCommands.delete(shellId)
+        this.workspaceLocationActivities.end('subprocess', `${managed.id}:${shellId}`)
       } catch (err) {
         sessionLog.error(`Error killing shell process: ${err}`)
       }
@@ -6776,73 +6845,6 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
       kind: 'agent_settled',
       payload: { status: 'interrupted' },
     })
-  }
-
-  async reloadExtensions(): Promise<{ reloadedSessionCount: number; deferredSessionCount: number }> {
-    const targets = Array.from(this.sessions.values()).filter(
-      (managed) => managed.agent && typeof managed.agent.reloadExtensions === 'function',
-    )
-    const results = await Promise.allSettled(targets.map(async (managed) => ({
-      sessionId: managed.id,
-      result: await managed.agent!.reloadExtensions!(),
-    })))
-    const errors = results.flatMap((result, index) => result.status === 'rejected'
-      ? [`${targets[index]?.id ?? 'unknown session'}: ${result.reason instanceof Error ? result.reason.message : String(result.reason)}`]
-      : [])
-    if (errors.length > 0) throw new Error(`Failed to reload Pi extensions: ${errors.join('; ')}`)
-
-    let reloadedSessionCount = 0
-    let deferredSessionCount = 0
-    for (const result of results) {
-      if (result.status !== 'fulfilled') continue
-      if (result.value.result.reloaded) reloadedSessionCount += 1
-      if (result.value.result.deferred) deferredSessionCount += 1
-    }
-    return { reloadedSessionCount, deferredSessionCount }
-  }
-
-  private getExtensionReloadActiveSessions(): PiExtensionReloadActiveSession[] {
-    const result: PiExtensionReloadActiveSession[] = []
-    for (const managed of this.sessions.values()) {
-      if (!managed.isProcessing && !this.isPiProjectionProcessing(managed.id)) continue
-      result.push({
-        sessionId: managed.id,
-        workspaceName: managed.workspace.name,
-        title: managed.name || undefined,
-      })
-    }
-    return result
-  }
-
-  async requestExtensionReload(interruptRunning: boolean): Promise<PiExtensionReloadResult> {
-    if (this.extensionReloadPromise) return await this.extensionReloadPromise
-
-    const activeSessions = this.getExtensionReloadActiveSessions()
-    if (activeSessions.length > 0 && !interruptRunning) {
-      return { status: 'confirmation_required', activeSessions }
-    }
-
-    this.extensionReloadPromise = (async () => {
-      const currentActiveSessions = this.getExtensionReloadActiveSessions()
-      if (currentActiveSessions.length > 0 && !interruptRunning) {
-        return { status: 'confirmation_required', activeSessions: currentActiveSessions }
-      }
-      if (interruptRunning) {
-        await Promise.all(currentActiveSessions.map((session) => this.cancelProcessing(session.sessionId, false)))
-      }
-      const summary = await this.reloadExtensions()
-      return {
-        status: 'reloaded',
-        interruptedSessionCount: interruptRunning ? currentActiveSessions.length : 0,
-        ...summary,
-      }
-    })()
-
-    try {
-      return await this.extensionReloadPromise
-    } finally {
-      this.extensionReloadPromise = null
-    }
   }
 
   /**
@@ -7214,6 +7216,13 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
       }
 
       case 'tool_start': {
+        this.workspaceLocationActivities.begin({
+          workspaceId: managed.workspace.id,
+          locationId: managed.activeWorkspaceLocationId ?? managed.workspace.primaryLocationId,
+          kind: 'tool',
+          activityId: `${managed.id}:${event.toolUseId}`,
+          ownerSessionId: managed.id,
+        })
         const formattedToolInput = formatToolInputPaths(event.input)
         const workspaceRootPath = requirePrimaryLocalWorkspaceRoot(managed.workspace)
         let toolDisplayMeta: ToolDisplayMeta | undefined
@@ -7243,6 +7252,7 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
       }
 
       case 'tool_result': {
+        this.workspaceLocationActivities.end('tool', `${managed.id}:${event.toolUseId}`)
         const pending = managed.pendingToolSideEffects.get(event.toolUseId)
         if (pending) {
           await this.recordToolSideEffect(managed, {
@@ -7375,6 +7385,7 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
       case 'task_completed':
         // Store output for later retrieval via getTaskOutput()
         if (managed) {
+          this.workspaceLocationActivities.end('subprocess', `${managed.id}:${event.taskId}`)
           managed.backgroundTaskOutputs.set(event.taskId, {
             outputFile: event.outputFile || '',
             summary: event.summary || '',
@@ -7406,6 +7417,13 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
         // Store the command for later process killing
         if (event.command && managed) {
           managed.backgroundShellCommands.set(event.shellId, event.command)
+          this.workspaceLocationActivities.begin({
+            workspaceId: managed.workspace.id,
+            locationId: managed.activeWorkspaceLocationId ?? managed.workspace.primaryLocationId,
+            kind: 'subprocess',
+            activityId: `${managed.id}:${event.shellId}`,
+            ownerSessionId: managed.id,
+          })
           sessionLog.info(`Stored command for shell ${event.shellId}: ${event.command.slice(0, 50)}...`)
         }
         // Forward to renderer
@@ -7618,7 +7636,7 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
       }
     }
 
-    if (target.kind === 'session') {
+    {
       const resolved = this.resolveAutomationSessionReference(context, target.session)
       if ('error' in resolved) return resolved.error
       try {
@@ -7631,91 +7649,6 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
           error instanceof Error ? error.message : String(error),
         )
       }
-    }
-
-    if (target.provider && !hasConfiguredPiProvider(target.provider)) {
-      return this.automationActionError('blocked', 'provider_not_found', `Provider "${target.provider}" is not configured`)
-    }
-    const thinkingLevel = normalizeThinkingLevel(target.thinkingLevel)
-    if (target.thinkingLevel && !thinkingLevel) {
-      return this.automationActionError('blocked', 'thinking_level_invalid', `Thinking level "${target.thinkingLevel}" is not supported`)
-    }
-
-    const workspace = this.resolveWorkspaceByNameOrId(context.workspaceId)
-    if (!workspace) {
-      return this.automationActionError('blocked', 'workspace_not_found', `Workspace ${context.workspaceId} was not found`)
-    }
-    const backendContext = resolveBackendContext({
-      sessionProvider: target.provider,
-      managedModel: target.model,
-    })
-    const isolated = createBackendFromResolvedContext({
-      context: backendContext,
-      hostRuntime: buildBackendHostRuntimeContext(),
-      coreConfig: {
-        workspace,
-        session: {
-          mortiseId: `automation-isolated-${randomUUID()}`,
-          workspaceId: workspace.id,
-          workspaceRootPath: requirePrimaryLocalWorkspaceRoot(workspace),
-          createdAt: Date.now(),
-          lastUsedAt: Date.now(),
-          sdkCwd: requirePrimaryLocalWorkspaceRoot(workspace),
-          model: target.model,
-          provider: target.provider,
-          permissionMode: target.permissionMode ?? 'safe',
-        },
-        model: target.model,
-        miniModel: target.model ?? backendContext.resolvedModel,
-        thinkingLevel,
-        systemPromptPreset: 'mini',
-        envOverrides: { MORTISE_WORKSPACE_PATH: requirePrimaryLocalWorkspaceRoot(workspace) },
-        isHeadless: true,
-        skipConfigWatcher: true,
-      },
-      providerOptions: { piAuthProvider: backendContext.providerKey },
-    })
-
-    try {
-      const output = await isolated.runIsolatedAgent({
-        prompt,
-        ...(target.provider ? { provider: target.provider } : {}),
-        ...(target.model ? { model: target.model } : {}),
-        ...(thinkingLevel ? { thinkingLevel } : {}),
-        ...(context.signal ? { signal: context.signal } : {}),
-      })
-      if (!output) {
-        return this.automationActionError('failed', 'isolated_agent_no_result', 'The isolated Agent returned no result')
-      }
-      const boundedOutput = output.slice(0, 65_536)
-      if (!target.notify) return { status: 'succeeded', details: { kind: 'isolated-agent', output: boundedOutput, notification: 'none' } }
-
-      const notifyTarget = this.resolveAutomationSessionReference(context, target.notify.session)
-      if ('error' in notifyTarget) return notifyTarget.error
-      const notification = this.formatAutomationNotification(context.definition.name, output)
-      try {
-        await this.deliverAutomationSessionPrompt(
-          notifyTarget.managed,
-          notification,
-          target.notify.delivery,
-          context.signal,
-        )
-      } catch (error) {
-        return this.automationActionError(
-          context.signal?.aborted ? 'cancelled' : 'failed',
-          context.signal?.aborted ? 'action_cancelled' : 'notification_delivery_failed',
-          error instanceof Error ? error.message : String(error),
-        )
-      }
-      return { status: 'succeeded', sessionId: notifyTarget.managed.id, details: { kind: 'isolated-agent', output: boundedOutput, notification: 'delivered' } }
-    } catch (error) {
-      return this.automationActionError(
-        context.signal?.aborted ? 'cancelled' : 'failed',
-        context.signal?.aborted ? 'action_cancelled' : 'isolated_agent_failed',
-        error instanceof Error ? error.message : String(error),
-      )
-    } finally {
-      isolated.destroy()
     }
   }
 
@@ -7768,12 +7701,6 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
         else sessionLog.warn(`[Automations] Session ${managed.id} failed after accepting an automation message`, error)
       })
     })
-  }
-
-  private formatAutomationNotification(automationName: string, output: string): string {
-    const prefix = `Automation "${automationName}" completed.\n\n`
-    const available = Math.max(0, AUTOMATION_NOTIFICATION_MAX_CHARS - prefix.length)
-    return `${prefix}${output.slice(0, available)}`
   }
 
   private automationActionError(
@@ -8033,7 +7960,7 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
       storedSession.messages,
     )
 
-    const overlaySession: StoredSession = {
+    const uiMetadataSession: StoredSession = {
       ...storedSession,
       messages: storedSession.messages.map((message) => {
         const importedId = importedIdMap.get(message.id)
@@ -8044,11 +7971,11 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
     // Write all bundle files (attachments, plans, data, downloads, etc.)
     // Uses restoreFiles() for path traversal, size, and base64 validation.
     restoreFiles(sessionDir, bundle.files)
-    await writeMortiseSessionOverlayAsync(sessionFile, overlaySession)
+    await writeTreeSessionUiMetadataAsync(sessionFile, uiMetadataSession)
 
     // Register in-memory — pass session metadata without messages to avoid
     // StoredMessage[] vs Message[] type mismatch, then convert messages separately
-    const reloadedStoredSession = loadStoredSession(workspaceRootPath, sessionId) ?? overlaySession
+    const reloadedStoredSession = loadStoredSession(workspaceRootPath, sessionId) ?? uiMetadataSession
     const { messages: bundleMessages, ...sessionMeta } = reloadedStoredSession
     const managed = createManagedSession(sessionMeta, workspace, {
       messagesLoaded: true,
@@ -8160,6 +8087,7 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
       }
     }
     this.automationHosts.clear()
+    this.extensionRuntime.clear()
 
     this.pendingPermissionRequests.clear()
     this.adminRememberApprovals.clear()

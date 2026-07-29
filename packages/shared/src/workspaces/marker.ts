@@ -55,6 +55,20 @@ export function readWorkspaceMarker(rootPath: string, workspaceId: string): Work
   return readMatchingMarker(markerPath, workspaceId)
 }
 
+/** Remove only a verified Workspace membership marker, preserving all other files. */
+export function removeWorkspaceMarker(rootPath: string, workspaceId: string): void {
+  const markerPath = getWorkspaceMarkerPath(rootPath)
+  if (!existsSync(markerPath)) {
+    throw markerError(
+      WORKSPACE_TOPOLOGY_ERROR_CODES.MARKER_MISSING,
+      `Workspace marker is missing at ${markerPath}`,
+      workspaceId,
+    )
+  }
+  readMatchingMarker(markerPath, workspaceId)
+  unlinkSync(markerPath)
+}
+
 /**
  * Adopt an unmarked local root or verify its existing membership marker.
  * A complete temporary file is linked into place so concurrent adopters never

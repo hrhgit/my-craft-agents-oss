@@ -48,10 +48,10 @@ describe('workspace transfer routing', () => {
   })
 
   it('copies resources without renderer credentials or a direct server channel', async () => {
-    const bundle = { version: 2 as const, exportedAt: 1, sourceWorkspaceId: source.id, resources: {} }
+    const bundle = { version: 3 as const, exportedAt: 1, sourceWorkspace: source.id, resources: {} }
     const importResult = {
-      skills: { imported: ['skill-a'], skipped: [], failed: [], warnings: [] },
-      automations: { imported: [], skipped: [], failed: [], warnings: [] },
+      skills: { imported: ['skill-a'], skipped: [], failed: [], warnings: [], items: [{ id: 'skill-a', status: 'imported' as const }] },
+      automations: { imported: [], skipped: [], failed: [], warnings: [], items: [] },
     }
     const invokeWorkspaceApi = mock(async (...callArgs: unknown[]) => {
       const [, method] = callArgs as [unknown, string]

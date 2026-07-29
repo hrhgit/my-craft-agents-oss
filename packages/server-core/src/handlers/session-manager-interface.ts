@@ -39,6 +39,7 @@ export interface ISessionManager extends WorkspaceTopologySessionCoordinator {
   cleanup(): Promise<void>
   setEventSink(sink: EventSink): void
   flushAllSessions(): Promise<void>
+  openWorkspaceExtensions?(workspace: Workspace | WorkspaceInfo): Promise<import('@mortise/shared/agent/backend').BackendExtensionWorkspaceSnapshot>
 
   // ---------------------------------------------------------------------------
   // Session CRUD
@@ -134,17 +135,18 @@ export interface ISessionManager extends WorkspaceTopologySessionCoordinator {
     ownerExtensionId?: string,
   ): Promise<import('@mortise/core/types').ExtensionCommandResult>
 
-  /** Reload extensions in all active Pi runtimes; streaming runtimes defer until settled. */
-  reloadExtensions(): Promise<{ reloadedSessionCount: number; deferredSessionCount: number }>
-
-  /** Settings-initiated reload with an explicit confirmation boundary for running sessions. */
-  requestExtensionReload(interruptRunning: boolean): Promise<import('@mortise/shared/config').PiExtensionReloadResult>
-
   /**
    * 查询当前会话已注册的 Pi 扩展 slash commands。
    * 非 Pi 后端或会话未就绪时返回空数组。
    */
   listExtensionCommands(sessionId: string): Promise<import('@mortise/shared/agent').PiExtensionCommand[]>
+
+  getExtensionFileState(workspaceId: string, extensionId: string): import('@mortise/shared/protocol').ExtensionFileStateV1
+  setExtensionFileState(
+    workspaceId: string,
+    extensionId: string,
+    state: import('@mortise/shared/protocol').ExtensionFileStateV1,
+  ): Promise<void>
 
   /**
    * List child sessions in pi's session tree spawned from the given session.

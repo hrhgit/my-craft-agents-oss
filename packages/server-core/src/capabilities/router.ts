@@ -5,6 +5,12 @@ import type {
   CapabilityRouterOptions,
 } from './types.ts'
 import { isDeepStrictEqual } from 'node:util'
+import {
+  capabilityStatusForExecutionRouteError,
+  EXECUTION_ROUTE_ERROR_CODES,
+  isExecutionRouteErrorCode,
+  isRequestingClientCapability,
+} from '@mortise/shared/protocol'
 
 const DEFAULT_TIMEOUT_MS = 30_000
 const DEFAULT_COMPLETED_RESULT_LIMIT = 500
@@ -26,6 +32,13 @@ function validateRequest(request: CapabilityRequestV1): string | undefined {
   }
   if (request.timeoutMs !== undefined && (!Number.isFinite(request.timeoutMs) || request.timeoutMs <= 0)) {
     return 'timeoutMs must be a positive finite number'
+  }
+  if (request.target?.owner === 'location-backend') {
+    if (!request.target.workspaceId.trim() || !request.target.locationId.trim()) {
+      return 'Location execution target requires workspaceId and locationId'
+    }
+  } else if (request.target !== undefined && request.target.owner !== 'requesting-client') {
+    return 'Unsupported capability execution target'
   }
   return undefined
 }
@@ -150,8 +163,24 @@ export class CapabilityRouter {
       } else {
         const provider = this.providers.get(request.capability)
         if (!provider) {
-        result = failure(request.requestId, 'unsupported', 'UNSUPPORTED_CAPABILITY', `Unsupported capability: ${request.capability}`)
+          result = isRequestingClientCapability(request.capability)
+            ? failure(
+                request.requestId,
+                'unsupported',
+                EXECUTION_ROUTE_ERROR_CODES.noInteractiveClient,
+                `No requesting client can execute capability: ${request.capability}`,
+              )
+            : failure(request.requestId, 'unsupported', 'UNSUPPORTED_CAPABILITY', `Unsupported capability: ${request.capability}`)
         } else {
+          if (isRequestingClientCapability(request.capability) && request.target?.owner === 'location-backend') {
+            result = failure(
+              request.requestId,
+              'unsupported',
+              EXECUTION_ROUTE_ERROR_CODES.unsupported,
+              `Capability must execute on the requesting client: ${request.capability}`,
+            )
+            return this.finishExecution(request, result, startedAt)
+          }
           const authorization = await this.options.authorize?.(request) ?? { allowed: true as const }
           if (!authorization.allowed) {
             result = failure(request.requestId, 'denied', 'PERMISSION_DENIED', authorization.reason ?? 'Capability request denied')
@@ -193,12 +222,24 @@ export class CapabilityRouter {
           timedOut ? `Capability request timed out after ${timeoutMs}ms` : 'Capability request cancelled',
         )
       } else {
-        result = failure(request.requestId, 'failed', 'PROVIDER_ERROR', error instanceof Error ? error.message : 'Capability provider failed')
+        const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined
+        result = isExecutionRouteErrorCode(code)
+          ? failure(
+              request.requestId,
+              capabilityStatusForExecutionRouteError(code),
+              code,
+              error instanceof Error ? error.message : 'Capability execution route failed',
+            )
+          : failure(request.requestId, 'failed', 'PROVIDER_ERROR', error instanceof Error ? error.message : 'Capability provider failed')
       }
     } finally {
       clearTimeout(timer)
     }
 
+    return this.finishExecution(request, result, startedAt)
+  }
+
+  private finishExecution(request: CapabilityRequestV1, result: CapabilityResultV1, startedAt: number): CapabilityResultV1 {
     this.pending.delete(request.requestId)
     this.remember(request, result)
     this.options.audit?.({

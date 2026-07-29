@@ -39,7 +39,14 @@ describe('SessionManager runtime teardown', () => {
       workspace as never,
       { messagesLoaded: true },
     ) as any
-    const agent = { dispose: jest.fn(), isProcessing: jest.fn(() => false) }
+    const agent: {
+      dispose: ReturnType<typeof jest.fn>
+      isProcessing: ReturnType<typeof jest.fn>
+      prepareChildTasksForParentDeletion?: ReturnType<typeof jest.fn>
+    } = {
+      dispose: jest.fn(),
+      isProcessing: jest.fn(() => false),
+    }
     managed.agent = agent
     ;(sm as unknown as { sessions: Map<string, unknown> }).sessions.set(sessionId, managed)
 
@@ -87,6 +94,31 @@ describe('SessionManager runtime teardown', () => {
     expect(first.agent.dispose).toHaveBeenCalledTimes(1)
     expect(second.agent.dispose).toHaveBeenCalledTimes(1)
     expect((sm as unknown as { sessions: Map<string, unknown> }).sessions.size).toBe(0)
+  })
+
+  it('deleteSession settles the concrete child-task contract before parent teardown', async () => {
+    const { agent } = injectManagedSession('delete-child-cascade')
+    const order: string[] = []
+    agent.prepareChildTasksForParentDeletion = jest.fn(async () => {
+      order.push('children-settled')
+      return { childSessionIds: ['child-1'] }
+    })
+    agent.dispose = jest.fn(() => { order.push('parent-disposed') })
+
+    await sm.deleteSession('delete-child-cascade')
+
+    expect(order).toEqual(['children-settled', 'parent-disposed'])
+  })
+
+  it('keeps a failed cascade visible and retryable in deleting state', async () => {
+    const { managed, agent } = injectManagedSession('delete-child-failure')
+    agent.prepareChildTasksForParentDeletion = jest.fn(async () => { throw new Error('child did not settle') })
+
+    await expect(sm.deleteSession('delete-child-failure')).rejects.toThrow('child did not settle')
+    expect(managed.deleting).toBe(true)
+    expect(await sm.getSession('delete-child-failure')).toMatchObject({ deletionState: 'deleting' })
+    agent.prepareChildTasksForParentDeletion = jest.fn(async () => ({ childSessionIds: ['child-1'] }))
+    await expect(sm.deleteSession('delete-child-failure')).resolves.toBeUndefined()
   })
 
   it('cleanup releases each backend turn handle after finite runtime disposal', async () => {

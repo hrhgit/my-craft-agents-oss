@@ -11,9 +11,9 @@ export interface EventTriggerV3 {
 }
 
 export type TimeScheduleV3 =
-  | { kind: 'cron'; expression: string; timezone?: string; misfire?: 'skip' | 'run-once' }
-  | { kind: 'once'; at: string; expiresAt?: string; misfire?: 'skip' | 'run-once' }
-  | { kind: 'interval'; everyMs: number; anchorAt: string; misfire?: 'skip' | 'run-once' }
+  | { kind: 'cron'; expression: string; timezone?: string }
+  | { kind: 'once'; at: string; expiresAt?: string }
+  | { kind: 'interval'; everyMs: number; anchorAt: string }
 
 export interface TimeTriggerV3 {
   id: string
@@ -27,6 +27,17 @@ export interface SecretReferenceV1 {
   provider: 'mortise-secrets'
   id: string
 }
+
+export type AutomationDependencyDeclarationV1 =
+  | { kind: 'session'; id: string; actionId: string; required: true }
+  | { kind: 'secret'; id: string; actionId: string; field: string; required: true }
+  | {
+      kind: 'event-source'
+      id: string
+      triggerId: string
+      source: 'extension' | 'external'
+      required: true
+    }
 
 export type SessionReferenceV1 = 'event-session' | { id: string }
 
@@ -43,14 +54,6 @@ export type PromptTargetV3 =
       kind: 'session'
       session: SessionReferenceV1
       delivery: 'followUp' | 'steer'
-    }
-  | {
-      kind: 'isolated-agent'
-      provider?: string
-      model?: string
-      thinkingLevel?: string
-      permissionMode?: 'safe' | 'ask' | 'allow-all'
-      notify?: { session: SessionReferenceV1; delivery: 'followUp' | 'steer' }
     }
 
 export interface PromptActionV3 {
@@ -114,6 +117,11 @@ export interface AutomationDefinitionV3 {
     overlap?: 'skip' | 'queue-one'
     actionFailure?: 'continue' | 'stop'
   }
+  configuration?: {
+    status: 'incomplete'
+    desiredEnabled: boolean
+    missingDependencies: AutomationDependencyDeclarationV1[]
+  }
   createdAt: string
   updatedAt: string
 }
@@ -161,8 +169,7 @@ export interface AutomationActionRunV1 {
 }
 
 export type AutomationActionExecutionDetailsV1 =
-  | { kind: 'webhook'; statusCode?: number; attempts: number; durationMs: number; responseBody?: string }
-  | { kind: 'isolated-agent'; output: string; notification: 'none' | 'delivered' }
+  { kind: 'webhook'; statusCode?: number; attempts: number; durationMs: number; responseBody?: string }
 
 export interface AutomationRunV1 {
   schemaVersion: 1

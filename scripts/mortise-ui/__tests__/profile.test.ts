@@ -66,20 +66,20 @@ describe('mortise-ui profiles', () => {
 
     setSharedPiSessionsDirForTests(join(profile.mortiseAgentDir, 'sessions'))
     try {
-      const productSessions = listSessions(productRoot)
+      const productSessions = listSessions('product-launch', productRoot)
       expect(productSessions.some(session => session.mortiseId === 'release-readiness')).toBe(true)
       expect(productSessions.map(session => session.mortiseId)).toEqual(expect.arrayContaining([
         'release-readiness', 'verify-search-child', 'search-regression', 'onboarding-copy',
       ]))
-      expect(listSessions(researchRoot)).toHaveLength(2)
-      expect(listSessions(supportRoot)).toHaveLength(2)
+      expect(listSessions('customer-research', researchRoot)).toHaveLength(2)
+      expect(listSessions('support-operations', supportRoot)).toHaveLength(2)
       expect(productSessions.find(session => session.mortiseId === 'search-regression'))
         .toMatchObject({ messageCount: 4, hasUnread: true })
-      expect(loadSession(productRoot, 'release-readiness')?.messages).toHaveLength(4)
-      const parentHeader = JSON.parse(readFileSync(getSessionFilePath(productRoot, 'release-readiness'), 'utf8').split(/\r?\n/, 1)[0]!)
-      const childHeader = JSON.parse(readFileSync(getSessionFilePath(productRoot, 'verify-search-child'), 'utf8').split(/\r?\n/, 1)[0]!)
+      expect(loadSession('product-launch', 'release-readiness')?.messages).toHaveLength(4)
+      const parentHeader = JSON.parse(readFileSync(getSessionFilePath('product-launch', 'release-readiness'), 'utf8').split(/\r?\n/, 1)[0]!)
+      const childHeader = JSON.parse(readFileSync(getSessionFilePath('product-launch', 'verify-search-child'), 'utf8').split(/\r?\n/, 1)[0]!)
       expect(childHeader.spawnedFrom).toBe(parentHeader.id)
-      expect(existsSync(join(getSessionPath(productRoot, 'release-readiness'), 'plans', 'release-readiness.md'))).toBe(true)
+      expect(existsSync(join(getSessionPath('product-launch', 'release-readiness'), 'plans', 'release-readiness.md'))).toBe(true)
     } finally {
       setSharedPiSessionsDirForTests(undefined)
     }
@@ -125,19 +125,19 @@ describe('mortise-ui profiles', () => {
 
     setSharedPiSessionsDirForTests(join(profile.mortiseAgentDir, 'sessions'))
     try {
-      expect(listSessions(workspaceRoot)).toEqual([expect.objectContaining({
+      expect(listSessions('workspace-a', workspaceRoot)).toEqual([expect.objectContaining({
         mortiseId: 'session-a', name: 'Inspect source', messageCount: 2, hasUnread: true,
       })])
-      expect(loadSession(workspaceRoot, 'session-a')?.messages.map(message => message.content)).toEqual([
+      expect(loadSession('workspace-a', 'session-a')?.messages.map(message => message.content)).toEqual([
         'What does this export?', 'It exports the value 42.',
       ])
-      expect(loadSession(workspaceRoot, 'session-a')?.pendingPlanExecution).toEqual({
+      expect(loadSession('workspace-a', 'session-a')?.pendingPlanExecution).toEqual({
         planPath: 'plans/inspection.md',
         draftInputSnapshot: 'Run the inspection plan.',
         awaitingCompaction: true,
         executionDispatched: false,
       })
-      expect(readFileSync(join(getSessionPath(workspaceRoot, 'session-a'), 'plans', 'inspection.md'), 'utf8')).toContain('# Inspection')
+      expect(readFileSync(join(getSessionPath('workspace-a', 'session-a'), 'plans', 'inspection.md'), 'utf8')).toContain('# Inspection')
     } finally {
       setSharedPiSessionsDirForTests(undefined)
     }

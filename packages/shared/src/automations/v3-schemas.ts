@@ -52,14 +52,35 @@ const CronScheduleSchema = z.object({
   kind: z.literal('cron'),
   expression: z.string().refine(isCron, 'Must be a valid five- or six-field cron expression'),
   timezone: z.string().refine(isIanaTimezone, 'Must be an IANA timezone').optional(),
-  misfire: z.enum(['skip', 'run-once']).optional(),
 }).strict()
+
+export const AutomationDependencyDeclarationV1Schema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('session'),
+    id: OpaqueIdSchema,
+    actionId: OpaqueIdSchema,
+    required: z.literal(true),
+  }).strict(),
+  z.object({
+    kind: z.literal('secret'),
+    id: OpaqueIdSchema,
+    actionId: OpaqueIdSchema,
+    field: z.string().min(1).max(255),
+    required: z.literal(true),
+  }).strict(),
+  z.object({
+    kind: z.literal('event-source'),
+    id: z.string().min(1).max(512),
+    triggerId: OpaqueIdSchema,
+    source: z.enum(['extension', 'external']),
+    required: z.literal(true),
+  }).strict(),
+])
 
 const OnceScheduleSchema = z.object({
   kind: z.literal('once'),
   at: IsoDateSchema,
   expiresAt: IsoDateSchema.optional(),
-  misfire: z.enum(['skip', 'run-once']).optional(),
 }).strict().superRefine((value, ctx) => {
   if (value.expiresAt && Date.parse(value.expiresAt) < Date.parse(value.at)) {
     ctx.addIssue({ code: 'custom', path: ['expiresAt'], message: 'expiresAt must not precede at' })
@@ -70,7 +91,6 @@ const IntervalScheduleSchema = z.object({
   kind: z.literal('interval'),
   everyMs: z.number().int().positive().max(365 * 24 * 60 * 60 * 1000),
   anchorAt: IsoDateSchema,
-  misfire: z.enum(['skip', 'run-once']).optional(),
 }).strict()
 
 const TimeTriggerSchema = z.object({
@@ -94,14 +114,6 @@ const PromptTargetSchema = z.discriminatedUnion('kind', [
     kind: z.literal('session'),
     session: SessionReferenceSchema,
     delivery: z.enum(['followUp', 'steer']),
-  }).strict(),
-  z.object({
-    kind: z.literal('isolated-agent'),
-    provider: z.string().min(1).optional(),
-    model: z.string().min(1).optional(),
-    thinkingLevel: z.string().min(1).optional(),
-    permissionMode: z.enum(['safe', 'ask', 'allow-all']).optional(),
-    notify: z.object({ session: SessionReferenceSchema, delivery: z.enum(['followUp', 'steer']) }).strict().optional(),
   }).strict(),
 ])
 
@@ -190,6 +202,11 @@ export const AutomationDefinitionV3Schema = z.object({
     overlap: z.enum(['skip', 'queue-one']).optional(),
     actionFailure: z.enum(['continue', 'stop']).optional(),
   }).strict().optional(),
+  configuration: z.object({
+    status: z.literal('incomplete'),
+    desiredEnabled: z.boolean(),
+    missingDependencies: z.array(AutomationDependencyDeclarationV1Schema).min(1),
+  }).strict().optional(),
   createdAt: IsoDateSchema,
   updatedAt: IsoDateSchema,
 }).strict().superRefine((value, ctx) => {
@@ -201,10 +218,12 @@ export const AutomationDefinitionV3Schema = z.object({
   }
   const hasTime = value.triggers.some(trigger => trigger.type === 'time')
   const usesEventSession = value.actions.some(action => action.type === 'prompt' && (
-    (action.target.kind === 'session' && action.target.session === 'event-session')
-    || (action.target.kind === 'isolated-agent' && action.target.notify?.session === 'event-session')
+    action.target.kind === 'session' && action.target.session === 'event-session'
   ))
   if (hasTime && usesEventSession) ctx.addIssue({ code: 'custom', path: ['actions'], message: 'event-session cannot be used when any trigger is a time trigger' })
+  if (value.configuration?.status === 'incomplete' && value.enabled) {
+    ctx.addIssue({ code: 'custom', path: ['enabled'], message: 'Automation with incomplete dependencies must be disabled' })
+  }
 })
 
 export const AutomationsDocumentV3Schema = z.object({
@@ -216,20 +235,13 @@ export const AutomationsDocumentV3Schema = z.object({
   if (new Set(ids).size !== ids.length) ctx.addIssue({ code: 'custom', path: ['definitions'], message: 'Automation IDs must be unique' })
 })
 
-const AutomationActionExecutionDetailsV1Schema = z.discriminatedUnion('kind', [
-  z.object({
+const AutomationActionExecutionDetailsV1Schema = z.object({
     kind: z.literal('webhook'),
     statusCode: z.number().int().optional(),
     attempts: z.number().int().nonnegative(),
     durationMs: z.number().nonnegative(),
     responseBody: z.string().optional(),
-  }).strict(),
-  z.object({
-    kind: z.literal('isolated-agent'),
-    output: z.string(),
-    notification: z.enum(['none', 'delivered']),
-  }).strict(),
-])
+  }).strict()
 
 const AutomationActionRunV1Schema = z.object({
   actionRunId: OpaqueIdSchema,

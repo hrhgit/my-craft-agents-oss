@@ -102,7 +102,7 @@ import { executeAutomationWorkspaceOperationV1 } from '@mortise/server-core/hand
 import { registerAutomationWorkspaceRpcHandlers } from '@mortise/server-core/handlers'
 import { AutomationIngressTokenRegistry, createAutomationIngressHandler } from '@mortise/server-core/services'
 import { nodeHttpAdapter } from '@mortise/server-core/webui'
-import { registerAllRpcHandlers } from './handlers/index'
+import { registerAllRpcHandlers, registerLayoutHandlers } from './handlers/index'
 import { registerCoreRpcHandlers, cleanupClientFileWatches } from '@mortise/server-core/handlers/rpc'
 import type { PlatformServices } from '../runtime/platform'
 import { createElectronPlatform, resolveElectronRuntimeContext } from './platform'
@@ -128,6 +128,7 @@ import { WindowManager } from './window-manager'
 import { resolveInitialWindowTarget } from './initial-window-target'
 import { routes } from '../shared/routes'
 import { LayoutCoordinator } from './layout-coordinator'
+import { BACKEND_TYPE_CAPABILITY } from '@mortise/shared/protocol'
 import { loadWindowState, saveWindowState } from './window-state'
 import { getWorkspaces, getWorkspaceByNameOrId, loadStoredConfig, addWorkspace, saveConfig, CONFIG_DIR } from '@mortise/shared/config'
 import { MORTISE_AGENT_DIR } from '@mortise/shared/config/paths'
@@ -264,6 +265,7 @@ const DEEPLINK_SCHEME = process.env.MORTISE_DEEPLINK_SCHEME || 'mortise'
 
 let windowManager: WindowManager | null = null
 let layoutCoordinator: LayoutCoordinator | null = null
+let webuiLayoutCoordinator: LayoutCoordinator | null = null
 let sessionManager: SessionManager | null = null
 let browserPaneManager: BrowserPaneManager | null = null
 let moduleSink: EventSink | null = null
@@ -542,6 +544,11 @@ app.whenReady().then(async () => {
         && process.env.MORTISE_UI_WINDOW_MODE === 'background',
     )
     layoutCoordinator = new LayoutCoordinator({
+      backendType: 'electron',
+      authorizeContentRef: ref => ref.workspaceId === '' || !!getWorkspaceByNameOrId(ref.workspaceId),
+    })
+    webuiLayoutCoordinator = new LayoutCoordinator({
+      backendType: 'webui',
       authorizeContentRef: ref => ref.workspaceId === '' || !!getWorkspaceByNameOrId(ref.workspaceId),
     })
     windowManager.setAuxiliaryClosedHandler((windowId, workspaceId) => {
@@ -1063,13 +1070,20 @@ app.whenReady().then(async () => {
             windowManager: windowManager ?? undefined,
             browserPaneManager: browserPaneManager ?? undefined,
             layoutCoordinator: layoutCoordinator ?? undefined,
+            layoutCoordinators: {
+              ...(layoutCoordinator ? { electron: layoutCoordinator } : {}),
+              ...(webuiLayoutCoordinator ? { webui: webuiLayoutCoordinator } : {}),
+            },
             messagingRegistry: messagingHandle.registry,
           }
         },
         // Headless: register only core handlers (no GUI handlers for browser, settings, etc.)
         // GUI: register all handlers (core + GUI)
         registerAllRpcHandlers: (server, deps, serverCtx) => {
-          if (isHeadless) registerCoreRpcHandlers(server, deps, serverCtx)
+          if (isHeadless) {
+            registerCoreRpcHandlers(server, deps, serverCtx)
+            registerLayoutHandlers(server, deps)
+          }
           else registerAllRpcHandlers(server, deps, serverCtx)
           registerAutomationWorkspaceRpcHandlers(server, {
             dispatcher: {
@@ -1140,7 +1154,20 @@ app.whenReady().then(async () => {
       moduleSink = instance.wsServer.push.bind(instance.wsServer)
       moduleClientResolver = resolveClientId
       layoutCoordinator?.setChangedHandler(layout => {
-        moduleSink?.(RPC_CHANNELS.layout.CHANGED, { to: 'workspace', workspaceId: layout.workspaceId }, layout)
+        for (const clientId of instance.wsServer.findClientsWithCapability(
+          BACKEND_TYPE_CAPABILITY.electron,
+          { workspaceId: layout.workspaceId },
+        )) {
+          moduleSink?.(RPC_CHANNELS.layout.CHANGED, { to: 'client', clientId }, layout)
+        }
+      })
+      webuiLayoutCoordinator?.setChangedHandler(layout => {
+        for (const clientId of instance.wsServer.findClientsWithCapability(
+          BACKEND_TYPE_CAPABILITY.webui,
+          { workspaceId: layout.workspaceId },
+        )) {
+          moduleSink?.(RPC_CHANNELS.layout.CHANGED, { to: 'client', clientId }, layout)
+        }
       })
 
       // IPC handlers — preload uses sendSync to get WS connection details
@@ -1722,7 +1749,10 @@ app.on('before-quit', async (event) => {
     },
     {
       name: 'layout-flush',
-      run: () => layoutCoordinator?.flush(),
+      run: async () => {
+        await layoutCoordinator?.flush()
+        await webuiLayoutCoordinator?.flush()
+      },
     },
     {
       name: 'dedicated-logs',

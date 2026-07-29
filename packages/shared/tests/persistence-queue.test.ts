@@ -30,6 +30,7 @@ function createTestSession(
 ): StoredSession {
   return {
     mortiseId: id,
+    workspaceId: workspaceRootPath,
     workspaceRootPath,
     createdAt: Date.now(),
     lastUsedAt: Date.now(),
@@ -206,17 +207,19 @@ describe('SessionPersistenceQueue', () => {
     expect(queue.hasFailedWrite(bad.mortiseId)).toBe(true);
   });
 
-  it('rejects flush when the overlay atomic write fails after a valid header update', async () => {
-    const session = createTestSession('overlay-write-failure', testDir, 'sdk-overlay');
+  it('rejects flush when the Pi UI metadata atomic write fails after a valid header update', async () => {
+    const session = createTestSession('ui-metadata-write-failure', testDir, 'sdk-ui-metadata');
     queue.enqueue(session);
     await queue.flush(session.mortiseId);
 
-    const overlayPath = join(getSessionPath(testDir, session.mortiseId), 'overlay.json');
-    mkdirSync(overlayPath, { recursive: true });
+    const sessionFile = getSessionFilePath(testDir, session.mortiseId, session.createdAt);
+    const metadataPath = join(dirname(sessionFile), '.pi-ui', `${Buffer.from(session.mortiseId).toString('base64url')}.v1.json`);
+    rmSync(metadataPath, { force: true });
+    mkdirSync(metadataPath, { recursive: true });
     queue.enqueue({
       ...session,
       messages: [{
-        id: 'overlay-message',
+        id: 'ui-metadata-message',
         type: 'user',
         content: '',
         timestamp: Date.now(),

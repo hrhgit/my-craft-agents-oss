@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto'
 import { RPC_CHANNELS } from '@mortise/shared/protocol'
+import { BACKEND_TYPE_CAPABILITY, type BackendType } from '@mortise/shared/protocol'
 import type { RpcServer } from '@mortise/server-core/transport'
 import type { HandlerDeps } from './handler-deps'
+import type { LayoutCoordinator } from '../layout-coordinator'
 import type { AppLayout, LayoutWindow } from '../../shared/app-layout'
 
 export const LAYOUT_HANDLED_CHANNELS = [
@@ -13,11 +15,22 @@ export const LAYOUT_HANDLED_CHANNELS = [
 ] as const
 
 export function registerLayoutHandlers(server: RpcServer, deps: HandlerDeps): void {
-  const coordinator = deps.layoutCoordinator
   const windowManager = deps.windowManager
-  if (!coordinator) return
+  const coordinatorFor = (clientId: string) => {
+    const advertised = (Object.entries(BACKEND_TYPE_CAPABILITY) as Array<[BackendType, string]>)
+      .filter(([, capability]) => server.hasClientCapability(clientId, capability))
+      .map(([backendType]) => backendType)
+    if (advertised.length > 1) throw new Error('Client advertised multiple backend types')
+    const backendType = advertised[0] ?? 'electron'
+    const coordinator = deps.layoutCoordinators?.[backendType]
+      ?? (backendType === 'electron' ? deps.layoutCoordinator : undefined)
+    if (!coordinator) throw new Error(`Layout backend is unavailable: ${backendType}`)
+    return coordinator
+  }
+  if (!deps.layoutCoordinator && !deps.layoutCoordinators) return
 
   server.handle(RPC_CHANNELS.layout.GET, async (ctx, requestedWorkspaceId?: string) => {
+    const coordinator = coordinatorFor(ctx.clientId)
     const windowWorkspaceId = ctx.webContentsId != null
       ? windowManager?.getWorkspaceForWindow(ctx.webContentsId) ?? undefined
       : undefined
@@ -30,6 +43,7 @@ export function registerLayoutHandlers(server: RpcServer, deps: HandlerDeps): vo
     return snapshot
   })
   server.handle(RPC_CHANNELS.layout.SAVE, async (ctx, layout: AppLayout, expectedRevision?: number) => {
+    const coordinator = coordinatorFor(ctx.clientId)
     const windowWorkspaceId = ctx.workspaceId
       ?? (ctx.webContentsId != null ? windowManager?.getWorkspaceForWindow(ctx.webContentsId) : undefined)
     if (windowWorkspaceId && layout.workspaceId !== windowWorkspaceId) {
@@ -50,6 +64,7 @@ export function registerLayoutHandlers(server: RpcServer, deps: HandlerDeps): vo
     return saved
   })
   const detach = async (
+    coordinator: LayoutCoordinator,
     webContentsId: number | null,
     bounds: LayoutWindow['bounds'] | undefined,
     updateLayout: (windowId: string, bounds: LayoutWindow['bounds']) => AppLayout,
@@ -76,20 +91,23 @@ export function registerLayoutHandlers(server: RpcServer, deps: HandlerDeps): vo
   }
 
   server.handle(RPC_CHANNELS.layout.DETACH_TAB, (ctx, tabId: string, bounds?: LayoutWindow['bounds']) => {
+    const coordinator = coordinatorFor(ctx.clientId)
     const workspaceId = ctx.webContentsId != null
       ? windowManager?.getWorkspaceForWindow(ctx.webContentsId) ?? ''
       : ''
-    return detach(ctx.webContentsId, bounds, (windowId, resolvedBounds) =>
+    return detach(coordinator, ctx.webContentsId, bounds, (windowId, resolvedBounds) =>
       coordinator.detachTab(workspaceId, tabId, windowId, resolvedBounds))
   })
   server.handle(RPC_CHANNELS.layout.DETACH_GROUP, (ctx, groupId: string, bounds?: LayoutWindow['bounds']) => {
+    const coordinator = coordinatorFor(ctx.clientId)
     const workspaceId = ctx.webContentsId != null
       ? windowManager?.getWorkspaceForWindow(ctx.webContentsId) ?? ''
       : ''
-    return detach(ctx.webContentsId, bounds, (windowId, resolvedBounds) =>
+    return detach(coordinator, ctx.webContentsId, bounds, (windowId, resolvedBounds) =>
       coordinator.detachGroup(workspaceId, groupId, windowId, resolvedBounds))
   })
   server.handle(RPC_CHANNELS.layout.REDOCK_WINDOW, async (ctx, windowId: string) => {
+    const coordinator = coordinatorFor(ctx.clientId)
     const workspaceId = ctx.workspaceId
       ?? (ctx.webContentsId != null ? windowManager?.getWorkspaceForWindow(ctx.webContentsId) : undefined)
       ?? undefined

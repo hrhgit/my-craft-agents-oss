@@ -7,6 +7,7 @@
 import { RPC_CHANNELS } from '@mortise/shared/protocol'
 import { requirePrimaryLocalWorkspaceRoot } from '@mortise/core/types'
 import { MORTISE_PROJECT_SKILLS_DIR } from '@mortise/shared/config/paths'
+import { getCredentialManager } from '@mortise/shared/credentials'
 import { getWorkspaceOrThrow, resolveWorkspaceId } from '../utils'
 import type { RpcServer } from '@mortise/server-core/transport'
 import type { HandlerDeps } from '../handler-deps'
@@ -55,7 +56,22 @@ export function registerResourcesHandlers(server: RpcServer, deps: HandlerDeps):
       const { importResources } = await import('@mortise/shared/resources')
       const automationHost = deps.sessionManager.getAutomationHost(resolvedWorkspaceId) ?? undefined
       const workspaceRoot = requirePrimaryLocalWorkspaceRoot(workspace)
-      const result = await importResources(workspaceRoot, bundle, mode, resolvedWorkspaceId, automationHost)
+      const result = await importResources(
+        workspaceRoot,
+        bundle,
+        mode,
+        resolvedWorkspaceId,
+        automationHost,
+        {
+          isAvailable: async dependency => {
+            if (dependency.kind === 'session') return automationHost?.hasSessionDependency(dependency.id) ?? false
+            if (dependency.kind === 'secret') {
+              return !!await getCredentialManager().getAutomationSecret(resolvedWorkspaceId, dependency.id)
+            }
+            return false
+          },
+        },
+      )
 
       deps.platform.logger?.info(
         `RESOURCES_IMPORT: Imported into ${resolvedWorkspaceId} (mode=${mode}): ` +

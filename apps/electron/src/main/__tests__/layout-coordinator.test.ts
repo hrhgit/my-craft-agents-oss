@@ -49,6 +49,21 @@ function tab(id: string, groupId = 'group:main'): ContentTab {
 }
 
 describe('LayoutCoordinator', () => {
+  it('persists independent startup baselines for Electron and WebUI backends', async () => {
+    const snapshotRoot = mkdtempSync(join(tmpdir(), 'mortise-layout-backends-'))
+    roots.push(snapshotRoot)
+    const electron = new LayoutCoordinator({ snapshotRoot, backendType: 'electron' })
+    const webui = new LayoutCoordinator({ snapshotRoot, backendType: 'webui' })
+    electron.saveSnapshot(createDefaultAppLayout({ workspaceId: 'ws-a', sessionId: 'electron-session' }))
+    webui.saveSnapshot(createDefaultAppLayout({ workspaceId: 'ws-a', sessionId: 'webui-session' }))
+    await Promise.all([electron.flush(), webui.flush()])
+
+    expect(new LayoutCoordinator({ snapshotRoot, backendType: 'electron' })
+      .getSnapshot('ws-a').tabs['content:main'].ref.sessionId).toBe('electron-session')
+    expect(new LayoutCoordinator({ snapshotRoot, backendType: 'webui' })
+      .getSnapshot('ws-a').tabs['content:main'].ref.sessionId).toBe('webui-session')
+  })
+
   it('coalesces hot-path mutations into one asynchronous latest-snapshot write', async () => {
     const storagePath = pathForTest()
     const writes: string[] = []

@@ -43,7 +43,7 @@ Own transport DTOs, channel contracts, routing types, core workspace interfaces,
 
 # Invariants
 
-Production protocol exports exclude test-only APIs; channel maps and DTOs stay consistent across all transports.
+Production protocol exports exclude test-only APIs; channel maps and DTOs stay consistent across all transports. Filesystem and command routes identify one location endpoint, while client-native routes identify the requesting client; unsupported, unavailable, or non-interactive targets fail explicitly without fallback.
 
 # Change Impact
 

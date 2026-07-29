@@ -23,7 +23,7 @@ import { debug } from '../utils/debug.ts';
 import { expandPath } from '../utils/paths.ts';
 import { readJsonFileSync } from '../utils/files.ts';
 import { perf } from '../utils/perf.ts';
-import { readPiGlobalAuth, readPiGlobalProviders, readPiGlobalSettings, watchPiGlobalModelsFile, type PiGlobalProvider } from './pi-global-config.ts';
+import { readPiGlobalAuth, readPiGlobalProviders, readPiGlobalSettings, subscribePiGlobalConfig, type PiGlobalProvider } from './pi-global-config.ts';
 import {
   validatePreferences,
   type ValidationResult,
@@ -160,6 +160,7 @@ export class ConfigWatcher {
   private workspaceId: string;
   private callbacks: ConfigWatcherCallbacks;
   private watchers: FSWatcher[] = [];
+  private subscriptions: Array<() => void> = [];
   private debounceTimers: Map<string, NodeJS.Timeout> = new Map();
   private isRunning = false;
 
@@ -313,6 +314,8 @@ export class ConfigWatcher {
       watcher.close();
     }
     this.watchers = [];
+    for (const close of this.subscriptions) close();
+    this.subscriptions = [];
 
     this.knownSkills.clear();
     this.knownThemes.clear();
@@ -355,12 +358,11 @@ export class ConfigWatcher {
    */
   private watchPiGlobalConfigs(): void {
     try {
-      const watcher = watchPiGlobalModelsFile(() => {
-        this.debounce('pi-models.json', () => this.handleProvidersChange());
-      });
-
-      watcher.on('error', (err) => debug('[ConfigWatcher] Pi global configs watcher error:', err));
-      this.watchers.push(watcher);
+      const subscription = subscribePiGlobalConfig(
+        () => this.debounce('pi-global-config', () => this.handleProvidersChange()),
+        err => debug('[ConfigWatcher] Pi global configs subscription error:', err),
+      );
+      this.subscriptions.push(() => subscription.close());
       debug('[ConfigWatcher] Watching Pi global models config');
     } catch (error) {
       debug('[ConfigWatcher] Error watching Pi global configs:', error);

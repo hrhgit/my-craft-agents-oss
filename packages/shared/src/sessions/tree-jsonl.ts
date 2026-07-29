@@ -3,11 +3,14 @@
  *
  */
 
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, statSync } from 'fs';
-import { dirname, join } from 'path';
+import { closeSync, existsSync, openSync, readFileSync, readSync, statSync } from 'fs';
+import { dirname } from 'path';
 import {
+  readSessionUiMetadata as readPiSessionUiMetadata,
   SessionManager as PiSessionManager,
   setMortiseSessionMetadata as setPiMortiseSessionMetadata,
+  writeSessionUiMetadata as writePiSessionUiMetadata,
+  type HostSessionUiMetadataV1,
 } from '@mortise/pi-coding-agent/host-facade';
 import type { MessageRole } from '@mortise/core/types';
 import type {
@@ -19,10 +22,8 @@ import type {
   StoredSession,
 } from './types.ts';
 import { pickMortiseSessionMetadata } from './utils.ts';
-import { sanitizeSessionId } from './validation.ts';
 import { debug } from '../utils/debug.ts';
 import { expandPath, toPortablePath } from '../utils/paths.ts';
-import { atomicWriteFile } from '../utils/files.ts';
 import { stripLeadingMortiseInjectedUserContext } from '../prompts/strip-injected-user-context.ts';
 import { applyPlanCustomMessageToStored } from './plan-artifact-projection.ts';
 import type { PlanModeStateV1 } from '@mortise/core/types';
@@ -172,12 +173,6 @@ interface ParsedTreeSession {
   entries: TreeSessionEntry[];
 }
 
-interface MortiseOverlayFile {
-  version: 1;
-  messages?: Array<Partial<StoredMessage> & { id: string }>;
-  annotations?: Record<string, StoredMessage['annotations']>;
-}
-
 export interface TreeProjectionOptions {
   workspaceId?: string;
   workspaceRootPath?: string;
@@ -283,11 +278,6 @@ function buildMortiseMetadataOnDisk(
   return mortiseMetadata;
 }
 
-function getMortiseOverlayPath(sessionFile: string, mortiseId: string): string {
-  const safeMortiseId = sanitizeSessionId(mortiseId) || '_invalid-session';
-  return join(dirname(sessionFile), '.mortise', safeMortiseId, 'overlay.json');
-}
-
 function isCanonicalStoredMessage(message: StoredMessage): boolean {
   return message.type === 'user' || message.type === 'assistant' || message.type === 'tool';
 }
@@ -322,105 +312,63 @@ function buildMortiseOnlyMessagePatch(message: StoredMessage): (Partial<StoredMe
   return Object.keys(patch).length > 1 ? patch : null;
 }
 
-function buildMortiseOverlay(session: StoredSession): MortiseOverlayFile | null {
+function buildSessionUiMetadata(session: StoredSession): HostSessionUiMetadataV1 {
   const messages = session.messages.flatMap((message) => {
-    if (!isCanonicalStoredMessage(message)) return [message];
-    const patch = buildMortiseOnlyMessagePatch(message);
-    return patch ? [patch] : [];
+    const projection = !isCanonicalStoredMessage(message) ? message : buildMortiseOnlyMessagePatch(message);
+    if (!projection) return [];
+    const { id, ...metadata } = projection;
+    return [{ messageId: id, metadata }];
   });
-  const annotations: Record<string, StoredMessage['annotations']> = {};
-
-  for (const message of session.messages) {
-    if (message.annotations?.length) {
-      annotations[message.id] = message.annotations;
-    }
-  }
-
-  if (messages.length === 0 && Object.keys(annotations).length === 0) {
-    return null;
-  }
-
-  return {
-    version: 1,
-    messages: messages.length > 0 ? messages : undefined,
-    annotations: Object.keys(annotations).length > 0 ? annotations : undefined,
-  };
+  return { schemaVersion: 1, messages };
 }
 
-function readMortiseSessionOverlay(sessionFile: string, mortiseId: string): MortiseOverlayFile | null {
-  const overlayPath = getMortiseOverlayPath(sessionFile, mortiseId);
-  if (!existsSync(overlayPath)) return null;
-
+function readSessionUiMetadata(sessionFile: string, mortiseId: string): HostSessionUiMetadataV1 | null {
   try {
-    const parsed = JSON.parse(readFileSync(overlayPath, 'utf-8')) as unknown;
-    if (!isRecord(parsed) || parsed.version !== 1) return null;
-    const messages = Array.isArray(parsed.messages)
-      ? parsed.messages.filter(value => isRecord(value)
-        && (value.type === undefined || isCurrentMessageRole(value.type))) as unknown as StoredMessage[]
-      : undefined;
-    const annotations = isRecord(parsed.annotations)
-      ? parsed.annotations as Record<string, StoredMessage['annotations']>
-      : undefined;
-    return { version: 1, messages, annotations };
+    return readPiSessionUiMetadata({ sessionPath: sessionFile, projectionId: mortiseId });
   } catch (error) {
-    debug('[tree-jsonl] Failed to read Mortise overlay:', overlayPath, error);
+    debug('[tree-jsonl] Failed to read Pi Session UI metadata:', sessionFile, error);
     return null;
   }
 }
 
-function mergeMortiseOverlayMessages(messages: StoredMessage[], overlay: MortiseOverlayFile | null): StoredMessage[] {
-  if (!overlay) return messages;
+function applySessionUiMetadata(messages: StoredMessage[], projection: HostSessionUiMetadataV1 | null): StoredMessage[] {
+  if (!projection) return messages;
+  const merged = [...messages];
 
-  const merged = messages.map(message => {
-    const annotations = overlay.annotations?.[message.id];
-    return annotations?.length ? { ...message, annotations } : message;
-  });
-
-  if (overlay.messages?.length) {
+  if (projection.messages.length) {
     const indexById = new Map(merged.map((message, index) => [message.id, index]));
-    for (const overlayMessage of overlay.messages) {
-      const existingIndex = indexById.get(overlayMessage.id);
+    for (const entry of projection.messages) {
+      const uiMessage = { id: entry.messageId, ...entry.metadata } as Partial<StoredMessage> & { id: string };
+      const existingIndex = indexById.get(entry.messageId);
       if (existingIndex === undefined) {
-        const inferredType = isCurrentMessageRole(overlayMessage.type)
-          ? overlayMessage.type
-          : overlayMessage.attachments?.length || overlayMessage.badges?.length
+        const inferredType = isCurrentMessageRole(uiMessage.type)
+          ? uiMessage.type
+          : uiMessage.attachments?.length || uiMessage.badges?.length
             ? 'user'
             : 'assistant';
         const carrier = {
           type: inferredType,
-          content: typeof overlayMessage.content === 'string' ? overlayMessage.content : '',
-          timestamp: typeof overlayMessage.timestamp === 'number' ? overlayMessage.timestamp : 0,
-          ...overlayMessage,
-          annotations: overlayMessage.annotations ?? overlay.annotations?.[overlayMessage.id],
+          content: typeof uiMessage.content === 'string' ? uiMessage.content : '',
+          timestamp: typeof uiMessage.timestamp === 'number' ? uiMessage.timestamp : 0,
+          ...uiMessage,
         } as StoredMessage;
-        indexById.set(overlayMessage.id, merged.length);
+        indexById.set(uiMessage.id, merged.length);
         merged.push(carrier);
         continue;
       }
       const existingMessage = merged[existingIndex];
       if (!existingMessage) continue;
       const {
-        content: _overlayContent,
-        timestamp: _overlayTimestamp,
-        type: _overlayType,
+        content: _uiContent,
+        timestamp: _uiTimestamp,
+        type: _uiType,
         ...mortisePatch
-      } = overlayMessage;
+      } = uiMessage;
       merged[existingIndex] = {
         ...existingMessage,
         ...mortisePatch,
       };
     }
-  }
-
-  for (const [messageId, annotations] of Object.entries(overlay.annotations ?? {})) {
-    if (!annotations?.length || merged.some(message => message.id === messageId)) continue;
-    merged.push({
-      id: messageId,
-      type: 'assistant',
-      content: '',
-      timestamp: 0,
-      annotations,
-    });
   }
 
   merged.sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
@@ -440,16 +388,12 @@ export function isTreeSessionHeader(value: unknown): value is TreeSessionHeader 
   return true;
 }
 
-export async function writeMortiseSessionOverlayAsync(sessionFile: string, session: StoredSession): Promise<void> {
-  const overlay = buildMortiseOverlay(session);
-  const overlayPath = getMortiseOverlayPath(sessionFile, session.mortiseId);
-  if (!overlay) {
-    if (existsSync(overlayPath)) {
-      await atomicWriteFile(overlayPath, JSON.stringify({ version: 1 }, null, 2) + '\n');
-    }
-    return;
-  }
-  await atomicWriteFile(overlayPath, JSON.stringify(overlay, null, 2) + '\n');
+export async function writeTreeSessionUiMetadataAsync(sessionFile: string, session: StoredSession): Promise<void> {
+  writePiSessionUiMetadata({
+    sessionPath: sessionFile,
+    projectionId: session.mortiseId,
+    metadata: buildSessionUiMetadata(session),
+  });
 }
 
 /**
@@ -557,7 +501,7 @@ export async function writeTreeSessionMortiseMetadata(
       cwdOverride: session.workspaceRootPath,
       metadata: mortiseMetadata,
     });
-    await writeMortiseSessionOverlayAsync(sessionFile, session);
+    await writeTreeSessionUiMetadataAsync(sessionFile, session);
     return true;
   } catch (error) {
     debug('[tree-jsonl] Failed to update tree session Mortise metadata:', sessionFile, error);
@@ -587,7 +531,7 @@ export async function writeTreeSessionMortiseMetadataAsync(
     cwdOverride: session.workspaceRootPath,
     metadata: mortiseMetadata,
   });
-  await writeMortiseSessionOverlayAsync(sessionFile, session);
+  await writeTreeSessionUiMetadataAsync(sessionFile, session);
 }
 
 type PiAppendMessageInput = Parameters<PiSessionManager['appendMessage']>[0];
@@ -666,7 +610,7 @@ function piMessagesEquivalent(existing: TreeAgentMessage, expected: PiAppendMess
  *
  * The caller must create the header file first (Mortise is allowed to write
  * header metadata). This function appends only user/assistant/tool transcript
- * messages; UI-only messages remain in the Mortise overlay. Repeated calls with
+ * messages; UI-only messages remain in Pi's typed UI metadata sidecar. Repeated calls with
  * the same source messages are idempotent: existing matching Pi entries are
  * reused and only a missing suffix is appended.
  */
@@ -729,7 +673,7 @@ export async function materializeStoredSessionViaPiSessionManager(
   if (!existsSync(sessionFile) && session.hidden === true) {
     await manager.publishHiddenSession();
   }
-  if (existsSync(sessionFile)) await writeMortiseSessionOverlayAsync(sessionFile, session);
+  if (existsSync(sessionFile)) await writeTreeSessionUiMetadataAsync(sessionFile, session);
   return idMap;
 }
 
@@ -1181,7 +1125,7 @@ function projectParsedTreeSessionAsStoredSession(
   // on-disk mortise.id → 扁平 SessionHeader.mortiseId
   // 优先用 mortise.id（Mortise 人类可读 ID），无则退回 Pi 顶层 id + 前缀
   const mortiseId = getMortiseIdFromTreeHeader(parsed.header, options.sessionIdPrefix ?? '');
-  const messages = mergeMortiseOverlayMessages(baseMessages, readMortiseSessionOverlay(sessionFile, mortiseId));
+  const messages = applySessionUiMetadata(baseMessages, readSessionUiMetadata(sessionFile, mortiseId));
 
   // Strip on-disk `id` before spreading so it doesn't leak as a phantom `id`
   // field onto SessionHeader (which declares only `mortiseId`). Without this,

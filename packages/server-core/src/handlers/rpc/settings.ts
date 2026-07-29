@@ -62,7 +62,6 @@ export const HANDLED_CHANNELS = [
   RPC_CHANNELS.piExtensions.UPDATE_SETTINGS,
   RPC_CHANNELS.piExtensions.GET_CATALOG,
   RPC_CHANNELS.piExtensions.PATCH_EXTENSION_CONFIG,
-  RPC_CHANNELS.piExtensions.RELOAD,
   RPC_CHANNELS.piExtensions.GET_EXTENSION_STATES,
   RPC_CHANNELS.piExtensions.SET_EXTENSION_ENABLED,
   RPC_CHANNELS.settings.GET_NETWORK_PROXY,
@@ -371,18 +370,7 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
       extension,
       patch,
       patchPiExtensionConfig,
-      (interruptRunning) => deps.sessionManager.requestExtensionReload(interruptRunning),
     )
-  })
-
-  server.handle(RPC_CHANNELS.piExtensions.RELOAD, async (
-    _ctx,
-    payload?: boolean | { interruptRunning?: boolean },
-  ) => {
-    const interruptRunning = typeof payload === 'boolean'
-      ? payload
-      : payload?.interruptRunning === true
-    return await deps.sessionManager.requestExtensionReload(interruptRunning)
   })
 
   // 逐扩展启停：读写 Pi settings.json 的 extensionConfig.<name>.enabled
@@ -399,7 +387,7 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
   server.handle(RPC_CHANNELS.piExtensions.SET_EXTENSION_ENABLED, async (_ctx, payload: { name: string; enabled: boolean }) => {
     const { writePiExtensionEnabled } = await import('@mortise/shared/config/pi-global-config')
     await writePiExtensionEnabled(payload.name, payload.enabled)
-    return await deps.sessionManager.requestExtensionReload(false)
+    return { status: 'saved_for_next_backend_load' as const }
   })
 
   // ============================================================

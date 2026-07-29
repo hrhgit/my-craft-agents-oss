@@ -155,7 +155,7 @@ export async function importSkillDirectory(
 
   const files = collectDirectoryFiles(resolvedSource)
   const result = await importResources(workspaceRootPath, {
-    version: 2,
+    version: 3,
     exportedAt: Date.now(),
     resources: { skills: [{ slug, files }] },
   }, 'skip')

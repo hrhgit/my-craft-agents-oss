@@ -33,6 +33,7 @@ export {
   ensureWorkspaceMarker,
   getWorkspaceMarkerPath,
   readWorkspaceMarker,
+  removeWorkspaceMarker,
 } from './marker.ts';
 
 export {

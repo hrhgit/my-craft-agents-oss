@@ -177,7 +177,6 @@ export const LOCAL_ONLY_CHANNELS = new Set<string>([
   RPC_CHANNELS.piExtensions.UPDATE_SETTINGS,
   RPC_CHANNELS.piExtensions.GET_CATALOG,
   RPC_CHANNELS.piExtensions.PATCH_EXTENSION_CONFIG,
-  RPC_CHANNELS.piExtensions.RELOAD,
   RPC_CHANNELS.piExtensions.GET_EXTENSION_STATES,
   RPC_CHANNELS.piExtensions.SET_EXTENSION_ENABLED,
 
@@ -293,6 +292,7 @@ export const REMOTE_ELIGIBLE_CHANNELS = new Set<string>([
   RPC_CHANNELS.workspaces.TRANSFER_ENDPOINT_IMPORT_COMMIT,
   RPC_CHANNELS.workspaces.TRANSFER_ENDPOINT_IMPORT_CLEANUP,
   RPC_CHANNELS.workspaces.TRANSFER_ENDPOINT_ABORT,
+  RPC_CHANNELS.workspaces.DETACH_MARKER,
 
   // tasks — workspace content
   RPC_CHANNELS.tasks.GET_OUTPUT,
@@ -447,6 +447,8 @@ export const REMOTE_ELIGIBLE_CHANNELS = new Set<string>([
   RPC_CHANNELS.extensions.INTERACTION_RESPONSE,
   RPC_CHANNELS.extensions.COMMAND_INVOKE,
   RPC_CHANNELS.extensions.GET_COMMANDS,
+  RPC_CHANNELS.extensions.GET_FILE_STATE,
+  RPC_CHANNELS.extensions.SET_FILE_STATE,
 ])
 
 // ---------------------------------------------------------------------------

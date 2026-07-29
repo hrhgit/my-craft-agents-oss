@@ -11,8 +11,8 @@ import {
 } from '../agent/backend/pi/session-tool-defs.ts';
 import { getSystemPrompt } from '../prompts/system.ts';
 import { atomicWriteFileSync } from '../utils/files.ts';
-import { MORTISE_AGENT_DIR } from './paths.ts';
 import {
+  getPiAgentDir,
   getPiExtensionCatalog,
   readPiMortiseSetting,
   writePiMortiseSettingsBulk,
@@ -75,9 +75,10 @@ export interface SubagentUpsert {
   agent: SubagentDefinition;
 }
 
-const SYSTEM_PROMPT_FILE = join(MORTISE_AGENT_DIR, 'SYSTEM.md');
-const COMPACTION_PROMPT_FILE = join(MORTISE_AGENT_DIR, 'COMPACTION.md');
-const SUBAGENTS_DIR = join(MORTISE_AGENT_DIR, 'agents');
+const PI_AGENT_DIR = getPiAgentDir();
+const SYSTEM_PROMPT_FILE = join(PI_AGENT_DIR, 'SYSTEM.md');
+const COMPACTION_PROMPT_FILE = join(PI_AGENT_DIR, 'COMPACTION.md');
+const SUBAGENTS_DIR = join(PI_AGENT_DIR, 'agents');
 const SUBAGENT_ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 const BUILTIN_TOOL_DESCRIPTIONS: Record<string, string> = {
@@ -107,7 +108,7 @@ function writeOptionalTextFile(path: string, value: string): void {
     rmSync(path, { force: true });
     return;
   }
-  mkdirSync(MORTISE_AGENT_DIR, { recursive: true });
+  mkdirSync(PI_AGENT_DIR, { recursive: true });
   atomicWriteFileSync(path, `${normalized}\n`);
 }
 

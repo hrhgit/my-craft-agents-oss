@@ -36,7 +36,6 @@ const ALLOW_ALL_SENSITIVE_EXPORTS = Symbol('allow-all-sensitive-pi-paths')
 // a seam cannot quietly grow from a watcher/helper into raw settings/auth I/O.
 const ALLOWED_PATH_EXPORTS_BY_FILE_ENDING = new Map([
   ['src/config/paths.ts', ALLOW_ALL_SENSITIVE_EXPORTS],
-  ['src/config/pi-global-config.ts', new Set(['MORTISE_AGENT_DIR'])],
   ['src/sessions/storage.ts', new Set(['MORTISE_SESSIONS_DIR'])],
   ['src/workspaces/storage.ts', new Set(['MORTISE_SESSIONS_DIR'])],
 ])

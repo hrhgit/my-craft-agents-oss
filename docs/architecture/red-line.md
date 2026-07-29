@@ -107,11 +107,15 @@ where Mortise is preserving its own opaque metadata.
   (`getModels`/`getProviders`) used for pre-auth provider listing in connection
   setup. `RpcClient.getAvailableModels()` requires a live authenticated session
   and cannot serve this path.
+- `packages/shared/src/config/agent-settings.ts` — consumes Pi's public
+  compaction default and frontmatter parser while Mortise owns the surrounding
+  settings UI and subagent definitions. Agent-root resolution goes through the
+  typed host facade.
 - `packages/shared/src/config/pi-global-config.ts` — compatibility shell around
   Pi host facade for global providers/defaults,
-  `mortise.agent.*`, `shellGui.*`, and `extensionConfig.*`. Its only raw Pi path
-  constant is `MORTISE_AGENT_DIR`, used to watch for external runtime config changes; it
-  must not import `MORTISE_SETTINGS_FILE`, `MORTISE_MODELS_FILE`, or `MORTISE_AUTH_FILE`.
+  `mortise.agent.*`, `shellGui.*`, and `extensionConfig.*`. It resolves the Agent
+  root and subscribes to configuration changes through typed Pi facade APIs; it
+  must not import Pi storage-path constants.
 - `packages/shared/src/pi/pi-skill-resolver.ts` and
   `packages/shared/src/skills/storage.ts` — synchronous UI/server seams over
   Pi's skill listing facade. Mortise may validate slugs and render metadata, but
@@ -120,9 +124,13 @@ where Mortise is preserving its own opaque metadata.
   helpers plus Pi projection creation/lookup facade calls. It may import
   `MORTISE_SESSIONS_DIR` only to compute the current workspace bucket.
 - `packages/shared/src/sessions/tree-jsonl.ts` — uses Pi `SessionManager` for
-  JSONL entry projection and Pi's `setCraftSessionMetadata` facade for Mortise's
-  opaque UI metadata. It may keep lightweight first-line/projection readers but
-  must not own Pi transcript locking or rewrite Pi entry bodies.
+  JSONL entry projection and Pi's typed Session UI metadata sidecar facade for
+  Mortise UI projection. It may keep lightweight first-line/projection readers
+  but must not own Pi transcript locking or rewrite Pi entry bodies.
+- `packages/shared/src/ui-validation/session-validation-backend.ts` and
+  `packages/shared/src/sessions/__tests__/tree-jsonl.test.ts` — isolated
+  contract probes over Pi's public `SessionManager`; neither is a general host
+  persistence API.
 - `packages/shared/src/agent/pi-agent.ts` — Mortise's backend adapter over Pi's
   public `RpcClient`, preserving host-side workflow scaffolding without
   re-implementing Pi's agent runtime.
@@ -133,8 +141,6 @@ where Mortise is preserving its own opaque metadata.
 outside this list:
 
 - `packages/shared/src/config/paths.ts` — defines the path constants.
-- `packages/shared/src/config/pi-global-config.ts` — `MORTISE_AGENT_DIR` only, for
-  config-change watching until Pi exposes a typed subscription.
 - `packages/shared/src/sessions/storage.ts` — `MORTISE_SESSIONS_DIR` only, to compute
   workspace bucket paths and delegate creation/lookup to Pi projection facades.
 - `packages/shared/src/workspaces/storage.ts` — read-only session bucket
@@ -149,12 +155,11 @@ the case here for why it is a seam extension.
 
 - `secure-storage.ts` has left the raw path allowlist; it now calls Pi's
   credential facade only.
-- `pi-global-config.ts` should lose raw path access once Pi exposes a
-  config-change watcher/subscription.
-- `sessions/storage.ts` has moved Pi-owned reads to projection APIs and
-  `sessions/tree-jsonl.ts` uses Pi mortise metadata setters. The remaining
-  ratchet is to remove Mortise-only overlays once Pi exposes a typed UI metadata
-  sidecar/projection contract.
+- `pi-global-config.ts` now resolves the Agent root and watches global config
+  through Pi's typed facade subscription; its raw path allowlist entry is gone.
+- `sessions/storage.ts` delegates Pi-owned reads to projection APIs and
+  `sessions/tree-jsonl.ts` uses Pi's typed UI metadata sidecar/projection
+  contract. Mortise-only Session overlay files and their merge path are gone.
 - The legacy Mortise storage migration window is closed. Mortise no longer imports
   or reads legacy session, skill, credential, or messaging storage, and no
   longer migrates legacy workspace cwd or Pi provider configuration at

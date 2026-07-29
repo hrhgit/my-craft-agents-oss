@@ -37,6 +37,7 @@ export function createExtensionEventForwarder(
   eventSink: EventSink | null,
   workspaceId: string,
   sessionId?: string,
+  backendType: 'electron' | 'webui' = 'electron',
 ): (event: ExtensionBridgeEvent) => void {
   return (event: ExtensionBridgeEvent) => {
     if (!eventSink) return
@@ -58,7 +59,7 @@ export function createExtensionEventForwarder(
         runtimeId: event.runtimeId,
         sessionId: trustedSessionId,
       }
-      const delta = { ...event.delta, ...trustedRoute, workspaceId }
+      const delta = { ...event.delta, ...trustedRoute, workspaceId, backendType }
       if (validateExtensionContributionDeltaV1(delta) !== null) return
       eventSink(RPC_CHANNELS.extensions.EVENT, { to: 'workspace', workspaceId }, {
         type: 'extension_contribution',
@@ -75,6 +76,7 @@ export function createExtensionEventForwarder(
         runtimeId: event.runtimeId,
         sessionId: trustedSessionId,
         workspaceId,
+        backendType,
       })
       return
     }

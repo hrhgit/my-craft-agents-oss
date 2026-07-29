@@ -49,14 +49,16 @@ Mortise GUI 必须跟随 Pi 扩展分发，而不是由 Mortise 按扩展名称�
 ### Ownership
 
 - Pi owns extension identity and per-runtime monotonically increasing `revision`.
-- Mortise owns `sessionId` and trusts only the RPC runtime route, never identity fields supplied inside content.
-- Registry key is `(sessionId, runtimeId, extensionId, contributionId)`.
+- Mortise owns the trusted Workspace and backend projection route. Session and
+  runtime IDs remain lifecycle coordinates on the transport, not projection
+  ownership supplied by contribution content.
+- Registry key is `(workspaceId, backendType, extensionId, contributionId)`.
 - `upsert` and `remove` are idempotent. Events with a revision not greater than the last accepted revision for an extension runtime are ignored.
 - `reset` removes every contribution for one extension runtime. Runtime close, reload, reconnect, session replacement and process failure must emit or synthesize a reset.
 
 ### Rendering Levels
 
-Level 1 is host-rendered and is the default. It supports text, markdown, stack, row, badge, icon, divider, button and command actions. It inherits Mortise theme and primitive accessibility. Responsive slot reallocation remains host-owned, but the current V1 resolver uses fixed capacities rather than a complete viewport-aware policy.
+Level 1 is host-rendered and is the default. It supports text, markdown, stack, row, badge, icon, divider, button and command actions. It inherits Mortise theme and primitive accessibility. Host-owned capacity responds to each rendered surface's viewport while preserving deterministic maximums.
 
 Level 2 is a sandbox UI App. Each self-contained app receives an opaque-origin iframe document, CSP, a private `MessageChannel`, bounded session/runtime-scoped storage and explicitly declared permissions. Multiple apps may be visible in one Mortise UI, but each occupies a layout slot assigned by Mortise. They cannot access the parent DOM, global CSS, credentials, Electron IPC, workers, raw network APIs or arbitrary filesystem APIs. Omitted permissions mean no host bridge access.
 
@@ -98,7 +100,7 @@ Each contribution may declare `priority`, `order`, `group`, `collapse`, `overflo
 1. Reject contributions incompatible with the requested surface.
 2. Partition by surface and optional target entity.
 3. Sort `collapse: never` before `auto` before `always`, then by descending priority, ascending order, extension ID and contribution ID.
-4. Enforce fixed surface capacity. Keep visible items and put non-hidden remainder into one host-owned overflow control.
+4. Treat contributions with the same `group` as one allocation block, then enforce the responsive capacity derived from the rendered surface. Keep admitted blocks visible and route non-hidden remainder by its declared overflow mode.
 5. Resolve exclusive/replace requests to one winner. Non-winning replace contributions are not mounted by the replace zone.
 6. Enforce a maximum of four mounted sandbox apps per shared surface; `workspace.content` applies that admission budget across the renderer.
 
@@ -114,16 +116,17 @@ Default capacities:
 | Workspace content sandbox apps | 4 admitted tabs per renderer | excess sandbox contributions stay unmounted |
 | Replace surfaces | 1 | deterministic winner |
 
-`navigation.item`, `session.badge`, and targeted message/tool/turn contribution counts are not currently capacity-bounded beyond the sandbox limit. Authors must keep these contributions compact; host policy must add tighter allocation before treating them as high-demand shared regions.
+`navigation.item`, `session.badge`, and targeted message/tool/turn contribution counts are not capacity-bounded beyond the sandbox limit. Authors must keep these contributions compact; host policy may add tighter allocation if they become high-demand shared regions.
 
 Compact hotspots accept only shallow rows of text, icons, badges, and buttons. They reject Markdown, stacks, dividers, deep trees, and long text; the renderer clamps height and width before overflow allocation. A contribution's `collapse: never` is a preference, not permission to displace core Mortise controls.
 
-Current V1 gaps that remain host responsibilities:
-
-- `group` is metadata but does not yet participate in allocation or collapse.
-- `overflow: menu` and `overflow: collapse` share one renderer path; only `hide` changes admission.
-- Capacity does not yet recompute from viewport size, and there is no explicit cross-contribution focus-priority or focus-restoration policy.
-- Host-rendered contribution nodes expose accessible primitive roles and names, but the contribution schema has no per-node stable semantic ID. Validation snapshots provide stable declared IDs through a separate development contract.
+`overflow: menu` uses the compact host menu, `overflow: collapse` uses an inline
+collapsible region, and `overflow: hide` remains unmounted. When responsive
+allocation moves a focused contribution between visible and overflow regions,
+the host restores focus to the same stable semantic node when it remains
+available. Host-rendered nodes may declare a bounded `semanticId`; Mortise
+namespaces it by Extension and contribution identity before exposing it to the
+renderer and validation surface.
 
 ## Security And Validation
 
@@ -143,7 +146,7 @@ GUI extensions can publish a development-only validation contract through `ctx.u
 
 Mortise WebUI and Electron share the renderer registry and sandbox protocol. Verification evidence is graded: scenario validation proves declared production-state transitions, renderer validation proves real rendered interaction, and native validation proves operating-system interaction where a native adapter exists. A platform without that adapter reports `UNSUPPORTED`; it must not be represented as native verification.
 
-Validation V1 does not enforce referential integrity between `definition.contributionId` and a live contribution, nor does it automatically map a declared semantic snapshot node to a renderer DOM node. `verificationLevel: physical` declares required evidence but does not itself produce that evidence. Acceptance still needs a real accessible renderer action, and the protocol should eventually expose stable primitive identity that can bind the declared and rendered views.
+Validation V1 does not enforce referential integrity between `definition.contributionId` and a live contribution or automatically prove that a declared snapshot node matches a rendered node. Host-rendered primitives now expose namespaced stable `semanticId` values so authors can bind those views explicitly. `verificationLevel: physical` still declares required evidence rather than producing it; acceptance needs a real accessible renderer action.
 
 ## Legacy Isolation And Migration
 

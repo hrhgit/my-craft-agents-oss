@@ -106,7 +106,7 @@ function definition(index: number): AutomationDefinitionV3 {
     triggers: [{
       id: `trigger-benchmark-${suffix}`,
       type: 'time',
-      schedule: { kind: 'once', at: '2026-01-01T00:00:00.000Z', misfire: 'run-once' },
+      schedule: { kind: 'once', at: '2026-01-01T00:00:00.000Z' },
     }],
     actions: [{
       id: `action-benchmark-${suffix}`,

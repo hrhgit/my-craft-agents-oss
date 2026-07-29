@@ -5,7 +5,7 @@ export interface ScheduledOccurrenceV1 {
   occurrenceKey: string
   scheduledAt: string
   recovery: boolean
-  skipReason?: 'expired' | 'misfire'
+  skipReason?: 'missed'
 }
 
 export interface OccurrenceCalculationV1 {
@@ -24,22 +24,28 @@ export function intervalIndex(anchorMs: number, occurrenceMs: number, everyMs: n
 
 export function calculateTimeOccurrence(
   trigger: TimeTriggerV3,
-  options: { now: Date; lastClaimedAt?: Date },
+  options: { now: Date; lastClaimedAt?: Date; activeSince?: Date },
 ): OccurrenceCalculationV1 {
   const nowMs = options.now.getTime()
   const lastMs = options.lastClaimedAt?.getTime()
+  const activeSinceMs = options.activeSince?.getTime() ?? nowMs
   const schedule = trigger.schedule
 
   if (schedule.kind === 'once') {
     const atMs = Date.parse(schedule.at)
     if (lastMs !== undefined && lastMs >= atMs) return { completed: true }
     if (atMs > nowMs) return { next: { occurrenceKey: iso(atMs), scheduledAt: iso(atMs), recovery: false } }
-    const expired = schedule.expiresAt !== undefined && Date.parse(schedule.expiresAt) < nowMs
-    if (expired) return { completed: true, due: { occurrenceKey: iso(atMs), scheduledAt: iso(atMs), recovery: true, skipReason: 'expired' } }
-    if ((schedule.misfire ?? 'run-once') === 'skip') {
-      return { completed: true, due: { occurrenceKey: iso(atMs), scheduledAt: iso(atMs), recovery: true, skipReason: 'misfire' } }
+    const missed = atMs < activeSinceMs
+      || (schedule.expiresAt !== undefined && Date.parse(schedule.expiresAt) < nowMs)
+    return {
+      completed: true,
+      due: {
+        occurrenceKey: iso(atMs),
+        scheduledAt: iso(atMs),
+        recovery: missed,
+        ...(missed ? { skipReason: 'missed' as const } : {}),
+      },
     }
-    return { completed: true, due: { occurrenceKey: iso(atMs), scheduledAt: iso(atMs), recovery: atMs < nowMs } }
   }
 
   if (schedule.kind === 'interval') {
@@ -51,10 +57,15 @@ export function calculateTimeOccurrence(
     const lastIndex = lastMs === undefined || lastMs < anchorMs ? -1 : intervalIndex(anchorMs, lastMs, schedule.everyMs)
     const boundaryMs = anchorMs + currentIndex * schedule.everyMs
     const nextMs = anchorMs + (currentIndex + 1) * schedule.everyMs
-    const missedCount = currentIndex - lastIndex
-    const shouldRun = missedCount > 0 && (boundaryMs === nowMs || (schedule.misfire ?? 'run-once') === 'run-once')
+    const unseen = currentIndex > lastIndex
+    const missed = boundaryMs < activeSinceMs
     return {
-      ...(shouldRun ? { due: { occurrenceKey: `interval:${currentIndex}:${iso(boundaryMs)}`, scheduledAt: iso(boundaryMs), recovery: boundaryMs < nowMs } } : {}),
+      ...(unseen ? { due: {
+        occurrenceKey: `interval:${currentIndex}:${iso(boundaryMs)}`,
+        scheduledAt: iso(boundaryMs),
+        recovery: missed,
+        ...(missed ? { skipReason: 'missed' as const } : {}),
+      } } : {}),
       next: { occurrenceKey: `interval:${currentIndex + 1}:${iso(nextMs)}`, scheduledAt: iso(nextMs), recovery: false },
     }
   }
@@ -66,9 +77,14 @@ export function calculateTimeOccurrence(
     : cron.previousRuns(1, options.now)[0] ?? null
   const next = cron.nextRun(options.now)
   const unseen = previous && (lastMs === undefined || previous.getTime() > lastMs)
-  const onBoundary = unseen && matchesNow
-  const due = unseen && (onBoundary || (schedule.misfire ?? 'skip') === 'run-once')
-    ? { occurrenceKey: previous.toISOString(), scheduledAt: previous.toISOString(), recovery: !onBoundary }
+  const missed = !!previous && previous.getTime() < activeSinceMs
+  const due = unseen
+    ? {
+        occurrenceKey: previous.toISOString(),
+        scheduledAt: previous.toISOString(),
+        recovery: missed,
+        ...(missed ? { skipReason: 'missed' as const } : {}),
+      }
     : undefined
   return {
     ...(due ? { due } : {}),

@@ -16,6 +16,7 @@ function extensionItem(
 ): RegisteredExtensionContribution {
   return {
     extensionId: 'inspector',
+    backendType: 'electron',
     sessionId,
     runtimeId,
     workspaceId,
@@ -42,9 +43,9 @@ describe('right workbench state', () => {
       .toBe(extensionWorkspaceContentId(extensionItem('global', 'session-b', 'workspace-b')))
   })
 
-  it('keeps multiple tools distinct across runtime owners', () => {
+  it('keeps a multiple-capable tool definition backend-owned across runtime routes', () => {
     expect(extensionWorkspaceContentId(extensionItem('workspace', 'session-a', 'workspace-a', 'runtime-a', 'multiple')))
-      .not.toBe(extensionWorkspaceContentId(extensionItem('workspace', 'session-a', 'workspace-a', 'runtime-b', 'multiple')))
+      .toBe(extensionWorkspaceContentId(extensionItem('workspace', 'session-a', 'workspace-a', 'runtime-b', 'multiple')))
   })
 
   it('round-trips browser instance identities', () => {

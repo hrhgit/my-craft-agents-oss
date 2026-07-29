@@ -46,6 +46,8 @@ export interface Session extends Omit<CoreSession, 'createdAt' | 'lastUsedAt'> {
   isProcessing: boolean
   /** True for sessions projected from Pi runtime that Mortise can display but not mutate. */
   readOnly?: boolean
+  /** Parent/child deletion is frozen or retryable after a failed cascade. */
+  deletionState?: 'deleting'
   /** Permission mode for this session ('safe', 'ask', 'allow-all') */
   permissionMode?: PermissionMode
   /**
@@ -187,6 +189,7 @@ export type SessionEvent =
   | { type: 'name_changed'; sessionId: string; name?: string }
   | { type: 'session_model_changed'; sessionId: string; model: string | null }
   | { type: 'session_deleted'; sessionId: string }
+  | { type: 'session_deletion_changed'; sessionId: string; state: 'deleting' }
   | { type: 'session_created'; sessionId: string }
   | { type: 'session_shared'; sessionId: string; sharedUrl: string }
   | { type: 'session_unshared'; sessionId: string }

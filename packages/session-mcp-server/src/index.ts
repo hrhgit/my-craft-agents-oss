@@ -35,10 +35,9 @@ import { isDeveloperFeedbackEnabled } from '@mortise/shared/feature-flags';
 import {
   CONFIG_DIR,
   MORTISE_PROJECT_SKILLS_DIR,
-  MORTISE_SESSIONS_DIR,
-  MORTISE_SKILLS_DIR,
   encodePiSessionCwd,
 } from '@mortise/shared/config/paths';
+import { getPiAgentDir } from '@mortise/shared/config/pi-global-config';
 import { validateSessionId } from '@mortise/shared/sessions/validation';
 // Import from session-tools-core
 import {
@@ -124,14 +123,15 @@ function createCodexContext(config: McpServerConfig): SessionToolContext {
   // resolve the sidecar next to Pi's workspace-scoped session projection without
   // scanning the global Pi session root from this subprocess.
   validateSessionId(sessionId);
-  const sessionsDir = join(MORTISE_SESSIONS_DIR, encodePiSessionCwd(workspaceRootPath), '.mortise', sessionId);
+  const piAgentDir = getPiAgentDir();
+  const sessionsDir = join(piAgentDir, 'sessions', encodePiSessionCwd(workspaceRootPath), '.mortise', sessionId);
   const sessionDataDir = join(sessionsDir, 'data');
   // Build context
   return {
     sessionId,
     workspacePath: workspaceRootPath,
     get skillPaths() {
-      return [MORTISE_SKILLS_DIR, join(workspaceRootPath, MORTISE_PROJECT_SKILLS_DIR)];
+      return [join(piAgentDir, 'skills'), join(workspaceRootPath, MORTISE_PROJECT_SKILLS_DIR)];
     },
     get skillsPath() { return this.skillPaths?.[0] ?? ''; },
     plansFolderPath,

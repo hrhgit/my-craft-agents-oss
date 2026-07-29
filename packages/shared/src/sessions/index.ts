@@ -87,7 +87,7 @@ export {
   projectTreeSessionPlanData,
   writeTreeSessionMortiseMetadata,
   writeTreeSessionMortiseMetadataAsync,
-  writeMortiseSessionOverlayAsync,
+  writeTreeSessionUiMetadataAsync,
   appendPiBranchMessagesViaSessionManager,
   appendStoredMessagesViaPiSessionManager,
 } from './tree-jsonl.ts';

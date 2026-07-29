@@ -555,15 +555,16 @@ export interface ElectronAPI {
   updatePiExtensionSettings(patch: StoredPiExtensionSettings): Promise<PiExtensionSettings>
   getPiExtensionCatalog(): Promise<PiExtensionCatalogResult>
   patchPiExtensionConfig(patch: import('@mortise/shared/config').PiExtensionConfigPatch): Promise<import('@mortise/shared/config').PiExtensionConfigPatchResult>
-  reloadPiExtensions(interruptRunning: boolean): Promise<import('@mortise/shared/config').PiExtensionReloadResult>
   getPiExtensionStates(): Promise<Record<string, boolean>>
-  setPiExtensionEnabled(name: string, enabled: boolean): Promise<import('@mortise/shared/config').PiExtensionReloadResult>
+  setPiExtensionEnabled(name: string, enabled: boolean): Promise<import('@mortise/shared/config').PiExtensionSettingsWriteResult>
 
   // Pi extension event bridge for contributions, interactions, and lifecycle events.
   onExtensionEvent(callback: (event: import('@mortise/shared/agent/backend/types').ExtensionBridgeEvent) => void): () => void
   respondToExtensionInteraction(sessionId: string, requestId: string, response: import('@mortise/shared/protocol').ExtensionInteractionResponseV1): Promise<boolean>
   invokeExtensionCommand(sessionId: string, commandId: string, args?: string | Record<string, unknown>, ownerExtensionId?: string): Promise<import('@mortise/core/types').ExtensionCommandResult>
   getExtensionCommands(sessionId: string): Promise<import('@mortise/shared/agent/backend/types').PiExtensionCommand[]>
+  getExtensionFileState(workspaceId: string, extensionId: string): Promise<import('@mortise/shared/protocol').ExtensionFileStateV1>
+  setExtensionFileState(workspaceId: string, extensionId: string, state: import('@mortise/shared/protocol').ExtensionFileStateV1): Promise<boolean>
   /** Preload-authenticated, source-build-only capability. Never true in packaged/production builds. */
   uiValidationTestHost?: { readonly schemaVersion: 1; readonly enabled: true }
   // Pi session tree — list child sessions spawned from the given parent session

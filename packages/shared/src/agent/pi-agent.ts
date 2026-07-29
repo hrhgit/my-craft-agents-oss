@@ -18,8 +18,8 @@ import type { FileAttachment } from '../utils/files.ts';
 import { atomicWriteFile } from '../utils/files.ts';
 import { createSanitizedEnv } from '../utils/env.ts';
 import { getProxyEnvVars } from '../config/proxy-env.ts';
-import { MORTISE_AGENT_DIR, MORTISE_PROJECT_DIR } from '../config/paths.ts';
-import { isPiModelReference, resolvePiModelReference } from '../config/pi-global-config.ts';
+import { MORTISE_PROJECT_DIR } from '../config/paths.ts';
+import { getPiAgentDir, isPiModelReference, resolvePiModelReference } from '../config/pi-global-config.ts';
 import {
   type PiRuntimeHandle,
   type RpcCapabilities as PiRpcCapabilities,
@@ -142,6 +142,7 @@ export const PI_BACKEND_SESSION_TOOL_NAMES = new Set<string>([
 const PI_ABORT_ACK_TIMEOUT_MS = 5_000;
 const SETTLED_EXTENSION_INTERACTION_TTL_MS = 5 * 60_000;
 const MAX_SETTLED_EXTENSION_INTERACTIONS = 512;
+const PI_AGENT_DIR = getPiAgentDir();
 
 function mortiseRpcUiCapabilities() {
   const validationEnabled = process.env.MORTISE_UI_VALIDATION_BUILD === '1'
@@ -590,7 +591,7 @@ export class PiAgent extends BaseAgent {
     const environmentFingerprint = createHash('sha256')
       .update(JSON.stringify(Object.entries(env).sort(([left], [right]) => left.localeCompare(right))))
       .digest('hex');
-	return `${runtimePath}\u0000${MORTISE_AGENT_DIR}\u0000${environmentFingerprint}`;
+	return `${runtimePath}\u0000${PI_AGENT_DIR}\u0000${environmentFingerprint}`;
   }
 
   private async startRpcClientUnlocked(): Promise<void> {
@@ -659,7 +660,7 @@ export class PiAgent extends BaseAgent {
       runtime: {
         runtimeId,
         cwd,
-        agentDir: MORTISE_AGENT_DIR,
+        agentDir: PI_AGENT_DIR,
         projectConfigDir: MORTISE_PROJECT_DIR,
         extensionPaths: this.getMortiseExtensionPaths(),
         sessionDir,
@@ -1866,7 +1867,7 @@ export class PiAgent extends BaseAgent {
     const { lease, epoch } = await this.acquireChildRuntimeLease(() => parentLease.acquireRuntime({
       runtimeId: `subagent-${childSessionId}`,
       cwd: this.resolvedWorkspaceRoot(),
-      agentDir: MORTISE_AGENT_DIR,
+      agentDir: PI_AGENT_DIR,
       projectConfigDir: MORTISE_PROJECT_DIR,
       extensionPaths: this.getMortiseExtensionPaths(),
       sessionDir: this.getChildSessionDir(),
@@ -2255,7 +2256,7 @@ export class PiAgent extends BaseAgent {
     const { lease, epoch } = await this.acquireChildRuntimeLease(() => parentLease.acquireRuntime({
       runtimeId: active.runtimeId,
       cwd: active.cwd,
-      agentDir: MORTISE_AGENT_DIR,
+      agentDir: PI_AGENT_DIR,
       projectConfigDir: MORTISE_PROJECT_DIR,
     }));
     try {
@@ -2266,6 +2267,22 @@ export class PiAgent extends BaseAgent {
     } finally {
       await this.releaseChildRuntimeLease(lease);
     }
+  }
+
+  async prepareChildTasksForParentDeletion(): Promise<{ childSessionIds: string[] }> {
+    const client = await this.ensureRpcClient();
+    this.requirePiRpcCommand('list_child_sessions', 'parent Session deletion');
+    const parentSessionId = this.piSessionId ?? (await client.getState()).sessionId;
+    if (!parentSessionId) return { childSessionIds: [] };
+    const children = await client.listChildSessions(parentSessionId, this.getChildSessionDir());
+    for (const child of children) {
+      if (child.status !== 'running') continue;
+      const result = await this.interruptChildSession(parentSessionId, child.id);
+      if (result.status === 'running') {
+        throw new Error(`Child task did not settle before parent deletion: ${child.id}`);
+      }
+    }
+    return { childSessionIds: children.map(child => child.id) };
   }
 
   private async acquireChildRuntime(
@@ -2282,12 +2299,12 @@ export class PiAgent extends BaseAgent {
     const { lease, epoch } = await this.acquireChildRuntimeLease(() => parentLease.acquireRuntime(active ? {
       runtimeId: active.runtimeId,
       cwd: active.cwd,
-      agentDir: MORTISE_AGENT_DIR,
+      agentDir: PI_AGENT_DIR,
       projectConfigDir: MORTISE_PROJECT_DIR,
     } : {
       runtimeId: `subagent-${childSessionId}`,
       cwd: this.resolvedWorkspaceRoot(),
-      agentDir: MORTISE_AGENT_DIR,
+      agentDir: PI_AGENT_DIR,
       projectConfigDir: MORTISE_PROJECT_DIR,
       extensionPaths: this.getMortiseExtensionPaths(),
       sessionPath: child.sessionPath,
@@ -2672,17 +2689,6 @@ export class PiAgent extends BaseAgent {
       this.debug(`[sendExtensionCommandInvoke] Failed for "${commandId}": ${message}`);
       return { invoked: false, error: message };
     }
-  }
-
-  async reloadExtensions(): Promise<{ reloaded: boolean; deferred: boolean }> {
-    const client = this.rpcClient;
-    // A runtime that is not open has no extension code to refresh. Its next
-    // startup will load the current extension files, so do not resurrect idle
-    // or force-closed sessions solely for a manual reload.
-    if (!client) return { reloaded: false, deferred: false };
-    if (this.rpcClientReady) await this.rpcClientReady;
-    if (this.rpcClient !== client) return { reloaded: false, deferred: false };
-    return await client.reloadExtensions();
   }
 
   /**
@@ -3394,7 +3400,7 @@ export class PiAgent extends BaseAgent {
     const runtime = await host.openRuntime({
       runtimeId: `automation-isolated-${randomUUID()}`,
       cwd: this.resolvedWorkspaceRoot(),
-      agentDir: MORTISE_AGENT_DIR,
+      agentDir: PI_AGENT_DIR,
       projectConfigDir: MORTISE_PROJECT_DIR,
       inMemory: true,
       persistInitialState: false,

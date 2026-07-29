@@ -557,6 +557,17 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
     return sessionManager.listExtensionCommands(sessionId)
   })
 
+  server.handle(RPC_CHANNELS.extensions.GET_FILE_STATE, async (ctx, workspaceId: string, extensionId: string) => {
+    if (!ctx.workspaceId || ctx.workspaceId !== workspaceId) throw new Error('Extension state requires the authenticated Workspace route')
+    return sessionManager.getExtensionFileState(workspaceId, extensionId)
+  })
+
+  server.handle(RPC_CHANNELS.extensions.SET_FILE_STATE, async (ctx, workspaceId: string, extensionId: string, state: import('@mortise/shared/protocol').ExtensionFileStateV1) => {
+    if (!ctx.workspaceId || ctx.workspaceId !== workspaceId) throw new Error('Extension state requires the authenticated Workspace route')
+    await sessionManager.setExtensionFileState(workspaceId, extensionId, state)
+    return true
+  })
+
   // List child sessions in pi's session tree spawned from the given parent session.
   // Used by SubagentPanel to render active branches (spawnedFrom filter).
   server.handle(RPC_CHANNELS.sessions.LIST_CHILD_SESSIONS, async (ctx, sessionId: string) => {

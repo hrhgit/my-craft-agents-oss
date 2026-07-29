@@ -9,6 +9,7 @@ import {
   type CloudEventV1,
 } from '@mortise/shared/automations'
 import {
+  createAutomationWorkspaceDescriptionV1,
   parseAutomationWorkspaceCommandV1,
   type AutomationWorkspaceCommandV1,
 } from '@mortise/shared/protocol'
@@ -50,21 +51,7 @@ export async function executeAutomationWorkspaceOperationV1(
           schemaVersion: 1,
           status: 'ok',
           revision: document.revision,
-          data: {
-            capability: 'automation.workspace',
-            schemaVersion: 1,
-            capabilities: {
-              'automations.definitions': { minRead: 4, maxRead: 4, minWrite: 4, maxWrite: 4 },
-              'automations.ingress': { minRead: 2, maxRead: 2, minWrite: 2, maxWrite: 2 },
-              'automations.runs': { minRead: 2, maxRead: 2, minWrite: 2, maxWrite: 2 },
-              'automations.history': { minRead: 2, maxRead: 2, minWrite: 2, maxWrite: 2 },
-            },
-            triggerKinds: ['event', 'cron', 'once', 'interval'],
-            actionKinds: ['prompt', 'webhook'],
-            targetKinds: ['new-session', 'session', 'isolated-agent'],
-            limits: { maxEventBytes: 1_048_576, maxConditionDepth: 8, maxMatcherLength: 500, maxEventTypeLength: 255, maxRunListLimit: 500 },
-            permissionScopes: ['automations.read', 'automations.history.read', 'automations.write', 'automations.run', 'automations.events.emit'],
-          },
+          data: createAutomationWorkspaceDescriptionV1(),
         }
       case 'list': {
         const page = store.listDefinitionsPage({

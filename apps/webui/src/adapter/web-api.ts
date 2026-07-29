@@ -20,6 +20,7 @@ import {
   attachWebPlatformCapabilities,
   createUnsupportedWebApiOverrides,
 } from './platform-capabilities'
+import { BACKEND_TYPE_CAPABILITY } from '@mortise/shared/protocol'
 
 // ---------------------------------------------------------------------------
 // Web platform contract
@@ -64,6 +65,7 @@ export function createWebApi(options: WebApiOptions): {
     autoReconnect: true,
     maxReconnectDelay: WEBUI_MAX_RECONNECT_DELAY_MS,
     mode: 'remote',
+    clientCapabilities: [BACKEND_TYPE_CAPABILITY.webui],
     // No token — auth is via session cookie sent on WebSocket upgrade
   })
 

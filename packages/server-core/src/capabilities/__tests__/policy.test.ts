@@ -45,13 +45,12 @@ describe('capability authorization policy', () => {
     expect(prompt).toHaveBeenCalledTimes(1)
   })
 
-  it('uses one canonical automation surface and keeps mutations confirmable', () => {
+  it('uses one canonical automation surface without per-operation prompts for trusted callers', () => {
     const automationRules = ELECTRON_CAPABILITY_POLICY_V1.filter(rule => rule.capability.includes('automation') || rule.capability.includes('scheduler') || rule.capability.includes('webhook'))
     expect(automationRules.every(rule => rule.capability === 'automation.workspace')).toBe(true)
-    expect(automationRules.find(rule => rule.decision === 'allow')?.operations).toContain('simulate')
-    const promptedOperations = automationRules.filter(rule => rule.decision === 'prompt').flatMap(rule => [...rule.operations])
-    expect(promptedOperations).toContain('emit-event')
-    expect(promptedOperations).toContain('list')
-    expect(promptedOperations).toContain('get-run')
+    expect(automationRules).toHaveLength(1)
+    expect(automationRules[0]?.decision).toBe('allow')
+    expect(automationRules[0]?.operations).toContain('emit-event')
+    expect(automationRules[0]?.operations).toContain('list-changes')
   })
 })

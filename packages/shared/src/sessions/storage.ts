@@ -41,7 +41,10 @@ import { readSessionHeader, readSessionJsonl } from './jsonl.ts';
 import { sessionPersistenceQueue } from './persistence-queue.ts';
 import { MORTISE_SESSIONS_DIR, encodePiSessionCwd } from '../config/paths.ts';
 import { materializeStoredSessionViaPiSessionManager, readTreeSessionAsStoredSession, readTreeSessionHeader, readTreeSessionMetadata, writeTreeSessionMortiseMetadataAsync } from './tree-jsonl.ts';
-import { findSessionProjectionById as findPiHostSessionProjectionById } from '@mortise/pi-coding-agent/host-facade';
+import {
+  deleteSessionUiMetadata as deletePiSessionUiMetadata,
+  findSessionProjectionById as findPiHostSessionProjectionById,
+} from '@mortise/pi-coding-agent/host-facade';
 
 let sharedPiSessionsDirOverride: string | undefined;
 
@@ -285,7 +288,7 @@ export function getPiNativeSessionDir(workspaceRootPath: string): string {
 /**
  * Ensure Pi has a tree JSONL session projection and attach latest Mortise metadata.
  *
- * Pi creates the projection/header; Mortise only sends the UI metadata overlay
+ * Pi creates the projection/header; Mortise only sends the typed UI metadata projection
  * through the Pi facade and returns the projection path.
  */
 /**
@@ -609,6 +612,7 @@ export async function deleteSession(workspaceRootPath: string, sessionId: string
     // 1. Delete the Pi tree JSONL session file (the authoritative transcript)
     const sessionFile = getSessionFilePath(workspaceRootPath, sessionId);
     if (existsSync(sessionFile)) {
+      deletePiSessionUiMetadata({ sessionPath: sessionFile, projectionId: sessionId });
       rmSync(sessionFile);
     }
 

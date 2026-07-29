@@ -51,7 +51,7 @@ Automation writes are atomic and operation-identified; repeated delivery cannot 
 
 Automation-created sessions use `session-lifecycle`; outbound notifications coordinate with `messaging`.
 
-Clock changes and process downtime affect schedules; concurrent backends must agree on operation identity and version. The current scheduler implementation and tests still include missed-once recovery and interval coalescing, which must be aligned with the accepted skip-while-no-backend contract. Projection corruption, stale leases, cursor reuse under different filters, and mixed-version writers must fail explicitly instead of looping or overwriting a newer transition.
+Clock changes and process downtime affect schedules; concurrent backends must agree on operation identity and version. Missed time boundaries advance through durable observations without creating recovery runs. Projection corruption, stale leases, cursor reuse under different filters, and mixed-version writers must fail explicitly instead of looping or overwriting a newer transition.
 
 # Validation
 

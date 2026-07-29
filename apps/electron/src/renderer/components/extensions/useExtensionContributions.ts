@@ -22,7 +22,7 @@ function ensureHostSubscription(): void {
     if (event.type === 'extension_contributions_runtime_reset') {
       refreshedSessions.delete(refreshKey(event.sessionId, event.workspaceId))
       refreshedSessions.delete(refreshKey(event.sessionId))
-      extensionContributionStore.resetRuntime(event.sessionId, event.runtimeId, event.workspaceId)
+      extensionContributionStore.resetRuntime(event.sessionId, event.runtimeId, event.workspaceId, event.backendType)
       extensionValidationStore.resetRuntime(event.sessionId, event.runtimeId)
     }
   })
@@ -34,6 +34,7 @@ export function useExtensionContributions(
   target?: { turnId?: string; messageId?: string; toolCallId?: string; artifactId?: string },
   hydrateRuntime = true,
   workspaceId?: string | null,
+  capacity?: number,
 ) {
   ensureHostSubscription()
   const appShell = useOptionalAppShellContext()
@@ -73,6 +74,6 @@ export function useExtensionContributions(
         && (targetToolCallId === undefined || ownTarget.toolCallId === targetToolCallId)
         && (targetArtifactId === undefined || ownTarget.artifactId === targetArtifactId)
     })
-    return extensionSurfaceLayout.resolve(surface, items)
-  }, [hasTarget, resolvedWorkspaceId, sessionId, surface, targetArtifactId, targetMessageId, targetToolCallId, targetTurnId, version])
+    return extensionSurfaceLayout.resolve(surface, items, capacity)
+  }, [capacity, hasTarget, resolvedWorkspaceId, sessionId, surface, targetArtifactId, targetMessageId, targetToolCallId, targetTurnId, version])
 }

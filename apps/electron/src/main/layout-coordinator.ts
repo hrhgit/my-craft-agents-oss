@@ -2,6 +2,8 @@ import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { atomicWriteFile } from '@mortise/shared/utils'
+import { BackendSnapshotStore } from '@mortise/shared/storage'
+import type { BackendType } from '@mortise/shared/protocol'
 import {
   assertSingleWorkspaceLayout,
   createDefaultAppLayout,
@@ -16,6 +18,10 @@ import {
 } from '../shared/app-layout'
 
 export interface LayoutCoordinatorOptions {
+  backendType?: BackendType
+  snapshotRoot?: string
+  snapshotStore?: BackendSnapshotStore
+  /** Explicit legacy collection path retained for focused tests and migration tooling. */
   storagePath?: string
   authorizeContentRef?: (ref: ContentRef) => boolean
   onChanged?: (layout: AppLayout) => void
@@ -31,7 +37,11 @@ export interface LayoutPersistenceState {
 
 export class LayoutCoordinator {
   readonly storagePath: string
+  readonly backendType: BackendType
   private readonly layouts: Map<string, AppLayout>
+  private readonly legacyLayouts: Map<string, AppLayout>
+  private readonly snapshotStore: BackendSnapshotStore | undefined
+  private readonly collectionMode: boolean
   private changedHandler: ((layout: AppLayout) => void) | undefined
   private needsPersistAfterLoad = false
   private requestedPersistRevision = 0
@@ -41,9 +51,17 @@ export class LayoutCoordinator {
   private persistenceError: Error | undefined
 
   constructor(private readonly options: LayoutCoordinatorOptions = {}) {
-    this.storagePath = options.storagePath
-      ?? join(process.env.MORTISE_CONFIG_DIR || join(homedir(), '.mortise'), 'app-layout.v1.json')
-    this.layouts = this.loadFromDisk()
+    const configDirectory = process.env.MORTISE_CONFIG_DIR || join(homedir(), '.mortise')
+    this.backendType = options.backendType ?? 'electron'
+    this.collectionMode = options.storagePath !== undefined
+    this.storagePath = options.storagePath ?? options.snapshotRoot ?? join(configDirectory, 'backend-snapshots')
+    this.snapshotStore = this.collectionMode
+      ? undefined
+      : options.snapshotStore ?? new BackendSnapshotStore(this.storagePath)
+    this.layouts = this.collectionMode ? this.loadCollectionFromDisk(this.storagePath) : new Map()
+    this.legacyLayouts = !this.collectionMode && this.backendType === 'electron'
+      ? this.loadCollectionFromDisk(join(configDirectory, 'app-layout.v1.json'))
+      : new Map()
     this.changedHandler = options.onChanged
     if (this.needsPersistAfterLoad) this.requestPersist()
   }
@@ -134,12 +152,12 @@ export class LayoutCoordinator {
     return structuredClone(next)
   }
 
-  private loadFromDisk(): Map<string, AppLayout> {
+  private loadCollectionFromDisk(storagePath: string): Map<string, AppLayout> {
     const layouts = new Map<string, AppLayout>()
-    if (!existsSync(this.storagePath)) return layouts
+    if (!existsSync(storagePath)) return layouts
     let parsed: unknown
     try {
-      parsed = JSON.parse(readFileSync(this.storagePath, 'utf8'))
+      parsed = JSON.parse(readFileSync(storagePath, 'utf8'))
     } catch {
       return layouts
     }
@@ -177,6 +195,32 @@ export class LayoutCoordinator {
   private requireLayout(workspaceId: string): AppLayout {
     const existing = this.layouts.get(workspaceId)
     if (existing) return existing
+    const persisted = this.snapshotStore?.read(
+      { kind: 'layout', workspaceId, backendType: this.backendType },
+      isLayoutCandidate,
+    )
+    if (persisted) {
+      try {
+        const sanitized = sanitizeAppLayout(persisted)
+        const restored = restoreLayoutForStartup(sanitized)
+        assertSingleWorkspaceLayout(restored)
+        if (restored.workspaceId !== workspaceId) throw new Error('Layout workspace mismatch')
+        this.assertAuthorized(restored)
+        this.layouts.set(workspaceId, restored)
+        if (Object.values(sanitized.windows).some(window => window.kind === 'auxiliary')) {
+          this.requestPersist()
+        }
+        return restored
+      } catch {
+        // A corrupt or unauthorized snapshot is isolated to its Workspace.
+      }
+    }
+    const legacy = this.legacyLayouts.get(workspaceId)
+    if (legacy) {
+      this.layouts.set(workspaceId, legacy)
+      this.requestPersist()
+      return legacy
+    }
     const created = createDefaultAppLayout({ workspaceId })
     this.layouts.set(workspaceId, created)
     return created
@@ -237,12 +281,21 @@ export class LayoutCoordinator {
   private async drainPersistence(): Promise<void> {
     while (this.durablePersistRevision < this.requestedPersistRevision) {
       const targetRevision = this.requestedPersistRevision
-      const payload = {
-        version: 1,
-        layouts: Object.fromEntries(this.layouts),
+      if (this.collectionMode) {
+        const payload = {
+          version: 1,
+          layouts: Object.fromEntries(this.layouts),
+        }
+        const contents = `${JSON.stringify(payload, null, 2)}\n`
+        await (this.options.persistSnapshot ?? atomicWriteFile)(this.storagePath, contents)
+      } else if (this.snapshotStore) {
+        await Promise.all([...this.layouts.entries()].map(([workspaceId, layout]) =>
+          this.snapshotStore!.write(
+            { kind: 'layout', workspaceId, backendType: this.backendType },
+            layout,
+            isLayoutCandidate,
+          )))
       }
-      const contents = `${JSON.stringify(payload, null, 2)}\n`
-      await (this.options.persistSnapshot ?? atomicWriteFile)(this.storagePath, contents)
       this.durablePersistRevision = targetRevision
     }
   }
@@ -371,7 +424,7 @@ function isPersistedLayoutCollection(value: unknown): value is { version: 1; lay
     && (value as { layouts?: unknown }).layouts !== null
 }
 
-function isLayoutCandidate(value: unknown): value is Record<string, unknown> {
+function isLayoutCandidate(value: unknown): value is AppLayout {
   return isRecord(value)
     && value.version === 1
     && typeof value.workspaceId === 'string'

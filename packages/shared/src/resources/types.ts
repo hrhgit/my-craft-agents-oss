@@ -8,7 +8,10 @@
  */
 
 import type { BundleFile } from '../utils/bundle-files.ts'
-import type { AutomationDefinitionV3 } from '../automations/v3-types.ts'
+import type {
+  AutomationDefinitionV3,
+  AutomationDependencyDeclarationV1,
+} from '../automations/v3-types.ts'
 
 // ============================================================
 // Bundle Format
@@ -20,7 +23,7 @@ import type { AutomationDefinitionV3 } from '../automations/v3-types.ts'
  */
 export interface ResourceBundle {
   /** Bundle format version */
-  version: 2
+  version: 3
   /** When the bundle was created (Unix timestamp ms) */
   exportedAt: number
   /** Informational: name of the workspace this was exported from */
@@ -28,8 +31,14 @@ export interface ResourceBundle {
   /** The exported resources */
   resources: {
     skills?: SkillBundleEntry[]
-    automations?: AutomationDefinitionV3[]
+    automations?: PortableAutomationEntryV1[]
   }
+}
+
+export interface PortableAutomationEntryV1 {
+  schemaVersion: 1
+  definition: AutomationDefinitionV3
+  dependencies: AutomationDependencyDeclarationV1[]
 }
 
 /**
@@ -54,6 +63,10 @@ export interface SkillBundleEntry {
  * - 'overwrite': Replace existing resources with imported ones
  */
 export type ResourceImportMode = 'skip' | 'overwrite'
+
+export interface AutomationDependencyResolverV1 {
+  isAvailable(dependency: AutomationDependencyDeclarationV1): boolean | Promise<boolean>
+}
 
 /**
  * Options for resource export.
@@ -86,6 +99,13 @@ export interface ImportBucketResult {
   failed: Array<{ id: string; error: string }>
   /** Warnings (non-fatal issues) */
   warnings: string[]
+  /** Isolated result for every selected resource. */
+  items: Array<{
+    id: string
+    status: 'imported' | 'imported-disabled' | 'skipped' | 'failed'
+    missingDependencies?: AutomationDependencyDeclarationV1[]
+    error?: string
+  }>
 }
 
 /**

@@ -13,7 +13,7 @@ describe('parseAutomationDefinitionsV3', () => {
     const [item] = parseAutomationDefinitionsV3([{
       id: 'automation-v3-test', name: 'Interval review', enabled: true,
       triggers: [{ id: 'trigger-v3-test', type: 'time', schedule: { kind: 'interval', everyMs: 60_000, anchorAt: now } }],
-      actions: [{ id: 'action-v3-test', type: 'prompt', prompt: 'review', target: { kind: 'isolated-agent', model: 'test-model' } }],
+      actions: [{ id: 'action-v3-test', type: 'prompt', prompt: 'review', target: { kind: 'new-session', model: 'test-model' } }],
       createdAt: now, updatedAt: now,
     }])
     expect(item).toMatchObject({

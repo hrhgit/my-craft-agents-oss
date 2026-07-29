@@ -64,6 +64,7 @@ export interface SessionMeta {
   hidden?: boolean
   /** Display-only sessions projected from Pi runtime cannot be mutated by Mortise. */
   readOnly?: boolean
+  deletionState?: 'deleting'
 }
 
 /**

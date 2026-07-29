@@ -56,44 +56,6 @@ describe('AutomationV3Runtime', () => {
     store.close()
   })
 
-  it('records once misfire skips without disabling definitions that have other triggers', () => {
-    const root = mkdtempSync(join(tmpdir(), 'mortise-automations-runtime-'))
-    roots.push(root)
-    const store = new AutomationV3Store({ workspaceId: 'workspace-once', workspaceRootPath: root })
-    const initial = store.initialize()
-    const onceTrigger = {
-      id: 'trg_once_skip_123', type: 'time' as const,
-      schedule: { kind: 'once' as const, at: '2026-07-20T09:00:00Z', misfire: 'skip' as const },
-    }
-    const definition = {
-      id: 'aut_once_skip_123', name: 'Once plus event', enabled: true,
-      triggers: [
-        onceTrigger,
-        { id: 'trg_event_123456', type: 'event' as const, source: 'mortise' as const, eventType: 'mortise.test' },
-      ],
-      actions: [{ id: 'act_once_skip_123', type: 'prompt' as const, prompt: 'inspect', target: { kind: 'new-session' as const } }],
-      createdAt: '2026-07-20T00:00:00Z', updatedAt: '2026-07-20T00:00:00Z',
-    }
-    expect(store.mutateDocument({
-      operationId: 'operation-once-definition', expectedRevision: initial.revision,
-      document: { ...initial, definitions: [definition] },
-    }).status).toBe('ok')
-    const runtime = new AutomationV3Runtime({
-      workspaceId: 'workspace-once', store,
-      callbacks: {
-        prompt: async () => ({ status: 'succeeded' }),
-        webhook: async () => ({ status: 'succeeded' }),
-      },
-    })
-    const run = runtime.acceptTimeTrigger(definition, onceTrigger, {
-      occurrenceKey: '2026-07-20T09:00:00.000Z', scheduledAt: '2026-07-20T09:00:00.000Z',
-      recovery: true, skipReason: 'misfire',
-    })
-    expect(run).toMatchObject({ state: 'skipped', reason: 'misfire-skip' })
-    expect(store.initialize().definitions[0]?.enabled).toBe(true)
-    store.close()
-  })
-
   it('cancels a callback that returns after its abort signal instead of recording success', async () => {
     const root = mkdtempSync(join(tmpdir(), 'mortise-automations-runtime-abort-'))
     roots.push(root)

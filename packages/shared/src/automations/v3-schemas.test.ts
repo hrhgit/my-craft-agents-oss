@@ -37,6 +37,21 @@ describe('Automations V3 schemas', () => {
     expect(AutomationsDocumentV3Schema.safeParse(value).success).toBe(false)
   })
 
+  it('rejects removed isolated targets and misfire policies', () => {
+    const isolated = document()
+    isolated.definitions[0]!.actions = [{
+      id: 'act_123456789abc', type: 'prompt', prompt: 'inspect', target: { kind: 'isolated-agent' },
+    }] as never
+    expect(AutomationsDocumentV3Schema.safeParse(isolated).success).toBe(false)
+
+    const misfire = document()
+    misfire.definitions[0]!.triggers = [{
+      id: 'trg_123456789abc', type: 'time',
+      schedule: { kind: 'once', at: now, misfire: 'run-once' },
+    }] as never
+    expect(AutomationsDocumentV3Schema.safeParse(misfire).success).toBe(false)
+  })
+
   it('requires CloudEvents 1.0 required attributes and JSON data', () => {
     const event = { specversion: '1.0', id: 'one', source: 'urn:test', type: 'tests.failed', time: now, data: { exitCode: 1 } }
     expect(CloudEventV1Schema.safeParse(event).success).toBe(true)

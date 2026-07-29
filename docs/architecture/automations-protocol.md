@@ -109,10 +109,10 @@ The host MUST advertise at least these automation capabilities:
 
 ```json
 {
-  "automations.definitions": { "minRead": 3, "maxRead": 3, "minWrite": 3, "maxWrite": 3 },
-  "automations.ingress": { "minRead": 1, "maxRead": 1, "minWrite": 1, "maxWrite": 1 },
-  "automations.runs": { "minRead": 1, "maxRead": 1, "minWrite": 1, "maxWrite": 1 },
-  "automations.history": { "minRead": 1, "maxRead": 1, "minWrite": 1, "maxWrite": 1 }
+  "automations.definitions": { "minRead": 4, "maxRead": 4, "minWrite": 4, "maxWrite": 4 },
+  "automations.ingress": { "minRead": 2, "maxRead": 2, "minWrite": 2, "maxWrite": 2 },
+  "automations.runs": { "minRead": 2, "maxRead": 2, "minWrite": 2, "maxWrite": 2 },
+  "automations.history": { "minRead": 2, "maxRead": 2, "minWrite": 2, "maxWrite": 2 }
 }
 ```
 
@@ -145,6 +145,7 @@ type AutomationOperationV1 =
   | 'run'
   | 'get-run'
   | 'list-runs'
+  | 'list-changes'
   | 'emit-event'
 ```
 
@@ -196,6 +197,11 @@ Declarations do not grant permissions. Host policy remains fail closed, binds
 grants to extension/runtime identity, redacts prompt and header content from
 read responses when the caller lacks its scope, and audits every mutating
 operation.
+
+Trusted Extension and Agent callers that have entered this host-owned capability
+do not receive an additional confirmation prompt for each read or mutation.
+Schema validation, Workspace binding, operation identity, revision checks, and
+the visible management history remain mandatory.
 
 ## 5. Canonical Document V3
 
@@ -294,7 +300,6 @@ type TimeTriggerV3 =
         kind: 'cron'
         expression: string
         timezone?: string
-        misfire?: 'skip' | 'run-once'
       }
     }
   | {
@@ -304,7 +309,6 @@ type TimeTriggerV3 =
         kind: 'once'
         at: string
         expiresAt?: string
-        misfire?: 'skip' | 'run-once'
       }
     }
   | {
@@ -314,7 +318,6 @@ type TimeTriggerV3 =
         kind: 'interval'
         everyMs: number
         anchorAt: string
-        misfire?: 'skip' | 'run-once'
       }
     }
 ```
@@ -327,10 +330,9 @@ event every minute.
 
 An occurrence whose scheduled instant passed while no Mortise backend was
 active is skipped and MUST NOT be claimed or replayed when a backend later
-starts. This rule applies to cron, once, and interval schedules regardless of a
-stored `misfire` value. A concrete history projection MAY record that a boundary
-was skipped, but that record cannot create a run or make the occurrence eligible
-for execution.
+starts. This rule applies to cron, once, and interval schedules. A durable
+schedule observation may advance the stored boundary, but it cannot create a
+run or make the occurrence eligible for execution.
 
 For interval schedules, the next future occurrence is always calculated from
 `anchorAt + n * everyMs`. Restart time and prior execution duration MUST NOT
@@ -599,6 +601,22 @@ History is a materialized view over durable ingress, run, action, and attempt
 records. Retention may compact old detail, but it MUST preserve terminal run
 summary, automation ID, trigger ID, occurrence ID, timestamps, action outcomes,
 and linked Session IDs for the configured retention period.
+
+Automation portability uses the versioned resource bundle boundary, not a copy
+of canonical SQLite state. An exported entry contains the complete definition
+and explicit declarations for required Sessions, secrets, Extension event
+sources, and external event sources. Secret values, run history, received
+events, queued or active work, claims, and query projections are never exported.
+Sensitive literal headers are replaced with explicit secret references rather
+than silently removed from the definition.
+
+Import validates and commits each selected Automation independently. Known
+dependencies are reconnected through the target Workspace resolver. Missing
+required dependencies preserve the complete definition but force it disabled
+with a visible configuration-incomplete state and the desired enabled state for
+later restoration. One malformed, conflicting, or incomplete entry cannot
+prevent other valid entries in the same batch from importing, and the result
+MUST contain one status and diagnostic record per selected entry.
 
 ## 9. Scheduling And Recovery Invariants
 

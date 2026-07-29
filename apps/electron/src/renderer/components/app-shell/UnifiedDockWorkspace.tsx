@@ -30,6 +30,7 @@ import {
 } from './unified-dock-tab-chrome'
 import { actionEntersCompactDockDetail } from './compact-dock-navigation'
 import { handleBrowserHostDockNavigation } from './dock-host-navigation'
+import { isRestorableWorkspaceContentTab } from './saved-workspace-content'
 import {
   createNativeViewDragOcclusionController,
   resolveNativeViewDockDragTarget,
@@ -344,7 +345,8 @@ export function UnifiedDockWorkspace({
 
   const openToolTab = React.useCallback((tool: WorkbenchTool, targetTabsetId?: string) => {
     enterCompactDockDetail()
-    const tabId = toolTabId(tool, activeWorkspaceId)
+    const multiple = tool.extension?.contribution.workspaceContent?.instancePolicy === 'multiple'
+    const tabId = multiple ? `${toolTabId(tool, activeWorkspaceId)}:${crypto.randomUUID()}` : toolTabId(tool, activeWorkspaceId)
     const existing = model.getNodeById(tabId)
     if (existing instanceof TabNode) {
       model.doAction(Actions.selectTab(tabId))
@@ -1351,7 +1353,7 @@ function contentTabIdsForWindow(snapshot: AppLayout, windowId: string): string[]
     .filter(tabId => snapshot.tabs[tabId]?.ref.resourceId !== 'workspace-content-picker')
 }
 
-function sanitizeSavedGeometry(
+export function sanitizeSavedGeometry(
   saved: IJsonModel,
   entries: PanelStackEntry[],
   serverId: string,
@@ -1395,12 +1397,7 @@ function sanitizeSavedGeometry(
       }
       return true
     }
-    const validWorkspaceContent = tab.component === CONTENT_COMPONENT
-      && config?.source === 'workspace-content'
-      && isWorkspaceContentKind(config.contentKind)
-      && typeof config.resourceId === 'string'
-      && config.workspaceId === (workspaceId ?? '')
-      && (!allowedTabIds || allowedTabIds.has(tab.id))
+    const validWorkspaceContent = isRestorableWorkspaceContentTab(tab, workspaceId ?? '', allowedTabIds)
     if (!validWorkspaceContent) return false
     const canonical = canonicalTabs?.[tab.id]
     if (canonical) {

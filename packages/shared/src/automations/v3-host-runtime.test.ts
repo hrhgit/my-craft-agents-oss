@@ -11,6 +11,43 @@ afterEach(() => {
 })
 
 describe('AutomationWorkspaceHostV3', () => {
+  it('advances missed time boundaries without creating a recovery run', () => {
+    const root = mkdtempSync(join(tmpdir(), 'mortise-automations-host-missed-'))
+    roots.push(root)
+    const host = new AutomationWorkspaceHostV3({
+      workspaceId: 'workspace-host-missed',
+      workspaceRootPath: root,
+      callbacks: {
+        prompt: async () => ({ status: 'succeeded' }),
+        webhook: async () => ({ status: 'succeeded' }),
+      },
+    })
+    const initial = host.store.initialize()
+    const definition = {
+      id: 'automation-host-missed', name: 'Missed once', enabled: true,
+      triggers: [{
+        id: 'trigger-host-missed', type: 'time' as const,
+        schedule: { kind: 'once' as const, at: '2026-07-20T09:00:00.000Z' },
+      }],
+      actions: [{ id: 'action-host-missed', type: 'prompt' as const, prompt: 'do not run', target: { kind: 'new-session' as const } }],
+      createdAt: '2026-07-20T08:00:00.000Z', updatedAt: '2026-07-20T08:00:00.000Z',
+    }
+    expect(host.store.mutateDocument({
+      operationId: 'operation-host-missed-definition',
+      expectedRevision: initial.revision,
+      document: { ...initial, definitions: [definition] },
+    }).status).toBe('ok')
+    const now = new Date('2026-07-20T10:00:00.000Z')
+    const due = host.store.listDueOccurrences(now, 100, now)
+    expect(due).toHaveLength(1)
+    expect(due[0]?.occurrence.skipReason).toBe('missed')
+    host.store.recordMissedTimeOccurrence(due[0]!)
+    host.store.recordMissedTimeOccurrence(due[0]!)
+    expect(host.store.listRuns()).toEqual([])
+    expect(host.store.listDueOccurrences(now, 100, now)).toEqual([])
+    host.store.close()
+  })
+
   it('returns a durable run claim before background action completion', async () => {
     const root = mkdtempSync(join(tmpdir(), 'mortise-automation-host-'))
     roots.push(root)
@@ -278,6 +315,60 @@ describe('AutomationWorkspaceHostV3', () => {
     expect(recoveredHost.store.getRun(run.runId)).toMatchObject({ state: 'cancelled', reason: 'workspace-topology-interrupted' })
     expect(recoveredHost.store.initialize().definitions).toMatchObject([{ id: definition.id, enabled: true }])
     await recoveredHost.stop()
+  })
+
+  it('interrupts only the active run using a changed location and preserves queued work', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'mortise-automations-location-interrupt-'))
+    roots.push(root)
+    let releaseActive!: () => void
+    const activeGate = new Promise<void>(resolve => { releaseActive = resolve })
+    let executionCount = 0
+    const host = new AutomationWorkspaceHostV3({
+      workspaceId: 'workspace-location-interrupt',
+      workspaceRootPath: root,
+      getCurrentLocationId: () => 'primary',
+      callbacks: {
+        prompt: async () => {
+          executionCount++
+          if (executionCount === 1) await activeGate
+          return { status: 'succeeded' }
+        },
+        webhook: async () => ({ status: 'succeeded' }),
+      },
+    })
+    host.start()
+    const document = host.store.initialize()
+    const now = new Date().toISOString()
+    const definition = {
+      id: 'automation-location-interrupt', name: 'Location interrupt', enabled: true,
+      triggers: [{ id: 'trigger-location-interrupt', type: 'event' as const, source: 'mortise' as const, eventType: 'manual' }],
+      actions: [{ id: 'action-location-interrupt', type: 'prompt' as const, prompt: 'run', target: { kind: 'new-session' as const } }],
+      runPolicy: { overlap: 'queue-one' as const }, createdAt: now, updatedAt: now,
+    }
+    expect(host.store.mutateDocument({
+      operationId: 'operation-location-interrupt-definition',
+      expectedRevision: document.revision,
+      document: { ...document, definitions: [definition] },
+    }).status).toBe('ok')
+
+    const active = host.acceptManual(definition.id, 'manual-location-active').run
+    const queued = host.acceptManual(definition.id, 'manual-location-queued').run
+    for (let attempt = 0; attempt < 50 && host.store.getRun(active.runId)?.state !== 'running'; attempt++) await Bun.sleep(5)
+
+    await expect(host.interruptForWorkspaceTopologyChange({ scope: 'location', locationId: 'attached' }))
+      .resolves.toEqual({ selectedRunIds: [], cancelledRunIds: [] })
+    expect(host.store.getRun(active.runId)?.state).toBe('running')
+    expect(host.store.getRun(queued.runId)?.state).toBe('queued')
+
+    const interruption = host.interruptForWorkspaceTopologyChange({ scope: 'location', locationId: 'primary' })
+    expect(host.store.getRun(active.runId)).toMatchObject({ state: 'cancelled', reason: 'workspace-location-interrupted' })
+    expect(host.store.getRun(queued.runId)?.state).toBe('queued')
+    releaseActive()
+    await expect(interruption).resolves.toEqual({ selectedRunIds: [active.runId], cancelledRunIds: [active.runId] })
+    await host.resumeAfterWorkspaceTopologyChange()
+    for (let attempt = 0; attempt < 50 && host.store.getRun(queued.runId)?.state !== 'succeeded'; attempt++) await Bun.sleep(5)
+    expect(host.store.getRun(queued.runId)?.state).toBe('succeeded')
+    await host.stop()
   })
 
   it('fails closed when durable interruption cannot be completed', async () => {

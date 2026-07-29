@@ -63,6 +63,7 @@ export const RPC_CHANNELS = {
     CHECK_SLUG: 'workspaces:checkSlug',
     GET_TOPOLOGY: 'workspaces:getTopology',
     TOPOLOGY_COMMAND: 'workspaces:topologyCommand',
+    DETACH_MARKER: 'workspaces:detachMarker',
     TOPOLOGY_CHANGED: 'workspaces:topologyChanged',
     REMOTE_PRIMARY_COMMAND: 'workspaces:remotePrimaryCommand',
     TRANSFER: 'workspaces:transfer',
@@ -318,7 +319,6 @@ export const RPC_CHANNELS = {
     UPDATE_SETTINGS: 'piExtensions:updateSettings',
     GET_CATALOG: 'piExtensions:getCatalog',
     PATCH_EXTENSION_CONFIG: 'piExtensions:patchExtensionConfig',
-    RELOAD: 'piExtensions:reload',
     // 逐扩展启停状态（读写 ~/.mortise/agent/settings.json 的 extensions.<name>.enabled）
     GET_EXTENSION_STATES: 'piExtensions:getExtensionStates',
     SET_EXTENSION_ENABLED: 'piExtensions:setExtensionEnabled',
@@ -329,6 +329,8 @@ export const RPC_CHANNELS = {
     INTERACTION_RESPONSE: 'extensions:interactionResponse',
     COMMAND_INVOKE: 'extensions:commandInvoke',
     GET_COMMANDS: 'extensions:getCommands',
+    GET_FILE_STATE: 'extensions:getFileState',
+    SET_FILE_STATE: 'extensions:setFileState',
   },
   badge: {
     REFRESH: 'badge:refresh',

@@ -12,3 +12,4 @@ export { AutomationV3Store, automationIdentity, type AutomationV3StoreOptions, t
 export { AutomationV3Runtime, type AutomationV3RuntimeOptions, type AutomationEventDispatchResultV1 } from './v3-runtime.ts';
 export { AutomationWorkspaceHostV3, type AutomationWorkspaceHostV3Options, type AutomationWorkspaceInterruptionResultV1 } from './v3-host-runtime.ts';
 export { createAutomationAsyncApiDocumentV1, type AutomationAsyncApiDocumentOptionsV1 } from './v3-asyncapi.ts';
+export * from './capability-contract.ts'

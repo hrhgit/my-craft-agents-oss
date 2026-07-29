@@ -228,10 +228,10 @@ function assertHistoryRelationships(
   }
 }
 
-function nextDueAt(trigger: TimeTriggerV3, lastClaimedAtMs: number | null, now: Date): number | null {
+function nextDueAt(trigger: TimeTriggerV3, lastObservedAtMs: number | null, now: Date): number | null {
   const result = calculateTimeOccurrence(trigger, {
     now,
-    ...(lastClaimedAtMs === null ? {} : { lastClaimedAt: new Date(lastClaimedAtMs) }),
+    ...(lastObservedAtMs === null ? {} : { lastClaimedAt: new Date(lastObservedAtMs) }),
   })
   const value = result.due?.scheduledAt ?? result.next?.scheduledAt
   return value ? Date.parse(value) : null
@@ -264,13 +264,22 @@ export function replaceDefinitionProjection(
       const lastClaimedAtMs = latest?.scheduled_at_ms === null || latest?.scheduled_at_ms === undefined
         ? null
         : Number(latest.scheduled_at_ms)
+      const observation = transaction.getRecord<{ scheduledAt: string }>(
+        `automations-schedule-observations:${workspaceId}`,
+        `${definition.id}:${trigger.id}`,
+      )
+      const lastObservedAtMs = Math.max(
+        lastClaimedAtMs ?? Number.NEGATIVE_INFINITY,
+        observation ? Date.parse(observation.value.scheduledAt) : Number.NEGATIVE_INFINITY,
+      )
+      const scheduleCursorMs = Number.isFinite(lastObservedAtMs) ? lastObservedAtMs : null
       transaction.run(`
         INSERT INTO automation_schedule_index
           (workspace_id, automation_id, trigger_id, definition_revision, enabled,
            next_due_at_ms, last_claimed_at_ms, trigger_json)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `, workspaceId, definition.id, trigger.id, document.revision, definition.enabled ? 1 : 0,
-      nextDueAt(trigger, lastClaimedAtMs, now), lastClaimedAtMs, JSON.stringify(trigger))
+      nextDueAt(trigger, scheduleCursorMs, now), scheduleCursorMs, JSON.stringify(trigger))
     }
   }
   transaction.run(`
@@ -305,22 +314,23 @@ export function projectRun(
 export function advanceScheduleProjection(
   transaction: MultiWriterTransaction,
   workspaceId: string,
-  run: AutomationRunV1,
+  automationId: string,
+  triggerId: string,
+  scheduledAt: string,
 ): void {
-  if (!run.scheduledAt) return
   const row = transaction.get<{ trigger_json: string }>(`
     SELECT trigger_json FROM automation_schedule_index
     WHERE workspace_id = ? AND automation_id = ? AND trigger_id = ?
-  `, workspaceId, run.automationId, run.triggerId)
-  if (!row) throw new Error(`Missing automation schedule projection for ${run.automationId}/${run.triggerId}`)
+  `, workspaceId, automationId, triggerId)
+  if (!row) throw new Error(`Missing automation schedule projection for ${automationId}/${triggerId}`)
   const trigger = JSON.parse(row.trigger_json) as TimeTriggerV3
-  const claimedAtMs = Date.parse(run.scheduledAt)
+  const claimedAtMs = Date.parse(scheduledAt)
   transaction.run(`
     UPDATE automation_schedule_index
     SET last_claimed_at_ms = ?, next_due_at_ms = ?
     WHERE workspace_id = ? AND automation_id = ? AND trigger_id = ?
   `, claimedAtMs, nextDueAt(trigger, claimedAtMs, new Date(claimedAtMs + 1)),
-  workspaceId, run.automationId, run.triggerId)
+  workspaceId, automationId, triggerId)
 }
 
 export function projectHistory(
@@ -623,6 +633,7 @@ export function listDueOccurrences(
   transaction: MultiWriterReadTransaction,
   workspaceId: string,
   dueAtOrBefore: number,
+  activeSince: number,
   limit = 100,
 ): DueAutomationOccurrenceV1[] {
   return transaction.all<{
@@ -644,6 +655,7 @@ export function listDueOccurrences(
     const trigger = JSON.parse(row.trigger_json) as TimeTriggerV3
     const calculation = calculateTimeOccurrence(trigger, {
       now: new Date(dueAtOrBefore),
+      activeSince: new Date(activeSince),
       ...(row.last_claimed_at_ms === null
         ? {}
         : { lastClaimedAt: new Date(Number(row.last_claimed_at_ms)) }),

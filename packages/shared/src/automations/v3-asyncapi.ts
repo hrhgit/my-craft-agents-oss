@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { CloudEventV1Schema } from './v3-schemas.ts'
+import { createAutomationWorkspaceDescriptionV1 } from './capability-contract.ts'
 
 export interface AutomationAsyncApiDocumentOptionsV1 {
   serverHost?: string
@@ -17,6 +18,7 @@ export function createAutomationAsyncApiDocumentV1(
       version: '1.0.0',
       description: 'Description-only contract for Host-owned CloudEvents ingress. AsyncAPI is not the Mortise execution runtime.',
     },
+    'x-mortise-automation-workspace': createAutomationWorkspaceDescriptionV1(),
     defaultContentType: 'application/cloudevents+json',
     servers: {
       local: {

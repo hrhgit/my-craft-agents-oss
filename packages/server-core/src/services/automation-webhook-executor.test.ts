@@ -31,6 +31,25 @@ describe('automation webhook executor', () => {
     expect(request).not.toHaveBeenCalled()
   })
 
+  it('resolves portable secret header references only at dispatch time', async () => {
+    const request = mock(async (_url: string | URL | Request, init?: RequestInit) => {
+      expect(new Headers(init?.headers).get('authorization')).toBe('Bearer resolved-token')
+      return new Response('', { status: 204 })
+    })
+    const execute = createAutomationWebhookExecutor({
+      fetch: request,
+      resolveSecret: {
+        resolve: async reference => reference.id === 'portable-secret-1234567890abcdef'
+          ? 'Bearer resolved-token'
+          : null,
+      },
+    })
+    expect(await execute({
+      id: 'action-identity-1234', type: 'webhook', url: 'https://example.test/hook',
+      headers: { Authorization: '${mortise-secret:portable-secret-1234567890abcdef}' },
+    }, context)).toMatchObject({ status: 'succeeded' })
+  })
+
   it('classifies retryable HTTP failures', async () => {
     const execute = createAutomationWebhookExecutor({ fetch: async () => new Response('', { status: 503 }), maxAttempts: 1 })
     expect(await execute({ id: 'action-identity-1234', type: 'webhook', url: 'https://example.test/hook' }, context))

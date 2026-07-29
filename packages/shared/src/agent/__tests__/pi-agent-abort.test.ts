@@ -276,16 +276,4 @@ describe('PiAgent abort', () => {
     }
   })
 
-  it('does not start a runtime solely to reload extensions', async () => {
-    const agent = createAgent()
-    let startupAttempts = 0
-    ;(agent as any).ensureRpcClient = async () => {
-      startupAttempts++
-      throw new Error('should not start')
-    }
-
-    await expect(agent.reloadExtensions()).resolves.toEqual({ reloaded: false, deferred: false })
-    expect(startupAttempts).toBe(0)
-    agent.destroy()
-  })
 })

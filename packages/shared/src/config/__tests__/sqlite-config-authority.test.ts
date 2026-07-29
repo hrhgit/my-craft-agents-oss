@@ -19,6 +19,57 @@ function runEval(configDir: string, code: string): string {
 }
 
 describe('SQLite global config authority', () => {
+  it('removes only the Workspace registration and preserves markers, files, and Mortise data', () => {
+    const configDir = mkdtempSync(join(tmpdir(), 'mortise-config-remove-registration-'))
+    const workspaceRoot = join(configDir, 'workspace-root')
+    const workspaceData = join(configDir, 'workspaces', 'workspace-1')
+    const output = runEval(configDir, `
+      const { existsSync, mkdirSync, writeFileSync } = await import('node:fs');
+      const { join } = await import('node:path');
+      const { removeWorkspace, saveConfig } = await import(${JSON.stringify(STORAGE_MODULE_PATH)});
+      const { getDefaultWorkspaceTopologyStore } = await import(${JSON.stringify(TOPOLOGY_MODULE_PATH)});
+      const root = ${JSON.stringify(workspaceRoot)};
+      const data = ${JSON.stringify(workspaceData)};
+      mkdirSync(root, { recursive: true });
+      mkdirSync(data, { recursive: true });
+      writeFileSync(join(root, 'ordinary.txt'), 'ordinary');
+      writeFileSync(join(data, 'session.json'), 'session');
+      getDefaultWorkspaceTopologyStore().create({
+        schemaVersion: 2,
+        id: 'workspace-1',
+        revision: 0,
+        primaryLocationId: 'primary',
+        locations: [{
+          id: 'primary',
+          name: 'Primary',
+          rootName: 'workspace-root',
+          endpoint: { kind: 'local', rootPath: root },
+        }],
+        name: 'workspace-root',
+        nameSource: 'derived',
+        slug: 'workspace-1',
+        createdAt: 1,
+      });
+      saveConfig({ activeWorkspaceId: 'workspace-1', activeSessionId: null });
+      const removed = await removeWorkspace('workspace-1');
+      console.log(JSON.stringify({
+        removed,
+        registered: getDefaultWorkspaceTopologyStore().get('workspace-1') !== null,
+        marker: existsSync(join(root, '.mortise', 'workspace.json')),
+        ordinary: existsSync(join(root, 'ordinary.txt')),
+        sessionData: existsSync(join(data, 'session.json')),
+      }));
+    `)
+
+    expect(JSON.parse(output)).toEqual({
+      removed: true,
+      registered: false,
+      marker: true,
+      ordinary: true,
+      sessionData: true,
+    })
+  }, 30_000)
+
   it('validates SQLite state while ignoring and preserving retired JSON files', () => {
     const configDir = mkdtempSync(join(tmpdir(), 'mortise-config-authority-'))
     const legacyPath = join(configDir, 'config.json')

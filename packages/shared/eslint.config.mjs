@@ -80,18 +80,24 @@ export default [
   //     requires a live authenticated session and cannot serve this path.
   //   - pi-skill-resolver.ts / skills/storage.ts: synchronous UI/server seams over
   //     Pi host facade skill listing.
+  //   - agent-settings.ts: Pi-owned compaction defaults and frontmatter parsing.
   //   - sessions/storage.ts: session projection creation/lookup via Pi host facade.
+  //   - session-validation-backend.ts and tree-jsonl.test.ts: isolated contract
+  //     probes that exercise Pi's public SessionManager persistence boundary.
   //   - pi-agent.ts: the Mortise backend adapter over Pi's PUBLIC RpcClient.
   {
     files: [
       'src/credentials/backends/secure-storage.ts',
       'src/config/models-pi.ts',
+      'src/config/agent-settings.ts',
       'src/config/pi-global-config.ts',
       'src/pi/pi-skill-resolver.ts',
       'src/skills/storage.ts',
       'src/sessions/storage.ts',
       'src/sessions/tree-jsonl.ts',
+      'src/sessions/__tests__/tree-jsonl.test.ts',
       'src/agent/pi-agent.ts',
+      'src/ui-validation/session-validation-backend.ts',
     ],
     rules: {
       'no-restricted-syntax': 'off',

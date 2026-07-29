@@ -50,7 +50,7 @@ Workspace writes are atomic and conflict-aware; file RPC stays inside the select
 
 Coordinate layout replacement with `universal-layout` and workspace-owned session publication with `session-lifecycle`.
 
-Path normalization differs by platform; concurrent source and installed backends can race without operation identities. The marker-only detach and registration-only remove flows require cross-client implementation alignment.
+Path normalization differs by platform; concurrent source and installed backends can race without operation identities. Marker detach must verify Workspace identity before deleting only the marker, and remove-from-app must never grow into data deletion.
 
 # Validation
 

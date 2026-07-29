@@ -4,7 +4,7 @@
 
 Pi extensions can add persistent GUI to Mortise without shipping extension-specific code inside Mortise. Extensions publish serializable contributions; Mortise owns rendering, layout, validation, permissions, recovery, and fallback.
 
-> **Placement and reload:** Declare each Mortise extension once in the package's `pi.extensions` array. Put the package under `~/.mortise/agent/extensions/` (global) or `.mortise/extensions/` (project-local), then use **Settings > Extensions > Reload extensions**. Mortise reloads immediately when sessions are idle and asks before interrupting running sessions.
+> **Placement and loading:** Declare each Mortise extension once in the package's `pi.extensions` array. Put the package under `~/.mortise/agent/extensions/` (global) or `.mortise/extensions/` (project-local). Each backend discovers both trusted sources when it opens or attaches the Workspace; file changes take effect on the next backend or Workspace load.
 
 **Key capabilities:**
 - **Host-rendered UI** - Compose text, Markdown, icons, badges, buttons, rows, and stacks with `ctx.ui.upsertContribution()`
@@ -36,7 +36,6 @@ The Quick Start below is a complete host-rendered example that you can install d
 - [Sandbox UI Apps](#sandbox-ui-apps)
 - [Layout and Conflicts](#layout-and-conflicts)
 - [Manifest Settings](#manifest-settings)
-- [Reloading](#reloading)
 - [Error Handling](#error-handling)
 - [Mode Behavior](#mode-behavior)
 - [AI-Operable Validation](#ai-operable-validation)
@@ -128,7 +127,7 @@ export default function (pi: ExtensionAPI) {
 }
 ```
 
-Open **Settings > Extensions** in Mortise and choose **Reload extensions**. The contribution appears above the composer.
+Open or attach the Workspace in Mortise. The contribution appears above the composer when that backend loads the Workspace.
 
 ## Extension Locations
 
@@ -143,6 +142,13 @@ Mortise extensions use these discovery locations:
 | A package listed in Pi `settings.json` | Global or project-local, depending on the settings file |
 
 Use a stable lowercase package entry `id`, such as `repo-memory` or `build-status`. Mortise uses this ID for settings, command ownership, diagnostics, and contribution routing.
+
+Both discovery directories are trusted code sources. A backend loads them once
+for each Workspace open/attach lifecycle. Editing files does not interrupt
+running Sessions or hot-reload an active Extension; reopen the Workspace or
+restart the backend to load the changed package. One failing Extension is
+reported and disabled for that load without retrying in a loop or preventing
+other Extensions from loading.
 
 ## Package Manifest V1
 
@@ -207,7 +213,7 @@ Manifest V1 is strict: unknown fields, invalid identifiers, and invalid SemVer v
 
 IDs used by `id`, dependency maps, conflicts, and load-order hints are lowercase stable identifiers containing letters, digits, dots, and hyphens. Dependency keys refer to extension entry IDs, not npm package names or display names.
 
-Mortise exposes `compatible`, `warning`, `blocked`, or `legacy` manifest status plus structured diagnostics in the extension catalog. Blocked extensions do not execute. Settings shows the extension version, author, and first diagnostic. Fix the manifest or installed dependency set, then reload extensions.
+Mortise exposes `compatible`, `warning`, `blocked`, or `legacy` manifest status plus structured diagnostics in the extension catalog. Blocked extensions do not execute. Settings shows the extension version, author, and first diagnostic. Fix the manifest or installed dependency set, then use the next backend or Workspace load.
 
 The Developer Kit includes `schemas/extension-manifest-v1.schema.json` and a complete package under `examples/manifest-v1/`. Runtime validation remains authoritative.
 
@@ -384,6 +390,11 @@ Host-rendered contributions use a bounded recursive node tree.
 | Button | `{ type: "button", label, icon?, action, disabled? }` |
 | Row or stack | `{ type: "row" | "stack", children, gap? }` |
 
+Every node may include a bounded stable `semanticId`. Mortise namespaces it by
+Extension and contribution identity before exposing it to the renderer. Use it
+for stable focus restoration and validation identity; do not derive it from
+display text, array position, or DOM structure.
+
 Text tones: `default`, `muted`, `success`, `warning`, `danger`.
 
 Badge tones: `default`, `info`, `success`, `warning`, `danger`.
@@ -519,7 +530,7 @@ Optional contribution fields:
 |-------|---------|
 | `priority` | Higher values win constrained capacity; integer `-1000..1000` |
 | `order` | Stable order after priority; integer `-10000..10000` |
-| `group` | Related-content metadata; current V1 does not allocate or collapse by group |
+| `group` | Related content that Mortise admits or overflows as one allocation block |
 | `collapse` | `never`, `auto`, or `always` |
 | `overflow` | `menu`, `collapse`, or `hide` |
 | `exclusive` | Requests the only visible slot; Mortise chooses one winner |
@@ -527,7 +538,7 @@ Optional contribution fields:
 
 The current V1 resolver is deterministic. It sorts `collapse: "never"` before `auto` before `always`, then uses descending priority, ascending order, extension ID, and contribution ID. Replace surfaces and `exclusive: true` choose one winner. Extensions cannot override core controls or request focus by raising priority.
 
-Current fixed capacities are:
+Maximum capacities are:
 
 | Surface class | Visible capacity |
 |---------------|------------------|
@@ -538,13 +549,13 @@ Current fixed capacities are:
 | Workspace content | 4 admitted sandbox apps per renderer; host-rendered content is not subject to the sandbox budget |
 | Replace surfaces | 1 |
 
-Extra contributions enter host-owned overflow unless `overflow: "hide"` removes them from it. Current V1 renders `menu` and `collapse` through the same host overflow container; extensions must not depend on a visual distinction between those two values yet. A shared surface runs at most four mounted sandbox apps at once. `workspace.content` uses one renderer-wide sandbox admission budget even when several dock groups are visible; excess sandbox apps remain unmounted.
+Each rendered surface reduces its effective capacity at narrow widths. Grouped contributions move together instead of being split between visible and overflow regions. Extra contributions enter a compact host menu for `overflow: "menu"`, an inline collapsible region for `overflow: "collapse"`, or remain unmounted for `overflow: "hide"`. A shared surface runs at most four mounted sandbox apps at once. `workspace.content` uses one renderer-wide sandbox admission budget even when several dock groups are visible; excess sandbox apps remain unmounted.
 
 Compact surfaces (`composer.toolbar`, `composer.status`, `navigation.item`, `session.badge`, `window.topLeft`, `window.topRight`) accept only text, icon, badge, button, and shallow rows. They reject Markdown, stacks, dividers, sandbox apps, deep trees, and long text.
 
 `collapse: "never"` is a visibility preference. It cannot displace core Mortise controls.
 
-Responsive capacity changes and explicit cross-contribution focus arbitration are still host-side V1 gaps. Today the host keeps deterministic DOM order and clamps compact content, but it does not recompute every surface capacity from viewport width. Keep content flexible, accessible, and safe at narrow widths; do not compensate with fixed/absolute positioning, global z-index, or focus stealing.
+Mortise recomputes bounded surface capacity from the rendered width. If a responsive transition moves the focused contribution between visible and overflow regions, the host restores the matching stable semantic node when it is still available. Keep content flexible, accessible, and safe at narrow widths; do not compensate with fixed/absolute positioning, global z-index, or focus stealing.
 
 ## Manifest Settings
 
@@ -635,25 +646,9 @@ const config = settings.getExtensionConfig("my-mortise-ui");
 const visible = config?.visible !== false;
 ```
 
-Fields marked `requiresReload` reload active extension runtimes after a successful write. Streaming runtimes may defer that settings-triggered reload until they settle.
-
-## Reloading
-
-Use **Settings > Extensions > Reload extensions** to reload extension code and GUI:
-
-1. Mortise reloads immediately when all sessions are idle.
-2. If any session is running, Mortise lists the active sessions and asks for confirmation.
-3. Confirming interrupts every session that is still running, then reloads all active Pi runtimes.
-4. Cancelling leaves running sessions and extensions unchanged.
-
-Pi emits `session_shutdown` with `reason: "reload"`, rebuilds the extension runtime, then emits `session_start` with `reason: "reload"`.
-
-Treat reload as a new extension instance:
-
-- Republish initial GUI from `session_start`.
-- Do not rely on module-local state surviving.
-- Persist extension state with Pi session entries or settings when needed.
-- Sandbox DOM and runtime-scoped `mortise.storage` are recreated. Persist durable state through Pi settings or session entries, then provide it again through `initialState`.
+Fields marked `requiresReload` are saved for the next backend or Workspace load.
+They do not interrupt or rebuild active Extension runtimes. Fields without that
+flag take effect immediately through their normal settings read path.
 
 ## Error Handling
 
@@ -867,7 +862,7 @@ Host-rendered contributions inherit baseline semantics from Mortise's primitives
 - Route actions through commands owned by the extension so semantic and physical validation exercise the same production state transitions.
 - Publish state changes when they occur instead of requiring fixed-delay waits.
 
-Contribution V1 does not accept a per-node `semanticId`. Use stable IDs in the validation snapshot for declared semantics and concise accessible labels for real renderer discovery. Do not target `data-extension-*`, DOM ancestry, generated refs, or visual coordinates; those are host implementation details. The Test Host can inspect a declared extension snapshot and a real renderer snapshot, but it does not automatically prove that a declared semantic node is the same DOM control.
+Contribution V1 accepts a stable per-node `semanticId`, which Mortise namespaces by Extension and contribution identity. Use the same local identity in validation snapshots when it describes the same control, together with concise accessible labels. Do not target `data-extension-*`, DOM ancestry, generated refs, or visual coordinates; those are host implementation details. The Test Host can inspect a declared extension snapshot and a real renderer snapshot, but identity alone does not replace a real renderer interaction check.
 
 When the development host advertises versioned validation capabilities, GUI extensions must declare host-validated readiness signals, typed actions, and bounded scenario primitives through those capabilities. Agents may compose registered scenarios and event flows, but extensions must not expose arbitrary renderer-state mutation or states that cannot occur in production.
 
@@ -911,7 +906,7 @@ From an installed Mortise Developer Kit on Windows:
   --extension D:\Projects\my-mortise-extension --json
 ```
 
-`--extension` is repeatable. Each directory must contain `package.json` with host-neutral Manifest V1 `pi.extensions` entries. Mounted entries override cloned profile entries with the same extension ID for that run, while duplicate mounted IDs fail before the host starts. Use **Settings > Extensions > Reload extensions** after editing extension code; the next runtime is loaded from the same development directory.
+`--extension` is repeatable. Each directory must contain `package.json` with host-neutral Manifest V1 `pi.extensions` entries. Mounted entries override cloned profile entries with the same extension ID for that run, while duplicate mounted IDs fail before the host starts. After editing extension code, stop and start the isolated validation run so the next backend load reads the same development directory.
 
 Before publishing a Mortise GUI extension, verify:
 
@@ -921,9 +916,9 @@ Before publishing a Mortise GUI extension, verify:
 4. Buttons reference commands owned by the same extension.
 5. Targeted surfaces use stable turn, message, or tool IDs.
 6. Multiple extensions share the surface without overlap and deterministic overflow remains reachable.
-7. Narrow viewports keep core controls usable; do not assume the current fixed capacity is a responsive placement API.
+7. Narrow viewports keep core controls usable and grouped contributions move together under responsive capacity.
 8. Replace surfaces restore built-in UI when the contribution fails or disappears.
-9. Reload removes old GUI and republishes the new version.
+9. A fresh backend or Workspace load removes the old runtime projection and publishes the new version.
 10. The backend continues when optional GUI capabilities are unavailable.
 11. Structured snapshots expose stable semantic IDs, labels, actions, and current state without relying on private DOM selectors.
 12. Ready, busy, completion, and failure transitions are observable without fixed sleeps.
