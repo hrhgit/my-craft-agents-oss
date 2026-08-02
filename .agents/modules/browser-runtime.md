@@ -22,6 +22,11 @@ depends_on:
   - universal-layout
 related:
   - universal-layout
+frontend_impact:
+  affects: true
+  areas:
+    - embedded browser workbench, toolbar, navigation, and request views
+    - browser pane loading, error, and empty states
 validation:
   - >-
     bun test apps/electron/src/main/__tests__/browser-cdp.test.ts

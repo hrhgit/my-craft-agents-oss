@@ -132,7 +132,6 @@ export function AddWorkspaceStep_ConnectRemote({
 
       <AddWorkspaceStepHeader
         title={t('workspace.reconnect', { name: workspaceName })}
-        description="Update the server URL and provide a new token to restore this Workspace location."
       />
 
       <div className="mt-6 w-full space-y-5">

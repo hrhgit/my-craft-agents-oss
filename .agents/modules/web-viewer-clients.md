@@ -23,6 +23,11 @@ depends_on:
   - shared-ui-i18n
 related:
   - headless-server-cli
+frontend_impact:
+  affects: true
+  areas:
+    - WebUI authentication, bootstrap, connection, navigation, and browser fallback states
+    - read-only viewer pages
 validation:
   - bun test apps/webui apps/viewer scripts/webui-process-utils.test.ts
   - bun run lint:webui

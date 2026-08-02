@@ -55,6 +55,21 @@ export function readWorkspaceMarker(rootPath: string, workspaceId: string): Work
   return readMatchingMarker(markerPath, workspaceId)
 }
 
+/** Read a local root's Workspace identity without adopting an unmarked folder. */
+export function readWorkspaceMarkerIfPresent(rootPath: string): WorkspaceMarkerV1 | null {
+  const markerPath = getWorkspaceMarkerPath(rootPath)
+  if (!existsSync(markerPath)) return null
+  try {
+    return parseWorkspaceMarkerV1(JSON.parse(readFileSync(markerPath, 'utf8')))
+  } catch (error) {
+    throw markerError(
+      WORKSPACE_TOPOLOGY_ERROR_CODES.MARKER_MISMATCH,
+      `Workspace marker is invalid at ${markerPath}: ${error instanceof Error ? error.message : String(error)}`,
+      'unknown',
+    )
+  }
+}
+
 /** Remove only a verified Workspace membership marker, preserving all other files. */
 export function removeWorkspaceMarker(rootPath: string, workspaceId: string): void {
   const markerPath = getWorkspaceMarkerPath(rootPath)

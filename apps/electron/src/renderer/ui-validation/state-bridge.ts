@@ -107,7 +107,7 @@ export function deriveRendererValidationStates(
     },
     {
       scope: 'workspace',
-      phase: input.workspaceTransitioning ? 'busy' : input.workspaceId ? (appPhase === 'error' ? 'error' : appPhase) : input.appState === 'workspace-picker' ? 'ready' : 'loading',
+      phase: input.workspaceTransitioning ? 'busy' : input.workspaceId ? (appPhase === 'error' ? 'error' : appPhase) : input.appState === 'workspace-picker' ? 'ready' : appPhase,
       ...(input.workspaceId ? { entityId: input.workspaceId } : {}),
       detail: { selected: Boolean(input.workspaceId), transitioning: input.workspaceTransitioning },
     },

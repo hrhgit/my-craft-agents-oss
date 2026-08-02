@@ -21,6 +21,11 @@ depends_on:
   - session-lifecycle
   - headless-server-cli
 related: []
+frontend_impact:
+  affects: true
+  areas:
+    - messaging settings, binding, and connection-status surfaces
+    - sessions, transcripts, and unread state created from messaging gateways
 validation:
   - bun test packages/messaging-gateway packages/messaging-whatsapp-worker
 ---

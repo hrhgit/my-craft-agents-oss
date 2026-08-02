@@ -42,12 +42,12 @@ describe('initial window target', () => {
     })
   })
 
-  it('returns no target when there are no workspaces', () => {
+  it('opens an unbound app shell when there are no workspaces', () => {
     expect(resolveInitialWindowTarget({
       workspaces: [],
       sessions,
       activeWorkspaceId: 'workspace-a',
       activeSessionId: 'fallback-session',
-    })).toBeNull()
+    })).toEqual({ workspaceId: '' })
   })
 })

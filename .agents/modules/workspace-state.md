@@ -20,6 +20,11 @@ entrypoints:
 depends_on:
   - shared-contracts
 related: []
+frontend_impact:
+  affects: true
+  areas:
+    - workspace picker, creation, switching, and location settings
+    - workspace-scoped file and navigation availability states
 validation:
   - >-
     bun test packages/shared/src/workspaces packages/shared/src/storage

@@ -126,6 +126,11 @@ describe('WorkspaceTopologyStore', () => {
     expect(store.list().map(workspace => workspace.id)).toEqual([second.id])
     expect(store.remove(first.id, 'remove-first-again')).toBeFalse()
     expect(() => store.create(first, 'recreate-first')).toThrow('already exists')
+    expect(store.restore(first.id, 'restore-first')).toEqual(first)
+    expect(store.get(first.id)).toEqual(first)
+    expect(store.list().map(workspace => workspace.id)).toEqual([second.id, first.id])
+    expect(store.restore(first.id, 'restore-first-again')).toEqual(first)
+    expect(store.remove(first.id, 'remove-restored-first')).toBeTrue()
     expect(() => store.apply(command({
       operation: 'rename',
       locationId: 'primary',

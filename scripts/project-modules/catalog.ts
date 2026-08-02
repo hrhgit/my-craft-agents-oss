@@ -117,6 +117,7 @@ export function renderProjectModuleCatalog(catalog: ProjectModuleCatalog): strin
   for (const module of catalog.modules.filter(module => module.status !== 'deprecated')) {
     lines.push(`- \`${module.id}\` - ${module.summary}`)
     lines.push(`  Read when: ${module.when_to_read.join('; ')}`)
+    lines.push(`  Frontend: ${module.frontend_impact.affects ? module.frontend_impact.areas.join('; ') : 'none'}`)
     lines.push(`  Document: \`${module.document}\``)
     if (module.depends_on.length) lines.push(`  Depends on: ${module.depends_on.map(id => `\`${id}\``).join(', ')}`)
     const consumers = catalog.consumers[module.id] ?? []

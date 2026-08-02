@@ -28,6 +28,9 @@ describe('Electron shared backend discovery', () => {
     const packageJson = JSON.parse(readFileSync(join(import.meta.dir, '..', 'package.json'), 'utf8'))
 
     expect(devLauncher).toContain('configureSharedBackend(process.env, DEFAULT_CONFIG_DIR)')
+    expect(devLauncher).toContain('buildPiRuntime()')
+    expect(devLauncher).toContain('["pi:build:binary", "Pi binary build"]')
+    expect(devLauncher).toContain('MORTISE_DEV_RUNTIME: "1"')
     expect(startLauncher).toContain('configureSharedBackend(env, defaultConfigDir)')
     expect(startLauncher).toContain('acquireElectronBuild')
     expect(startLauncher).toContain('cmd: [electronBin, lease.appDir]')

@@ -26,4 +26,28 @@ describe('production bundle portability', () => {
       root,
     )).not.toThrow()
   })
+
+  it('builds the production session MCP server without embedding its source checkout', async () => {
+    const repositoryRoot = resolve(import.meta.dir, '../../..')
+    const result = await Bun.build({
+      entrypoints: [resolve(repositoryRoot, 'packages/session-mcp-server/src/index.ts')],
+      target: 'node',
+      format: 'cjs',
+      minify: { syntax: true },
+      define: {
+        'process.env.MORTISE_UI_VALIDATION_BUILD': '"0"',
+        'process.env.MORTISE_UI_TEST_HOST': '"0"',
+      },
+      write: false,
+    })
+
+    expect(result.success).toBe(true)
+    expect(result.outputs).toHaveLength(1)
+    const source = await result.outputs[0]!.text()
+    expect(() => assertNoSourceRootReferences(
+      source,
+      'session-mcp-server/index.js',
+      repositoryRoot,
+    )).not.toThrow()
+  }, 30_000)
 })

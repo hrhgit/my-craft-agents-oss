@@ -8,12 +8,24 @@ import {
   MORTISE_PROJECT_SETTINGS_FILE,
   MORTISE_PROJECT_SKILLS_DIR,
   MORTISE_SESSIONS_DIR,
+  resolveMortiseAgentDir,
 } from '../paths.ts';
 import { ConfigWatcher } from '../watcher.ts';
 import { detectConfigFileType } from '../validators.ts';
 import { getWorkspaceSessionsDir, getWorkspaceSkillsPath } from '../../workspaces/storage.ts';
 
 describe('Mortise project skill paths', () => {
+  it('honors the explicit Pi Agent root without loading the Pi runtime', () => {
+    const configDir = join(tmpdir(), 'mortise-config-root');
+    const agentDir = join(tmpdir(), 'mortise-agent-root');
+
+    expect(resolveMortiseAgentDir({ MORTISE_CONFIG_DIR: configDir })).toBe(join(configDir, 'agent'));
+    expect(resolveMortiseAgentDir({
+      MORTISE_CONFIG_DIR: configDir,
+      MORTISE_AGENT_DIR: `  ${agentDir}  `,
+    })).toBe(agentDir);
+  });
+
   it('publishes only Mortise-owned project resource paths', () => {
     const root = join(tmpdir(), 'mortise-project-paths');
 

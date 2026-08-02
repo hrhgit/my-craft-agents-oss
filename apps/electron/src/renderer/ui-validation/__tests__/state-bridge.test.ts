@@ -76,4 +76,21 @@ describe('deriveRendererValidationStates', () => {
       detail: { route: 'workspace-picker', surface: 'workspace-picker' },
     })
   })
+
+  it('publishes the empty app shell as ready without inventing a workspace identity', () => {
+    const states = deriveRendererValidationStates({
+      appState: 'ready',
+      workspaceId: null,
+      workspaceTransitioning: false,
+      sessionsLoaded: true,
+      splashHidden: true,
+      sessionLoadError: null,
+      transport: { mode: 'local', status: 'connected', attempt: 0, url: '', updatedAt: 1 },
+    }, { route: 'newConversation', focusedSessionId: null, sessions: [] })
+
+    expect(states.find(state => state.scope === 'workspace')).toMatchObject({
+      phase: 'ready',
+      detail: { selected: false, transitioning: false },
+    })
+  })
 })

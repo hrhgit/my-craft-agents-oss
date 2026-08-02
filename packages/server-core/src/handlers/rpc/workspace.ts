@@ -1,12 +1,19 @@
-import { existsSync } from 'fs'
-import { isAbsolute, join, relative, sep } from 'path'
-import { RPC_CHANNELS } from '@mortise/shared/protocol'
+import { existsSync, statSync } from 'fs'
+import { basename, isAbsolute, join, relative, resolve, sep } from 'path'
+import {
+  RPC_CHANNELS,
+  WORKSPACE_CREATION_SCHEMA_VERSION,
+  parseWorkspaceCreationRequestV1,
+  type WorkspaceCreationResultV1,
+} from '@mortise/shared/protocol'
 import { CONFIG_DIR, addWorkspace, setActiveWorkspace } from '@mortise/shared/config'
-import type { Workspace } from '@mortise/core/types'
+import type { Workspace, WorkspaceNameSource } from '@mortise/core/types'
 import {
   getDefaultWorkspaceTopologyStore,
+  generateUniqueWorkspacePath,
+  getDefaultWorkspacesDir,
   readWorkspaceMarker,
-  type LegacyWorkspaceV1,
+  readWorkspaceMarkerIfPresent,
   type WorkspaceTopologyStore,
 } from '@mortise/shared/workspaces'
 import { perf } from '@mortise/shared/utils'
@@ -89,27 +96,91 @@ export function registerWorkspaceCoreHandlers(
     return sessionManager.getWorkspaces().map(candidate => ensureWorkspaceTopology(topologyStore, candidate))
   })
 
-  // Create a new workspace at a folder path (Obsidian-style: folder IS the workspace)
-  server.handle(RPC_CHANNELS.workspaces.CREATE, async (_ctx, folderPath: string, name: string, remoteServer?: { url: string; token: string; remoteWorkspaceId: string }) => {
-    const rootPath = folderPath.trim()
-    const validation = isValidWorkspaceRootPath(rootPath)
-    if (!validation.valid) {
-      throw new Error(validation.reason!)
+  server.handle(RPC_CHANNELS.workspaces.CREATE, async (_ctx, requestValue: unknown): Promise<WorkspaceCreationResultV1> => {
+    const request = parseWorkspaceCreationRequestV1(requestValue)
+    const customName = request.name?.trim() || null
+    const selectedRoots = request.locations.map(location => resolve(location.rootPath.trim()))
+    const rootKeys = new Set<string>()
+    for (const rootPath of selectedRoots) {
+      const validation = isValidWorkspaceRootPath(rootPath)
+      if (!validation.valid) throw new Error(validation.reason!)
+      if (!existsSync(rootPath) || !statSync(rootPath).isDirectory()) {
+        throw new Error(`Workspace location must be an existing folder: ${rootPath}`)
+      }
+      const key = process.platform === 'win32' ? rootPath.toLocaleLowerCase('en-US') : rootPath
+      if (rootKeys.has(key)) throw new Error(`Workspace locations cannot contain the same folder twice: ${rootPath}`)
+      rootKeys.add(key)
     }
 
-    if (remoteServer) {
-      throw new Error('Remote Workspace creation requires the credential-backed remote connection flow')
+    const markers = selectedRoots.map(rootPath => readWorkspaceMarkerIfPresent(rootPath))
+    const registeredRoots = new Set(topologyStore.list().flatMap(workspace => workspace.locations.flatMap(location => (
+      location.endpoint.kind === 'local'
+        ? [process.platform === 'win32'
+            ? resolve(location.endpoint.rootPath).toLocaleLowerCase('en-US')
+            : resolve(location.endpoint.rootPath)]
+        : []
+    ))))
+    selectedRoots.forEach((rootPath, index) => {
+      const key = process.platform === 'win32' ? rootPath.toLocaleLowerCase('en-US') : rootPath
+      if (markers[index] === null && registeredRoots.has(key)) {
+        throw new Error(`Workspace location is already attached to another Workspace: ${rootPath}`)
+      }
+    })
+    const markerIds = new Set(markers.flatMap(marker => marker ? [marker.workspaceId] : []))
+    if (markerIds.size > 1) throw new Error('Selected folders belong to different Workspaces')
+    if (markerIds.size === 1) {
+      if (markers.some(marker => marker === null)) {
+        throw new Error('Cannot combine an existing Workspace with unassociated folders during reconnection')
+      }
+      const workspaceId = [...markerIds][0]!
+      const restored = topologyStore.restore(workspaceId)
+      await deps.sessionManager.openWorkspaceExtensions?.(restored)
+      setActiveWorkspace(restored.id)
+      const workspace = topologyStore.getInfo(restored.id)
+      if (!workspace) throw new Error(`Workspace topology not found after restoration: ${restored.id}`)
+      deps.platform.logger.info(`Reconnected workspace "${restored.name}" from ${selectedRoots[0]}`)
+      return { schemaVersion: WORKSPACE_CREATION_SCHEMA_VERSION, action: 'reconnected', workspace }
     }
-    // The registry owner still publishes the initial identity. Topology becomes
-    // authoritative immediately and all later location changes bypass that
-    // legacy single-root record.
-    const candidate = addWorkspace({ name, rootPath } as never) as unknown as LegacyWorkspaceV1
+
+    const generatedRoot = selectedRoots.length === 0
+      ? generateUniqueWorkspacePath(customName ?? 'My Workspace', getDefaultWorkspacesDir())
+      : null
+    const roots = generatedRoot ? [generatedRoot] : selectedRoots
+    const primaryLocationIndex = generatedRoot ? 0 : request.primaryLocationIndex ?? 0
+    const primaryRootName = basename(roots[primaryLocationIndex]!)
+    const workspaceName = customName ?? primaryRootName
+    const nameSource: WorkspaceNameSource = customName ? 'custom' : 'derived'
+    const usedNames = new Set<string>()
+    const locations = roots.map((rootPath, index) => {
+      const rootName = basename(rootPath)
+      let locationName = rootName
+      let suffix = 2
+      while (usedNames.has(locationName.toLocaleLowerCase('en-US'))) {
+        locationName = `${rootName} ${suffix++}`
+      }
+      usedNames.add(locationName.toLocaleLowerCase('en-US'))
+      return {
+        id: index === primaryLocationIndex ? 'primary' : `location-${index + 1}`,
+        name: locationName,
+        rootName,
+        endpoint: { kind: 'local' as const, rootPath },
+      }
+    })
+    const candidate = addWorkspace({
+      schemaVersion: 2,
+      revision: 0,
+      name: workspaceName,
+      nameSource,
+      primaryLocationId: 'primary',
+      locations: locations as [typeof locations[number], ...(typeof locations[number])[]],
+    })
     const workspace = ensureWorkspaceTopology(topologyStore, candidate)
-    await deps.sessionManager.openWorkspaceExtensions?.(workspace)
+    // Client projections hide local paths; the extension runtime must receive the canonical record.
+    await deps.sessionManager.openWorkspaceExtensions?.(candidate)
     // Make it active
     setActiveWorkspace(workspace.id)
-    deps.platform.logger.info(`Created workspace "${name}" at ${rootPath}`)
-    return workspace
+    deps.platform.logger.info(`Created workspace "${workspaceName}" with ${locations.length} location(s)`)
+    return { schemaVersion: WORKSPACE_CREATION_SCHEMA_VERSION, action: 'created', workspace }
   })
 
   // Check if a workspace slug already exists (for validation before creation)

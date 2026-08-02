@@ -25,6 +25,10 @@ related:
   - session-lifecycle
   - session-tooling
   - shared-ui-i18n
+frontend_impact:
+  affects: true
+  areas:
+    - conversation transcript, composer, turn controls, plans, and annotations
 validation:
   - >-
     bun test packages/ui/src/components/chat packages/ui/src/components/annotations

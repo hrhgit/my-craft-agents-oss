@@ -23,6 +23,10 @@ depends_on:
 related:
   - project-modules
   - ui-validation-developer-kit
+frontend_impact:
+  affects: true
+  areas:
+    - application startup, update, About, release-note, and diagnostic surfaces
 validation:
   - git diff --check
   - bun run module:lint

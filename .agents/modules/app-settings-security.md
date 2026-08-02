@@ -23,6 +23,11 @@ depends_on:
   - workspace-state
 related:
   - provider-model-runtime
+frontend_impact:
+  affects: true
+  areas:
+    - Electron and WebUI settings pages
+    - onboarding, authentication, credential, and permission surfaces
 validation:
   - bun test --isolate packages/shared/src/config packages/shared/src/auth packages/shared/src/credentials
   - bun run typecheck:electron

@@ -1677,34 +1677,46 @@ function AppShellContent({
             <div className="flex h-full flex-col select-none bg-foreground/[0.012]">
               {/* Sidebar Top Section */}
               <div className="flex-1 flex flex-col min-h-0">
-                {/* New Session Button - Gmail-style, with context menu for "Open in New Window" */}
+                {/* Primary action follows whether this window owns a workspace yet. */}
                 <div className="px-2 pb-2 shrink-0">
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <div>
-                        <ContextMenu modal={true}>
-                          <ContextMenuTrigger asChild>
-                            <Button
-                              semanticId="app.new-session"
-                              variant="ghost"
-                              onClick={(e) => handleNewChat(e.metaKey || e.ctrlKey)}
-                              className="h-8 w-full justify-start gap-2 px-2 text-[13px] font-medium rounded-[6px] bg-foreground/[0.045] hover:bg-foreground/[0.075]"
-                              data-tutorial="new-chat-button"
-                            >
-                              <SquarePenRounded className="h-3.5 w-3.5 shrink-0" />
-                              {t("session.newSession")}
-                            </Button>
-                          </ContextMenuTrigger>
-                          <StyledContextMenuContent>
-                            <ContextMenuProvider>
-                              <SidebarMenu type="newSession" />
-                            </ContextMenuProvider>
-                          </StyledContextMenuContent>
-                        </ContextMenu>
-                      </div>
-                    </TooltipTrigger>
-                    <TooltipContent side="right">{newChatHotkey}</TooltipContent>
-                  </Tooltip>
+                  {activeWorkspaceId ? (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <div>
+                          <ContextMenu modal={true}>
+                            <ContextMenuTrigger asChild>
+                              <Button
+                                semanticId="app.new-session"
+                                variant="ghost"
+                                onClick={(e) => handleNewChat(e.metaKey || e.ctrlKey)}
+                                className="h-8 w-full justify-start gap-2 px-2 text-[13px] font-medium rounded-[6px] bg-foreground/[0.045] hover:bg-foreground/[0.075]"
+                                data-tutorial="new-chat-button"
+                              >
+                                <SquarePenRounded className="h-3.5 w-3.5 shrink-0" />
+                                {t("session.newSession")}
+                              </Button>
+                            </ContextMenuTrigger>
+                            <StyledContextMenuContent>
+                              <ContextMenuProvider>
+                                <SidebarMenu type="newSession" />
+                              </ContextMenuProvider>
+                            </StyledContextMenuContent>
+                          </ContextMenu>
+                        </div>
+                      </TooltipTrigger>
+                      <TooltipContent side="right">{newChatHotkey}</TooltipContent>
+                    </Tooltip>
+                  ) : (
+                    <Button
+                      semanticId="workspace.add"
+                      variant="ghost"
+                      onClick={workspaceNavigation.openCreation}
+                      className="h-8 w-full justify-start gap-2 px-2 text-[13px] font-medium rounded-[6px] bg-foreground/[0.045] hover:bg-foreground/[0.075]"
+                    >
+                      <FolderPlus className="h-3.5 w-3.5 shrink-0" />
+                      {t('workspace.createWorkspace')}
+                    </Button>
+                  )}
                 </div>
                 {/* Workspace-first navigation. Sessions stay directly under their owning workspace. */}
                 <div className="flex-1 overflow-y-auto min-h-0 mask-fade-bottom pb-4">
@@ -1712,7 +1724,7 @@ function AppShellContent({
                 {effectiveSessionId && <ExtensionContributionZone className="px-2 py-1" sessionId={effectiveSessionId} surface="navigation.item" />}
                 <div className="flex h-7 items-center px-4 pt-1 text-[11px] font-medium text-muted-foreground/70">
                   <span className="min-w-0 flex-1 truncate">{t('workspace.workspaces')}</span>
-                  <Tooltip>
+                  {activeWorkspaceId && <Tooltip>
                     <TooltipTrigger asChild>
                       <button
                         type="button"
@@ -1725,8 +1737,8 @@ function AppShellContent({
                       </button>
                     </TooltipTrigger>
                     <TooltipContent side="right">{t('shortcuts.action.search')}</TooltipContent>
-                  </Tooltip>
-                  <Tooltip>
+                  </Tooltip>}
+                  {activeWorkspaceId && <Tooltip>
                     <TooltipTrigger asChild>
                       <button
                         type="button"
@@ -1739,7 +1751,7 @@ function AppShellContent({
                       </button>
                     </TooltipTrigger>
                     <TooltipContent side="right">{t('workspace.addWorkspace')}</TooltipContent>
-                  </Tooltip>
+                  </Tooltip>}
                 </div>
                 {searchActive ? sessionSearchSurface : (
                   <LeftSidebar

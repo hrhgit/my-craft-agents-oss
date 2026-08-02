@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { useTheme } from '@/hooks/useTheme'
 import type { ThemeOverrides } from '@config/theme'
 import { useSetAtom, useStore, useAtomValue, useAtom } from 'jotai'
-import type { Session, WorkspaceInfo, SessionEvent, Message, FileAttachment, StoredAttachment, PermissionRequest, SetupNeeds, NewChatActionParams, ContentBadge, PermissionModeState } from '../shared/types'
+import type { Session, WorkspaceInfo, SessionEvent, Message, FileAttachment, StoredAttachment, PermissionRequest, NewChatActionParams, ContentBadge, PermissionModeState } from '../shared/types'
 import type { SessionDraft, DraftAttachmentRef } from '@mortise/shared/config'
 import type { MidStreamSendIntent } from '@mortise/shared/protocol'
 import type { SessionOptions, SessionOptionUpdates } from './hooks/useSessionOptions'
@@ -14,7 +14,7 @@ import type { AgentEvent, Effect } from './event-processor'
 import { isProjectionOwnedHostEvent } from './event-processor/projection-ownership'
 import { AppShell } from '@/components/app-shell/AppShell'
 import type { AppShellContextType } from '@/context/AppShellContext'
-import { OnboardingWizard, ReauthScreen } from '@/components/onboarding'
+import { ReauthScreen } from '@/components/onboarding'
 import { WorkspacePicker } from '@/components/workspace'
 import { SplashScreen } from '@/components/SplashScreen'
 import { TooltipProvider } from '@mortise/ui'
@@ -22,7 +22,6 @@ import { FocusProvider } from '@/context/FocusContext'
 import { ModalProvider } from '@/context/ModalContext'
 import { DismissibleLayerProvider } from '@/context/DismissibleLayerContext'
 import { useWindowCloseHandler } from '@/hooks/useWindowCloseHandler'
-import { useOnboarding } from '@/hooks/useOnboarding'
 import { usePiGlobalConfig } from '@/hooks/usePiGlobalConfig'
 import { useNotifications } from '@/hooks/useNotifications'
 import { useSessionSelectionStore } from '@/hooks/useSession'
@@ -110,7 +109,7 @@ import { hasPlatformCapability } from '@/lib/platform-capabilities'
 import { ActionRegistryProvider } from '@/actions'
 import { toast } from 'sonner'
 
-type AppState = 'loading' | 'onboarding' | 'reauth' | 'workspace-picker' | 'ready'
+type AppState = 'loading' | 'reauth' | 'workspace-picker' | 'ready'
 
 /** Type for the Jotai store returned by useStore() */
 type JotaiStore = ReturnType<typeof getDefaultStore>
@@ -268,9 +267,8 @@ export default function App() {
     })
   }, [])
 
-  // App state: loading -> check auth -> onboarding or ready
+  // App state: loading -> workspace selection -> ready
   const [appState, setAppState] = useState<AppState>('loading')
-  const [setupNeeds, setSetupNeeds] = useState<SetupNeeds | null>(null)
 
   // Per-session Jotai atom setters for isolated updates
   // NOTE: No sessionsAtom - we don't store a Session[] array anywhere to prevent memory leaks
@@ -677,46 +675,12 @@ export default function App() {
 
   const DRAFT_SAVE_DEBOUNCE_MS = 500
 
-  // Handle onboarding completion
-  const handleOnboardingComplete = useCallback(async () => {
-    try {
-      // Reload workspaces after onboarding
-      const ws = await window.electronAPI.getWorkspaces()
-      if (ws.length > 0) {
-        // Switch to workspace in-place (no window close/reopen)
-        await window.electronAPI.switchWorkspace(ws[0].id)
-        setWindowWorkspaceId(ws[0].id)
-        setWorkspaces(ws)
-      } else {
-        setWorkspaces(ws)
-      }
-    } catch (error) {
-      console.error('[App] Failed to load workspaces after onboarding:', error)
-      // Still transition to ready — the app can recover via reconnect
-    }
+  // Reauth login handler - placeholder (reauth is not currently used)
+  const handleReauthLogin = useCallback(async () => {
     setAppState('ready')
   }, [])
 
-  // Keep the provider/model source of truth fresh after onboarding changes.
-  const onboarding = useOnboarding({
-    onComplete: handleOnboardingComplete,
-    onConfigSaved: refreshPiGlobalConfig,
-    initialSetupNeeds: setupNeeds || undefined,
-  })
-
-  // Reauth login handler - placeholder (reauth is not currently used)
-  const handleReauthLogin = useCallback(async () => {
-    // Re-check setup needs
-    const needs = await window.electronAPI.getSetupNeeds()
-    if (needs.isFullyConfigured) {
-      setAppState('ready')
-    } else {
-      setSetupNeeds(needs)
-      setAppState('onboarding')
-    }
-  }, [])
-
-  // Check auth state and get window's workspace ID on mount
+  // Get the window's workspace ID on mount. Provider setup remains available in Settings.
   useEffect(() => {
     const initialize = async () => {
       try {
@@ -724,25 +688,10 @@ export default function App() {
         const wsId = await window.electronAPI.getWindowWorkspace()
         setWindowWorkspaceId(wsId)
 
-        const needs = await window.electronAPI.getSetupNeeds()
-        setSetupNeeds(needs)
-
-        if (needs.isFullyConfigured) {
-          // If no workspace is selected (thin client without MORTISE_WORKSPACE_ID),
-          // show workspace picker before entering the main app
-          if (!wsId) {
-            setAppState('workspace-picker')
-          } else {
-            setAppState('ready')
-          }
-        } else {
-          // New user or needs setup - show onboarding
-          setAppState('onboarding')
-        }
+        setAppState('ready')
       } catch (error) {
-        console.error('Failed to check auth state:', error)
-        // If check fails, show onboarding to be safe
-        setAppState('onboarding')
+        console.error('Failed to initialize app:', error)
+        setAppState('ready')
       }
     }
 
@@ -842,7 +791,14 @@ export default function App() {
         })
       }
     }).catch(() => { /* non-fatal startup check */ })
-    if (windowWorkspaceId) void loadSessionsFromServer(windowWorkspaceId)
+    if (windowWorkspaceId) {
+      void loadSessionsFromServer(windowWorkspaceId)
+    } else {
+      initializeSessions([])
+      setSessionOptions(new Map())
+      setSessionLoadError(null)
+      setSessionsLoaded(true)
+    }
     // Load persisted input drafts into ref (no re-render needed).
     // Attachment files are not read here — hydration happens lazily when the session
     // is opened so app startup isn't delayed by reading potentially large files.
@@ -861,7 +817,7 @@ export default function App() {
     }
     // Load app-level theme
     window.electronAPI.getAppTheme().then(setAppTheme)
-  }, [appState, loadSessionsFromServer, windowWorkspaceId])
+  }, [appState, initializeSessions, loadSessionsFromServer, windowWorkspaceId])
 
   // Subscribe to theme change events (live updates when theme.json changes)
   useEffect(() => {
@@ -1999,11 +1955,6 @@ export default function App() {
     void handleRefreshWorkspaces()
   }), [handleRefreshWorkspaces])
 
-  // Handle cancel during onboarding
-  const handleOnboardingCancel = useCallback(() => {
-    onboarding.handleCancel()
-  }, [onboarding])
-
   // Build context value for AppShell component
   // This is memoized to prevent unnecessary re-renders
   // IMPORTANT: Must be before early returns to maintain consistent hook order
@@ -2130,34 +2081,6 @@ export default function App() {
           <WindowCloseHandler />
           <ReauthScreen
             onLogin={handleReauthLogin}
-          />
-        </ModalProvider>
-      </DismissibleLayerProvider>
-    )
-  }
-
-  // Onboarding state
-  // ModalProvider + WindowCloseHandler ensures X button works on Windows
-  // (without this, the close IPC message has no listener and window stays open)
-  if (appState === 'onboarding') {
-    return (
-      <DismissibleLayerProvider>
-        <ModalProvider>
-          <WindowCloseHandler />
-          <OnboardingWizard
-            state={onboarding.state}
-            onContinue={onboarding.handleContinue}
-            onBack={onboarding.handleBack}
-            onSelectProvider={onboarding.handleSelectProvider}
-            onSkipSetup={onboarding.handleSkipSetup}
-            onSelectApiSetupMethod={onboarding.handleSelectApiSetupMethod}
-            onSubmitCredential={onboarding.handleSubmitCredential}
-            onSubmitLocalModel={onboarding.handleSubmitLocalModel}
-            onFinish={onboarding.handleFinish}
-            onBrowseGitBash={onboarding.handleBrowseGitBash}
-            onUseGitBashPath={onboarding.handleUseGitBashPath}
-            onRecheckGitBash={onboarding.handleRecheckGitBash}
-            onClearError={onboarding.handleClearError}
           />
         </ModalProvider>
       </DismissibleLayerProvider>

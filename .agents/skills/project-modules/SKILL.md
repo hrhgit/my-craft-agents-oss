@@ -10,8 +10,8 @@ Use this skill for non-trivial repository investigation, implementation, or revi
 ## Workflow
 
 1. Run `bun run module:catalog` from the repository root.
-2. Let the current model select the smallest relevant module set from the summaries and `when_to_read` triggers. Do not assign scores or assume that multiple matches require task decomposition.
-3. Read each selected `.agents/modules/<id>.md` document in full. Use its entry points, reusable capabilities, invariants, dependencies, consumers, change-impact notes, and validation guidance to bound repository exploration.
+2. Let the current model select the smallest relevant module set from the summaries, `when_to_read` triggers, and frontend-impact summaries. Do not assign scores or assume that multiple matches require task decomposition.
+3. Read each selected `.agents/modules/<id>.md` document in full. Use its entry points, reusable capabilities, invariants, dependencies, consumers, frontend areas, change-impact notes, and validation guidance to bound repository exploration.
 4. Prefer existing module capabilities and public entry points over parallel implementations. Search the actual code when the document is incomplete or stale, and report the gap without inventing module facts.
 5. After editing, revisit the selected modules' dependencies, consumers, related modules, and validation commands so cross-module effects are not missed.
 

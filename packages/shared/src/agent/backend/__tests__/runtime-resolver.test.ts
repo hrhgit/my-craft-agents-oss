@@ -151,10 +151,13 @@ describe('resolveRipgrepPath', () => {
 describe('resolvePiRuntimePath', () => {
   const tmpBase = join(tmpdir(), `pi-runtime-resolver-test-${Date.now()}`);
   const originalOverride = process.env.MORTISE_PI_CLI_PATH;
+  const originalDevRuntime = process.env.MORTISE_DEV_RUNTIME;
 
   afterEach(() => {
     if (originalOverride === undefined) delete process.env.MORTISE_PI_CLI_PATH;
     else process.env.MORTISE_PI_CLI_PATH = originalOverride;
+    if (originalDevRuntime === undefined) delete process.env.MORTISE_DEV_RUNTIME;
+    else process.env.MORTISE_DEV_RUNTIME = originalDevRuntime;
     try { rmSync(tmpBase, { recursive: true, force: true }); } catch {}
   });
 
@@ -206,7 +209,41 @@ describe('resolvePiRuntimePath', () => {
       .toThrow('Packaged Pi runtime resolution requires resourcesPath');
   });
 
-  it('does not select a mutable JavaScript runtime in development', () => {
+  it('selects the compiled Pi binary from an explicitly enabled development source tree', () => {
+    const sourceRoot = join(tmpBase, 'development-source');
+    const appRoot = join(sourceRoot, 'apps', 'electron');
+    const binaryPath = join(
+      sourceRoot,
+      'pi',
+      'packages',
+      'coding-agent',
+      'dist',
+      process.platform === 'win32' ? 'pi.exe' : 'pi',
+    );
+    mkdirSync(dirname(binaryPath), { recursive: true });
+    writeFileSync(binaryPath, 'compiled development runtime');
+    process.env.MORTISE_DEV_RUNTIME = '1';
+
+    expect(resolveBackendRuntimePaths({
+      appRootPath: appRoot,
+      resourcesPath: appRoot,
+      isPackaged: false,
+    }).piRuntimePath).toBe(binaryPath);
+  });
+
+  it('fails explicitly when the development compiled Pi binary is missing', () => {
+    const appRoot = join(tmpBase, 'missing-development-runtime', 'apps', 'electron');
+    mkdirSync(appRoot, { recursive: true });
+    process.env.MORTISE_DEV_RUNTIME = '1';
+
+    expect(() => resolveBackendRuntimePaths({
+      appRootPath: appRoot,
+      resourcesPath: appRoot,
+      isPackaged: false,
+    })).toThrow('Development Pi runtime is missing');
+  });
+
+  it('does not select a mutable JavaScript runtime outside explicit development builds', () => {
     const appRoot = join(tmpBase, 'monorepo', 'apps', 'electron');
     const legacyRuntimePath = join(
       tmpBase,

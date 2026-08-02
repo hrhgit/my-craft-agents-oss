@@ -17,6 +17,10 @@ entrypoints:
 depends_on:
   - shared-contracts
 related: []
+frontend_impact:
+  affects: true
+  areas:
+    - skill and source management, resource selection, and MCP result surfaces
 validation:
   - bun test packages/shared/src/skills packages/server-core/src/handlers/rpc/skills.test.ts
 ---

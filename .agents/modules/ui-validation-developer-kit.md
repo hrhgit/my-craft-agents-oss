@@ -24,6 +24,10 @@ depends_on:
 related:
   - build-release-observability
   - extension-ui
+frontend_impact:
+  affects: true
+  areas:
+    - Developer Host playground, semantic snapshots, scenarios, and validation error surfaces outside production UI
 validation:
   - bun run test:mortise-ui
   - bun run test:ui-validation:fast

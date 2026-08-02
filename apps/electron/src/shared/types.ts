@@ -6,6 +6,8 @@ import type {
   AutomationChangedNotificationV1,
   BrowserHostDockNavigationCommand,
   WorkspaceCoordinationStatusV1,
+  WorkspaceCreationRequestV1,
+  WorkspaceCreationResultV1,
   WorkspaceRemotePrimaryCommandV1,
   WorkspaceRemotePrimaryResultV1,
   WorkspaceTopologyChangedV1,
@@ -273,7 +275,7 @@ export interface ElectronAPI {
   onWorkspaceTopologyChanged(callback: (change: WorkspaceTopologyChangedV1) => void): () => void
   setWorkspaceRemoteCredential(input: { workspaceId: string; credentialRef: string; token: string }): Promise<void>
   deleteWorkspaceRemoteCredential(input: { workspaceId: string; credentialRef: string }): Promise<void>
-  createWorkspace(folderPath: string, name: string): Promise<WorkspaceInfo>
+  createWorkspace(request: WorkspaceCreationRequestV1): Promise<WorkspaceCreationResultV1>
   checkWorkspaceSlug(slug: string): Promise<{ exists: boolean; path: string }>
   getWorkspaceCoordinationStatus(): Promise<WorkspaceCoordinationStatusV1>
 
@@ -462,6 +464,7 @@ export interface ElectronAPI {
 
   // Folder dialog
   openFolderDialog(): Promise<string | null>
+  openFolderDialog(options: { multiple: true }): Promise<string[]>
 
   // User Preferences
   readPreferences(): Promise<{ content: string; exists: boolean; path: string }>

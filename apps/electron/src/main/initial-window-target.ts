@@ -17,10 +17,10 @@ export function resolveInitialWindowTarget(args: {
   sessions: readonly InitialWindowSession[]
   activeWorkspaceId?: string | null
   activeSessionId?: string | null
-}): InitialWindowTarget | null {
+}): InitialWindowTarget {
   const workspace = args.workspaces.find(item => item.id === args.activeWorkspaceId)
     ?? args.workspaces[0]
-  if (!workspace) return null
+  if (!workspace) return { workspaceId: '' }
 
   const activeSessionId = args.activeSessionId
   const ownsActiveSession = activeSessionId

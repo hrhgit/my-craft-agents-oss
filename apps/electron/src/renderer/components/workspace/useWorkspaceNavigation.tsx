@@ -1,14 +1,11 @@
 import * as React from 'react'
-import { AnimatePresence } from 'motion/react'
-import { useSetAtom } from 'jotai'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
-import { fullscreenOverlayOpenAtom } from '@/atoms/overlay'
 import { useTransportConnectionState } from '@/hooks/useTransportConnectionState'
 import { waitForTransportConnected } from '@/lib/transport-wait'
 import type { WorkspaceInfo } from '../../../shared/types'
-import { WorkspaceCreationScreen } from './WorkspaceCreationScreen'
+import { WorkspaceCreationDialog } from './WorkspaceCreationScreen'
 import type { WorkspaceSwitchDestination } from '@/contexts/navigation-history'
 import {
   getPrimaryRemoteLocation,
@@ -66,10 +63,9 @@ export function useWorkspaceNavigation({
   onRefreshWorkspaces,
 }: UseWorkspaceNavigationOptions): WorkspaceNavigationModel {
   const { t } = useTranslation()
-  const setFullscreenOverlayOpen = useSetAtom(fullscreenOverlayOpenAtom)
   const connectionState = useTransportConnectionState()
   const workspaceIconMap = useWorkspaceInfoIcons(workspaces)
-  const [showCreationScreen, setShowCreationScreen] = React.useState(false)
+  const [showCreationDialog, setShowCreationDialog] = React.useState(false)
   const [reconnectTarget, setReconnectTarget] = React.useState<WorkspaceInfo | null>(null)
 
   const refreshRemoteHealth = React.useCallback(() => {
@@ -78,16 +74,14 @@ export function useWorkspaceNavigation({
   }, [])
 
   const closeCreation = React.useCallback(() => {
-    setShowCreationScreen(false)
+    setShowCreationDialog(false)
     setReconnectTarget(null)
-    setFullscreenOverlayOpen(false)
-  }, [setFullscreenOverlayOpen])
+  }, [])
 
   const openCreation = React.useCallback(() => {
     setReconnectTarget(null)
-    setShowCreationScreen(true)
-    setFullscreenOverlayOpen(true)
-  }, [setFullscreenOverlayOpen])
+    setShowCreationDialog(true)
+  }, [])
 
   const isDisconnected = React.useCallback((workspace: WorkspaceInfo) => {
     if (!getPrimaryRemoteLocation(workspace) || workspace.id !== activeWorkspaceId) return false
@@ -111,13 +105,12 @@ export function useWorkspaceNavigation({
     if (isDisconnected(workspace)) {
       if (getPrimaryRemoteLocation(workspace)) {
         setReconnectTarget(workspace)
-        setShowCreationScreen(true)
-        setFullscreenOverlayOpen(true)
+        setShowCreationDialog(true)
       }
       return
     }
     await Promise.resolve(onSelectWorkspace(workspaceId, false, 'newConversation'))
-  }, [isDisconnected, onSelectWorkspace, setFullscreenOverlayOpen, workspaces])
+  }, [isDisconnected, onSelectWorkspace, workspaces])
 
   const selectSession = React.useCallback(async (workspaceId: string, sessionId: string) => {
     const workspace = workspaces.find(item => item.id === workspaceId)
@@ -125,13 +118,12 @@ export function useWorkspaceNavigation({
     if (isDisconnected(workspace)) {
       if (getPrimaryRemoteLocation(workspace)) {
         setReconnectTarget(workspace)
-        setShowCreationScreen(true)
-        setFullscreenOverlayOpen(true)
+        setShowCreationDialog(true)
       }
       return
     }
     await Promise.resolve(onSelectWorkspace(workspaceId, false, { sessionId }))
-  }, [isDisconnected, onSelectWorkspace, setFullscreenOverlayOpen, workspaces])
+  }, [isDisconnected, onSelectWorkspace, workspaces])
 
   const openWorkspaceInNewWindow = React.useCallback(async (workspaceId: string) => {
     await Promise.resolve(onSelectWorkspace(workspaceId, true, 'restore'))
@@ -148,9 +140,14 @@ export function useWorkspaceNavigation({
     onRefreshWorkspaces?.()
   }, [activeWorkspaceId, onRefreshWorkspaces, t])
 
-  const handleWorkspaceCreated = React.useCallback((workspace: WorkspaceInfo) => {
+  const handleWorkspaceCreated = React.useCallback((
+    workspace: WorkspaceInfo,
+    action: 'created' | 'reconnected',
+  ) => {
     closeCreation()
-    toast.success(t('toast.createdWorkspace', { name: workspace.name }))
+    toast.success(action === 'reconnected'
+      ? t('toast.workspaceReconnected')
+      : t('toast.createdWorkspace', { name: workspace.name }))
     onRefreshWorkspaces?.()
     void Promise.resolve(onSelectWorkspace(workspace.id, false, 'newConversation'))
   }, [closeCreation, onRefreshWorkspaces, onSelectWorkspace, t])
@@ -183,18 +180,14 @@ export function useWorkspaceNavigation({
     }
   }), [activeWorkspaceId, disconnectLabel, isDisconnected, workspaceIconMap, workspaceProcessingMap, workspaceUnreadMap, workspaces])
 
-  const overlay = (
-    <AnimatePresence>
-      {showCreationScreen && (
-        <WorkspaceCreationScreen
-          onWorkspaceCreated={handleWorkspaceCreated}
-          onClose={closeCreation}
-          reconnectWorkspace={reconnectTarget ?? undefined}
-          onWorkspaceReconnected={handleWorkspaceReconnected}
-        />
-      )}
-    </AnimatePresence>
-  )
+  const overlay = showCreationDialog ? (
+    <WorkspaceCreationDialog
+      onWorkspaceCreated={handleWorkspaceCreated}
+      onClose={closeCreation}
+      reconnectWorkspace={reconnectTarget ?? undefined}
+      onWorkspaceReconnected={handleWorkspaceReconnected}
+    />
+  ) : null
 
   return {
     items,

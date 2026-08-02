@@ -213,7 +213,7 @@
      island-overlay     390     Backdrop for annotation island interactions
      island             400     Annotation island menu surface
      island-popover     410     Popovers/dropdowns opened from island content
-     splash             600     Splash screen, workspace creation
+     splash             600     Splash screen
   */
   --z-base: 0;
   --z-local: 10;

@@ -5,23 +5,22 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ArrowLeft, FolderOpen, Plus } from 'lucide-react'
-import { toast } from 'sonner'
+import { ArrowLeft, Folder, Plus } from 'lucide-react'
 import { Spinner } from '@mortise/ui'
 import type { WorkspaceInfo } from '../../../shared/types'
 import {
   AddWorkspaceContainer,
   AddWorkspaceStepHeader,
   AddWorkspacePrimaryButton,
-  AddWorkspaceSecondaryButton,
 } from './primitives'
-import { AddWorkspaceStep_OpenFolder } from './AddWorkspaceStep_OpenFolder'
 
 interface WorkspacePickerProps {
   onSelectWorkspace: (workspaceId: string) => void
 }
 
-type WorkspacePickerView = 'list' | 'create' | 'open'
+type WorkspacePickerView = 'list' | 'create'
+
+const pickerPanelClass = 'max-w-[30rem] rounded-lg border bg-background p-6 shadow-strong'
 
 export function WorkspacePicker({ onSelectWorkspace }: WorkspacePickerProps) {
   const { t } = useTranslation()
@@ -57,37 +56,13 @@ export function WorkspacePicker({ onSelectWorkspace }: WorkspacePickerProps) {
     }
   }, [newName, onSelectWorkspace])
 
-  const handleOpenFolder = useCallback(async (folderPath: string, name: string) => {
-    setCreating(true)
-    try {
-      const workspace = await window.electronAPI.createWorkspace(folderPath, name)
-      onSelectWorkspace(workspace.id)
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to open workspace folder'
-      toast.error(t('toast.failedToCreateWorkspace'), { description: message })
-      setCreating(false)
-    }
-  }, [onSelectWorkspace, t])
-
   if (loading) {
     return (
       <div className="flex h-screen items-center justify-center bg-sidebar px-4">
-        <AddWorkspaceContainer>
+        <AddWorkspaceContainer className={pickerPanelClass}>
           <Spinner className="h-6 w-6" />
-          <p className="mt-3 text-sm text-muted-foreground">{t("workspace.loadingWorkspaces")}</p>
+          <span className="sr-only">{t("workspace.loadingWorkspaces")}</span>
         </AddWorkspaceContainer>
-      </div>
-    )
-  }
-
-  if (view === 'open') {
-    return (
-      <div className="flex h-screen items-center justify-center bg-sidebar px-4">
-        <AddWorkspaceStep_OpenFolder
-          onBack={() => setView('list')}
-          onCreate={handleOpenFolder}
-          isCreating={creating}
-        />
       </div>
     )
   }
@@ -96,11 +71,10 @@ export function WorkspacePicker({ onSelectWorkspace }: WorkspacePickerProps) {
 
   return (
     <div className="flex h-screen items-center justify-center bg-sidebar px-4">
-      <AddWorkspaceContainer>
+      <AddWorkspaceContainer className={pickerPanelClass}>
         {showWorkspaceList ? (
           <AddWorkspaceStepHeader
             title={t("workspace.selectWorkspace")}
-            description={t("workspace.selectWorkspaceDesc")}
           />
         ) : (
           <div className="flex w-full items-center">
@@ -114,7 +88,6 @@ export function WorkspacePicker({ onSelectWorkspace }: WorkspacePickerProps) {
             </button>
             <AddWorkspaceStepHeader
               title={t("workspace.createWorkspace")}
-              description={t("workspace.createWorkspaceDesc")}
               className="flex-1 pr-8"
             />
           </div>
@@ -132,12 +105,11 @@ export function WorkspacePicker({ onSelectWorkspace }: WorkspacePickerProps) {
                 onClick={() => onSelectWorkspace(ws.id)}
                 className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm transition-colors hover:bg-foreground/5"
               >
-                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent/15 text-accent text-xs font-semibold uppercase">
-                  {ws.name.charAt(0)}
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-foreground/5 text-muted-foreground">
+                  <Folder className="h-4 w-4" />
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="truncate font-medium">{ws.name}</div>
-                  <div className="truncate text-xs text-muted-foreground">{ws.slug}</div>
                 </div>
               </button>
             ))}
@@ -153,13 +125,6 @@ export function WorkspacePicker({ onSelectWorkspace }: WorkspacePickerProps) {
               <Plus className="mr-1.5 h-4 w-4" />
               {t("workspace.createWorkspace")}
             </AddWorkspacePrimaryButton>
-            <AddWorkspaceSecondaryButton
-              onClick={() => setView('open')}
-              className="h-9 w-full"
-            >
-              <FolderOpen className="mr-1.5 h-4 w-4" />
-              {t("workspace.openFolder")}
-            </AddWorkspaceSecondaryButton>
           </div>
         ) : (
           <div className="mt-5 w-full space-y-2">

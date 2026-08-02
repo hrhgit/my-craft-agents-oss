@@ -8,7 +8,9 @@ import type { BackendHostRuntimeContext } from '../types.ts';
  * interceptor and runtime assets in the monorepo / on the system PATH.
  * Intended for local `electron:dist:mac` builds that skip `build-dmg.sh`.
  */
-const IS_DEV_RUNTIME = !!process.env.MORTISE_DEV_RUNTIME;
+function isDevelopmentRuntime(): boolean {
+  return process.env.MORTISE_DEV_RUNTIME === '1';
+}
 
 export interface ResolvedBackendRuntimePaths {
   sessionServerPath?: string;
@@ -103,6 +105,19 @@ function resolvePiRuntimePath(hostRuntime: BackendHostRuntimeContext): string | 
     }
 		return compiledRuntimePath;
 	}
+
+  if (isDevelopmentRuntime()) {
+    const binaryName = process.platform === 'win32' ? 'pi.exe' : 'pi';
+    const relativePath = join('pi', 'packages', 'coding-agent', 'dist', binaryName);
+    const compiledRuntimePath = resolveUpwards(hostRuntime.appRootPath, relativePath, 10);
+    if (!compiledRuntimePath) {
+      throw new Error(
+        `Development Pi runtime is missing below the Mortise source root (${relativePath}). `
+        + 'Run "bun run pi:build && bun run pi:build:binary" before starting Electron.',
+      );
+    }
+    return compiledRuntimePath;
+  }
 
 	return undefined;
 }

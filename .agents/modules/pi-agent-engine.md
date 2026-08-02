@@ -20,6 +20,10 @@ entrypoints:
 depends_on:
   - provider-model-runtime
 related: []
+frontend_impact:
+  affects: true
+  areas:
+    - conversation streaming, tool execution, retry, error, steering, and abort states
 validation:
   - npm --prefix pi test --workspace @mortise/pi-agent-core
 ---

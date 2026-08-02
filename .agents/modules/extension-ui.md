@@ -23,6 +23,10 @@ depends_on:
 related:
   - extension-runtime
   - ui-validation-developer-kit
+frontend_impact:
+  affects: true
+  areas:
+    - extension-contributed composer, conversation, settings, sandbox, and workspace panels
 validation:
   - >-
     bun test --isolate apps/electron/src/renderer/components/extensions

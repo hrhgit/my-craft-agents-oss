@@ -22,6 +22,11 @@ depends_on:
   - session-lifecycle
 related:
   - web-viewer-clients
+frontend_impact:
+  affects: true
+  areas:
+    - WebUI authentication, bootstrap, connection, and transport-status surfaces
+    - remote-backed shared renderer workflows exposed through RPC
 validation:
   - bun test apps/cli packages/server packages/server-core
   - bun run typecheck:all

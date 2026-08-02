@@ -130,9 +130,8 @@ import { routes } from '../shared/routes'
 import { LayoutCoordinator } from './layout-coordinator'
 import { BACKEND_TYPE_CAPABILITY } from '@mortise/shared/protocol'
 import { loadWindowState, saveWindowState } from './window-state'
-import { getWorkspaces, getWorkspaceByNameOrId, loadStoredConfig, addWorkspace, saveConfig, CONFIG_DIR } from '@mortise/shared/config'
+import { getWorkspaces, getWorkspaceByNameOrId, loadStoredConfig, CONFIG_DIR } from '@mortise/shared/config'
 import { MORTISE_AGENT_DIR } from '@mortise/shared/config/paths'
-import { getDefaultWorkspacesDir } from '@mortise/shared/workspaces'
 import { initializeDocs } from '@mortise/shared/docs'
 import { ensureDefaultPermissions } from '@mortise/shared/agent/permissions-config'
 import { ensureToolIcons, ensurePresetThemes } from '@mortise/shared/config'
@@ -153,6 +152,7 @@ import { PRELOAD_LOCAL_CHANNELS } from '../shared/ipc-channels'
 import { WorkspaceTransferHostCoordinator } from '../transport/workspace-transfer-single-flight'
 import { spawnWorkspaceServer, type SpawnedWorkspaceServer } from './workspace-server-spawner'
 import { resolveElectronResourcePaths } from './electron-resource-paths'
+import { handleStartupFailure } from './startup-failure'
 const isPackagedDeveloperHost = __MORTISE_DEV_HOST_BUILD__ && app.isPackaged
 process.env.MORTISE_PROCESS_ROLE ??= 'electron-main'
 process.env.MORTISE_BACKEND_KIND ??= 'electron'
@@ -401,31 +401,7 @@ async function createInitialWindows(): Promise<void> {
 
   // Load saved window state
   const savedState = loadWindowState()
-  let workspaces = getWorkspaces()
-
-  // If no workspaces exist, create default "My Workspace" on first run
-  if (workspaces.length === 0) {
-    // Ensure config file exists (addWorkspace requires it)
-    if (!loadStoredConfig()) {
-      saveConfig({ activeWorkspaceId: null, activeSessionId: null })
-    }
-    const defaultPath = join(getDefaultWorkspacesDir(), 'my-workspace')
-    addWorkspace({
-      schemaVersion: 2,
-      revision: 0,
-      name: 'My Workspace',
-      nameSource: 'custom',
-      primaryLocationId: 'primary',
-      locations: [{
-        id: 'primary',
-        name: 'My Workspace',
-        rootName: 'my-workspace',
-        endpoint: { kind: 'local', rootPath: defaultPath },
-      }],
-    })
-    workspaces = getWorkspaces() // Refresh after creation
-    mainLog.info('Created default workspace on first run')
-  }
+  const workspaces = getWorkspaces()
 
   const validWorkspaceIds = workspaces.map(ws => ws.id)
 
@@ -463,13 +439,22 @@ async function createInitialWindows(): Promise<void> {
     activeWorkspaceId: storedConfig?.activeWorkspaceId,
     activeSessionId: storedConfig?.activeSessionId,
   })
-  if (!target) return
-
   windowManager.createWindow({
     workspaceId: target.workspaceId,
     initialRoute: routes.view.newConversation(),
   })
   mainLog.info('Created initial workspace window', target)
+}
+
+function reportStartupFailure(error: unknown): void {
+  handleStartupFailure(error, {
+    isHeadless: !!process.env.MORTISE_HEADLESS,
+    logError: (message, details) => mainLog.error(message, details),
+    writeRuntimeError: entry => writeRuntimeLog('error', entry),
+    showErrorBox: (title, message) => dialog.showErrorBox(title, message),
+    setExitCode: code => { process.exitCode = code },
+    quit: () => app.quit(),
+  })
 }
 
 app.whenReady().then(async () => {
@@ -1571,8 +1556,7 @@ app.whenReady().then(async () => {
     }
     mainLog.info('Messaging gateway log path:', getMessagingGatewayLogFilePath())
   } catch (error) {
-    mainLog.error('Failed to initialize app:', error instanceof Error ? error.message : error, (error as any)?.stack)
-    // Continue anyway - the app will show errors in the UI
+    reportStartupFailure(error)
   }
 
   // macOS: Re-create window when dock icon is clicked
@@ -1592,7 +1576,7 @@ app.whenReady().then(async () => {
       }
     }
   })
-})
+}).catch(reportStartupFailure)
 
 // Guard both the normal quit sequence and the pre-update renderer flush.
 const beforeQuitGate = new BeforeQuitGate()
@@ -1772,7 +1756,7 @@ app.on('before-quit', async (event) => {
       mainLog.info('Update in progress, letting electron-updater handle quit')
       app.quit()
     } else {
-      app.exit(0)
+      app.exit(typeof process.exitCode === 'number' ? process.exitCode : 0)
     }
   })
 })

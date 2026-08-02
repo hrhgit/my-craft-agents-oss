@@ -23,6 +23,10 @@ depends_on:
 related:
   - extension-runtime
   - conversation-ui
+frontend_impact:
+  affects: true
+  areas:
+    - conversation tool cards, plans, artifacts, and child-task or delegation controls
 validation:
   - bun test packages/session-tools-core packages/session-mcp-server
   - bun run typecheck:all

@@ -23,6 +23,10 @@ depends_on:
   - pi-agent-engine
 related:
   - conversation-ui
+frontend_impact:
+  affects: true
+  areas:
+    - workspace session list, drafts, transcript visibility, and unread, running, or deleting states
 validation:
   - >-
     bun test packages/shared/src/sessions packages/shared/tests/persistence-queue.test.ts

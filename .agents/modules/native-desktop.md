@@ -23,6 +23,10 @@ depends_on:
   - headless-server-cli
 related:
   - universal-layout
+frontend_impact:
+  affects: true
+  areas:
+    - Electron windows, title bar, menus, dialogs, notifications, and native-view coordination
 validation:
   - bun test --isolate apps/electron/src/main apps/electron/src/transport
   - bun run typecheck:electron

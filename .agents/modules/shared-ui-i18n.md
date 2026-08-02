@@ -22,6 +22,10 @@ depends_on:
   - shared-contracts
 related:
   - conversation-ui
+frontend_impact:
+  affects: true
+  areas:
+    - shared components, icons, themes, localization, and accessibility across Electron, WebUI, and viewer clients
 validation:
   - bun test packages/ui
   - bun run lint:i18n:parity && bun run lint:i18n:sorted

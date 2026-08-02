@@ -20,6 +20,10 @@ entrypoints:
   - packages/core/src/types/index.ts
 depends_on: []
 related: []
+frontend_impact:
+  affects: true
+  areas:
+    - Electron renderer, WebUI, and viewer flows that consume changed DTOs, events, or channels
 validation:
   - bun test packages/shared/src/protocol packages/shared/src/utils
   - bun run typecheck:shared

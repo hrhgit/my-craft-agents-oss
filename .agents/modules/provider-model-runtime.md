@@ -22,6 +22,11 @@ depends_on:
   - app-settings-security
 related:
   - app-settings-security
+frontend_impact:
+  affects: true
+  areas:
+    - provider, model, and authentication settings and selectors
+    - composer model and thinking controls and provider error states
 validation:
   - npm --prefix pi test --workspace @mortise/pi-ai
   - bun test packages/shared/tests/models-pi.test.ts

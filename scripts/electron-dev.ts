@@ -40,11 +40,13 @@ const SESSION_SERVER_DIR = join(ROOT_DIR, "packages/session-mcp-server");
 const SESSION_SERVER_OUTPUT = join(SESSION_SERVER_DIR, "dist/index.js");
 const WHATSAPP_WORKER_DIR = join(ROOT_DIR, "packages/messaging-whatsapp-worker");
 const WHATSAPP_WORKER_OUTPUT = join(WHATSAPP_WORKER_DIR, "dist/worker.cjs");
+const PI_RUNTIME_DIR = join(ROOT_DIR, "pi/packages/coding-agent");
+const PI_RUNTIME_OUTPUT = join(PI_RUNTIME_DIR, `dist/pi${process.platform === "win32" ? ".exe" : ""}`);
 
 // Platform-specific binary paths (bun creates .exe on Windows, no extension on Unix)
 const IS_WINDOWS = process.platform === "win32";
 const BIN_EXT = IS_WINDOWS ? ".exe" : "";
-const VITE_BIN = join(ROOT_DIR, `node_modules/.bin/vite${BIN_EXT}`);
+const VITE_ENTRY = join(ROOT_DIR, "node_modules/vite/bin/vite.js");
 const ELECTRON_BIN = join(ROOT_DIR, `node_modules/.bin/electron${BIN_EXT}`);
 
 function resolveBuildPlatform(): Platform {
@@ -271,6 +273,49 @@ async function buildMcpServers(): Promise<void> {
   console.log("✅ Session MCP server built");
 }
 
+async function buildPiRuntime(): Promise<void> {
+  if (
+    process.env.MORTISE_DEV_FORCE_REBUILD_PI !== "1" &&
+    !needsBuild(PI_RUNTIME_OUTPUT, [
+      join(ROOT_DIR, "pi/packages/ai/src"),
+      join(ROOT_DIR, "pi/packages/ai/package.json"),
+      join(ROOT_DIR, "pi/packages/agent/src"),
+      join(ROOT_DIR, "pi/packages/agent/package.json"),
+      join(PI_RUNTIME_DIR, "src"),
+      join(PI_RUNTIME_DIR, "scripts"),
+      join(PI_RUNTIME_DIR, "package.json"),
+      join(ROOT_DIR, "pi/scripts"),
+      join(ROOT_DIR, "pi/package.json"),
+      join(ROOT_DIR, "pi/package-lock.json"),
+    ])
+  ) {
+    console.log(`🤖 Mortise Agent runtime unchanged, reusing ${PI_RUNTIME_OUTPUT}`);
+    return;
+  }
+
+  console.log("🤖 Building Mortise Agent runtime...");
+  for (const [script, label] of [
+    ["pi:build", "Pi workspace build"],
+    ["pi:build:binary", "Pi binary build"],
+  ] as const) {
+    const proc = spawn({
+      cmd: ["bun", "run", script],
+      cwd: ROOT_DIR,
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+    const exitCode = await proc.exited;
+    if (exitCode !== 0) {
+      throw new Error(`${label} failed with exit code ${exitCode}`);
+    }
+  }
+
+  if (!existsSync(PI_RUNTIME_OUTPUT) || statSync(PI_RUNTIME_OUTPUT).size === 0) {
+    throw new Error(`Mortise Agent runtime build did not produce ${PI_RUNTIME_OUTPUT}`);
+  }
+  console.log(`✅ Mortise Agent runtime built: ${PI_RUNTIME_OUTPUT}`);
+}
+
 // Get environment variables for electron process
 function getElectronEnv(): Record<string, string> {
   const vitePort = process.env.MORTISE_VITE_PORT || "5173";
@@ -282,6 +327,7 @@ function getElectronEnv(): Record<string, string> {
   return {
     ...process.env as Record<string, string>,
     VITE_DEV_SERVER_URL: `http://localhost:${vitePort}`,
+    MORTISE_DEV_RUNTIME: "1",
     MORTISE_CONFIG_DIR: process.env.MORTISE_CONFIG_DIR || "",
     MORTISE_APP_NAME: process.env.MORTISE_APP_NAME || "Mortise",
     MORTISE_DEEPLINK_SCHEME: process.env.MORTISE_DEEPLINK_SCHEME || "mortise",
@@ -379,7 +425,7 @@ async function main(): Promise<void> {
   copyResources();
 
   // These independent artifacts can be checked/built concurrently.
-  await Promise.all([buildMcpServers(), buildWaWorker()]);
+  await Promise.all([buildPiRuntime(), buildMcpServers(), buildWaWorker()]);
 
   const vitePort = process.env.MORTISE_VITE_PORT || "5173";
   const mainCjsPath = join(DIST_DIR, "main.cjs");
@@ -392,7 +438,9 @@ async function main(): Promise<void> {
 
   // 1. Vite dev server (strictPort ensures we don't silently switch ports)
   const viteProc = spawn({
-    cmd: [VITE_BIN, "dev", "--config", "apps/electron/vite.config.ts", "--port", vitePort, "--strictPort"],
+    // Run Vite in Bun directly. Windows package-manager shims can exit before
+    // their node.exe child, leaving the dev port occupied after Electron quits.
+    cmd: [process.execPath, VITE_ENTRY, "dev", "--config", "apps/electron/vite.config.ts", "--port", vitePort, "--strictPort"],
     cwd: ROOT_DIR,
     stdin: "ignore",
     stdout: "inherit",
@@ -489,8 +537,29 @@ async function main(): Promise<void> {
   });
   processes.push(electronProc);
 
-  // Handle cleanup on exit
-  const cleanup = async () => {
+  async function terminateProcessTree(proc: Subprocess): Promise<void> {
+    if (process.platform !== "win32" || !proc.pid) {
+      try { proc.kill(); } catch {}
+      return;
+    }
+
+    try {
+      const killer = spawn({
+        cmd: ["taskkill.exe", "/PID", String(proc.pid), "/T", "/F"],
+        stdin: "ignore",
+        stdout: "ignore",
+        stderr: "ignore",
+      });
+      await killer.exited;
+    } catch {
+      try { proc.kill(); } catch {}
+    }
+  }
+
+  // Handle cleanup on exit. Keep it single-flight because Electron exit and a
+  // terminal signal can arrive together on Windows.
+  let cleanupPromise: Promise<void> | undefined;
+  const cleanup = (): Promise<void> => cleanupPromise ??= (async () => {
     console.log("\n🛑 Shutting down...");
     // Dispose esbuild contexts
     for (const ctx of esbuildContexts) {
@@ -500,16 +569,9 @@ async function main(): Promise<void> {
         // Context may already be disposed
       }
     }
-    // Kill subprocesses
-    for (const proc of processes) {
-      try {
-        proc.kill();
-      } catch {
-        // Process may already be dead
-      }
-    }
+    await Promise.all(processes.map(terminateProcessTree));
     process.exit(0);
-  };
+  })();
 
   process.on("SIGINT", () => cleanup());
   process.on("SIGTERM", () => cleanup());

@@ -284,6 +284,32 @@ export class WorkspaceTopologyStore {
     })
   }
 
+  restore(workspaceId: string, operationId = `workspace-restore-${workspaceId}-${randomUUID()}`): Workspace {
+    return this.store.writeTransaction({ requiredCapabilities: [TOPOLOGY_CAPABILITY] }, (transaction) => {
+      const workspace = readWorkspaceInTransaction(transaction, workspaceId)
+      if (!workspace) throw new Error(`Workspace topology not found: ${workspaceId}`)
+
+      const identity = getWorkspaceTopologyRegistryIdentity()
+      const record = transaction.getRecord(identity.namespace, identity.key)
+      const registry = record ? parseRegistry(record.value) : emptyRegistry()
+      if (registry.workspaceIds.includes(workspaceId)) return workspace
+
+      const write = transaction.mutateRecord({
+        capability: TOPOLOGY_CAPABILITY,
+        namespace: identity.namespace,
+        key: identity.key,
+        value: {
+          ...registry,
+          workspaceIds: [...registry.workspaceIds, workspaceId],
+        } as unknown as JsonValue,
+        expectedVersion: record?.version ?? null,
+        operationId,
+      })
+      if (write.status !== 'applied') throw new Error('Workspace registry changed while restoring a Workspace')
+      return workspace
+    })
+  }
+
   migrateLegacy(legacy: LegacyWorkspaceV1): Workspace {
     const existing = this.get(legacy.id)
     if (existing) return existing

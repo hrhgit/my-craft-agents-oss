@@ -25,6 +25,10 @@ related:
   - browser-runtime
   - file-workbench
   - native-desktop
+frontend_impact:
+  affects: true
+  areas:
+    - workspace sidebar, dock groups, tabs, splits, detach, focus, and layout restoration
 validation:
   - >-
     bun test apps/electron/src/renderer/components/app-shell

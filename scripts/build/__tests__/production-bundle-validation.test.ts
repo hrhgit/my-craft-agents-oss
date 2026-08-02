@@ -128,6 +128,7 @@ describe('production bundle validation composition', () => {
     )
     expect(scripts['validate:dev']?.startsWith('bun run validate:production-node-bundles &&')).toBe(true)
     expect(scripts['validate:production-bundles']).toBe('bun run scripts/build/validate-production-bundles.ts')
+    expect(scripts['test:build-validation']).toContain('bundle-portability.test.ts')
     expect(scripts['validate:ci']).toContain('bun run test:build-validation')
     expect(scripts['validate:ci']).toContain('bun run validate:production-bundles')
     expect(buildModule).not.toContain('command: "bun run validate:dev"')

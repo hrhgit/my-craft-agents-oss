@@ -23,6 +23,10 @@ depends_on:
   - shared-ui-i18n
 related:
   - universal-layout
+frontend_impact:
+  affects: true
+  areas:
+    - workspace file tree, preview, editor, diff, and file-action states
 validation:
   - >-
     bun test packages/ui/src/components/markdown packages/ui/src/components/overlay

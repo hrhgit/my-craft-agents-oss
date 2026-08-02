@@ -41,7 +41,15 @@ interface DirectoryPickerResult {
 
 export function useDirectoryPicker(
   onSelect: (path: string) => void,
-  options: { host?: DirectoryPickerHost } = {},
+  options?: { host?: DirectoryPickerHost; multiple?: false },
+): DirectoryPickerResult
+export function useDirectoryPicker(
+  onSelect: (paths: string[]) => void,
+  options: { host?: DirectoryPickerHost; multiple: true },
+): DirectoryPickerResult
+export function useDirectoryPicker(
+  onSelect: ((path: string) => void) | ((paths: string[]) => void),
+  options: { host?: DirectoryPickerHost; multiple?: boolean } = {},
 ): DirectoryPickerResult {
   const { t } = useTranslation()
   const connectionState = useTransportConnectionState()
@@ -85,8 +93,13 @@ export function useDirectoryPicker(
 
     // Local mode — native OS dialog
     try {
-      const path = await window.electronAPI.openFolderDialog()
-      if (path) onSelect(path)
+      if (options.multiple) {
+        const paths = await window.electronAPI.openFolderDialog({ multiple: true })
+        if (paths.length > 0) (onSelect as (paths: string[]) => void)(paths)
+      } else {
+        const path = await window.electronAPI.openFolderDialog()
+        if (path) (onSelect as (path: string) => void)(path)
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error'
       toast.error(t('toast.failedToOpenFolderPicker'), {
@@ -101,8 +114,12 @@ export function useDirectoryPicker(
 
   const confirmServerBrowser = useCallback((path: string) => {
     setShowServerBrowser(false)
-    onSelect(path)
-  }, [onSelect])
+    if (options.multiple) {
+      (onSelect as (paths: string[]) => void)([path])
+    } else {
+      (onSelect as (path: string) => void)(path)
+    }
+  }, [onSelect, options.multiple])
 
   return {
     pickDirectory,

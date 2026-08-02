@@ -68,6 +68,9 @@ export const KEYS = {
 
   // Workspace-scoped composer state for routes that do not own a Session yet.
   newConversationOptions: 'new-conversation.workspace-draft.v1',
+
+  // Workspace creation form (global, cleared after a successful creation)
+  workspaceCreationDraft: 'workspace-creation.global.draft.v2',
 } as const
 
 export type StorageKey = typeof KEYS[keyof typeof KEYS]

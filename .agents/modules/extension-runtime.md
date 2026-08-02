@@ -24,6 +24,10 @@ depends_on:
 related:
   - extension-ui
   - session-tooling
+frontend_impact:
+  affects: true
+  areas:
+    - extension settings, reload and status indicators, and contribution availability
 validation:
   - bun test packages/shared/src/agent packages/server-core/src/handlers/pi-extension-bridge.test.ts
 ---

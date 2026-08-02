@@ -222,9 +222,9 @@ export const mockElectronAPI = {
     return null // Skip thumbnails in playground
   },
 
-  openFolderDialog: async () => {
+  openFolderDialog: async (options?: { multiple?: boolean }) => {
     console.log('[Playground] openFolderDialog called')
-    return null
+    return options?.multiple ? [] : null
   },
 
   discoverSkills: async () => [],

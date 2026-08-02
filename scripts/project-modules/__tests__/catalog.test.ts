@@ -36,6 +36,9 @@ describe('project module catalog', () => {
       'entrypoints: [src/alpha.ts]',
       'depends_on: []',
       'related: []',
+      'frontend_impact:',
+      '  affects: false',
+      '  areas: []',
       'validation: []',
     ].join('\n') + '\n')
     writeModule(root, 'beta', [
@@ -48,6 +51,9 @@ describe('project module catalog', () => {
       'entrypoints: [src/alpha.ts]',
       'depends_on: [alpha]',
       'related: []',
+      'frontend_impact:',
+      '  affects: true',
+      '  areas: [Conversation panel]',
       'validation: []',
     ].join('\n') + '\n')
 
@@ -55,6 +61,8 @@ describe('project module catalog', () => {
     expect(catalog.consumers.alpha).toEqual(['beta'])
     expect(renderProjectModuleCatalog(catalog)).toContain('Select the smallest relevant set')
     expect(renderProjectModuleCatalog(catalog)).toContain('Used by: `beta`')
+    expect(renderProjectModuleCatalog(catalog)).toContain('Frontend: none')
+    expect(renderProjectModuleCatalog(catalog)).toContain('Frontend: Conversation panel')
   })
 
   test('reports broken references and missing entrypoints without checking repository ownership coverage', async () => {
@@ -70,6 +78,9 @@ describe('project module catalog', () => {
       'entrypoints: [src/missing.ts]',
       'depends_on: [missing]',
       'related: []',
+      'frontend_impact:',
+      '  affects: false',
+      '  areas: []',
       'validation: []',
     ].join('\n') + '\n')
 
@@ -93,10 +104,66 @@ describe('project module catalog', () => {
       'entrypoints: [node_modules/dependency/index.ts]',
       'depends_on: []',
       'related: []',
+      'frontend_impact:',
+      '  affects: false',
+      '  areas: []',
       'validation: []',
     ].join('\n') + '\n')
 
     const result = await lintProjectModules(root)
     expect(result.diagnostics).toContainEqual(expect.objectContaining({ code: 'INVALID_ENTRYPOINT' }))
+  })
+
+  test('requires present and internally consistent frontend impact metadata', async () => {
+    const root = fixture()
+    writeModule(root, 'alpha', [
+      'schema: project-module/v1',
+      'id: alpha',
+      'name: Alpha',
+      'summary: Alpha capability.',
+      'when_to_read: [alpha work]',
+      'tags: []',
+      'entrypoints: [src/alpha.ts]',
+      'depends_on: []',
+      'related: []',
+      'frontend_impact:',
+      '  affects: true',
+      '  areas: []',
+      'validation: []',
+    ].join('\n') + '\n')
+    writeModule(root, 'beta', [
+      'schema: project-module/v1',
+      'id: beta',
+      'name: Beta',
+      'summary: Beta capability.',
+      'when_to_read: [beta work]',
+      'tags: []',
+      'entrypoints: [src/alpha.ts]',
+      'depends_on: []',
+      'related: []',
+      'frontend_impact:',
+      '  affects: false',
+      '  areas: [Unexpected panel]',
+      'validation: []',
+    ].join('\n') + '\n')
+    writeModule(root, 'gamma', [
+      'schema: project-module/v1',
+      'id: gamma',
+      'name: Gamma',
+      'summary: Gamma capability.',
+      'when_to_read: [gamma work]',
+      'tags: []',
+      'entrypoints: [src/alpha.ts]',
+      'depends_on: []',
+      'related: []',
+      'validation: []',
+    ].join('\n') + '\n')
+
+    const result = await lintProjectModules(root)
+    expect(result.diagnostics.filter(item => item.code === 'INVALID_DOCUMENT').map(item => item.document).sort()).toEqual([
+      '.agents/modules/alpha.md',
+      '.agents/modules/beta.md',
+      '.agents/modules/gamma.md',
+    ])
   })
 })

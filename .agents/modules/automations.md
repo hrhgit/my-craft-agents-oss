@@ -21,6 +21,11 @@ depends_on:
   - workspace-state
   - session-lifecycle
 related: []
+frontend_impact:
+  affects: true
+  areas:
+    - automation list, editor, run history, and execution status surfaces
+    - session links and notifications for automation runs
 validation:
   - >-
     bun test packages/shared/src/automations packages/shared/src/scheduler

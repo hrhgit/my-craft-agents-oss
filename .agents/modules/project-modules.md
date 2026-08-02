@@ -20,6 +20,9 @@ entrypoints:
 depends_on: []
 related:
   - build-release-observability
+frontend_impact:
+  affects: false
+  areas: []
 validation:
   - bun test scripts/project-modules/__tests__
   - bun run module:lint
@@ -35,11 +38,11 @@ Maintain the module Markdown schema, catalog renderer, lightweight knowledge lin
 
 # Capabilities
 
-`module:catalog` reads current YAML frontmatter and emits a compact Markdown index. `module:lint` checks module-document integrity without writing repository state.
+`module:catalog` reads current YAML frontmatter and emits a compact Markdown index, including whether each module affects frontend behavior and which areas it reaches. `module:lint` checks module-document integrity without writing repository state.
 
 # Invariants
 
-Module Markdown is the only authority. Catalog and lint operations are read-only and stateless. The current model performs semantic module selection; multiple matching modules never imply task decomposition.
+Module Markdown is the only authority, and every module explicitly declares consistent frontend-impact metadata. Catalog and lint operations are read-only and stateless. The current model performs semantic module selection; multiple matching modules never imply task decomposition.
 
 # Change Impact
 

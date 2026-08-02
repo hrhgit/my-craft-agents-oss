@@ -17,6 +17,10 @@ entrypoints:
   - docs/product-semantics.md
 depends_on: []
 related: []
+frontend_impact:
+  affects: true
+  areas:
+    - workspace, session, automation, extension, browser, and layout behavior governed by semantic decisions
 validation:
   - git diff --check -- docs/product-semantics.md
 ---

@@ -23,6 +23,10 @@ depends_on:
   - pi-agent-engine
   - provider-model-runtime
 related: []
+frontend_impact:
+  affects: true
+  areas:
+    - session runtime, compaction, tool, and extension states rendered in conversation surfaces
 validation:
   - npm --prefix pi test --workspace @mortise/pi-coding-agent
   - npm --prefix pi run build:workspace

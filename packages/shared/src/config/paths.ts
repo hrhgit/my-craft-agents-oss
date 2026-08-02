@@ -17,7 +17,13 @@ import { expandPath } from '../utils/paths.ts';
 export const CONFIG_DIR = process.env.MORTISE_CONFIG_DIR || join(homedir(), '.mortise');
 
 /** Mortise-owned Pi runtime data. Independent Pi continues to use ~/.pi/agent. */
-export const MORTISE_AGENT_DIR = join(CONFIG_DIR, 'agent');
+export function resolveMortiseAgentDir(environment: NodeJS.ProcessEnv = process.env): string {
+  const explicitAgentDir = environment.MORTISE_AGENT_DIR?.trim();
+  const configDir = environment.MORTISE_CONFIG_DIR || join(homedir(), '.mortise');
+  return explicitAgentDir ? expandPath(explicitAgentDir) : join(configDir, 'agent');
+}
+
+export const MORTISE_AGENT_DIR = resolveMortiseAgentDir();
 export const MORTISE_MODELS_FILE = join(MORTISE_AGENT_DIR, 'models.json');
 export const MORTISE_SETTINGS_FILE = join(MORTISE_AGENT_DIR, 'settings.json');
 export const MORTISE_AUTH_FILE = join(MORTISE_AGENT_DIR, 'auth.json');
