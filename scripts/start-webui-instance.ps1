@@ -64,7 +64,7 @@ function Clear-StaleWebuiLaunch {
 function Start-SharedClientInstance {
   $endpoint = Get-MortiseServerEndpoint -RequireWebuiAutoLogin
   if ($null -eq $endpoint) {
-    throw 'No healthy shared Mortise WebUI backend was found. Run start-webui.cmd once to start it.'
+    throw 'No healthy shared Mortise WebUI backend was found. Use the Mortise source tool to start the WebUI first.'
   }
 
   $clientId = [string]$PID

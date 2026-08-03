@@ -153,6 +153,8 @@ export interface AppShellContextType {
   onToggleAutomation?: (automationId: string) => void
   /** Duplicate an automation by ID — clones config with " Copy" suffix */
   onDuplicateAutomation?: (automationId: string) => void
+  /** Create or update one automation definition in the active Workspace. */
+  saveAutomation?: (definition: import('../components/automations/types').AutomationDefinitionV3UI) => Promise<void>
   /** Delete an automation by ID — removes from automations config */
   onDeleteAutomation?: (automationId: string) => void
   /** Map of automationId → last test result */

@@ -13,7 +13,7 @@
   --color-splitter-hover: var(--ring);
   --color-drag1: color-mix(in srgb, var(--ring) 75%, transparent);
   --color-drag2: color-mix(in srgb, var(--ring) 16%, transparent);
-  --font-size: 12px;
+  --font-size: 13px;
   letter-spacing: 0;
 }
 
@@ -32,7 +32,7 @@
 }
 
 .mortise-unified-dock .flexlayout__tabset_tabbar_outer {
-  min-height: 36px;
+  min-height: 42px;
   padding: 5px 8px 0;
   border-bottom: 0;
   background: var(--foreground-2);
@@ -67,7 +67,7 @@
 }
 
 .mortise-unified-dock .flexlayout__tab_button {
-  height: 31px;
+  height: 35px;
   max-width: 210px;
   min-width: 72px;
   gap: 6px;
@@ -119,8 +119,8 @@
 .mortise-unified-dock .flexlayout__tab_button_trailing,
 .mortise-unified-dock .flexlayout__tab_toolbar_button {
   display: inline-flex;
-  width: 24px;
-  height: 24px;
+  width: 32px;
+  height: 32px;
   align-items: center;
   justify-content: center;
   border-radius: 4px;

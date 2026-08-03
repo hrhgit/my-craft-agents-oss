@@ -255,6 +255,7 @@ const EXPECTED_CHANNELS: string[] = [
   'skills:import',
   'skills:openEditor',
   'skills:openFinder',
+  'skills:save',
   'system:homeDir',
   'system:isDebugMode',
   'system:versions',

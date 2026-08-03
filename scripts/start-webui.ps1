@@ -152,7 +152,7 @@ if (-not $completeWebuiAlreadyRunning) {
 
 foreach ($port in @($webuiPort, $rpcPort)) {
   if (-not (Test-PortAvailable $port)) {
-    Fail-And-Wait "Port $port cannot be bound. Close the conflicting process, or run start-webui.cmd again if the shared WebUI is already running."
+    Fail-And-Wait "Port $port cannot be bound. Close the conflicting process, or launch the WebUI again if the shared service is already running."
   }
 }
 

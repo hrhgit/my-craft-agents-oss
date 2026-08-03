@@ -28,6 +28,8 @@ frontend_impact:
   affects: true
   areas:
     - Developer Host playground, semantic snapshots, scenarios, and validation error surfaces outside production UI
+  interaction_docs:
+    - .agents/modules/ui-validation-developer-kit/frontend-interactions.md
 validation:
   - bun run test:mortise-ui
   - bun run test:ui-validation:fast
@@ -53,6 +55,8 @@ Own isolated run/build lifecycle, semantic and native snapshots, typed scenarios
 # Invariants
 
 Runs have immutable IDs plus concise labels; actions use published targets; native operations require selected-window readiness; builds pin immutable source snapshots.
+
+On Windows, foreground validation hosts load the registered AppShell scenario host as their initial renderer entry instead of navigating a visible production window between renderer pages. Background validation and normal Mortise launches retain their standard startup entry and renderer configuration. Validation-only renderer entries dispose their bridges and acknowledge the native close handshake without invoking production persistence.
 
 # Change Impact
 

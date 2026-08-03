@@ -69,12 +69,8 @@ export interface EditContext {
 export type EditContextKey =
   | 'workspace-permissions'
   | 'default-permissions'
-  | 'skill-instructions'
-  | 'skill-metadata'
   | 'preferences-notes'
-  | 'add-skill'
   | 'edit-tool-icons'
-  | 'automation-config'
 
 /**
  * Full edit configuration including context for agent and example for UI.
@@ -149,46 +145,6 @@ const EDIT_CONFIGS: Record<EditContextKey, (location: string) => EditConfig> = {
     inlineExecution: true,
   }),
 
-  // Skill editing contexts
-  'skill-instructions': (location) => ({
-    context: {
-      label: 'Skill Instructions',
-      filePath: `${location}/SKILL.md`,
-      context:
-        'The user is editing skill instructions in SKILL.md. ' +
-        'IMPORTANT: Preserve the YAML frontmatter (between --- markers) at the top of the file. ' +
-        'Focus on editing the markdown content after the frontmatter. ' +
-        'The skill instructions guide the AI on how to use this skill. ' +
-        'After editing, call skill_validate with the skill slug to verify the changes. ' +
-        'Confirm clearly when done.',
-    },
-    example: 'Add error handling guidelines',
-    displayLabelKey: 'editPopover.label.skillInstructions',
-    exampleKey: 'editPopover.example.skillInstructions',
-    model: 'fast',
-    systemPromptPreset: 'mini',
-    inlineExecution: true,
-  }),
-
-  'skill-metadata': (location) => ({
-    context: {
-      label: 'Skill Metadata',
-      filePath: `${location}/SKILL.md`,
-      context:
-        'The user is editing skill metadata in the YAML frontmatter of SKILL.md. ' +
-        'Frontmatter fields: name (required), description (required), globs (optional array), alwaysAllow (optional array), icon (optional string — emoji or URL). ' +
-        'Keep the content after the frontmatter unchanged unless specifically requested. ' +
-        'After editing, call skill_validate with the skill slug to verify the changes. ' +
-        'Confirm clearly when done.',
-    },
-    example: 'Update the skill description',
-    displayLabelKey: 'editPopover.label.skillMetadata',
-    exampleKey: 'editPopover.example.skillMetadata',
-    model: 'fast',
-    systemPromptPreset: 'mini',
-    inlineExecution: true,
-  }),
-
   // Preferences editing context
   'preferences-notes': (location) => ({
     context: {
@@ -207,25 +163,6 @@ const EDIT_CONFIGS: Record<EditContextKey, (location: string) => EditConfig> = {
     model: 'fast',
     systemPromptPreset: 'mini',
     inlineExecution: true,
-  }),
-
-  'add-skill': (location) => ({
-    context: {
-      label: 'Add Skill',
-      filePath: `${location}/.mortise/skills/`, // location is the workspace root path
-      context:
-        'The user wants to add a new skill to their workspace. ' +
-        'Skills are specialized instructions with a SKILL.md file containing YAML frontmatter (name, description) and markdown instructions. ' +
-        'Ask clarifying questions if needed: What should the skill do? When should it trigger? ' +
-        'Create the skill folder and SKILL.md in the workspace skills directory. ' +
-        'Follow the patterns in ~/.mortise/docs/skills.md. ' +
-        'After creating the skill, call skill_validate with the skill slug to verify the SKILL.md file.',
-    },
-    example: 'Review PRs following our code standards',
-    overridePlaceholder: 'What should I learn to do?',
-    displayLabelKey: 'editPopover.label.addSkill',
-    exampleKey: 'editPopover.example.addSkill',
-    overridePlaceholderKey: 'editPopover.placeholder.addSkill',
   }),
 
   // Tool icons configuration context
@@ -251,24 +188,6 @@ const EDIT_CONFIGS: Record<EditContextKey, (location: string) => EditConfig> = {
     inlineExecution: true,        // Execute inline in popover
   }),
 
-  'automation-config': (location) => ({
-    context: {
-      label: 'Automation Configuration',
-      filePath: 'automation.workspace',
-      context:
-        'Use the host-owned automation.workspace capability for all automation work. ' +
-        'Create, update, delete, enable, run, and inspect history through its versioned typed operations. ' +
-        'Do not edit automation storage files directly. ' +
-        'Use cron, once, interval, event triggers, prompt targets, and webhook actions from the V3 protocol. ' +
-        'Confirm the accepted operation and resulting automation ID clearly.',
-    },
-    example: 'Change the cron schedule to every 30 minutes',
-    displayLabelKey: 'editPopover.label.automationConfiguration',
-    exampleKey: 'editPopover.example.automationConfig',
-    model: 'default',
-    systemPromptPreset: 'mini',
-    inlineExecution: true,
-  }),
 }
 
 /**

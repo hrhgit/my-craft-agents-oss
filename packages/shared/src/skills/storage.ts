@@ -108,15 +108,16 @@ export function invalidateSkillsCache(): void {
   skillsCache.clear();
 }
 
-export function loadAllSkills(workspaceRoot: string, projectRoot?: string): LoadedSkill[] {
-  const cacheKey = `${workspaceRoot}::${projectRoot ?? ''}`;
+export function loadAllSkills(workspaceRoot = '', projectRoot?: string): LoadedSkill[] {
+  const effectiveProjectRoot = projectRoot ?? (workspaceRoot || undefined);
+  const cacheKey = effectiveProjectRoot ?? '__global__';
   const now = Date.now();
   const cached = skillsCache.get(cacheKey);
   if (cached && now - cached.ts < SKILLS_CACHE_TTL) {
     return cached.skills;
   }
 
-  const result = listHostSkills(projectRoot ?? workspaceRoot).skills.map(toLoadedSkill);
+  const result = listHostSkills(effectiveProjectRoot).skills.map(toLoadedSkill);
   skillsCache.set(cacheKey, { skills: result, ts: now });
   return result;
 }

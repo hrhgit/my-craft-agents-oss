@@ -62,6 +62,17 @@ export interface LoadedSkill {
   source: SkillSource;
 }
 
+/** Versioned write request used by management clients. */
+export interface SaveSkillRequestV1 {
+  schemaVersion: 1;
+  workspaceId?: string;
+  source: SkillSource;
+  slug: string;
+  name: string;
+  description: string;
+  content: string;
+}
+
 /** Result of importing one local skill directory into the current workspace. */
 export type SkillImportResult =
   | { status: 'imported'; slug: string; name: string }

@@ -33,6 +33,7 @@
     "test:ui-validation:stability": "bun run scripts/e2e/ui-validation/stability.ts",
     "test:ui-validation:runtime-contract": "bun run scripts/e2e/ui-validation/runtime-contract.ts",
     "test:ui-validation:surface-parity": "bun run scripts/e2e/ui-validation/surface-parity.ts",
+    "test:ui-flows": "bun run scripts/e2e/ui-flows/run.ts",
     "test:ui-validation:session-publication": "bun run scripts/e2e/ui-validation/session-publication.ts",
     "test:ui-validation:session-settlement": "bun run scripts/e2e/ui-validation/session-settlement.ts",
     "mortise-ui": "bun run scripts/mortise-ui/cli.ts",

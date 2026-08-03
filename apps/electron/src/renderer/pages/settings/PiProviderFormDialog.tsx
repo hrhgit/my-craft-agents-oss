@@ -582,7 +582,7 @@ export function PiProviderFormDialog({
                 type="button"
                 variant="ghost"
                 size="icon"
-                className="absolute right-1 top-1 h-7 w-7 text-muted-foreground hover:text-foreground"
+                className="absolute right-1 top-1 h-8 w-8 text-muted-foreground hover:text-foreground"
                 onClick={handleToggleApiKeyVisible}
                 disabled={apiKeyLoading}
                 title={apiKeyVisible ? t('settings.piProviders.hideApiKey') : t('settings.piProviders.showApiKey')}
@@ -724,7 +724,7 @@ export function PiProviderFormDialog({
                 {fetchedModels.length > 0 && (
                   <DropdownMenu modal={false}>
                     <DropdownMenuTrigger asChild>
-                      <Button variant="outline" size="sm" className="h-7 gap-1">
+                      <Button variant="outline" size="sm" className="h-8 gap-1.5">
                         <ChevronDown className="h-3.5 w-3.5" />
                         {t('settings.piProviders.pickFetched')}
                       </Button>
@@ -747,7 +747,7 @@ export function PiProviderFormDialog({
                     </DropdownMenuContent>
                   </DropdownMenu>
                 )}
-                <Button variant="outline" size="sm" className="h-7 gap-1" type="button" onClick={handleAddModel}>
+                <Button variant="outline" size="sm" className="h-8 gap-1.5" type="button" onClick={handleAddModel}>
                   <Plus className="h-3.5 w-3.5" />
                   {t('settings.piProviders.addModel')}
                 </Button>
@@ -788,7 +788,7 @@ export function PiProviderFormDialog({
                     </div>
                     <Collapsible open={expandedModels[index] ?? false} onOpenChange={() => toggleModelAdvanced(index)}>
                       <CollapsibleTrigger asChild>
-                        <Button variant="ghost" size="sm" type="button" className="h-7 gap-1 text-xs text-muted-foreground hover:text-foreground">
+                        <Button variant="ghost" size="sm" type="button" className="h-8 gap-1.5 text-sm text-muted-foreground hover:text-foreground">
                           {expandedModels[index] ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
                           {t('settings.piProviders.advancedOptions')}
                         </Button>

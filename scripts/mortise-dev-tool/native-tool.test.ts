@@ -10,11 +10,14 @@ const packageJson = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf
 }
 
 describe('Mortise Windows desktop tool', () => {
-  it('has exactly the three requested actions', () => {
-    expect(script.match(/CreateButton\("(?:启动|重启|打包)"/g)?.length).toBe(3)
+  it('provides the desktop, WebUI, and Developer Kit actions', () => {
+    expect(script.match(/CreateButton\("(?:启动|重启|打包|启动网页端|停止网页端|构建开发者套件)"/g)?.length).toBe(6)
     expect(script).toContain('CreateButton("启动"')
     expect(script).toContain('CreateButton("重启"')
     expect(script).toContain('CreateButton("打包"')
+    expect(script).toContain('CreateButton("启动网页端"')
+    expect(script).toContain('CreateButton("停止网页端"')
+    expect(script).toContain('CreateButton("构建开发者套件"')
   })
 
   it('uses one canonical package mode', () => {
@@ -38,6 +41,22 @@ describe('Mortise Windows desktop tool', () => {
     expect(script).toContain('statusText.Text = "正在关闭"')
   })
 
+  it('reuses the existing WebUI and Developer Kit launch paths', () => {
+    expect(script).toContain('"scripts", "start-webui-instance.ps1"')
+    expect(script).toContain('"scripts", "stop-webui.ps1"')
+    expect(script).toContain('new[] { "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", scriptPath }')
+    expect(script).toContain('new[] { "run", "scripts/build-developer-kit.ts" }')
+    expect(script).toContain('DrainWebuiMessages()')
+    expect(script).toContain('DrainStopWebuiMessages()')
+    expect(script).toContain('DrainDeveloperKitMessages()')
+  })
+
+  it('does not report an intentional WebUI stop as a startup failure', () => {
+    expect(script).toContain('suppressNextWebuiExitError = webuiRunner != null && webuiRunner.IsRunning')
+    expect(script).toContain('if (suppressNextWebuiExitError)')
+    expect(script).toContain('suppressNextWebuiExitError = false')
+  })
+
   it('provides a double-click launcher and no longer needs a web server', () => {
     expect(launcher).toContain('MortiseDesktopTool.ps1')
     expect(launcher).toContain('-WindowStyle Hidden')
@@ -53,6 +72,9 @@ describe('Mortise Windows desktop tool', () => {
       'scripts/start-quick-test.ps1',
       'build-package.cmd',
       'scripts/build-package.ps1',
+      'start-webui.cmd',
+      'build-developer-kit.cmd',
+      'stop-webui.cmd',
     ]) {
       expect(existsSync(join(repoRoot, path))).toBe(false)
     }

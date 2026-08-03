@@ -79,10 +79,10 @@ function SettingsItemRow({ item, isSelected, isFirst, onSelect }: SettingsItemRo
       {/* Wrapper for button with proper margins */}
       <div className="settings-content relative group select-none pl-2 mr-2">
         {/* Icon - positioned absolutely for consistent alignment */}
-        <div className="absolute left-[20px] top-[14px] z-10">
+        <div className="absolute left-[20px] top-[15px] z-10">
           <Icon
             className={cn(
-              'w-4 h-4 shrink-0',
+              'w-[18px] h-[18px] shrink-0',
               isSelected ? 'text-foreground' : 'text-muted-foreground'
             )}
           />
@@ -113,7 +113,7 @@ function SettingsItemRow({ item, isSelected, isFirst, onSelect }: SettingsItemRo
             >
               {item.label}
             </span>
-            <span className="text-xs text-foreground/60 line-clamp-1">
+            <span className="text-[13px] text-foreground/65 line-clamp-1">
               {item.description}
             </span>
           </div>
@@ -122,14 +122,14 @@ function SettingsItemRow({ item, isSelected, isFirst, onSelect }: SettingsItemRo
         <div
           data-touch-reveal="true"
           className={cn(
-            'absolute right-2 top-2 transition-opacity z-10',
+            'absolute right-2 top-2.5 transition-opacity z-10',
             menuOpen ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
           )}
         >
           <div className="flex items-center rounded-[8px] overflow-hidden border border-transparent hover:border-border/50">
             <DropdownMenu modal={true} onOpenChange={setMenuOpen}>
               <DropdownMenuTrigger asChild>
-                <div className="p-1.5 hover:bg-foreground/10 data-[state=open]:bg-foreground/10 cursor-pointer">
+                <div className="flex size-8 items-center justify-center hover:bg-foreground/10 data-[state=open]:bg-foreground/10 cursor-pointer">
                   <MoreHorizontal className="h-4 w-4 text-muted-foreground" />
                 </div>
               </DropdownMenuTrigger>

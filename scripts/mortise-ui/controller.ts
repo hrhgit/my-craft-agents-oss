@@ -16,7 +16,12 @@ import {
 } from '../build/electron-build-cache.ts'
 
 export const DEFAULT_MORTISE_UI_RUN_ROOT = resolve(process.env.MORTISE_UI_RUN_ROOT ?? join(process.cwd(), 'output', 'mortise-ui'))
-export const DEFAULT_MORTISE_UI_START_WAIT_MS = 600_000
+export const MORTISE_UI_MAX_START_WAIT_MS = 900_000
+export const DEFAULT_MORTISE_UI_START_WAIT_MS = MORTISE_UI_MAX_START_WAIT_MS
+
+export function mortiseUiHostRequestTimeoutMs(remainingStartWaitMs: number): number {
+  return Math.min(UI_VALIDATION_MAX_WAIT_MS, Math.max(1, remainingStartWaitMs))
+}
 const MORTISE_UI_RUN_LABEL_PATTERN = /^[a-z0-9](?:[a-z0-9._-]{0,62}[a-z0-9])?$/
 const MORTISE_UI_SHUTDOWN_REQUEST_TIMEOUT_MS = 30_000
 const MORTISE_UI_SHUTDOWN_GRACE_PERIOD_MS = 30_000
@@ -241,8 +246,8 @@ export async function startMortiseUiRun(args: {
     throw new Error('fixtureSpec requires the fixture profile mode')
   }
   const waitMs = args.waitMs ?? DEFAULT_MORTISE_UI_START_WAIT_MS
-  if (!Number.isSafeInteger(waitMs) || waitMs < 1 || waitMs > UI_VALIDATION_MAX_WAIT_MS) {
-    throw new Error(`waitMs must be between 1 and ${UI_VALIDATION_MAX_WAIT_MS}`)
+  if (!Number.isSafeInteger(waitMs) || waitMs < 1 || waitMs > MORTISE_UI_MAX_START_WAIT_MS) {
+    throw new Error(`waitMs must be between 1 and ${MORTISE_UI_MAX_START_WAIT_MS}`)
   }
   const adapterCommand = args.adapterCommand ?? getDefaultAdapterCommand(args.surface)
   if (adapterCommand.length === 0 || !adapterCommand[0]) throw new Error('An adapter command is required')
@@ -406,7 +411,7 @@ export async function startMortiseUiRun(args: {
         hostPid: endpoint.pid,
         hostStartedAt: endpoint.pid === child.pid ? launcherStartedAt : getProcessStartTime(endpoint.pid),
       })
-      const appReadyTimeoutMs = Math.max(1, deadline - Date.now())
+      const appReadyTimeoutMs = mortiseUiHostRequestTimeoutMs(deadline - Date.now())
       const readiness = await requestMortiseUiHost({
         ...readyManifest,
         command: 'ui.wait',
@@ -421,7 +426,7 @@ export async function startMortiseUiRun(args: {
         throw new MortiseUiStartError(error, failed)
       }
       readyManifest = updateRunManifest(runDir, { lastResponseSeq: readiness.seq, lastRevision: readiness.revision, verificationLevel: readiness.verificationLevel })
-      const semanticReadyTimeoutMs = Math.max(1, deadline - Date.now())
+      const semanticReadyTimeoutMs = mortiseUiHostRequestTimeoutMs(deadline - Date.now())
       const semanticReadiness = await requestMortiseUiHost({
         ...readyManifest,
         command: 'ui.wait',
@@ -446,7 +451,7 @@ export async function startMortiseUiRun(args: {
           ...readyManifest,
           command: 'scenario.apply',
           params: args.scenario,
-          timeoutMs: waitMs,
+          timeoutMs: mortiseUiHostRequestTimeoutMs(waitMs),
           minimumSeqExclusive: readyManifest.lastResponseSeq,
         })
         updateRunManifest(runDir, { lastResponseSeq: applied.seq, lastRevision: applied.revision, verificationLevel: applied.verificationLevel })

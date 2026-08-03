@@ -21,6 +21,8 @@ frontend_impact:
   affects: true
   areas:
     - skill and source management, resource selection, and MCP result surfaces
+  interaction_docs:
+    - .agents/modules/sources-skills-mcp/frontend-interactions.md
 validation:
   - bun test packages/shared/src/skills packages/server-core/src/handlers/rpc/skills.test.ts
 ---

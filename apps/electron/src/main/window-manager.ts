@@ -17,6 +17,7 @@ import {
   type WindowLayoutMode,
 } from './window-renderer-query'
 import { isKeyboardCloseShortcut } from './keyboard-close-shortcut'
+import { isWindowsForegroundUiValidationHost } from './ui-validation/windows-renderer-stability'
 
 // Vite dev server URL for hot reload
 const VITE_DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL
@@ -471,7 +472,15 @@ export class WindowManager {
       layoutWindowId: resolvedLayoutWindowId,
       ...runtimeQueryOptions,
     })
-    let rendererQuery = defaultRendererQuery
+    const directValidationScenarioHost = isWindowsForegroundUiValidationHost({
+      platform: process.platform,
+      validationBuild: __MORTISE_UI_VALIDATION_BUILD__,
+      testHostEnabled: process.env.MORTISE_UI_TEST_HOST === '1',
+      windowMode: process.env.MORTISE_UI_WINDOW_MODE,
+    })
+    let rendererQuery = directValidationScenarioHost
+      ? { scenario: 'app-shell-scenario-host' }
+      : defaultRendererQuery
 
     // Apply window-title policy now that the map size reflects this window —
     // covers both the new window and any existing windows that should switch
@@ -484,7 +493,17 @@ export class WindowManager {
     }
 
     // Load the renderer - use restoreUrl if provided, otherwise build from options
-    if (restoreUrl) {
+    if (directValidationScenarioHost) {
+      windowLog.info('Loading foreground UI validation scenario host directly')
+      if (VITE_DEV_SERVER_URL) {
+        const devUrl = new URL(VITE_DEV_SERVER_URL)
+        devUrl.pathname = '/playground.html'
+        devUrl.search = new URLSearchParams(rendererQuery).toString()
+        window.loadURL(devUrl.toString())
+      } else {
+        window.loadFile(join(__dirname, 'renderer/playground.html'), { query: rendererQuery })
+      }
+    } else if (restoreUrl) {
       // Restore from saved URL - need to adapt for dev vs prod
       if (VITE_DEV_SERVER_URL) {
         // In dev mode, replace the base URL but keep the path and query
@@ -545,11 +564,18 @@ export class WindowManager {
         failLoadRetries++
         windowLog.info(`Retrying Vite dev server (attempt ${failLoadRetries}/5)...`)
         setTimeout(() => {
-          const params = new URLSearchParams(rendererQuery).toString()
-          window.loadURL(`${VITE_DEV_SERVER_URL}?${params}`)
+          if (directValidationScenarioHost) {
+            const devUrl = new URL(VITE_DEV_SERVER_URL)
+            devUrl.pathname = '/playground.html'
+            devUrl.search = new URLSearchParams(rendererQuery).toString()
+            window.loadURL(devUrl.toString())
+          } else {
+            const params = new URLSearchParams(rendererQuery).toString()
+            window.loadURL(`${VITE_DEV_SERVER_URL}?${params}`)
+          }
         }, 1000)
       } else {
-        window.loadFile(join(__dirname, 'renderer/index.html'), { query: rendererQuery })
+        window.loadFile(join(__dirname, directValidationScenarioHost ? 'renderer/playground.html' : 'renderer/index.html'), { query: rendererQuery })
       }
     })
 

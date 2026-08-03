@@ -5,9 +5,9 @@ import { toast } from 'sonner'
 import { SkillAvatar } from '@/components/ui/skill-avatar'
 import { EntityPanel } from '@/components/ui/entity-panel'
 import { EntityListEmptyScreen } from '@/components/ui/entity-list-empty'
+import { Button } from '@/components/ui/button'
 import { skillSelection } from '@/hooks/useEntitySelection'
 import { SkillMenu } from './SkillMenu'
-import { EditPopover, getEditConfig } from '@/components/ui/EditPopover'
 import { useActiveWorkspace } from '@/context/AppShellContext'
 import { getFileManagerName } from '@/lib/platform'
 import { isPrimaryWorkspaceLocal } from '@/lib/workspace-info'
@@ -18,6 +18,7 @@ export interface SkillsListPanelProps {
   onSkillClick: (skill: LoadedSkill) => void
   selectedSkillSlug?: string | null
   workspaceId?: string
+  onAddSkill: () => void
   className?: string
 }
 
@@ -26,11 +27,13 @@ export function SkillsListPanel({
   onSkillClick,
   selectedSkillSlug,
   workspaceId,
+  onAddSkill,
   className,
 }: SkillsListPanelProps) {
   const { t } = useTranslation()
   const activeWorkspace = useActiveWorkspace()
-  const canRevealLocally = activeWorkspace ? isPrimaryWorkspaceLocal(activeWorkspace) : false
+  const isElectron = window.electronAPI.getRuntimeEnvironment() === 'electron'
+  const canRevealWorkspaceSkill = activeWorkspace ? isPrimaryWorkspaceLocal(activeWorkspace) : false
 
   return (
     <EntityPanel<LoadedSkill>
@@ -48,15 +51,9 @@ export function SkillsListPanel({
           description={t('skillsList.emptyDescription')}
           docKey="skills"
         >
-          <EditPopover
-            align="center"
-            trigger={
-              <button className="inline-flex items-center h-7 px-3 text-xs font-medium rounded-[8px] bg-background shadow-minimal hover:bg-foreground/[0.03] transition-colors">
-                {t('skillsList.addSkill')}
-              </button>
-            }
-            {...getEditConfig('add-skill', '.')}
-          />
+          <Button type="button" onClick={onAddSkill} semanticId="skills.add.empty">
+            {t('skillsList.addSkill')}
+          </Button>
         </EntityListEmptyScreen>
       }
       mapItem={(skill) => ({
@@ -65,7 +62,7 @@ export function SkillsListPanel({
         badges: (
           <span className="flex items-center gap-1.5 min-w-0">
             {skill.source === 'project' && (
-              <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded-full bg-foreground/5 text-muted-foreground">
+              <span className="shrink-0 rounded-[4px] border border-[var(--surface-border)] bg-foreground/5 px-1.5 py-0.5 text-[12px] font-medium text-muted-foreground">
                 {t('skillsList.projectBadge')}
               </span>
             )}
@@ -78,7 +75,7 @@ export function SkillsListPanel({
             skillName={skill.metadata.name}
             onOpenInNewWindow={() => window.electronAPI.openUrl(`mortise://skills/skill/${skill.slug}?window=focused`)}
             onShowInFinder={async () => {
-              if (!canRevealLocally) return
+              if (!isElectron || (skill.source === 'project' && !canRevealWorkspaceSkill)) return
               try {
                 await window.electronAPI.showInFolder(skill.path)
               } catch (err) {
@@ -88,7 +85,7 @@ export function SkillsListPanel({
                 })
               }
             }}
-            canShowInFinder={canRevealLocally}
+            canShowInFinder={isElectron && (skill.source === 'global' || canRevealWorkspaceSkill)}
             canDelete={false}
             deleteLabel={t('skillsList.managedByProject')}
           />

@@ -19,7 +19,7 @@ interface Snapshot {
 const REQUIRED_SEMANTICS = [
   'app.new-session',
   'navigation.main',
-  'navigation.nav_allSessions',
+  'navigation.secondary',
   'navigation.nav_skills',
   'navigation.nav_automations',
   'navigation.nav_settings',

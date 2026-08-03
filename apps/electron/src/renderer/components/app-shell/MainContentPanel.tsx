@@ -16,7 +16,7 @@
 
 import * as React from 'react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { useAtomValue } from 'jotai'
+import { useAtomValue, useSetAtom } from 'jotai'
 import { useTranslation } from 'react-i18next'
 import { Panel } from './Panel'
 import { MultiSelectPanel } from './MultiSelectPanel'
@@ -37,6 +37,11 @@ import { getSettingsPageComponent } from '@/pages/settings/settings-pages'
 import { AutomationInfoPage } from '../automations/AutomationInfoPage'
 import type { ExecutionEntry } from '../automations/types'
 import { automationsAtom } from '@/atoms/automations'
+import { skillsAtom } from '@/atoms/skills'
+import { managementEditorAtom } from '@/atoms/management-editor'
+import { SkillEditorPanel } from './SkillEditorPanel'
+import { AutomationEditorPanel } from '../automations/AutomationEditorPanel'
+import { navigate, routes } from '@/lib/navigate'
 import { SendResourceToWorkspaceDialog, type SendResourceType } from './SendResourceToWorkspaceDialog'
 
 export interface MainContentPanelProps {
@@ -70,6 +75,7 @@ export function MainContentPanel({
     onReplayAutomation,
     automationTestResults,
     getAutomationHistory,
+    saveAutomation,
   } = useAppShellContext()
 
   // Session multi-select state
@@ -78,6 +84,10 @@ export function MainContentPanel({
   const selectionCount = useSelectionCount()
   const { clearMultiSelect } = useSessionSelection()
   const automations = useAtomValue(automationsAtom)
+  const skills = useAtomValue(skillsAtom)
+  const setSkills = useSetAtom(skillsAtom)
+  const managementEditor = useAtomValue(managementEditorAtom)
+  const setManagementEditor = useSetAtom(managementEditorAtom)
 
   // Execution history for the selected automation
   const selectedAutomationId = isAutomationsNavigation(navState) ? navState.details?.automationId : undefined
@@ -168,6 +178,28 @@ export function MainContentPanel({
 
   // Skills navigator - show skill info, multi-select panel, or empty state
   if (isSkillsNavigation(navState)) {
+    if (managementEditor?.kind === 'skill') {
+      const editingSkill = managementEditor.skillSlug
+        ? skills.find(skill => skill.slug === managementEditor.skillSlug)
+        : undefined
+      return wrapWithStoplight(
+        <Panel variant="grow" className={className}>
+          <SkillEditorPanel
+            skill={editingSkill}
+            workspaceId={activeWorkspaceId ?? undefined}
+            onCancel={() => setManagementEditor(null)}
+            onSaved={(saved) => {
+              setSkills(previous => {
+                const next = previous.filter(skill => skill.slug !== saved.slug)
+                return [...next, saved].sort((a, b) => a.metadata.name.localeCompare(b.metadata.name))
+              })
+              setManagementEditor(null)
+              navigate(routes.view.skills(saved.slug))
+            }}
+          />
+        </Panel>
+      )
+    }
     if (isSkillMultiSelectActive) {
       return wrapWithStoplight(
         <Panel variant="grow" className={className}>
@@ -185,7 +217,7 @@ export function MainContentPanel({
         <Panel variant="grow" className={className}>
           <SkillInfoPage
             skillSlug={navState.details.skillSlug}
-            workspaceId={activeWorkspaceId || ''}
+            workspaceId={activeWorkspaceId ?? undefined}
           />
         </Panel>
       )
@@ -202,6 +234,25 @@ export function MainContentPanel({
 
   // Automations navigator - show automation info, multi-select panel, or empty state
   if (isAutomationsNavigation(navState)) {
+    if (managementEditor?.kind === 'automation' && activeWorkspaceId && saveAutomation) {
+      const editingAutomation = managementEditor.automationId
+        ? automations.find(item => item.id === managementEditor.automationId)?.definition
+        : undefined
+      return wrapWithStoplight(
+        <Panel variant="grow" className={className}>
+          <AutomationEditorPanel
+            automation={editingAutomation}
+            workspaceId={activeWorkspaceId}
+            onCancel={() => setManagementEditor(null)}
+            onSave={saveAutomation}
+            onSaved={(automationId) => {
+              setManagementEditor(null)
+              navigate(routes.view.automations({ automationId }))
+            }}
+          />
+        </Panel>
+      )
+    }
     if (isAutomationMultiSelectActive) {
       return wrapWithStoplight(
         <Panel variant="grow" className={className}>
@@ -228,6 +279,7 @@ export function MainContentPanel({
               onDuplicate={onDuplicateAutomation ? () => onDuplicateAutomation(automation.id) : undefined}
               onDelete={onDeleteAutomation ? () => onDeleteAutomation(automation.id) : undefined}
               onReplay={onReplayAutomation}
+              onEdit={() => setManagementEditor({ kind: 'automation', automationId: automation.id })}
             />
           </Panel>
         )

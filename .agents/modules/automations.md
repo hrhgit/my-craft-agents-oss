@@ -26,6 +26,8 @@ frontend_impact:
   areas:
     - automation list, editor, run history, and execution status surfaces
     - session links and notifications for automation runs
+  interaction_docs:
+    - .agents/modules/automations/frontend-interactions.md
 validation:
   - >-
     bun test packages/shared/src/automations packages/shared/src/scheduler

@@ -17,7 +17,7 @@ import { Tooltip, TooltipTrigger, TooltipContent } from '@mortise/ui'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { EntityListEmptyScreen } from '@/components/ui/entity-list-empty'
 import { EntityRow } from '@/components/ui/entity-row'
-import { EditPopover, getEditConfig } from '@/components/ui/EditPopover'
+import { Button } from '@/components/ui/button'
 import { SessionSearchHeader } from '@/components/app-shell/SessionSearchHeader'
 import { AutomationMenu } from './AutomationMenu'
 import { BatchAutomationMenu } from './BatchAutomationMenu'
@@ -37,7 +37,7 @@ const {
 /** Tiny inline badge used for event name and action type in automation rows */
 function MicroBadge({ children, colorClass }: { children: React.ReactNode; colorClass: string }) {
   return (
-    <span className={cn('shrink-0 px-1.5 py-0.5 text-[10px] font-medium rounded', colorClass)}>
+    <span className={cn('shrink-0 px-2 py-1 text-[12px] font-medium rounded-md border border-current/10', colorClass)}>
       {children}
     </span>
   )
@@ -106,7 +106,7 @@ function AutomationItem({
       isSelected={isSelected}
       isInMultiSelect={isInMultiSelect}
       onMouseDown={handleClick}
-      icon={<AutomationAvatar event={automation.event} size="sm" />}
+      icon={<AutomationAvatar event={automation.event} size="md" />}
       title={automation.name}
       badges={
         <>
@@ -129,7 +129,7 @@ function AutomationItem({
         automation.lastExecutedAt ? (
           <Tooltip>
             <TooltipTrigger asChild>
-              <span className="shrink-0 text-[11px] text-foreground/40 whitespace-nowrap cursor-default">
+              <span className="shrink-0 text-[12px] text-foreground/60 whitespace-nowrap cursor-default">
                 {formatShortRelativeTime(automation.lastExecutedAt)}
               </span>
             </TooltipTrigger>
@@ -164,12 +164,12 @@ export interface AutomationsListPanelProps {
   automations: AutomationListItem[]
   automationFilter?: AutomationListFilter | null
   onAutomationClick: (automationId: string) => void
+  onAddAutomation?: () => void
   onDeleteAutomation?: (automationId: string) => void
   onToggleAutomation?: (automationId: string) => void
   onTestAutomation?: (automationId: string) => void
   onDuplicateAutomation?: (automationId: string) => void
   selectedAutomationId?: string | null
-  workspaceRootPath?: string
   className?: string
 }
 
@@ -177,12 +177,12 @@ export function AutomationsListPanel({
   automations,
   automationFilter,
   onAutomationClick,
+  onAddAutomation,
   onDeleteAutomation,
   onToggleAutomation,
   onTestAutomation,
   onDuplicateAutomation,
   selectedAutomationId,
-  workspaceRootPath,
   className,
 }: AutomationsListPanelProps) {
   const { t } = useTranslation()
@@ -261,16 +261,10 @@ export function AutomationsListPanel({
           description={t('automations.emptyDescription')}
           docKey="automations"
         >
-          {workspaceRootPath && (
-            <EditPopover
-              align="center"
-              trigger={
-                <button className="inline-flex items-center h-7 px-3 text-xs font-medium rounded-[8px] bg-background shadow-minimal hover:bg-foreground/[0.03] transition-colors">
-                  {t('automations.addAutomation')}
-                </button>
-              }
-              {...getEditConfig('automation-config', workspaceRootPath)}
-            />
+          {onAddAutomation && (
+            <Button onClick={onAddAutomation} semanticId="automations.add.empty">
+              {t('automations.addAutomation')}
+            </Button>
           )}
         </EntityListEmptyScreen>
       </div>

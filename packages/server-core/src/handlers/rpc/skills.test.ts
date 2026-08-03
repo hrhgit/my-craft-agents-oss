@@ -5,7 +5,7 @@ import { join, resolve } from 'path'
 import type { RpcServer } from '@mortise/server-core/transport'
 import type { HandlerDeps } from '../handler-deps'
 import { RPC_CHANNELS } from '@mortise/shared/protocol'
-import { discoverSkillsUnderHome, importSkillDirectories, importSkillDirectory, registerSkillsHandlers } from './skills'
+import { discoverSkillsUnderHome, importSkillDirectories, importSkillDirectory, registerSkillsHandlers, validateSkillSaveRequest, writeSkillDefinition } from './skills'
 
 const tempDirectories: string[] = []
 
@@ -93,7 +93,54 @@ describe('skills RPC contract', () => {
 
     expect(getHandler).toBeDefined()
     await expect(getHandler!({ workspaceId: 'workspace-a' }, 'workspace-a', 'C:/retired-cwd'))
-      .rejects.toThrow('skills:get accepts only workspaceId')
+      .rejects.toThrow('skills:get accepts only an optional workspaceId')
+  })
+
+  it('loads only global skills when no Workspace is active', async () => {
+    let getHandler: ((ctx: { workspaceId: string | null }, workspaceId?: string) => Promise<unknown>) | undefined
+    const server = {
+      handle(channel: string, handler: typeof getHandler) {
+        if (channel === RPC_CHANNELS.skills.GET) getHandler = handler
+      },
+    } as unknown as RpcServer
+    const deps = { platform: {} } as HandlerDeps
+    registerSkillsHandlers(server, deps)
+
+    const result = await getHandler!({ workspaceId: null }) as Array<{ source: string }>
+    expect(result.every(skill => skill.source === 'global')).toBe(true)
+  })
+})
+
+describe('skill save contract', () => {
+  it('writes a normalized SKILL.md below the selected global or project root', async () => {
+    const globalRoot = tempDirectory('mortise-global-skills-')
+    const projectRoot = tempDirectory('mortise-project-skills-')
+    const request = {
+      schemaVersion: 1 as const,
+      source: 'global' as const,
+      slug: 'review-notes',
+      name: ' Review Notes ',
+      description: ' Keep reviews consistent ',
+      content: ' Follow the project checklist. ',
+    }
+    const globalFile = await writeSkillDefinition(globalRoot, request)
+    const projectFile = await writeSkillDefinition(projectRoot, { ...request, source: 'project' })
+
+    expect(globalFile).toBe(join(globalRoot, 'review-notes', 'SKILL.md'))
+    expect(projectFile).toBe(join(projectRoot, 'review-notes', 'SKILL.md'))
+    expect(readFileSync(globalFile, 'utf8')).toBe('---\nname: "Review Notes"\ndescription: "Keep reviews consistent"\n---\n\nFollow the project checklist.\n')
+  })
+
+  it('rejects path-like or uppercase slugs before writing', () => {
+    const base = {
+      schemaVersion: 1 as const,
+      source: 'global' as const,
+      name: 'Bad',
+      description: '',
+      content: 'Instructions',
+    }
+    expect(() => validateSkillSaveRequest({ ...base, slug: '../bad' })).toThrow('lowercase letters')
+    expect(() => validateSkillSaveRequest({ ...base, slug: 'Bad-Skill' })).toThrow('lowercase letters')
   })
 })
 

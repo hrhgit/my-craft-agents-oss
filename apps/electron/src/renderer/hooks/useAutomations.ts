@@ -45,6 +45,7 @@ export interface UseAutomationsResult {
   handleTestAutomation: (automationId: string) => void
   handleToggleAutomation: (automationId: string) => void
   handleDuplicateAutomation: (automationId: string) => void
+  saveAutomation: (definition: AutomationDefinitionV3UI) => Promise<void>
   handleDeleteAutomation: (automationId: string) => void
   confirmDeleteAutomation: () => void
   getAutomationHistory: (automationId: string) => Promise<ExecutionEntry[]>
@@ -176,6 +177,18 @@ export function useAutomations(
       .catch(() => toast.error(t('toast.failedToDuplicateAutomation')))
   }, [findAutomation, activeWorkspaceId, automationRevision, loadAndHydrate])
 
+  const saveAutomation = useCallback(async (definition: AutomationDefinitionV3UI) => {
+    if (!activeWorkspaceId || automationRevision === null) throw new Error('Automation Workspace is not ready')
+    const operation = automations.some(item => item.id === definition.id) ? 'update' : 'create'
+    await automationCommand({
+      operation,
+      operationId: crypto.randomUUID(),
+      expectedRevision: automationRevision,
+      definition,
+    })
+    await loadAndHydrate()
+  }, [activeWorkspaceId, automationRevision, automations, loadAndHydrate])
+
   // Delete: show confirmation dialog
   const handleDeleteAutomation = useCallback((automationId: string) => {
     setAutomationPendingDelete(automationId)
@@ -234,6 +247,7 @@ export function useAutomations(
     handleTestAutomation,
     handleToggleAutomation,
     handleDuplicateAutomation,
+    saveAutomation,
     handleDeleteAutomation,
     confirmDeleteAutomation,
     getAutomationHistory,

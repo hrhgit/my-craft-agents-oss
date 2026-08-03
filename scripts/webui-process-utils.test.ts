@@ -8,7 +8,6 @@ const utilsPath = fileURLToPath(new URL("./webui-process-utils.ps1", import.meta
 const launcherPath = fileURLToPath(new URL("./start-webui.ps1", import.meta.url));
 const instanceLauncherPath = fileURLToPath(new URL("./start-webui-instance.ps1", import.meta.url));
 const clientLauncherPath = fileURLToPath(new URL("./start-webui-client.ps1", import.meta.url));
-const cmdLauncherPath = fileURLToPath(new URL("../start-webui.cmd", import.meta.url));
 const packageJsonPath = fileURLToPath(new URL("../package.json", import.meta.url));
 const webuiViteConfigPath = fileURLToPath(new URL("../apps/webui/vite.config.ts", import.meta.url));
 const windowsTest = process.platform === "win32" ? test : test.skip;
@@ -203,12 +202,10 @@ describe("WebUI process lifecycle utilities", () => {
     expect(portmuxIndex).toBeGreaterThan(cleanupIndex);
   });
 
-  test("repeated zero-argument launches create frontend-only clients", () => {
-    const cmd = readFileSync(cmdLauncherPath, "utf8");
+  test("repeated launcher invocations create frontend-only clients", () => {
     const instanceLauncher = readFileSync(instanceLauncherPath, "utf8");
     const clientLauncher = readFileSync(clientLauncherPath, "utf8");
 
-    expect(cmd).not.toContain("%~1");
     expect(instanceLauncher).toContain("Get-MortiseServerEndpoint -RequireWebuiAutoLogin");
     expect(instanceLauncher).toContain("Start-SharedClientInstance");
     expect(clientLauncher).toContain("apps/webui/vite.config.ts");

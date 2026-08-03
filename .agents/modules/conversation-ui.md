@@ -29,6 +29,8 @@ frontend_impact:
   affects: true
   areas:
     - conversation transcript, composer, turn controls, plans, and annotations
+  interaction_docs:
+    - .agents/modules/conversation-ui/frontend-interactions.md
 validation:
   - >-
     bun test packages/ui/src/components/chat packages/ui/src/components/annotations

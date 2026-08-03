@@ -1,17 +1,22 @@
 import { basename, join, resolve } from 'path'
 import { existsSync, readFileSync, readdirSync, statSync } from 'fs'
-import { readdir, readFile } from 'fs/promises'
+import { mkdir, readdir, readFile } from 'fs/promises'
 import { homedir } from 'os'
 import { requirePrimaryLocalWorkspaceRoot } from '@mortise/core/types'
 import { RPC_CHANNELS, type SkillFile } from '@mortise/shared/protocol'
 import { validateSkillContent } from '@mortise/shared/config'
+import { getPiAgentDir } from '@mortise/shared/config/pi-global-config'
 import { MORTISE_PROJECT_SKILLS_DIR } from '@mortise/shared/config/paths'
+import { atomicWriteFile } from '@mortise/shared/utils'
 import { importResources } from '@mortise/shared/resources'
 import {
   invalidateSkillsCache,
   loadSkill,
   resolveSkillDir,
+  validateSkillSlug,
   type DiscoveredSkill,
+  type LoadedSkill,
+  type SaveSkillRequestV1,
   type SkillImportBatchResult,
   type SkillImportResult,
 } from '@mortise/shared/skills'
@@ -25,6 +30,7 @@ export const HANDLED_CHANNELS = [
   RPC_CHANNELS.skills.GET_FILES,
   RPC_CHANNELS.skills.DISCOVER,
   RPC_CHANNELS.skills.IMPORT,
+  RPC_CHANNELS.skills.SAVE,
   RPC_CHANNELS.skills.DELETE,
   RPC_CHANNELS.skills.OPEN_EDITOR,
   RPC_CHANNELS.skills.OPEN_FINDER,
@@ -201,18 +207,61 @@ export async function importSkillDirectories(
   return result
 }
 
+export function validateSkillSaveRequest(request: SaveSkillRequestV1): {
+  slug: string
+  name: string
+  description: string
+  content: string
+} {
+  if (!request || request.schemaVersion !== 1) throw new Error('Unsupported skill save request')
+  const slug = validateSkillSlug(request.slug)
+  if (!slug) throw new Error('Skill slug must use lowercase letters, numbers, and hyphens')
+  const name = request.name.trim()
+  const description = request.description.trim()
+  const content = request.content.trim()
+  if (!name || name.length > 120) throw new Error('Skill name must be between 1 and 120 characters')
+  if (description.length > 500) throw new Error('Skill description must be at most 500 characters')
+  if (!content) throw new Error('Skill instructions cannot be empty')
+  return { slug, name, description, content }
+}
+
+export async function writeSkillDefinition(
+  skillsRoot: string,
+  request: SaveSkillRequestV1,
+): Promise<string> {
+  const { slug, name, description, content } = validateSkillSaveRequest(request)
+  const skillDir = join(skillsRoot, slug)
+  await mkdir(skillDir, { recursive: true })
+  const serialized = [
+    '---',
+    `name: ${JSON.stringify(name)}`,
+    `description: ${JSON.stringify(description)}`,
+    '---',
+    '',
+    content,
+    '',
+  ].join('\n')
+  const skillFile = join(skillDir, 'SKILL.md')
+  await atomicWriteFile(skillFile, serialized)
+  return skillFile
+}
+
 export function registerSkillsHandlers(server: RpcServer, deps: HandlerDeps): void {
-  server.handle(RPC_CHANNELS.skills.GET, async (ctx, workspaceId: string, ...unexpectedArgs: unknown[]) => {
+  server.handle(RPC_CHANNELS.skills.GET, async (ctx, workspaceId?: string, ...unexpectedArgs: unknown[]) => {
     if (unexpectedArgs.length > 0) {
-      throw new Error('skills:get accepts only workspaceId; skills are rooted at the workspace root')
+      throw new Error('skills:get accepts only an optional workspaceId')
     }
     const wid = resolveWorkspaceId(ctx.workspaceId, workspaceId)
-    if (!wid) return []
-    deps.platform.logger?.info(`SKILLS_GET: Loading skills for workspace: ${wid}`)
+    const { loadAllSkills } = await import('@mortise/shared/skills')
+    if (!wid) {
+      const skills = loadAllSkills()
+      deps.platform.logger?.info(`SKILLS_GET: Loaded ${skills.length} global skills`)
+      return skills
+    }
+    deps.platform.logger?.info(`SKILLS_GET: Loading effective skills for workspace: ${wid}`)
     const workspace = getWorkspaceOrNull(wid, deps.platform.logger, 'SKILLS_GET')
     if (!workspace) return []
     const workspaceRoot = requirePrimaryLocalWorkspaceRoot(workspace)
-    const { loadAllSkills } = await import('@mortise/shared/skills')
     const skills = loadAllSkills(workspaceRoot, workspaceRoot)
     deps.platform.logger?.info(`SKILLS_GET: Loaded ${skills.length} skills from ${workspaceRoot}`)
     return skills
@@ -295,6 +344,38 @@ export function registerSkillsHandlers(server: RpcServer, deps: HandlerDeps): vo
       `${importResult.skipped.length} skipped, ${importResult.failed.length} failed`,
     )
     return importResult
+  })
+
+  server.handle(RPC_CHANNELS.skills.SAVE, async (
+    ctx,
+    request: SaveSkillRequestV1,
+  ): Promise<LoadedSkill> => {
+    const { slug } = validateSkillSaveRequest(request)
+
+    let skillsRoot: string
+    let workspaceRoot: string | undefined
+    if (request.source === 'global') {
+      skillsRoot = join(getPiAgentDir(), 'skills')
+    } else if (request.source === 'project') {
+      const wid = resolveWorkspaceId(ctx.workspaceId, request.workspaceId)
+      if (!wid) throw new Error('A Workspace is required for a Workspace skill')
+      const workspace = getWorkspaceOrThrow(wid)
+      workspaceRoot = requirePrimaryLocalWorkspaceRoot(workspace)
+      skillsRoot = join(workspaceRoot, MORTISE_PROJECT_SKILLS_DIR)
+    } else {
+      throw new Error('Unknown skill source')
+    }
+
+    await writeSkillDefinition(skillsRoot, request)
+    invalidateSkillsCache()
+
+    if (workspaceRoot) {
+      deps.sessionManager.notifyConfigFileChange(workspaceRoot, `${MORTISE_PROJECT_SKILLS_DIR}/${slug}/SKILL.md`)
+    }
+    const saved = loadSkill(workspaceRoot ?? '', slug, workspaceRoot)
+    if (!saved) throw new Error('Skill was saved but could not be reloaded')
+    deps.platform.logger?.info(`SKILLS_SAVE: Saved ${request.source} skill ${slug}`)
+    return saved
   })
 
   // Delete a skill from a workspace

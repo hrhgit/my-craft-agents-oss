@@ -2,12 +2,11 @@ import { afterEach, describe, expect, it } from 'bun:test'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { UI_VALIDATION_MAX_WAIT_MS } from '@mortise/shared/ui-validation'
 import {
   ELECTRON_BUILD_PRODUCER_VERSION,
   ELECTRON_BUILD_SCHEMA_VERSION,
 } from '../../build/electron-build-cache.ts'
-import { DEFAULT_MORTISE_UI_START_WAIT_MS, getDefaultAdapterCommand, getMortiseUiRunStatus, readPackagedDeveloperHostIdentity, readRunManifest, resolveRunDir, restartMortiseUiRun, startMortiseUiRun, stopMortiseUiRun, updateRunManifest } from '../controller.ts'
+import { DEFAULT_MORTISE_UI_START_WAIT_MS, MORTISE_UI_MAX_START_WAIT_MS, getDefaultAdapterCommand, getMortiseUiRunStatus, mortiseUiHostRequestTimeoutMs, readPackagedDeveloperHostIdentity, readRunManifest, resolveRunDir, restartMortiseUiRun, startMortiseUiRun, stopMortiseUiRun, updateRunManifest } from '../controller.ts'
 import { requestMortiseUiHost } from '../client.ts'
 import { collectLocalEvidence, registerReturnedArtifacts } from '../evidence.ts'
 
@@ -23,7 +22,13 @@ afterEach(async () => {
 
 describe('mortise-ui controller', () => {
   it('allows slow cold source-development launches by default', () => {
-    expect(DEFAULT_MORTISE_UI_START_WAIT_MS).toBe(600_000)
+    expect(DEFAULT_MORTISE_UI_START_WAIT_MS).toBe(900_000)
+  })
+
+  it('keeps host requests within the protocol wait limit', () => {
+    expect(mortiseUiHostRequestTimeoutMs(DEFAULT_MORTISE_UI_START_WAIT_MS)).toBe(600_000)
+    expect(mortiseUiHostRequestTimeoutMs(45_000)).toBe(45_000)
+    expect(mortiseUiHostRequestTimeoutMs(0)).toBe(1)
   })
 
   it('uses an explicitly configured packaged Developer Host', () => {
@@ -60,8 +65,8 @@ describe('mortise-ui controller', () => {
   })
 
   it('enforces the shared maximum cold-start budget', async () => {
-    await expect(startMortiseUiRun({ surface: 'electron', waitMs: UI_VALIDATION_MAX_WAIT_MS + 1 }))
-      .rejects.toThrow(`waitMs must be between 1 and ${UI_VALIDATION_MAX_WAIT_MS}`)
+    await expect(startMortiseUiRun({ surface: 'electron', waitMs: MORTISE_UI_MAX_START_WAIT_MS + 1 }))
+      .rejects.toThrow(`waitMs must be between 1 and ${MORTISE_UI_MAX_START_WAIT_MS}`)
   })
 
   it('requires concise directory-safe semantic labels', async () => {

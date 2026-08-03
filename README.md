@@ -19,7 +19,7 @@ bun install
 bun run electron:start
 ```
 
-On Windows, double-click [`Mortise-Desktop-Tool.cmd`](./Mortise-Desktop-Tool.cmd) to start, restart, or package the source desktop application. Platform-specific package commands remain available through the root `package.json`. The existing icon is a temporary placeholder until Mortise artwork is ready.
+On Windows, double-click [`Mortise-Desktop-Tool.cmd`](./Mortise-Desktop-Tool.cmd) to start, restart, or package the source desktop application, launch or stop the WebUI, or build the Developer Kit. Platform-specific package commands remain available through the root `package.json`. The existing icon is a temporary placeholder until Mortise artwork is ready.
 
 ## Features
 
@@ -304,9 +304,9 @@ bun run typecheck:all
 # Logs are automatically enabled in development
 ```
 
-On Windows, double-click [`Mortise-Desktop-Tool.cmd`](./Mortise-Desktop-Tool.cmd) from the repo root for the source desktop workflow. It provides the single user-facing entry point for starting, restarting, and packaging Mortise.
+On Windows, double-click [`Mortise-Desktop-Tool.cmd`](./Mortise-Desktop-Tool.cmd) from the repo root for the source workflow. It provides the single user-facing entry point for starting, restarting, and packaging Mortise, launching or stopping the WebUI, and building the Developer Kit.
 
-To launch the complete browser UI development environment on Windows, double-click [`start-webui.cmd`](./start-webui.cmd) or run `portmux start`. It starts the authenticated headless server and Vite WebUI, automatically signs the local browser in, and opens the URL assigned by portmux. The RPC server uses the following port (`WebUI + 1`) and the shared `~/.mortise` configuration. Double-click `start-webui.cmd` again to open another browser client connected to the same running WebUI; it does not start another backend or create an isolated configuration directory. Double-click [`stop-webui.cmd`](./stop-webui.cmd) to stop every portmux-managed WebUI project for this repository and clean up legacy untracked WebUI process trees.
+To launch the complete browser UI development environment on Windows, use “启动网页端” in [`Mortise-Desktop-Tool.cmd`](./Mortise-Desktop-Tool.cmd) or run `portmux start`. It starts the authenticated headless server and Vite WebUI, automatically signs the local browser in, and opens the URL assigned by portmux. The RPC server uses the following port (`WebUI + 1`) and the shared `~/.mortise` configuration. Launch it again to open another browser client connected to the same running WebUI; it does not start another backend or create an isolated configuration directory. Use “停止网页端” in the same tool to stop every portmux-managed WebUI project for this repository and clean up legacy untracked WebUI process trees.
 
 Electron, standalone WebUI, RPC development server, and the component playground have separate portmux identities. Start them with `bun run electron:dev`, `bun run webui:dev`, `bun run server:dev`, and `bun run playground:dev`; each listens directly on its own assigned port. Electron, the WebUI headless server, and standalone server modes all use `~/.mortise` by default. Set `MORTISE_CONFIG_DIR` when an isolated profile is needed.
 

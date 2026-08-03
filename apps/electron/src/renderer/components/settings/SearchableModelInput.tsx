@@ -107,7 +107,7 @@ export function SearchableModelInput({
           <Button
             variant="outline"
             size="sm"
-            className="absolute right-1 top-1 h-7"
+            className="absolute right-1 top-1 h-8"
             onClick={handleFetchClick}
             disabled={fetchDisabled || isLoading}
           >

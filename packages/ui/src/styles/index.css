@@ -23,6 +23,7 @@
  * - -50 = 50% mix toward background (solid) - for Explore mode
  */
 
+@import "./foundations.css";
 @import "tailwindcss";
 @plugin "@tailwindcss/typography";
 
@@ -50,14 +51,14 @@
   --info-text: color-mix(in oklab, var(--info) 50%, var(--foreground));
 
   /* === SHADOW OPACITY (light mode = subtle, dark mode = stronger) === */
-  --shadow-border-opacity: 0.08;            /* Border ring opacity */
-  --shadow-blur-opacity: 0.06;              /* Blur layers opacity */
+  --shadow-border-opacity: 0.14;            /* Control boundary opacity */
+  --shadow-blur-opacity: 0.08;              /* Blur layers opacity */
 
   /* === SHADOW VALUES (reusable across utility classes and component overrides) === */
   --shadow-minimal:
     rgba(0, 0, 0, 0) 0px 0px 0px 0px,
     rgba(0, 0, 0, 0) 0px 0px 0px 0px,
-    rgba(var(--foreground-rgb), 0.06) 0px 0px 0px 1px,
+    rgba(var(--foreground-rgb), 0.13) 0px 0px 0px 1px,
     rgba(0, 0, 0, var(--shadow-blur-opacity)) 0px 1px 1px -0.5px,
     rgba(0, 0, 0, var(--shadow-blur-opacity)) 0px 3px 3px -1.5px;
 
@@ -113,14 +114,14 @@
   --secondary: oklch(from var(--foreground) l c h / 0.05);
   --secondary-foreground: var(--foreground);
   --muted: oklch(from var(--foreground) l c h / 0.05);
-  --muted-foreground: var(--foreground-50);
+  --muted-foreground: var(--foreground-60);
   --card: var(--background);
   --card-foreground: var(--foreground);
   --popover: var(--background);
   --popover-foreground: var(--foreground);
-  --border: oklch(from var(--foreground) l c h / 0.05);
-  --input: oklch(from var(--foreground) l c h / 0.1);
-  --ring: oklch(from var(--foreground) l c h / 0.25);
+  --border: oklch(from var(--foreground) l c h / 0.13);
+  --input: oklch(from var(--foreground) l c h / 0.16);
+  --ring: oklch(from var(--foreground) l c h / 0.38);
   --ring-width: 1px;
   --ring-offset: 0px;
 
@@ -168,8 +169,8 @@
   --info-text: color-mix(in oklab, var(--info) 50%, var(--foreground));
 
   /* === SHADOW OPACITY (stronger in dark mode) === */
-  --shadow-border-opacity: 0.15;
-  --shadow-blur-opacity: 0.12;
+  --shadow-border-opacity: 0.2;
+  --shadow-blur-opacity: 0.14;
 
   /* === MIX VARIANTS === */
   --foreground-2: color-mix(in oklch, var(--foreground) 2%, var(--background));
@@ -190,14 +191,14 @@
   --secondary: oklch(from var(--foreground) l c h / 0.05);
   --secondary-foreground: var(--foreground);
   --muted: oklch(from var(--foreground) l c h / 0.05);
-  --muted-foreground: var(--foreground-50);
+  --muted-foreground: var(--foreground-60);
   --card: var(--background);
   --card-foreground: var(--foreground);
   --popover: var(--background);
   --popover-foreground: var(--foreground);
-  --border: oklch(from var(--foreground) l c h / 0.05);
-  --input: oklch(from var(--foreground) l c h / 0.1);
-  --ring: oklch(from var(--foreground) l c h / 0.25);
+  --border: oklch(from var(--foreground) l c h / 0.17);
+  --input: oklch(from var(--foreground) l c h / 0.2);
+  --ring: oklch(from var(--foreground) l c h / 0.42);
 
   /* === COMPONENT TOKENS === */
   --user-message-bubble: oklch(from var(--foreground) l c h / 0.05);

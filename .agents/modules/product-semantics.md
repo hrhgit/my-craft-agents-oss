@@ -21,6 +21,8 @@ frontend_impact:
   affects: true
   areas:
     - workspace, session, automation, extension, browser, and layout behavior governed by semantic decisions
+  interaction_docs:
+    - .agents/modules/product-semantics/frontend-interactions.md
 validation:
   - git diff --check -- docs/product-semantics.md
 ---

@@ -15,6 +15,8 @@ import { Toaster } from './components/ui/sonner'
 import { PlaygroundApp } from './playground/PlaygroundApp'
 import { EscapeInterruptProvider } from './context/EscapeInterruptContext'
 import { PlaygroundAppShellProvider } from './playground/PlaygroundAppShellProvider'
+import { installPlaygroundCloseHandler } from './ui-validation/playground-close-handler'
+import { playgroundReadyStates } from './ui-validation/playground-ready-state'
 import './index.css'
 
 if (__MORTISE_UI_VALIDATION_BUILD__) {
@@ -22,8 +24,17 @@ if (__MORTISE_UI_VALIDATION_BUILD__) {
     import('./ui-validation/app-shell-scenario-service'),
     import('./ui-validation/bridge'),
   ]).then(([scenarioBridge, semanticBridge]) => {
-    scenarioBridge.installAppShellScenarioBridge()
+    const disposeScenarioBridge = scenarioBridge.installAppShellScenarioBridge()
     semanticBridge.installUiSemanticBridge()
+    const stateBridge = window.electronAPI.uiValidation
+    if (stateBridge) {
+      stateBridge.publishState({ version: 1, states: playgroundReadyStates() })
+    }
+    const cleanup = installPlaygroundCloseHandler(window.electronAPI, () => {
+      disposeScenarioBridge?.()
+      stateBridge?.dispose()
+    })
+    window.addEventListener('beforeunload', cleanup, { once: true })
   })
 }
 

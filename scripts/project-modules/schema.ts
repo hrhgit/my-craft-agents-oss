@@ -5,6 +5,7 @@ const stringList = z.array(z.string().min(1)).default([])
 const frontendImpactSchema = z.object({
   affects: z.boolean(),
   areas: z.array(z.string().min(1)),
+  interaction_docs: z.array(z.string().min(1)).default([]),
 }).strict().superRefine((value, context) => {
   if (value.affects && value.areas.length === 0) {
     context.addIssue({
@@ -18,6 +19,13 @@ const frontendImpactSchema = z.object({
       code: z.ZodIssueCode.custom,
       path: ['areas'],
       message: 'Modules without frontend impact must use an empty areas list.',
+    })
+  }
+  if (!value.affects && value.interaction_docs.length > 0) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['interaction_docs'],
+      message: 'Modules without frontend impact must not declare interaction documents.',
     })
   }
 })
@@ -42,7 +50,7 @@ export type ProjectModule = z.infer<typeof projectModuleSchema> & {
 }
 
 export interface ProjectModuleDiagnostic {
-  code: 'DUPLICATE_ID' | 'FILENAME_MISMATCH' | 'INVALID_DOCUMENT' | 'INVALID_ENTRYPOINT' | 'INVALID_REFERENCE' | 'MISSING_ENTRYPOINT'
+  code: 'DUPLICATE_ID' | 'FILENAME_MISMATCH' | 'INVALID_DOCUMENT' | 'INVALID_ENTRYPOINT' | 'INVALID_REFERENCE' | 'MISSING_ENTRYPOINT' | 'MISSING_INTERACTION_DOCUMENT'
   message: string
   document: string
   module?: string

@@ -8,6 +8,7 @@
 import * as React from 'react'
 import { useTranslation } from 'react-i18next'
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription, EmptyContent } from './empty'
+import { Button } from './button'
 import { getDocUrl, type DocFeature } from '@mortise/shared/docs/doc-links'
 
 export interface EntityListEmptyScreenProps {
@@ -44,12 +45,14 @@ export function EntityListEmptyScreen({
       {hasActions && (
         <EmptyContent>
           {docKey && (
-            <button
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
               onClick={() => window.electronAPI.openUrl(getDocUrl(docKey))}
-              className="inline-flex items-center h-7 px-3 text-xs font-medium rounded-[8px] bg-foreground/[0.02] shadow-minimal hover:bg-foreground/[0.05] transition-colors"
             >
               {t("common.learnMore")}
-            </button>
+            </Button>
           )}
           {children}
         </EmptyContent>

@@ -35,7 +35,7 @@ bun run test:doc-tools
 Choose the validation surface from the capability being changed. WebUI is useful only for workflows it actually supports; it is not a proxy for Electron-only behavior.
 
 - For behavior intentionally shared by WebUI and Electron, verify the shared state or domain boundary and exercise both client contracts in proportion to the change. Compare identical viewports and states only when the capability contract intends parity.
-- For WebUI behavior, run `start-webui.cmd` from the repository root. It starts the headless RPC server and Vite client, signs a localhost development browser in, and opens the portmux-assigned URL. Never enable this automatic login for a shared or production server.
+- For WebUI behavior on Windows, use “启动网页端” in `Mortise-Desktop-Tool.cmd`; from a terminal, run `portmux start` at the repository root. It starts the headless RPC server and Vite client, signs a localhost development browser in, and opens the portmux-assigned URL. Never enable this automatic login for a shared or production server.
 - For Electron-only behavior such as native dialogs, menus, IPC, filesystem access, subprocesses, and window management, use source-development Electron and the relevant smoke checks. Do not require equivalent WebUI coverage.
 - Keep reusable UI in `apps/electron/src/renderer` or `packages/ui`; keep `apps/webui/src` as the browser adapter and bootstrap layer.
 - AI-operated Electron validation defaults to background mode so it does not take over the desktop. Use foreground mode only when native menus, dialogs, or other visible-window behavior is the subject of the check.
@@ -66,7 +66,7 @@ The frozen clock virtualizes the registered application `timer`, `debounce`, `re
 
 `mortise-ui` is available from source or through the separately versioned Mortise Developer Kit. Windows offline installers include the kit as a default-selected optional component; it remains a separate Developer Host and control surface. It exposes an AI-facing validation assistant over the versioned UI control plane; callers do not use Playwright, CDP, selectors, renderer evaluation, or Electron objects directly.
 
-Cold starts and explicitly requested UI waits allow up to 10 minutes; the default cold-start budget is 10 minutes, ordinary host operations default to 2 minutes, and adapter-level waits default to 1 minute.
+Cold starts allow up to 15 minutes, while explicitly requested UI waits allow up to 10 minutes; the default cold-start budget is 15 minutes, ordinary host operations default to 2 minutes, and adapter-level waits default to 1 minute.
 
 Production, development, and Electron source-validation builds use the build-owned immutable producer under `output/electron-builds`. The identity binds the frozen source tree, build mode, platform, architecture, toolchain, and producer schema; each published capsule carries a complete SHA-256 artifact inventory that is verified before reuse or staging. Starts with the same identity wait for and reuse one completed capsule, while changed source or mode publishes a separate build without modifying files used by live runs. Each validation run records its `buildId` and `buildDir`. Normal shutdown releases the run lease and automatically removes unreferenced old capsules, retaining the newest two within a 2 GiB cache budget by default. `MORTISE_BUILD_RETAIN_COUNT` and `MORTISE_BUILD_MAX_BYTES` may tighten those bounds; active builds are never removed, so routine use requires no manual cleanup.
 
@@ -200,3 +200,15 @@ bun run test:electron:chat-real
 ```
 
 Every failed host command captures a redacted evidence bundle. Electron and WebUI bundles have a stable full/incremental snapshot pair, screenshot, state/event interval, console and page errors, network summary, runtime log, driver data, route/scenario/seed/viewport, and verification level. Electron also includes fixed main-process diagnostics without an evaluation API.
+
+### Module interaction flows
+
+Module-owned frontend interaction documents map stable interaction IDs to executable flows in `scripts/e2e/ui-flows/catalog.ts`. The runner starts one Electron or WebUI host, resets the typed scenario between flows, and calls the host protocol directly instead of spawning the CLI for every action:
+
+```powershell
+bun run test:ui-flows -- --surface electron
+bun run test:ui-flows -- --surface webui --module sources-skills-mcp
+bun run test:ui-flows -- --flow automations.fixed-editor --foreground
+```
+
+Flows may select semantic IDs, roles, and accessible names. They must not encode CSS selectors, DOM ancestry, visual coordinates, or implementation-only component names. Use the interactive CLI only to explore an unknown surface or diagnose a failed flow, then move stable behavior back into the typed catalog.

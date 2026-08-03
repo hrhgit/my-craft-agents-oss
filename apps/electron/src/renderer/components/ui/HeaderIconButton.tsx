@@ -25,7 +25,7 @@ export const HeaderIconButton = forwardRef<HTMLButtonElement, HeaderIconButtonPr
         type="button"
         className={cn(
           "header-icon-btn inline-flex items-center justify-center",
-          "h-7 w-7 shrink-0 rounded-[4px] titlebar-no-drag",
+          "h-8 w-8 shrink-0 rounded-[6px] titlebar-no-drag",
           "text-muted-foreground hover:text-foreground hover:bg-foreground/3",
           "data-[state=open]:text-foreground data-[state=open]:bg-foreground/3",
           "transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",

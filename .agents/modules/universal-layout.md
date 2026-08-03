@@ -29,6 +29,8 @@ frontend_impact:
   affects: true
   areas:
     - workspace sidebar, dock groups, tabs, splits, detach, focus, and layout restoration
+  interaction_docs:
+    - .agents/modules/universal-layout/frontend-interactions.md
 validation:
   - >-
     bun test apps/electron/src/renderer/components/app-shell

@@ -25,6 +25,8 @@ frontend_impact:
   areas:
     - workspace picker, creation, switching, and location settings
     - workspace-scoped file and navigation availability states
+  interaction_docs:
+    - .agents/modules/workspace-state/frontend-interactions.md
 validation:
   - >-
     bun test packages/shared/src/workspaces packages/shared/src/storage

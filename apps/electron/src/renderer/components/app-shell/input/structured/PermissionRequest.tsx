@@ -74,7 +74,7 @@ export function PermissionRequest({ request, onResponse, unstyled = false }: Per
         <Button
           size="sm"
           variant="default"
-          className="h-7 gap-1.5"
+          className="h-9 gap-1.5"
           onClick={handleAllow}
           data-tutorial="permission-allow-button"
         >
@@ -84,7 +84,7 @@ export function PermissionRequest({ request, onResponse, unstyled = false }: Per
         <Button
           size="sm"
           variant="ghost"
-          className="h-7 gap-1.5 border border-foreground/10 hover:bg-foreground/5 active:bg-foreground/10"
+          className="h-9 gap-1.5 border border-foreground/15 hover:bg-foreground/5 active:bg-foreground/10"
           onClick={handleAlwaysAllow}
         >
           <RefreshCw className="h-3.5 w-3.5" />
@@ -93,7 +93,7 @@ export function PermissionRequest({ request, onResponse, unstyled = false }: Per
         <Button
           size="sm"
           variant="ghost"
-          className="h-7 gap-1.5 text-destructive hover:text-destructive border border-dashed border-destructive/50 hover:bg-destructive/10 hover:border-destructive/70 active:bg-destructive/20"
+          className="h-9 gap-1.5 text-destructive hover:text-destructive border border-dashed border-destructive/50 hover:bg-destructive/10 hover:border-destructive/70 active:bg-destructive/20"
           onClick={handleDeny}
         >
           <X className="h-3.5 w-3.5" />

@@ -16,8 +16,7 @@ import {
   Info_Badge,
   Info_Markdown,
 } from '@/components/info'
-import { EditPopover, EditButton, getEditConfig } from '@/components/ui/EditPopover'
-import { useActiveWorkspace } from '@/context/AppShellContext'
+import { EditButton } from '@/components/ui/EditPopover'
 import { AutomationAvatar } from './AutomationAvatar'
 import { AutomationMenu } from './AutomationMenu'
 import { AutomationActionRow } from './AutomationActionRow'
@@ -40,6 +39,7 @@ export interface AutomationInfoPageProps {
   onDuplicate?: () => void
   onDelete?: () => void
   onReplay?: (automationId: string, event: string) => void
+  onEdit?: () => void
   className?: string
 }
 
@@ -52,10 +52,10 @@ export function AutomationInfoPage({
   onDuplicate,
   onDelete,
   onReplay,
+  onEdit,
   className,
 }: AutomationInfoPageProps) {
   const { t } = useTranslation()
-  const workspace = useActiveWorkspace()
   const nextRuns = automation.cron ? computeNextRuns(automation.cron) : []
 
   // Lightweight per-mount fetch — mirrors the pattern used in MessagingSettingsPage.
@@ -77,12 +77,7 @@ export function AutomationInfoPage({
     }
   }, [automation.telegramTopic])
 
-  const editActions = workspace ? (
-    <EditPopover
-      trigger={<EditButton />}
-      {...getEditConfig('automation-config', '.')}
-    />
-  ) : undefined
+  const editActions = onEdit ? <EditButton onClick={onEdit} /> : undefined
 
   return (
     <Info_Page className={className}>

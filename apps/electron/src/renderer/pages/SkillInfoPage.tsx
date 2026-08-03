@@ -9,8 +9,10 @@
 import * as React from 'react'
 import { useTranslation } from 'react-i18next'
 import { useEffect, useState, useCallback } from 'react'
-import { Check, X, Minus } from 'lucide-react'
-import { EditPopover, EditButton, getEditConfig } from '@/components/ui/EditPopover'
+import { Check, X, Minus, Pencil } from 'lucide-react'
+import { useSetAtom } from 'jotai'
+import { Button } from '@/components/ui/button'
+import { managementEditorAtom } from '@/atoms/management-editor'
 import { toast } from 'sonner'
 import { SkillMenu } from '@/components/app-shell/SkillMenu'
 import { SkillAvatar } from '@/components/ui/skill-avatar'
@@ -28,7 +30,7 @@ import type { LoadedSkill } from '../../shared/types'
 
 interface SkillInfoPageProps {
   skillSlug: string
-  workspaceId: string
+  workspaceId?: string
 }
 
 export default function SkillInfoPage({ skillSlug, workspaceId }: SkillInfoPageProps) {
@@ -37,6 +39,7 @@ export default function SkillInfoPage({ skillSlug, workspaceId }: SkillInfoPageP
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const activeWorkspace = useActiveWorkspace()
+  const setManagementEditor = useSetAtom(managementEditorAtom)
   const canRevealLocally = activeWorkspace ? isPrimaryWorkspaceLocal(activeWorkspace) : false
 
   // Load skill data
@@ -70,7 +73,7 @@ export default function SkillInfoPage({ skillSlug, workspaceId }: SkillInfoPageP
 
     // Subscribe to skill changes
     const unsubscribe = window.electronAPI.onSkillsChanged?.((changedWorkspaceId, skills) => {
-      if (changedWorkspaceId !== workspaceId) return
+      if (!workspaceId || changedWorkspaceId !== workspaceId) return
       const updated = skills.find((s) => s.slug === skillSlug)
       if (updated) {
         setSkill(updated)
@@ -163,15 +166,16 @@ export default function SkillInfoPage({ skillSlug, workspaceId }: SkillInfoPageP
           <Info_Section
             title={t('skillInfo.metadata')}
             actions={
-              // EditPopover for AI-assisted metadata editing (name, description in frontmatter)
-              <EditPopover
-                trigger={<EditButton />}
-                {...getEditConfig('skill-metadata', skill.path)}
-                secondaryAction={{
-                  label: t('common.editFile'),
-                  filePath: `${skill.path}/SKILL.md`,
-                }}
-              />
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setManagementEditor({ kind: 'skill', skillSlug: skill.slug })}
+                semanticId="skills.edit"
+              >
+                <Pencil />
+                {t('common.edit')}
+              </Button>
             }
           >
             <Info_Table>
@@ -236,15 +240,14 @@ export default function SkillInfoPage({ skillSlug, workspaceId }: SkillInfoPageP
           <Info_Section
             title={t('skillInfo.instructions')}
             actions={
-              // EditPopover for AI-assisted editing with "Edit File" as secondary action
-              <EditPopover
-                trigger={<EditButton />}
-                {...getEditConfig('skill-instructions', skill.path)}
-                secondaryAction={{
-                  label: t('common.editFile'),
-                  filePath: `${skill.path}/SKILL.md`,
-                }}
-              />
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setManagementEditor({ kind: 'skill', skillSlug: skill.slug })}
+              >
+                <Pencil />
+                {t('common.edit')}
+              </Button>
             }
           >
             <Info_Markdown maxHeight={540} fullscreen>

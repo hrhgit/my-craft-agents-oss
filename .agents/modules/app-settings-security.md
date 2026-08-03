@@ -28,6 +28,8 @@ frontend_impact:
   areas:
     - Electron and WebUI settings pages
     - onboarding, authentication, credential, and permission surfaces
+  interaction_docs:
+    - .agents/modules/app-settings-security/frontend-interactions.md
 validation:
   - bun test --isolate packages/shared/src/config packages/shared/src/auth packages/shared/src/credentials
   - bun run typecheck:electron

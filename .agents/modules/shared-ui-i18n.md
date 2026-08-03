@@ -26,6 +26,8 @@ frontend_impact:
   affects: true
   areas:
     - shared components, icons, themes, localization, and accessibility across Electron, WebUI, and viewer clients
+  interaction_docs:
+    - .agents/modules/shared-ui-i18n/frontend-interactions.md
 validation:
   - bun test packages/ui
   - bun run lint:i18n:parity && bun run lint:i18n:sorted

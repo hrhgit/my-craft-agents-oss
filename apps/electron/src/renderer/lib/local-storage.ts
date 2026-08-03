@@ -59,6 +59,10 @@ export const KEYS = {
   agentCompactionPromptDraft: 'settings.agents.global.compaction-prompt-draft.v1',
   agentSubagentDraft: 'settings.agents.entity-draft.v1',
 
+  // Skill management drafts (global or Workspace scoped via suffix)
+  skillEditorDraft: 'skills.editor.draft.v1',
+  automationEditorDraft: 'automations.editor.draft.v1',
+
   // Appearance
   showProviderIcons: 'show-provider-icons',
 

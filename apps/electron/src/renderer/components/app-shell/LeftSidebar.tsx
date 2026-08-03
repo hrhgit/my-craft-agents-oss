@@ -91,6 +91,8 @@ interface LeftSidebarProps {
   focusedItemId?: string | null
   /** Whether this is a nested sidebar (child of expandable item) */
   isNested?: boolean
+  /** Stable identity for a top-level navigation region. */
+  semanticId?: string
 }
 
 // Stagger animation for child items
@@ -146,7 +148,7 @@ const itemVariants: Variants = {
  * - Nested items have left indentation with vertical line
  *
  */
-export function LeftSidebar({ links, isCollapsed, getItemProps, focusedItemId, isNested }: LeftSidebarProps) {
+export function LeftSidebar({ links, isCollapsed, getItemProps, focusedItemId, isNested, semanticId = 'navigation.main' }: LeftSidebarProps) {
   // For nested sidebars, wrap in motion container for stagger effect
   const NavWrapper = isNested ? motion.nav : 'nav'
   const navProps = isNested ? {
@@ -159,7 +161,7 @@ export function LeftSidebar({ links, isCollapsed, getItemProps, focusedItemId, i
   return (
     <div className={cn("flex min-w-0 flex-col select-none", !isNested && "py-1")}>
       <NavWrapper
-        data-mortise-semantic-id={isNested ? undefined : 'navigation.main'}
+        data-mortise-semantic-id={isNested ? undefined : semanticId}
         className={cn(
           "grid min-w-0 gap-0.5",
           isNested ? "pl-5 pr-0 relative" : "px-2"

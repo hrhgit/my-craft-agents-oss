@@ -117,13 +117,20 @@ namespace MortiseDevTool
         private readonly Button startButton;
         private readonly Button restartButton;
         private readonly Button packageButton;
+        private readonly Button webuiButton;
+        private readonly Button stopWebuiButton;
+        private readonly Button developerKitButton;
         private readonly RichTextBox logBox;
         private readonly Timer timer;
 
         private ProcessRunner desktopRunner;
         private ProcessRunner stopRunner;
         private ProcessRunner packageRunner;
+        private ProcessRunner webuiRunner;
+        private ProcessRunner stopWebuiRunner;
+        private ProcessRunner developerKitRunner;
         private bool restarting;
+        private bool suppressNextWebuiExitError;
         private string desktopState = "idle";
         private DateTime nextDesktopProbe = DateTime.MinValue;
 
@@ -134,8 +141,8 @@ namespace MortiseDevTool
 
             Text = "Mortise 源码工具";
             StartPosition = FormStartPosition.CenterScreen;
-            ClientSize = new Size(820, 560);
-            MinimumSize = new Size(640, 440);
+            ClientSize = new Size(820, 620);
+            MinimumSize = new Size(640, 500);
             BackColor = Color.FromArgb(244, 243, 239);
             Font = new Font("Segoe UI", 9.5f, FontStyle.Regular, GraphicsUnit.Point);
             AutoScaleMode = AutoScaleMode.Dpi;
@@ -187,24 +194,40 @@ namespace MortiseDevTool
             var actions = new TableLayoutPanel
             {
                 Dock = DockStyle.Top,
-                Height = 76,
+                Height = 132,
                 Padding = new Padding(24, 13, 24, 13),
-                ColumnCount = 3,
-                RowCount = 1,
+                ColumnCount = 6,
+                RowCount = 2,
             };
-            actions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.333f));
-            actions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.333f));
-            actions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.334f));
+            for (var index = 0; index < 6; index++)
+                actions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 16.667f));
+            actions.RowStyles.Add(new RowStyle(SizeType.Percent, 50f));
+            actions.RowStyles.Add(new RowStyle(SizeType.Percent, 50f));
 
             startButton = CreateButton("启动", true, false);
             restartButton = CreateButton("重启", false, false);
             packageButton = CreateButton("打包", false, true);
+            webuiButton = CreateButton("启动网页端", false, false);
+            stopWebuiButton = CreateButton("停止网页端", false, false);
+            developerKitButton = CreateButton("构建开发者套件", false, true);
             startButton.Click += (_, __) => StartDesktop();
             restartButton.Click += (_, __) => RestartDesktop();
             packageButton.Click += (_, __) => PackageDesktop();
+            webuiButton.Click += (_, __) => StartWebui();
+            stopWebuiButton.Click += (_, __) => StopWebui();
+            developerKitButton.Click += (_, __) => BuildDeveloperKit();
             actions.Controls.Add(startButton, 0, 0);
-            actions.Controls.Add(restartButton, 1, 0);
-            actions.Controls.Add(packageButton, 2, 0);
+            actions.SetColumnSpan(startButton, 2);
+            actions.Controls.Add(restartButton, 2, 0);
+            actions.SetColumnSpan(restartButton, 2);
+            actions.Controls.Add(packageButton, 4, 0);
+            actions.SetColumnSpan(packageButton, 2);
+            actions.Controls.Add(webuiButton, 0, 1);
+            actions.SetColumnSpan(webuiButton, 2);
+            actions.Controls.Add(stopWebuiButton, 2, 1);
+            actions.SetColumnSpan(stopWebuiButton, 2);
+            actions.Controls.Add(developerKitButton, 4, 1);
+            actions.SetColumnSpan(developerKitButton, 2);
 
             var logHeader = new Panel { Dock = DockStyle.Top, Height = 42, Padding = new Padding(24, 13, 24, 4) };
             var logTitle = new Label
@@ -344,11 +367,90 @@ namespace MortiseDevTool
             }
         }
 
+        private void StartWebui()
+        {
+            if ((webuiRunner != null && webuiRunner.IsRunning)
+                || (stopWebuiRunner != null && stopWebuiRunner.IsRunning)) return;
+            webuiRunner?.Dispose();
+            webuiRunner = new ProcessRunner();
+            webuiButton.Enabled = false;
+            webuiButton.Text = "正在启动网页端";
+            var scriptPath = Path.Combine(repoRoot, "scripts", "start-webui-instance.ps1");
+            AppendCommand("powershell", "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", scriptPath);
+            try
+            {
+                webuiRunner.Start(
+                    "powershell",
+                    new[] { "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", scriptPath },
+                    repoRoot,
+                    "webui");
+            }
+            catch (Exception error)
+            {
+                AppendLog("tool", error.Message);
+                ResetWebuiStartButton();
+            }
+        }
+
+        private void StopWebui()
+        {
+            if (stopWebuiRunner != null && stopWebuiRunner.IsRunning) return;
+            suppressNextWebuiExitError = webuiRunner != null && webuiRunner.IsRunning;
+            stopWebuiRunner?.Dispose();
+            stopWebuiRunner = new ProcessRunner();
+            webuiButton.Enabled = false;
+            stopWebuiButton.Enabled = false;
+            stopWebuiButton.Text = "正在停止网页端";
+            var scriptPath = Path.Combine(repoRoot, "scripts", "stop-webui.ps1");
+            AppendCommand("powershell", "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", scriptPath);
+            try
+            {
+                stopWebuiRunner.Start(
+                    "powershell",
+                    new[] { "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", scriptPath },
+                    repoRoot,
+                    "webui-stop");
+            }
+            catch (Exception error)
+            {
+                AppendLog("tool", error.Message);
+                suppressNextWebuiExitError = false;
+                ResetWebuiStartButton();
+                ResetStopWebuiButton();
+            }
+        }
+
+        private void BuildDeveloperKit()
+        {
+            if (developerKitRunner != null && developerKitRunner.IsRunning) return;
+            developerKitRunner?.Dispose();
+            developerKitRunner = new ProcessRunner();
+            developerKitButton.Enabled = false;
+            developerKitButton.Text = "正在构建开发者套件";
+            AppendCommand("bun", "run", "scripts/build-developer-kit.ts");
+            try
+            {
+                developerKitRunner.Start(
+                    "bun",
+                    new[] { "run", "scripts/build-developer-kit.ts" },
+                    repoRoot,
+                    "developer-kit");
+            }
+            catch (Exception error)
+            {
+                AppendLog("tool", error.Message);
+                ResetDeveloperKitButton();
+            }
+        }
+
         private void DrainProcessMessages()
         {
             DrainDesktopMessages();
             DrainStopMessages();
             DrainPackageMessages();
+            DrainWebuiMessages();
+            DrainStopWebuiMessages();
+            DrainDeveloperKitMessages();
             ProbeDesktopWindow();
         }
 
@@ -429,6 +531,83 @@ namespace MortiseDevTool
                 packageButton.Text = "打包";
                 AppendLog("tool", message.ExitCode == 0 ? "打包完成。" : "打包失败，代码 " + message.ExitCode + "。");
             }
+        }
+
+        private void DrainWebuiMessages()
+        {
+            if (webuiRunner == null) return;
+            ProcessMessage message;
+            while (webuiRunner.Messages.TryDequeue(out message))
+            {
+                if (!message.IsExit)
+                {
+                    AppendLog(message.Source, message.Text);
+                    continue;
+                }
+                ResetWebuiStartButton();
+                if (suppressNextWebuiExitError)
+                {
+                    suppressNextWebuiExitError = false;
+                    continue;
+                }
+                AppendLog("tool", message.ExitCode == 0 ? "网页端已打开。" : "网页端启动失败，代码 " + message.ExitCode + "。");
+            }
+        }
+
+        private void DrainStopWebuiMessages()
+        {
+            if (stopWebuiRunner == null) return;
+            ProcessMessage message;
+            while (stopWebuiRunner.Messages.TryDequeue(out message))
+            {
+                if (!message.IsExit)
+                {
+                    AppendLog(message.Source, message.Text);
+                    continue;
+                }
+                ResetWebuiStartButton();
+                ResetStopWebuiButton();
+                AppendLog("tool", message.ExitCode == 0
+                    ? "网页端已停止。"
+                    : "网页端停止失败，代码 " + message.ExitCode + "。");
+            }
+        }
+
+        private void DrainDeveloperKitMessages()
+        {
+            if (developerKitRunner == null) return;
+            ProcessMessage message;
+            while (developerKitRunner.Messages.TryDequeue(out message))
+            {
+                if (!message.IsExit)
+                {
+                    AppendLog(message.Source, message.Text);
+                    continue;
+                }
+                ResetDeveloperKitButton();
+                AppendLog("tool", message.ExitCode == 0
+                    ? "开发者套件构建完成。"
+                    : "开发者套件构建失败，代码 " + message.ExitCode + "。");
+            }
+        }
+
+        private void ResetWebuiStartButton()
+        {
+            webuiButton.Enabled = (webuiRunner == null || !webuiRunner.IsRunning)
+                && (stopWebuiRunner == null || !stopWebuiRunner.IsRunning);
+            webuiButton.Text = "启动网页端";
+        }
+
+        private void ResetStopWebuiButton()
+        {
+            stopWebuiButton.Enabled = true;
+            stopWebuiButton.Text = "停止网页端";
+        }
+
+        private void ResetDeveloperKitButton()
+        {
+            developerKitButton.Enabled = true;
+            developerKitButton.Text = "构建开发者套件";
         }
 
         private void SetDesktopState(string state)

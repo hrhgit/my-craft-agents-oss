@@ -103,7 +103,7 @@ export function CompactPermissionModeSelector({
           type="button"
           aria-label={`Permission mode: ${t(labelKeyByMode[optimisticMode])}`}
           className={cn(
-            "h-7 pl-2 pr-2.5 text-xs font-medium rounded-[6px] flex items-center gap-1.5 shadow-tinted outline-none select-none shrink-0",
+            "h-8 pl-2.5 pr-3 text-[13px] font-medium rounded-[6px] flex items-center gap-1.5 shadow-tinted outline-none select-none shrink-0",
             style.className,
           )}
           style={{ '--shadow-color': style.shadowVar } as React.CSSProperties}

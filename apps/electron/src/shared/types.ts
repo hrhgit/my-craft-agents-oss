@@ -68,7 +68,7 @@ import type { CredentialHealthStatus, CredentialHealthIssue, CredentialHealthIss
 export type { CredentialHealthStatus, CredentialHealthIssue, CredentialHealthIssueType };
 
 // Skill types
-import type { DiscoveredSkill, LoadedSkill, SkillImportBatchResult, SkillMetadata } from '@mortise/shared/skills/types';
+import type { DiscoveredSkill, LoadedSkill, SaveSkillRequestV1, SkillImportBatchResult, SkillMetadata } from '@mortise/shared/skills/types';
 export type { DiscoveredSkill, LoadedSkill, SkillImportBatchResult, SkillMetadata };
 
 // Resource bundle types (cross-workspace export/import)
@@ -492,10 +492,11 @@ export interface ElectronAPI {
   onDefaultPermissionsChanged(callback: () => void): () => void
 
   // Skills
-  getSkills(workspaceId: string): Promise<LoadedSkill[]>
+  getSkills(workspaceId?: string): Promise<LoadedSkill[]>
   getSkillFiles?(workspaceId: string, skillSlug: string): Promise<SkillFile[]>
   discoverSkills(workspaceId: string): Promise<DiscoveredSkill[]>
   importSkills(workspaceId: string, sourcePaths: string[]): Promise<SkillImportBatchResult>
+  saveSkill(request: SaveSkillRequestV1): Promise<LoadedSkill>
   deleteSkill(workspaceId: string, skillSlug: string): Promise<void>
   openSkillInEditor(workspaceId: string, skillSlug: string): Promise<void>
   openSkillInFinder(workspaceId: string, skillSlug: string): Promise<void>

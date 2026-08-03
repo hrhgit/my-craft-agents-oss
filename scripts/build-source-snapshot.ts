@@ -31,7 +31,6 @@ const DEFAULT_SOURCE_PATHS = [
   'scripts',
   'pi',
   'developer-kit',
-  'build-developer-kit.cmd',
   'docs/testing.md',
 ] as const
 

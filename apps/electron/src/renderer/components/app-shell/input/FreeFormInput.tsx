@@ -123,7 +123,7 @@ function ContextUsageRing({
     <Tooltip>
       <TooltipTrigger asChild>
         <div
-          className="h-7 w-7 shrink-0 inline-flex items-center justify-center rounded-full text-foreground/60"
+          className="h-8 w-8 shrink-0 inline-flex items-center justify-center rounded-full text-foreground/65"
           aria-label={usage.percent === null ? t('chat.context') : `${usage.percent}% ${t('chat.context')}`}
         >
           <svg width="16" height="16" viewBox="0 0 16 16" className="-rotate-90">
@@ -169,7 +169,7 @@ function CompactThinkingBadge({
         <button
           type="button"
           disabled={disabled}
-          className="h-7 px-1.5 shrink-0 inline-flex items-center gap-0.5 rounded-[6px] text-xs text-foreground/55 hover:bg-foreground/5 disabled:opacity-40"
+          className="h-8 px-2 shrink-0 inline-flex items-center gap-1 rounded-[6px] text-[13px] text-foreground/65 hover:bg-foreground/5 disabled:opacity-40"
           aria-label={`${t('chat.modelPicker.thinkingSection')}: ${label}`}
         >
           <span>{label}</span>
@@ -1670,7 +1670,7 @@ export function FreeFormInput({
               onClick={onRequestExpand}
               onMouseEnter={onRequestExpand}
               aria-label={t('chat.tapToType')}
-              className="flex-1 h-7 mx-1 flex items-center justify-center text-foreground/30 hover:text-foreground/60 transition-colors cursor-pointer rounded-[6px] hover:bg-foreground/5 focus:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              className="flex-1 h-8 mx-1 flex items-center justify-center text-foreground/45 hover:text-foreground/70 transition-colors cursor-pointer rounded-[6px] hover:bg-foreground/5 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               <ChevronUp className="h-4 w-4" />
             </button>
@@ -1696,7 +1696,7 @@ export function FreeFormInput({
                   <button
                     type="button"
                     className={cn(
-                      "input-toolbar-btn inline-flex items-center h-7 px-1.5 gap-0.5 text-[13px] shrink-0 rounded-[6px] hover:bg-foreground/5 transition-colors select-none",
+                      "input-toolbar-btn inline-flex items-center h-8 px-2 gap-1 text-[13px] shrink-0 rounded-[6px] hover:bg-foreground/5 transition-colors select-none",
                       modelDropdownOpen && "bg-foreground/5",
                       providerUnavailable && "text-destructive",
                     )}
@@ -2079,7 +2079,7 @@ export function FreeFormInput({
                     type="button"
                     onClick={handleCompactClick}
                     disabled={isProcessing}
-                    className="inline-flex items-center h-6 px-2 text-[12px] font-medium bg-info/10 rounded-[6px] shadow-tinted select-none cursor-pointer hover:bg-info/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="inline-flex items-center h-8 px-2 text-[13px] font-medium bg-info/10 rounded-[6px] shadow-tinted select-none cursor-pointer hover:bg-info/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                     style={{
                       '--shadow-color': 'var(--info-rgb)',
                       color: 'color-mix(in oklab, var(--info) 30%, var(--foreground))',
@@ -2106,7 +2106,7 @@ export function FreeFormInput({
               size="icon"
               variant="secondary"
               aria-label={t('chat.stopResponse')}
-              className="send-btn h-7 w-7 rounded-full shrink-0 hover:bg-foreground/15 active:bg-foreground/20 ml-2"
+              className="send-btn h-10 w-10 rounded-full shrink-0 hover:bg-foreground/15 active:bg-foreground/20 ml-2 shadow-[var(--shadow-control)]"
               onClick={() => handleStop(false)}
             >
               <Square className="h-3 w-3 fill-current" />
@@ -2117,11 +2117,11 @@ export function FreeFormInput({
               type="submit"
               size="icon"
               aria-label={t('shortcuts.sendMessage')}
-              className="send-btn h-7 w-7 rounded-full shrink-0 ml-2"
+              className="send-btn h-10 w-10 rounded-full shrink-0 ml-2 shadow-[var(--shadow-control)]"
               disabled={!hasContent || disabled || disableSend}
               data-tutorial="send-button"
             >
-              <ArrowUp className="h-4 w-4" />
+              <ArrowUp className="h-[18px] w-[18px]" />
             </Button>
           )}
           </div>

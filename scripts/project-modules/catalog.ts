@@ -58,6 +58,12 @@ export async function loadProjectModules(root: string): Promise<{
           diagnostics.push(diagnostic('MISSING_ENTRYPOINT', `Entrypoint does not exist: ${entrypoint}`, document, data.id))
         }
       }
+      for (const interactionDocument of data.frontend_impact.interaction_docs) {
+        const target = resolve(root, interactionDocument)
+        if (!existsSync(target) || !statSync(target).isFile()) {
+          diagnostics.push(diagnostic('MISSING_INTERACTION_DOCUMENT', `Interaction document does not exist: ${interactionDocument}`, document, data.id))
+        }
+      }
       modules.push({ ...data, document })
     } catch (error) {
       diagnostics.push(diagnostic(
@@ -118,6 +124,9 @@ export function renderProjectModuleCatalog(catalog: ProjectModuleCatalog): strin
     lines.push(`- \`${module.id}\` - ${module.summary}`)
     lines.push(`  Read when: ${module.when_to_read.join('; ')}`)
     lines.push(`  Frontend: ${module.frontend_impact.affects ? module.frontend_impact.areas.join('; ') : 'none'}`)
+    if (module.frontend_impact.interaction_docs.length) {
+      lines.push(`  Interactions: ${module.frontend_impact.interaction_docs.map(path => `\`${path}\``).join(', ')}`)
+    }
     lines.push(`  Document: \`${module.document}\``)
     if (module.depends_on.length) lines.push(`  Depends on: ${module.depends_on.map(id => `\`${id}\``).join(', ')}`)
     const consumers = catalog.consumers[module.id] ?? []

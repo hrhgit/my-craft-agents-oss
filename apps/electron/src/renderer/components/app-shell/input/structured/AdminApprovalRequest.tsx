@@ -81,7 +81,7 @@ export function AdminApprovalRequest({
         <Button
           size="sm"
           variant="default"
-          className="h-7 gap-1.5 cursor-pointer"
+          className="h-9 gap-1.5 cursor-pointer"
           onClick={handleApprove}
         >
           <Check className="h-3.5 w-3.5" />
@@ -91,7 +91,7 @@ export function AdminApprovalRequest({
         <Button
           size="sm"
           variant="ghost"
-          className="h-7 gap-1.5 text-destructive hover:text-destructive border border-dashed border-destructive/50 hover:bg-destructive/10 hover:border-destructive/70 active:bg-destructive/20"
+          className="h-9 gap-1.5 text-destructive hover:text-destructive border border-dashed border-destructive/50 hover:bg-destructive/10 hover:border-destructive/70 active:bg-destructive/20"
           onClick={onCancel}
         >
           <X className="h-3.5 w-3.5" />

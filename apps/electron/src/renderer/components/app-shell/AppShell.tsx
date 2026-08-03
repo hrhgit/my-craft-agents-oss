@@ -1,7 +1,7 @@
 import * as React from "react"
 import { useTranslation, Trans } from "react-i18next"
 import { useRef, useState, useEffect, useCallback, useMemo } from "react"
-import { useAtomValue, useStore } from "jotai"
+import { useAtom, useAtomValue, useStore } from "jotai"
 import {
   Archive,
   Settings,
@@ -95,6 +95,7 @@ import type { Session, FileAttachment, PermissionRequest, DiscoveredSkill, Loade
 import { sessionMetaMapAtom, sendToWorkspaceAtom, type SessionMeta } from "@/atoms/sessions"
 import { piProjectionIsProcessingAtomFamily } from "@/atoms/pi-projection"
 import { skillsAtom } from "@/atoms/skills"
+import { managementEditorAtom } from "@/atoms/management-editor"
 import { activeDockTabIdAtom, activeDockTabProtectionAtom, activeDockTabTypeAtom, emptyDockPageSessionRequestAtom, enterCompactDockDetailAtom, exitCompactDockDetailAtom, isEmptyDockPageTabId, panelStackAtom, panelCountAtom, focusedSessionIdAtom, focusNextPanelAtom, focusPrevPanelAtom, resetCompactDockViewIntentAtom, shouldReplaceActiveTabWithSession } from "@/atoms/panel-stack"
 import { useContainerWidth } from "@/hooks/useContainerWidth"
 import { resolveEntityColor } from "@mortise/shared/colors"
@@ -124,7 +125,6 @@ import { FabNewChat } from "./FabNewChat"
 import { SendToWorkspaceDialog } from "./SendToWorkspaceDialog"
 import { MessagingDialogHost } from "@/components/messaging/MessagingDialogHost"
 import { useExtensionInteractions } from "@/hooks/useExtensionInteractions"
-import { EditPopover, getEditConfig } from "@/components/ui/EditPopover"
 import SettingsNavigator from "@/pages/settings/SettingsNavigator"
 import {
   PANEL_GAP,
@@ -405,13 +405,9 @@ function AppShellContent({
       [workspaceId]: (previous[workspaceId] ?? RECENT_WORKSPACE_SESSION_LIMIT) + 15,
     }))
   }, [])
-  // Skills state (workspace-scoped)
-  const [skills, setSkills] = React.useState<LoadedSkill[]>([])
-  // Sync skills to atom for NavigationContext auto-selection
-  const setSkillsAtom = useSetAtom(skillsAtom)
-  React.useEffect(() => {
-    setSkillsAtom(skills)
-  }, [skills, setSkillsAtom])
+  // Effective skills: global by default, with current-project overrides when available.
+  const [skills, setSkills] = useAtom(skillsAtom)
+  const setManagementEditor = useSetAtom(managementEditorAtom)
   // Automations — state, handlers, loading, subscriptions
   const activeWorkspace = workspaces.find(w => w.id === activeWorkspaceId)
   const activeWorkspaceRoute = activeWorkspace ? getPrimaryWorkspaceRoute(activeWorkspace) : null
@@ -506,7 +502,7 @@ function AppShellContent({
     automations, automationTestResults,
     automationPendingDelete, pendingDeleteAutomation, setAutomationPendingDelete,
     handleTestAutomation, handleToggleAutomation, handleDuplicateAutomation, handleDeleteAutomation, confirmDeleteAutomation,
-    getAutomationHistory, handleReplayAutomation,
+    getAutomationHistory, handleReplayAutomation, saveAutomation,
   } = useAutomations(activeWorkspaceId)
 
   // Enabled permission modes for Shift+Tab cycling (min 2 modes)
@@ -572,10 +568,9 @@ function AppShellContent({
 
   // Handle selecting a skill from the list
   const handleSkillSelect = React.useCallback((skill: LoadedSkill) => {
-    if (!activeWorkspaceId) return
     enterCompactDockDetail()
     navigate(routes.view.skills(skill.slug))
-  }, [activeWorkspaceId, enterCompactDockDetail, navigate])
+  }, [enterCompactDockDetail, navigate])
 
   // Handle selecting an automation from the list
   const handleAutomationSelect = React.useCallback((automationId: string) => {
@@ -823,10 +818,9 @@ function AppShellContent({
   }, [refreshWorkspaceRemoteHealth])
 
   React.useEffect(() => {
-    if (!activeWorkspaceId) return
     let cancelled = false
     setSkills([])
-    window.electronAPI.getSkills(activeWorkspaceId).then((loaded) => {
+    window.electronAPI.getSkills(activeWorkspaceId ?? undefined).then((loaded) => {
       if (!cancelled) setSkills(loaded || [])
     }).catch(err => {
       if (!cancelled) console.error('[Chat] Failed to load skills:', err)
@@ -1102,12 +1096,13 @@ function AppShellContent({
     onTestAutomation: handleTestAutomation,
     onToggleAutomation: handleToggleAutomation,
     onDuplicateAutomation: handleDuplicateAutomation,
+    saveAutomation,
     onDeleteAutomation: handleDeleteAutomation,
     automationTestResults,
     getAutomationHistory,
     onReplayAutomation: handleReplayAutomation,
     workspaceNavigation,
-  }), [contextValue, handleDeleteSession, skills, enabledModes, extensionInteraction, respondToExtensionInteraction, isAutoCompact, searchActive, searchQuery, handleChatMatchInfoChange, handleTestAutomation, handleToggleAutomation, handleDuplicateAutomation, handleDeleteAutomation, automationTestResults, getAutomationHistory, handleReplayAutomation, workspaceNavigation])
+  }), [contextValue, handleDeleteSession, skills, enabledModes, extensionInteraction, respondToExtensionInteraction, isAutoCompact, searchActive, searchQuery, handleChatMatchInfoChange, handleTestAutomation, handleToggleAutomation, handleDuplicateAutomation, saveAutomation, handleDeleteAutomation, automationTestResults, getAutomationHistory, handleReplayAutomation, workspaceNavigation])
 
   // Persist expanded folders to localStorage (workspace-scoped)
   React.useEffect(() => {
@@ -1169,64 +1164,19 @@ function AppShellContent({
     navigate(routes.view.settings(subpage))
   }, [enterCompactDockDetail, exitCompactDockDetail])
 
-  // ============================================================================
-  // EDIT POPOVER STATE
-  // ============================================================================
-  // State to control which EditPopover is open (triggered from context menus).
-  // We use controlled popovers instead of deep links so the user can type
-  // their request in the popover UI before opening a new chat window.
-  const [editPopoverOpen, setEditPopoverOpen] = useState<'add-skill' | 'automation-config' | null>(null)
-
-  // Stores the Y position of the last right-clicked sidebar item so the EditPopover
-  // appears near it rather than at a fixed location. Updated synchronously before
-  // the setTimeout that opens the popover, ensuring the ref is set before render.
-  const editPopoverAnchorY = useRef<number>(120)
-  // Tracks which label was right-clicked when opening label EditPopovers,
-  // so the agent knows the target for commands like "make this red" or "add below this"
-
-  // Stores the trigger element (button) so we can keep it highlighted while the
-  // EditPopover is open (after Radix removes data-state="open" on context menu close).
-  const editPopoverTriggerRef = useRef<Element | null>(null)
-
-  // Captures the bounding rect of the currently-open context menu trigger (the button).
-  // Radix sets data-state="open" on the button (via ContextMenuTrigger asChild)
-  // while the menu is visible, so we can locate it in the DOM at click time.
-  const captureContextMenuPosition = useCallback(() => {
-    const trigger = document.querySelector('.group\\/section > [data-state="open"]')
-    if (trigger) {
-      const rect = trigger.getBoundingClientRect()
-      editPopoverAnchorY.current = rect.top
-      editPopoverTriggerRef.current = trigger
-    }
-  }, [])
-
-  // Sync data-edit-active attribute on the trigger element with EditPopover open state.
-  // This keeps the sidebar item visually highlighted while the popover is shown,
-  // since Radix's data-state="open" disappears when the context menu closes.
-  useEffect(() => {
-    const el = editPopoverTriggerRef.current
-    if (!el) return
-    if (editPopoverOpen) {
-      el.setAttribute('data-edit-active', 'true')
-    } else {
-      el.removeAttribute('data-edit-active')
-      editPopoverTriggerRef.current = null
-    }
-  }, [editPopoverOpen])
-
-  // Handler for "Add Skill" context menu action
-  // Opens the EditPopover for adding a new skill
+  // Skill creation stays inside the management surface.
   const openAddSkill = useCallback(() => {
-    captureContextMenuPosition()
-    setTimeout(() => setEditPopoverOpen('add-skill'), 50)
-  }, [captureContextMenuPosition])
+    setManagementEditor({ kind: 'skill' })
+    exitCompactDockDetail()
+    navigate(routes.view.skills())
+  }, [exitCompactDockDetail, navigate, setManagementEditor])
 
-  // Handler for "Add Automation" context menu action
-  // Opens the EditPopover for adding a new automation
   const openAddAutomation = useCallback(() => {
-    captureContextMenuPosition()
-    setTimeout(() => setEditPopoverOpen('automation-config'), 50)
-  }, [captureContextMenuPosition])
+    if (!activeWorkspaceId) return
+    setManagementEditor({ kind: 'automation' })
+    exitCompactDockDetail()
+    navigate(routes.view.automations())
+  }, [activeWorkspaceId, exitCompactDockDetail, setManagementEditor])
 
   // Create a new chat and select it
   const handleNewChat = useCallback((newPanel: boolean = false) => {
@@ -1689,7 +1639,7 @@ function AppShellContent({
                                 semanticId="app.new-session"
                                 variant="ghost"
                                 onClick={(e) => handleNewChat(e.metaKey || e.ctrlKey)}
-                                className="h-8 w-full justify-start gap-2 px-2 text-[13px] font-medium rounded-[6px] bg-foreground/[0.045] hover:bg-foreground/[0.075]"
+                                className="h-9 w-full justify-start gap-2 px-2.5 text-sm font-medium rounded-[6px] bg-foreground/[0.06] hover:bg-foreground/[0.1]"
                                 data-tutorial="new-chat-button"
                               >
                                 <SquarePenRounded className="h-3.5 w-3.5 shrink-0" />
@@ -1711,7 +1661,7 @@ function AppShellContent({
                       semanticId="workspace.add"
                       variant="ghost"
                       onClick={workspaceNavigation.openCreation}
-                      className="h-8 w-full justify-start gap-2 px-2 text-[13px] font-medium rounded-[6px] bg-foreground/[0.045] hover:bg-foreground/[0.075]"
+                      className="h-10 w-full justify-start gap-2.5 px-3 text-sm font-semibold rounded-[7px] bg-foreground text-background shadow-[var(--shadow-control)] hover:bg-foreground/90"
                     >
                       <FolderPlus className="h-3.5 w-3.5 shrink-0" />
                       {t('workspace.createWorkspace')}
@@ -1722,7 +1672,7 @@ function AppShellContent({
                 <div className="flex-1 overflow-y-auto min-h-0 mask-fade-bottom pb-4">
                 {effectiveSessionId && <ExtensionContributionZone className="px-2 py-1" sessionId={effectiveSessionId} surface="sidebar.header" />}
                 {effectiveSessionId && <ExtensionContributionZone className="px-2 py-1" sessionId={effectiveSessionId} surface="navigation.item" />}
-                <div className="flex h-7 items-center px-4 pt-1 text-[11px] font-medium text-muted-foreground/70">
+                <div className="flex h-9 items-center px-3 pt-1 text-[12px] font-semibold text-muted-foreground">
                   <span className="min-w-0 flex-1 truncate">{t('workspace.workspaces')}</span>
                   {activeWorkspaceId && <Tooltip>
                     <TooltipTrigger asChild>
@@ -1731,7 +1681,7 @@ function AppShellContent({
                         data-mortise-semantic-id="session.search.open"
                         aria-label={t('shortcuts.action.search')}
                         onClick={() => setSearchActive(true)}
-                        className="flex h-6 w-6 shrink-0 items-center justify-center rounded-[5px] text-muted-foreground outline-none hover:bg-foreground/[0.05] hover:text-foreground focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
+                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] text-muted-foreground outline-none hover:bg-foreground/[0.07] hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
                       >
                         <Search className="h-3.5 w-3.5" />
                       </button>
@@ -1745,7 +1695,7 @@ function AppShellContent({
                         data-mortise-semantic-id="workspace.add"
                         aria-label={t('workspace.addWorkspace')}
                         onClick={workspaceNavigation.openCreation}
-                        className="flex h-6 w-6 shrink-0 items-center justify-center rounded-[5px] text-muted-foreground outline-none hover:bg-foreground/[0.05] hover:text-foreground focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
+                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[6px] text-muted-foreground outline-none hover:bg-foreground/[0.07] hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
                       >
                         <FolderPlus className="h-3.5 w-3.5" />
                       </button>
@@ -1756,6 +1706,7 @@ function AppShellContent({
                 {searchActive ? sessionSearchSurface : (
                   <LeftSidebar
                     isCollapsed={false}
+                    semanticId="navigation.main"
                     getItemProps={getSidebarItemProps}
                     focusedItemId={focusedSidebarItemId}
                     links={workspaceSidebarItems}
@@ -1767,6 +1718,7 @@ function AppShellContent({
                 <div className="shrink-0 border-t border-foreground/[0.055] py-1.5">
                   <LeftSidebar
                     isCollapsed={false}
+                    semanticId="navigation.secondary"
                     getItemProps={getSidebarItemProps}
                     focusedItemId={focusedSidebarItemId}
                     links={bottomSidebarItems}
@@ -1813,7 +1765,7 @@ function AppShellContent({
                     />
                   )}
                   {/* Add Skill button (only for skills mode) */}
-                  {isSkillsNavigation(navState) && activeWorkspace && (
+                  {isSkillsNavigation(navState) && (
                     <>
                       {canImportSkill && (
                         <HeaderIconButton
@@ -1826,39 +1778,36 @@ function AppShellContent({
                           disabled={isDiscoveringSkills || isImportingSkills}
                         />
                       )}
-                      <EditPopover
-                        trigger={
-                          <HeaderIconButton
-                            icon={<Plus className="h-4 w-4" />}
-                            tooltip={t("sidebarMenu.addSkill")}
-                            data-tutorial="add-skill-button"
-                          />
-                        }
-                        {...getEditConfig('add-skill', '.')}
+                      <HeaderIconButton
+                        icon={<Plus className="h-4 w-4" />}
+                        tooltip={t("sidebarMenu.addSkill")}
+                        aria-label={t("sidebarMenu.addSkill")}
+                        data-mortise-semantic-id="skills.add.header"
+                        data-tutorial="add-skill-button"
+                        onClick={openAddSkill}
                       />
                     </>
                   )}
                   {/* Add Automation button (only for automations mode) */}
                   {isAutomationsNavigation(navState) && activeWorkspace && (
-                    <EditPopover
-                      trigger={
-                        <HeaderIconButton
-                          icon={<Plus className="h-4 w-4" />}
-                          tooltip={t("sidebarMenu.addAutomation")}
-                        />
-                      }
-                      {...getEditConfig('automation-config', '.')}
+                    <HeaderIconButton
+                      icon={<Plus className="h-4 w-4" />}
+                      tooltip={t("sidebarMenu.addAutomation")}
+                      aria-label={t("sidebarMenu.addAutomation")}
+                      data-mortise-semantic-id="automations.add.header"
+                      onClick={openAddAutomation}
                     />
                   )}
                 </>
               }
             />
             {/* Content depends on the active navigation state. */}
-            {isSkillsNavigation(navState) && activeWorkspaceId && (
+            {isSkillsNavigation(navState) && (
               /* Skills List */
               <SkillsListPanel
                 skills={skills}
-                workspaceId={activeWorkspaceId}
+                workspaceId={activeWorkspaceId ?? undefined}
+                onAddSkill={openAddSkill}
                 onSkillClick={handleSkillSelect}
                 selectedSkillSlug={isSkillsNavigation(navState) && navState.details?.type === 'skill' ? navState.details.skillSlug : null}
               />
@@ -1869,6 +1818,7 @@ function AppShellContent({
                 automations={automations}
                 automationFilter={automationFilter ? { kind: AUTOMATION_TYPE_TO_FILTER_KIND[automationFilter.automationType] ?? 'all' } : undefined}
                 onAutomationClick={handleAutomationSelect}
+                onAddAutomation={openAddAutomation}
                 onTestAutomation={handleTestAutomation}
                 onToggleAutomation={handleToggleAutomation}
                 onDuplicateAutomation={handleDuplicateAutomation}
@@ -1963,52 +1913,6 @@ function AppShellContent({
         )}
 
       </div>
-
-      {/* ============================================================================
-       * CONTEXT MENU TRIGGERED EDIT POPOVERS
-       * ============================================================================
-       * These EditPopovers are opened programmatically from sidebar context menus.
-       * They use controlled state (editPopoverOpen) and invisible anchors for positioning.
-       * The anchor Y position is captured from the right-clicked item (editPopoverAnchorY ref)
-       * so the popover appears near the triggering item rather than at a fixed location.
-       * modal={true} prevents auto-close when focus shifts after context menu closes.
-       */}
-      {activeWorkspace && (
-        <>
-          {/* Add Skill EditPopover */}
-          <EditPopover
-            open={editPopoverOpen === 'add-skill'}
-            onOpenChange={(isOpen) => setEditPopoverOpen(isOpen ? 'add-skill' : null)}
-            modal={true}
-            trigger={
-              <div
-                className="fixed w-0 h-0 pointer-events-none"
-                style={{ left: sidebarWidth + 20, top: editPopoverAnchorY.current }}
-                aria-hidden="true"
-              />
-            }
-            side="bottom"
-            align="start"
-            {...getEditConfig('add-skill', '.')}
-          />
-          {/* Add Automation EditPopover - triggered from "Add Automation" context menu in automations */}
-          <EditPopover
-            open={editPopoverOpen === 'automation-config'}
-            onOpenChange={(isOpen) => setEditPopoverOpen(isOpen ? 'automation-config' : null)}
-            modal={true}
-            trigger={
-              <div
-                className="fixed w-0 h-0 pointer-events-none"
-                style={{ left: sidebarWidth + 20, top: editPopoverAnchorY.current }}
-                aria-hidden="true"
-              />
-            }
-            side="bottom"
-            align="start"
-            {...getEditConfig('automation-config', '.')}
-          />
-        </>
-      )}
 
       {workspaceNavigation.overlay}
 

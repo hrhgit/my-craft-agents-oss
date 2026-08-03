@@ -27,6 +27,8 @@ frontend_impact:
   areas:
     - provider, model, and authentication settings and selectors
     - composer model and thinking controls and provider error states
+  interaction_docs:
+    - .agents/modules/provider-model-runtime/frontend-interactions.md
 validation:
   - npm --prefix pi test --workspace @mortise/pi-ai
   - bun test packages/shared/tests/models-pi.test.ts

@@ -37,7 +37,7 @@ export function ActiveOptionBadges({
     <SessionInfoPopover
       sessionId={sessionId}
       sessionFolderPath={sessionFolderPath}
-      trigger={<button type="button" className="h-[30px] px-3 text-xs font-medium rounded-[8px] flex items-center gap-1.5 shadow-minimal hover:bg-foreground/5 bg-[color-mix(in_srgb,var(--background)_97%,var(--foreground)_3%)] text-foreground/80"><Info className="h-3.5 w-3.5" /><span>{t('common.info')}</span></button>}
+      trigger={<button type="button" className="h-9 px-3 text-sm font-medium rounded-[8px] flex items-center gap-1.5 border border-border bg-background shadow-sm hover:bg-foreground/5 text-foreground"><Info className="h-4 w-4" /><span>{t('common.info')}</span></button>}
     />
   </div>
 }

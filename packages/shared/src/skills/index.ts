@@ -14,4 +14,5 @@ export {
   skillNeedsIconDownload,
   downloadSkillIcon,
   resolveSkillDir,
+  validateSkillSlug,
 } from './storage.ts';
