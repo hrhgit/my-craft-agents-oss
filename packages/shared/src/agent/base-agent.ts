@@ -832,7 +832,7 @@ ${formattedMessages}
    * Redirect the agent mid-stream. Default: abort and let session layer re-send.
    * Override in backends that support native steering (e.g., Pi's steer()).
    */
-  redirect(_message: string, _clientMutationId?: string): boolean {
+  async redirect(_message: string, _clientMutationId?: string): Promise<boolean> {
     this.forceAbort(AbortReason.Redirect);
     return false;
   }

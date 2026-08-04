@@ -44,6 +44,22 @@ describe('extension interaction v1 validation', () => {
     })).toBeNull()
   })
 
+  it('accepts a strictly shaped wizard presentation and keeps forms as the default', () => {
+    expect(validateExtensionInteractionRequestV1(request)).toBeNull()
+    expect(validateExtensionInteractionRequestV1({
+      ...request,
+      presentation: { mode: 'wizard', allowSkip: true, autoAdvanceSingleChoice: true },
+    })).toBeNull()
+    expect(validateExtensionInteractionRequestV1({
+      ...request,
+      presentation: { mode: 'wizard', unknown: true },
+    })).toContain('presentation')
+    expect(validateExtensionInteractionRequestV1({
+      ...request,
+      presentation: { mode: 'tabs' },
+    })).toContain('presentation')
+  })
+
   it('rejects unknown properties, duplicate ids and malformed answers', () => {
     expect(validateExtensionInteractionRequestV1({ ...request, extensionId: 'forged' })).toContain('Unsupported')
     expect(validateExtensionInteractionRequestV1({
@@ -64,7 +80,7 @@ describe('extension interaction v1 validation', () => {
     })).toContain('cannot be both multiline and sensitive')
   })
 
-  it('counts an enabled Other answer in choice bounds', () => {
+  it('counts the host-provided custom answer in choice bounds', () => {
     expect(validateExtensionInteractionRequestV1({
       schemaVersion: 1,
       fields: [{
@@ -87,7 +103,7 @@ describe('extension interaction v1 validation', () => {
         options: [{ id: 'known', label: 'Known' }],
         maxSelections: 2,
       }],
-    })).toContain('bounds')
+    })).toBeNull()
   })
 
   it('strictly validates host settlement events', () => {

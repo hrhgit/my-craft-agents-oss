@@ -107,7 +107,7 @@ const PromptTargetSchema = z.discriminatedUnion('kind', [
     provider: z.string().min(1).optional(),
     model: z.string().min(1).optional(),
     thinkingLevel: z.string().min(1).optional(),
-    permissionMode: z.enum(['safe', 'ask', 'allow-all']).optional(),
+    permissionMode: z.enum(['ask', 'allow-all']).optional(),
     telegramTopic: z.string().min(1).max(128).optional(),
   }).strict(),
   z.object({

@@ -246,6 +246,7 @@ export interface ElectronAPI {
   // App lifecycle
   relaunchApp(): Promise<void>
   removeWorkspace(workspaceId: string): Promise<boolean>
+  openWorkspaceFolder(): Promise<void>
   /** Invoke a known ElectronAPI method against a trusted workspace runtime. */
   invokeWorkspaceApi(route: import('./app-layout').WorkspaceRoute, method: string, ...args: any[]): Promise<any>
   /** Subscribe to a known ElectronAPI listener on one trusted workspace runtime. */
@@ -482,14 +483,8 @@ export interface ElectronAPI {
   unwatchSessionFiles(): Promise<void>
   onSessionFilesChanged(callback: (sessionId: string) => void): () => void
 
-  getWorkspacePermissionsConfig(workspaceId: string): Promise<import('@mortise/shared/agent').PermissionsConfigFile | null>
-  getDefaultPermissionsConfig(): Promise<{ config: import('@mortise/shared/agent').PermissionsConfigFile | null; path: string }>
-
   // Session content search (full-text search via ripgrep)
   searchSessionContent(workspaceId: string, query: string, searchId?: string): Promise<SessionSearchResult[]>
-
-  // Default permissions change listener (live updates when default.json changes)
-  onDefaultPermissionsChanged(callback: () => void): () => void
 
   // Skills
   getSkills(workspaceId?: string): Promise<LoadedSkill[]>
@@ -559,6 +554,9 @@ export interface ElectronAPI {
   updatePiExtensionSettings(patch: StoredPiExtensionSettings): Promise<PiExtensionSettings>
   getPiExtensionCatalog(): Promise<PiExtensionCatalogResult>
   patchPiExtensionConfig(patch: import('@mortise/shared/config').PiExtensionConfigPatch): Promise<import('@mortise/shared/config').PiExtensionConfigPatchResult>
+  reloadPiExtensions(interruptRunning?: boolean): Promise<import('@mortise/shared/config').PiExtensionReloadResult>
+  importPiExtension(sourcePath: string): Promise<import('@mortise/shared/config').PiExtensionImportResult>
+  uninstallPiExtension(extensionId: string): Promise<import('@mortise/shared/config').PiExtensionUninstallResult>
   getPiExtensionStates(): Promise<Record<string, boolean>>
   setPiExtensionEnabled(name: string, enabled: boolean): Promise<import('@mortise/shared/config').PiExtensionSettingsWriteResult>
 

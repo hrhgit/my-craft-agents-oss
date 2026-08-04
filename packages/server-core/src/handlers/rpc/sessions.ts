@@ -609,6 +609,8 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
           throw new Error('retrySettlement does not accept a message or any other payload')
         }
         return sessionManager.retryPendingSettlement(sessionId)
+      case 'withdrawQueuedMessage':
+        return sessionManager.withdrawQueuedMessage(sessionId, command.messageId)
       case 'showInFinder': {
         const sessionPath = resolveSessionDisplayPath(sessionManager, sessionId, resolveWorkspaceRootPath(deps, ctx))
         if (!sessionPath) throw new Error(`Session path unavailable: ${sessionId}`)

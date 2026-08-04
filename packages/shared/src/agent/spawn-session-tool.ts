@@ -29,7 +29,7 @@ interface SpawnSessionToolArgs {
   name?: string;
   provider?: string;
   model?: string;
-  permissionMode?: 'safe' | 'ask' | 'allow-all';
+  permissionMode?: 'ask' | 'allow-all';
   thinkingLevel?: 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
   attachments?: Array<{ path: string; name?: string }>;
 }
@@ -78,7 +78,7 @@ Attachments pass existing absolute file paths to the child task. The selected te
         .describe('Pi provider key (e.g., "anthropic", "openai")'),
       model: z.string().optional()
         .describe('Model ID override'),
-      permissionMode: z.enum(['safe', 'ask', 'allow-all']).optional()
+      permissionMode: z.enum(['ask', 'allow-all']).optional()
         .describe('Permission mode for the new session'),
       thinkingLevel: z.enum(['off', 'minimal', 'low', 'medium', 'high', 'xhigh']).optional()
         .describe('Reasoning level for the new session. Silently ignored on non-reasoning models (e.g. gpt-4o, gemini-2.5-flash). Omit to inherit the global default.'),

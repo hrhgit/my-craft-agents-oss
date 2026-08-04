@@ -1405,13 +1405,14 @@ export default function App() {
       }))
       return true
     } catch (error) {
-      console.error('Failed to send message:', error)
+      const queuedMessageWithdrawn = (error as { code?: unknown } | null)?.code === 'QUEUED_MESSAGE_WITHDRAWN'
+      if (!queuedMessageWithdrawn) console.error('Failed to send message:', error)
       if (optimisticMessageId) {
         const projectionAtom = piProjectionAtomFamily(sessionId)
         store.set(projectionAtom, current => removeOptimisticPiUser(current, optimisticMessageId!))
       }
       updateSessionById(sessionId, (s) => ({
-        isProcessing: false,
+        ...(queuedMessageWithdrawn ? {} : { isProcessing: false }),
         messages: optimisticMessageId
           ? removePiUserOverlayCarrier(s.messages, optimisticMessageId)
           : s.messages,

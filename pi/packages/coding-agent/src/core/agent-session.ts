@@ -25,6 +25,7 @@ import type {
 	Message,
 	Model,
 	TextContent,
+	ToolResultMessage,
 	UserAttachmentMetadata,
 } from "@mortise/pi-ai/types";
 import { isContextOverflow } from "@mortise/pi-ai/utils/overflow";
@@ -93,6 +94,11 @@ import { type BashOperations, createLocalBashOperations } from "./tools/bash.ts"
 import { createAllToolDefinitions } from "./tools/index.ts";
 import { cleanupReadHistoryStore, getReadHistoryStore } from "./tools/read-history.ts";
 import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapper.ts";
+
+const INTERRUPTED_ATTEMPT_CONTEXT =
+	"The previous attempt was interrupted. Some tools or commands may still be running or may have partially executed. Check the current state before retrying.";
+const UNKNOWN_TOOL_OUTCOME =
+	"Tool execution was interrupted before a result was recorded. Its outcome is unknown; it may have partially executed or may still be running.";
 
 // ============================================================================
 // Skill Block Parsing
@@ -554,8 +560,8 @@ export class AgentSession {
 				}
 			}
 
-			// Host permission gate runs after extension handlers so it sees
-			// extension-mutated input. Bound via ExtensionBindings.toolPermissionHandler.
+			// The host execution boundary runs after extension handlers so it sees
+			// extension-mutated input. User approval can be implemented by tool_call.
 			const permissionHandler = this._toolPermissionHandler;
 			if (permissionHandler) {
 				const permission = await permissionHandler({
@@ -1290,7 +1296,7 @@ export class AgentSession {
 		}
 	}
 
-	/** Resume an interrupted run from persisted history without appending a synthetic user message. */
+	/** Resume an interrupted run after closing any incomplete persisted tool batch. */
 	async continueFromHistory(preflightResult?: (success: boolean) => void, systemPrompt?: string): Promise<void> {
 		try {
 			await this.prepareForFirstRequest();
@@ -1305,7 +1311,8 @@ export class AgentSession {
 			if (!this._modelRegistry.hasConfiguredAuth(this.model)) {
 				throw new Error(formatNoApiKeyFoundMessage(this.model.provider));
 			}
-			const lastMessage = this.messages.at(-1);
+			let history = this.sessionManager.buildSessionContext().messages;
+			const lastMessage = history.at(-1);
 			if (!lastMessage) throw new Error("No history to resume");
 			if (lastMessage.role === "assistant") {
 				if (
@@ -1315,19 +1322,59 @@ export class AgentSession {
 				) {
 					throw new Error("Completed history cannot be resumed without a new message");
 				}
-				// Keep the interrupted branch in JSONL for audit, but move both the
-				// persistent tree leaf and live context back to the preceding real input.
-				const interruptedEntry = [...this.sessionManager.getBranch()]
-					.reverse()
-					.find((entry) => entry.type === "message" && entry.message.role === "assistant");
-				if (interruptedEntry?.type === "message") {
+				if (lastMessage.stopReason === "aborted" || lastMessage.stopReason === "error") {
+					// Keep the incomplete assistant branch in JSONL for audit, but resume
+					// from its parent because streamed partial content is not reliable context.
+					const interruptedEntry = [...this.sessionManager.getBranch()]
+						.reverse()
+						.find((entry) => entry.type === "message" && entry.message.role === "assistant");
+					if (interruptedEntry?.type !== "message") {
+						throw new Error("Interrupted history leaf is unavailable");
+					}
 					if (interruptedEntry.parentId) this.sessionManager.branch(interruptedEntry.parentId);
 					else this.sessionManager.resetLeaf();
-					this.agent.state.messages = this.sessionManager.buildSessionContext().messages;
-				} else {
-					throw new Error("Interrupted history leaf is unavailable");
+					history = this.sessionManager.buildSessionContext().messages;
 				}
 			}
+
+			const historyLeaf = history.at(-1);
+			if (historyLeaf?.role === "assistant" || historyLeaf?.role === "toolResult") {
+				let toolUseIndex = -1;
+				for (let index = history.length - 1; index >= 0; index--) {
+					const message = history[index];
+					if (message.role !== "assistant") continue;
+					if (message.stopReason === "toolUse") toolUseIndex = index;
+					break;
+				}
+
+				if (toolUseIndex >= 0) {
+					const toolUseMessage = history[toolUseIndex] as AssistantMessage;
+					const completedToolCallIds = new Set(
+						history
+							.slice(toolUseIndex + 1)
+							.filter((message): message is ToolResultMessage => message.role === "toolResult")
+							.map((message) => message.toolCallId),
+					);
+					for (const toolCall of toolUseMessage.content) {
+						if (toolCall.type !== "toolCall" || completedToolCallIds.has(toolCall.id)) continue;
+						this.sessionManager.appendMessage({
+							role: "toolResult",
+							toolCallId: toolCall.id,
+							toolName: toolCall.name,
+							content: [{ type: "text", text: UNKNOWN_TOOL_OUTCOME }],
+							details: { status: "outcome-unknown" },
+							isError: true,
+							timestamp: Date.now(),
+						});
+					}
+				}
+			}
+
+			this.sessionManager.appendCustomMessageEntry("attempt_interrupted", INTERRUPTED_ATTEMPT_CONTEXT, false, {
+				status: "interrupted",
+			});
+			await this.sessionManager.flush();
+			this.agent.state.messages = this.sessionManager.buildSessionContext().messages;
 		} catch (error) {
 			preflightResult?.(false);
 			throw error;
@@ -3129,7 +3176,9 @@ export class AgentSession {
 		if (/rate.?limit|too many requests|429/i.test(errorMessage)) {
 			return { reason: "rate_limit" };
 		}
-		if (/500|502|503|504|service.?unavailable|server.?error|internal.?error|upstream.?error/i.test(errorMessage)) {
+		if (
+			/500|502|503|504|524|service.?unavailable|server.?error|internal.?error|upstream.?error/i.test(errorMessage)
+		) {
 			return { reason: "server" };
 		}
 		if (/timed? out|timeout/i.test(errorMessage)) {
@@ -3200,8 +3249,8 @@ export class AgentSession {
 
 		const err = message.errorMessage;
 		if (this._isNonRetryableProviderLimitError(err)) return false;
-		// Match: overloaded_error, upstream_error, provider returned error, rate limit, 429, 500, 502, 503, 504, service unavailable, network/connection errors (including connection lost), WebSocket transport closes/errors, fetch failed, premature stream endings, stream_read_error, HTTP/2 closed before response, terminated, retry delay exceeded
-		return /overloaded|upstream.?error|provider.?returned.?error|rate.?limit|too many requests|429|500|502|503|504|service.?unavailable|server.?error|internal.?error|network.?error|connection.?error|connection.?refused|connection.?lost|fetch failed|upstream.?connect|reset before headers|socket hang up|ended without|stream ended before message_stop|stream_read_error|http2 request did not get a response|timed? out|timeout|terminated|retry delay/i.test(
+		// Match: overloaded_error, upstream_error, provider returned error, rate limit, 429, 500, 502, 503, 504, 524, service unavailable, network/connection errors (including connection lost), WebSocket transport closes/errors, fetch failed, premature stream endings, stream_read_error, HTTP/2 closed before response, terminated, retry delay exceeded
+		return /overloaded|upstream.?error|provider.?returned.?error|rate.?limit|too many requests|429|500|502|503|504|524|service.?unavailable|server.?error|internal.?error|network.?error|connection.?error|connection.?refused|connection.?lost|fetch failed|upstream.?connect|reset before headers|socket hang up|ended without|stream ended before message_stop|stream_read_error|http2 request did not get a response|timed? out|timeout|terminated|retry delay/i.test(
 			err,
 		);
 	}

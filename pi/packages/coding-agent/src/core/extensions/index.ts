@@ -81,6 +81,7 @@ export type {
 	ExtensionUIContribution,
 	ExtensionUIDialogOptions,
 	ExtensionUIIconName,
+	ExtensionUIMenuOptionV1,
 	ExtensionUINode,
 	ExtensionUISemanticNodeV1,
 	ExtensionUISurface,

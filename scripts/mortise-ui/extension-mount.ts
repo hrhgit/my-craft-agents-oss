@@ -1,21 +1,16 @@
 import { existsSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import {
-  assertValidExtensionManifest,
-  isExtensionManifestId,
-  type ExtensionManifestV1,
-} from '../../pi/packages/coding-agent/src/core/extension-manifest.ts'
+  assertValidExtensionEntry,
+  type ExtensionManifestEntry,
+} from '../../pi/packages/coding-agent/src/core/resource-resolver.ts'
+import type { ExtensionManifestV1 } from '../../pi/packages/coding-agent/src/core/extension-manifest.ts'
 import type { MortiseUiMountedExtension } from './protocol.ts'
 
-const EXTENSION_ENTRY_KEYS = ['id', 'path', 'activation', 'manifest', 'ui'] as const
-const EXTENSION_ACTIVATIONS = ['startup', 'beforeFirstRequest', 'lazy'] as const
-
-interface ExtensionEntry {
+interface ExtensionEntry extends ExtensionManifestEntry {
   id: string
   path: string
-  activation?: unknown
   manifest: ExtensionManifestV1
-  ui?: unknown
 }
 
 interface LoadedExtensionPackage {
@@ -107,13 +102,9 @@ function loadExtensionPackage(inputPath: string): LoadedExtensionPackage {
 }
 
 function parseEntry(value: unknown, packageRoot: string, context: string): ExtensionEntry {
-  if (!isRecord(value)) throw new Error(`${context} must be an object`)
-  const unknownKey = Object.keys(value).find(key => !EXTENSION_ENTRY_KEYS.includes(key as typeof EXTENSION_ENTRY_KEYS[number]))
-  if (unknownKey) throw new Error(`${context} contains unknown field ${unknownKey}`)
-  const id = typeof value.id === 'string' ? value.id.trim() : ''
-  if (!isExtensionManifestId(id)) throw new Error(`${context}.id must be a lowercase stable identifier`)
-  const entryPath = typeof value.path === 'string' ? value.path.trim() : ''
-  if (!entryPath) throw new Error(`${context}.path must be a non-empty relative path`)
+  assertValidExtensionEntry(value, context)
+  const id = value.id.trim()
+  const entryPath = value.path.trim()
   if (isAbsolute(entryPath)) throw new Error(`${context}.path must stay relative to the extension directory`)
   const absoluteEntryPath = resolve(packageRoot, entryPath)
   const relativeEntryPath = relative(packageRoot, absoluteEntryPath)
@@ -123,10 +114,7 @@ function parseEntry(value: unknown, packageRoot: string, context: string): Exten
   if (!existsSync(absoluteEntryPath) || !statSync(absoluteEntryPath).isFile()) {
     throw new Error(`${context}.path does not resolve to a file: ${absoluteEntryPath}`)
   }
-  if (value.activation !== undefined && !EXTENSION_ACTIVATIONS.includes(value.activation as typeof EXTENSION_ACTIVATIONS[number])) {
-    throw new Error(`${context}.activation is invalid`)
-  }
-  assertValidExtensionManifest(value.manifest, id, context)
+  if (value.manifest === undefined) throw new Error(`${context}: extension manifest is required`)
   return {
     id,
     path: absoluteEntryPath,

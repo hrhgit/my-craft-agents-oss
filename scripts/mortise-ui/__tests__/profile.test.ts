@@ -289,7 +289,7 @@ describe('mortise-ui profiles', () => {
     expect(profile.mountedExtensions?.[0]?.entries[0]?.overrodeExisting).toBe(true)
   })
 
-  it('rejects duplicate mounted IDs and removed target fields before startup', async () => {
+  it('rejects duplicate mounted IDs and removed host-specific fields before startup', async () => {
     const root = mkdtempSync(join(tmpdir(), 'mortise-ui-profile-')); roots.push(root)
     const first = createExtensionPackage(root, 'duplicate', 'first')
     const second = createExtensionPackage(root, 'duplicate', 'second')
@@ -297,10 +297,16 @@ describe('mortise-ui profiles', () => {
       profileDir: join(root, 'duplicate-profile'), mode: 'isolated', extensionPaths: [first, second],
     })).rejects.toThrow('Mounted extension id is duplicated: duplicate')
 
-    const targeted = createExtensionPackage(root, 'targeted', 'targeted', { targets: ['pi'] })
-    await expect(prepareProfile({
-      profileDir: join(root, 'targeted-profile'), mode: 'isolated', extensionPaths: [targeted],
-    })).rejects.toThrow('contains unknown field targets')
+    for (const [directory, entryOverrides] of [
+      ['pi-target', { targets: ['pi'] }],
+      ['craft-target', { targets: ['craft'] }],
+      ['host-engines', { engines: { mortise: '*' } }],
+    ] as const) {
+      const extension = createExtensionPackage(root, directory, directory, entryOverrides)
+      await expect(prepareProfile({
+        profileDir: join(root, `${directory}-profile`), mode: 'isolated', extensionPaths: [extension],
+      })).rejects.toThrow('extension entry contains unknown fields')
+    }
   })
 })
 

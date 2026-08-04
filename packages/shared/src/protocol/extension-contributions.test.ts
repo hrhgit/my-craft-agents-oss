@@ -30,6 +30,60 @@ describe('ExtensionContributionV1', () => {
     expect(validateExtensionContributionV1(contribution)).toBeNull()
   })
 
+  it('accepts compact extension menus and validates their options', () => {
+    const menu = {
+      schemaVersion: 1,
+      id: 'mode',
+      surface: 'composer.toolbar',
+      content: {
+        type: 'menu',
+        label: 'Ask',
+        icon: 'info',
+        tone: 'info',
+        options: [
+          { id: 'ask', label: 'Ask', description: 'Prompt before edits.', icon: 'info', selected: true, action: { kind: 'command', command: 'mode:ask' } },
+          { id: 'execute', label: 'Execute', icon: 'repeat', tone: 'accent', action: { kind: 'command', command: 'mode:execute' } },
+        ],
+      },
+    } as const
+    expect(validateExtensionContributionV1(menu)).toBeNull()
+    expect(validateExtensionContributionV1({ ...menu, content: { ...menu.content, options: [...menu.content.options, menu.content.options[0]] } })).toContain('unique')
+  })
+
+  it('accepts responsive content and bounded scroll overflow on non-compact surfaces', () => {
+    expect(validateExtensionContributionV1({
+      schemaVersion: 1,
+      id: 'responsive-status',
+      surface: 'conversation.inline',
+      overflow: 'scroll',
+      content: {
+        type: 'responsive',
+        full: { type: 'row', children: [{ type: 'icon', name: 'activity', label: 'Running' }, { type: 'text', text: 'A long status' }] },
+        compact: { type: 'badge', label: 'Running', tone: 'info' },
+        minimal: { type: 'icon', name: 'activity', label: 'Running' },
+      },
+    })).toBeNull()
+    expect(validateExtensionContributionV1({
+      schemaVersion: 1,
+      id: 'compact-scroll',
+      surface: 'composer.status',
+      overflow: 'scroll',
+      content: { type: 'text', text: 'Status' },
+    })).toContain('Compact surfaces')
+    expect(validateExtensionContributionV1({
+      schemaVersion: 1,
+      id: 'accent-badge',
+      surface: 'conversation.inline',
+      content: { type: 'badge', label: 'Accent', tone: 'accent' },
+    })).toContain('badge tone')
+    expect(validateExtensionContributionV1({
+      schemaVersion: 1,
+      id: 'missing-responsive-full',
+      surface: 'conversation.inline',
+      content: { type: 'responsive' },
+    })).toContain('full node')
+  })
+
   it('rejects executable, DOM, and unknown primitives', () => {
     expect(validateExtensionContributionV1({ ...contribution, html: '<button />' })).toContain('Unsupported contribution field')
     expect(validateExtensionContributionV1({ ...contribution, content: { type: 'iframe' } })).toContain('Unsupported')
@@ -37,6 +91,15 @@ describe('ExtensionContributionV1', () => {
     expect(validateExtensionContributionV1({ ...contribution, surface: 'conversation.message.before', target: undefined })).toContain('target.messageId')
     expect(validateExtensionContributionV1({ ...contribution, surface: 'window.topRight', content: { type: 'markdown', markdown: '# Too large' } })).toContain('Compact surfaces')
     expect(validateExtensionContributionV1({ ...contribution, target: { messageId: 'message' } })).toContain('does not accept a target')
+    expect(validateExtensionContributionV1({
+      schemaVersion: 1,
+      id: 'responsive-sandbox',
+      surface: 'conversation.inline',
+      content: {
+        type: 'responsive',
+        full: { type: 'sandbox-app', appId: 'app', title: 'App', html: '' },
+      },
+    })).toContain('top-level')
   })
 
   it('validates routed lifecycle deltas', () => {

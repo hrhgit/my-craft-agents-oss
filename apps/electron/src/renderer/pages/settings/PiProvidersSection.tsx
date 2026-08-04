@@ -36,8 +36,9 @@ import {
 } from '@/components/settings'
 import { usePiGlobalConfig } from '@/hooks/usePiGlobalConfig'
 import { PiProviderFormDialog } from './PiProviderFormDialog'
-import type { PiCustomApi, PiGlobalProvider, PiGlobalProviderForDisplay } from '../../../shared/types'
+import type { PiCustomApi, PiGlobalProvider, PiGlobalProviderForDisplay, PiGlobalSettings } from '../../../shared/types'
 import type { PiGlobalDefaultSlot } from '@mortise/shared/config'
+import { setPiProviderModelSupportsReasoning } from '@mortise/shared/config/pi-provider-models'
 import {
   DEFAULT_THINKING_LEVEL,
   THINKING_LEVELS,
@@ -66,8 +67,25 @@ function cleanAddLabel(label: string): string {
 
 export function PiProvidersSection() {
   const { t } = useTranslation()
-  const { providers, settings, isLoading, error, refresh } = usePiGlobalConfig()
+  const {
+    providers: loadedProviders,
+    settings: loadedSettings,
+    isLoading,
+    error,
+    refresh,
+  } = usePiGlobalConfig({ subscribe: false })
+  const [providers, setProviders] = React.useState<PiGlobalProviderForDisplay[]>([])
+  const [settings, setSettings] = React.useState<PiGlobalSettings>({})
   const addProviderLabel = cleanAddLabel(t('settings.piProviders.addProvider'))
+
+  // This page applies its own confirmed changes so opening a select or saving a
+  // field never replaces the entire settings surface with a loading state.
+  React.useEffect(() => {
+    setProviders(loadedProviders)
+  }, [loadedProviders])
+  React.useEffect(() => {
+    setSettings(loadedSettings)
+  }, [loadedSettings])
 
   // Dialog state
   const [dialogOpen, setDialogOpen] = React.useState(false)
@@ -102,36 +120,71 @@ export function PiProvidersSection() {
     setDialogOpen(true)
   }, [])
 
-  // Persist a provider (add or edit) via RPC
+  // Persist a provider (add or edit) via RPC.
   const handleSaveProvider = React.useCallback(async (key: string, provider: PiGlobalProvider, apiKey?: string) => {
     const result = await window.electronAPI.savePiGlobalProvider({ key, provider, apiKey })
     if (!result.success) {
       throw new Error(result.error || 'savePiGlobalProvider failed')
     }
+    setProviders(current => {
+      const existing = current.find(entry => entry.key === key)
+      const nextEntry: PiGlobalProviderForDisplay = {
+        key,
+        provider,
+        apiKeyMasked: existing?.apiKeyMasked ?? '',
+        modelCount: provider.models?.length ?? 0,
+      }
+      return existing
+        ? current.map(entry => entry.key === key ? nextEntry : entry)
+        : [...current, nextEntry]
+    })
     toast.success(t('settings.piProviders.saved'))
-    await refresh()
-  }, [refresh, t])
+  }, [t])
 
-  // Delete a provider via RPC
+  // Delete a provider via RPC.
   const handleDelete = React.useCallback(async (key: string) => {
     const result = await window.electronAPI.deletePiGlobalProvider(key)
     if (result.success) {
+      setProviders(current => current.filter(entry => entry.key !== key))
       toast.success(t('settings.piProviders.deleted'))
-      await refresh()
     } else {
       toast.error(t('settings.piProviders.deleteFailed'), { description: result.error })
     }
-  }, [refresh, t])
+  }, [t])
 
-  // Switch default provider (keeps current model if it exists in the new provider, else first model)
-  const saveDefaultSlot = React.useCallback(async (slot: number, next: Pick<PiGlobalDefaultSlot, 'provider' | 'model' | 'thinkingLevel'>) => {
+  // Switch default provider (keeps current model if it exists in the new provider, else first model).
+  const saveDefaultSlot = React.useCallback(async (slot: number, next: Pick<PiGlobalDefaultSlot, 'provider' | 'model' | 'thinkingLevel'>): Promise<boolean> => {
     const result = await window.electronAPI.setPiGlobalDefault({ slot, ...next })
-    if (result.success) {
-      await refresh()
-    } else {
+    if (!result.success) {
       toast.error(result.error || t('settings.piProviders.switchFailed'))
+      return false
     }
-  }, [refresh, t])
+    if (next.thinkingLevel !== 'off') {
+      setProviders(current => current.map(entry => entry.key === next.provider
+        ? {
+            ...entry,
+            provider: setPiProviderModelSupportsReasoning(entry.provider, next.model, true),
+          }
+        : entry))
+    }
+    setSettings(current => {
+      const defaultSlot = { slot, ...next }
+      const defaultSlots = [
+        ...(current.defaultSlots ?? []).filter(entry => entry.slot !== slot),
+        defaultSlot,
+      ].sort((a, b) => a.slot - b.slot)
+      return slot === 1
+        ? {
+            ...current,
+            defaultProvider: next.provider,
+            defaultModel: next.model,
+            defaultThinkingLevel: next.thinkingLevel,
+            defaultSlots,
+          }
+        : { ...current, defaultSlots }
+    })
+    return true
+  }, [t])
 
   const handleDefaultProviderChange = React.useCallback(async (slot: PiGlobalDefaultSlot, nextProvider: string) => {
     const entry = providers.find(p => p.key === nextProvider)
@@ -166,23 +219,28 @@ export function PiProvidersSection() {
     const model = provider?.provider.models?.[0]
     if (!provider || !model) return
     const slot = defaultSlots.length + 1
-    await saveDefaultSlot(slot, {
+    const saved = await saveDefaultSlot(slot, {
       provider: provider.key,
       model: model.id,
       thinkingLevel: DEFAULT_THINKING_LEVEL,
     })
-    setExpandedSlot(slot)
+    if (saved) setExpandedSlot(slot)
   }, [defaultSlots.length, providers, saveDefaultSlot])
 
   const handleRemoveDefault = React.useCallback(async (slot: number) => {
     const result = await window.electronAPI.setPiGlobalDefault({ slot, remove: true })
     if (result.success) {
+      setSettings(current => ({
+        ...current,
+        defaultSlots: (current.defaultSlots ?? [])
+          .filter(entry => entry.slot !== slot)
+          .map((entry, index) => ({ ...entry, slot: index + 1 })),
+      }))
       setExpandedSlot(null)
-      await refresh()
     } else {
       toast.error(result.error || t('settings.piProviders.switchFailed'))
     }
-  }, [refresh, t])
+  }, [t])
 
   const existingKeys = React.useMemo(() => providers.map(p => p.key), [providers])
 

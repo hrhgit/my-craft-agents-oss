@@ -4,10 +4,27 @@ import { AbortReason } from '../core/session-lifecycle.ts'
 import type { BackendConfig } from '../backend/types.ts'
 import type { PiProjectionEventV1, PiProjectionSnapshotV1 } from '../../protocol/pi-projection.ts'
 
+const testWorkspace = {
+  schemaVersion: 2,
+  id: 'ws-test',
+  revision: 0,
+  primaryLocationId: 'primary',
+  locations: [{
+    id: 'primary',
+    name: 'Primary',
+    rootName: 'mortise-test',
+    endpoint: { kind: 'local', rootPath: '/tmp/mortise-test' },
+  }],
+  name: 'Test Workspace',
+  nameSource: 'custom',
+  slug: 'test-workspace',
+  createdAt: 0,
+} as BackendConfig['workspace']
+
 function createAgent(): PiAgent {
   return new PiAgent({
     provider: 'pi',
-    workspace: { id: 'ws-test', name: 'Test Workspace', rootPath: '/tmp/mortise-test' } as any,
+    workspace: testWorkspace,
     session: { id: 'session-test', mortiseId: 'session-test', workspaceRootPath: '/tmp/mortise-test', createdAt: 0, lastUsedAt: 0 } as any,
     isHeadless: true,
     onPiProjectionEvent: () => {},
@@ -19,7 +36,7 @@ describe('PiAgent abort', () => {
     const emitted: PiProjectionEventV1[] = []
     const agent = new PiAgent({
       provider: 'pi',
-      workspace: { id: 'ws-test', name: 'Test Workspace', rootPath: '/tmp/mortise-test' } as any,
+      workspace: testWorkspace,
       session: { id: 'session-test', mortiseId: 'session-test', workspaceRootPath: '/tmp/mortise-test', createdAt: 0, lastUsedAt: 0 } as any,
       isHeadless: true,
       onPiProjectionEvent: event => emitted.push(event),
@@ -79,7 +96,7 @@ describe('PiAgent abort', () => {
     }
     const agent = new PiAgent({
       provider: 'pi',
-      workspace: { id: 'ws-test', name: 'Test Workspace', rootPath: '/tmp/mortise-test' } as any,
+      workspace: testWorkspace,
       session: { id: 'session-test', mortiseId: 'session-test', workspaceRootPath: '/tmp/mortise-test', createdAt: 0, lastUsedAt: 0 } as any,
       isHeadless: true,
       getPiProjectionSnapshot: () => seed,

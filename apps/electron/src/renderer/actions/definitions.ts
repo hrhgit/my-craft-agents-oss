@@ -187,13 +187,6 @@ export const actions = {
     scope: 'chat',
     when: '!hasSelection',  // Let browser clear selection first; overlays handled by hasOpenOverlay() in enabled callback
   },
-  'chat.cyclePermissionMode': {
-    id: 'chat.cyclePermissionMode',
-    label: 'Cycle Permission Mode',
-    description: 'Switch between Explore, Ask, and Execute modes',
-    defaultHotkey: 'shift+tab',
-    category: 'Chat',
-  },
   'chat.nextSearchMatch': {
     id: 'chat.nextSearchMatch',
     label: 'Next Search Match',

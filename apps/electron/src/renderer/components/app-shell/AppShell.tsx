@@ -29,12 +29,13 @@ import {
   FolderOpen,
   FolderPlus,
   FolderInput,
+  SquarePen,
 } from "lucide-react"
 import { TopBar } from "./TopBar"
 import { WorkspaceCoordinationStatusPopover } from "./WorkspaceCoordinationStatusPopover"
 import { SquarePenRounded } from "../icons/SquarePenRounded"
 import { cn } from "@/lib/utils"
-import { isMac } from "@/lib/platform"
+import { getFileManagerName, isMac } from "@/lib/platform"
 import {
   canOpenSeparateBrowserSurface,
   canUseAuxiliaryLayoutWindows,
@@ -91,7 +92,7 @@ import { useFocusZone } from "@/hooks/keyboard"
 import { useFocusContext } from "@/context/FocusContext"
 import { getSessionTitle } from "@/utils/session"
 import { useSetAtom } from "jotai"
-import type { Session, FileAttachment, PermissionRequest, DiscoveredSkill, LoadedSkill, PermissionMode, AutomationFilter } from "../../../shared/types"
+import type { Session, FileAttachment, PermissionRequest, DiscoveredSkill, LoadedSkill, AutomationFilter } from "../../../shared/types"
 import { sessionMetaMapAtom, sendToWorkspaceAtom, type SessionMeta } from "@/atoms/sessions"
 import { piProjectionIsProcessingAtomFamily } from "@/atoms/pi-projection"
 import { skillsAtom } from "@/atoms/skills"
@@ -505,26 +506,6 @@ function AppShellContent({
     getAutomationHistory, handleReplayAutomation, saveAutomation,
   } = useAutomations(activeWorkspaceId)
 
-  // Enabled permission modes for Shift+Tab cycling (min 2 modes)
-  const [enabledModes, setEnabledModes] = React.useState<PermissionMode[]>(['safe', 'ask', 'allow-all'])
-
-  // Load workspace settings for cyclable permission modes.
-  React.useEffect(() => {
-    if (!activeWorkspaceId) return
-    let cancelled = false
-    window.electronAPI.getWorkspaceSettings(activeWorkspaceId).then((settings) => {
-      if (!cancelled && settings) {
-        // Load cyclablePermissionModes from workspace settings
-        if (settings.cyclablePermissionModes && settings.cyclablePermissionModes.length >= 2) {
-          setEnabledModes(settings.cyclablePermissionModes)
-        }
-      }
-    }).catch((err) => {
-      if (!cancelled) console.error('[Chat] Failed to load workspace settings:', err)
-    })
-    return () => { cancelled = true }
-  }, [activeWorkspaceId])
-
   // Reset UI state when workspace changes
   // This prevents stale search queries, focused items, and filter state from persisting
   const previousWorkspaceRef = React.useRef<string | null>(null)
@@ -599,8 +580,6 @@ function AppShellContent({
     focusNextZone()
   }, { enabled: () => !document.querySelector('[role="dialog"]') })
 
-  // Shift+Tab cycles permission mode through enabled modes (textarea handles its own, this handles when focus is elsewhere)
-  // In multi-panel, targets the focused panel's session
   const effectiveSessionId = focusedSessionId ?? session.selected
   const effectiveSessionIsProcessing = useAtomValue(
     piProjectionIsProcessingAtomFamily(effectiveSessionId ?? ''),
@@ -618,19 +597,6 @@ function AppShellContent({
     dispatchFocusInputEvent({ sessionId: targetSessionId })
   }, [])
 
-  useAction('chat.cyclePermissionMode', () => {
-    if (effectiveSessionId) {
-      const currentOptions = contextValue.sessionOptions.get(effectiveSessionId)
-      const currentMode = currentOptions?.permissionMode ?? 'ask'
-      // Cycle through enabled permission modes
-      const modes = enabledModes.length >= 2 ? enabledModes : ['safe', 'ask', 'allow-all'] as PermissionMode[]
-      const currentIndex = modes.indexOf(currentMode)
-      // If current mode not in enabled list, jump to first enabled mode
-      const nextIndex = currentIndex === -1 ? 0 : (currentIndex + 1) % modes.length
-      const nextMode = modes[nextIndex]
-      contextValue.onSessionOptionsChange(effectiveSessionId, { permissionMode: nextMode })
-    }
-  })
 
   const handleToggleSidebar = useCallback(() => {
     if (isFocusMode) {
@@ -1083,7 +1049,6 @@ function AppShellContent({
     ...contextValue,
     onDeleteSession: handleDeleteSession,
     skills,
-    enabledModes,
     extensionInteraction,
     respondToExtensionInteraction,
     panelHeaderTrailingAction: null,
@@ -1102,7 +1067,7 @@ function AppShellContent({
     getAutomationHistory,
     onReplayAutomation: handleReplayAutomation,
     workspaceNavigation,
-  }), [contextValue, handleDeleteSession, skills, enabledModes, extensionInteraction, respondToExtensionInteraction, isAutoCompact, searchActive, searchQuery, handleChatMatchInfoChange, handleTestAutomation, handleToggleAutomation, handleDuplicateAutomation, saveAutomation, handleDeleteAutomation, automationTestResults, getAutomationHistory, handleReplayAutomation, workspaceNavigation])
+  }), [contextValue, handleDeleteSession, skills, extensionInteraction, respondToExtensionInteraction, isAutoCompact, searchActive, searchQuery, handleChatMatchInfoChange, handleTestAutomation, handleToggleAutomation, handleDuplicateAutomation, saveAutomation, handleDeleteAutomation, automationTestResults, getAutomationHistory, handleReplayAutomation, workspaceNavigation])
 
   // Persist expanded folders to localStorage (workspace-scoped)
   React.useEffect(() => {
@@ -1195,6 +1160,36 @@ function AppShellContent({
     // Focus the chat input after navigation completes
     setTimeout(() => focusZone('chat', { intent: 'programmatic' }), 50)
   }, [activeWorkspace, focusZone, navigate])
+
+  const handleWorkspaceNewSession = useCallback(async (workspaceId: string) => {
+    if (workspaceId === activeWorkspaceId) {
+      handleNewChat()
+      return
+    }
+    await workspaceNavigation.selectWorkspace(workspaceId)
+  }, [activeWorkspaceId, handleNewChat, workspaceNavigation])
+
+  const handleEditWorkspace = useCallback(async (workspaceId: string) => {
+    if (workspaceId !== activeWorkspaceId) {
+      const selected = await workspaceNavigation.selectWorkspace(workspaceId)
+      if (!selected) return
+    }
+    handleSettingsClick('workspace')
+  }, [activeWorkspaceId, handleSettingsClick, workspaceNavigation])
+
+  const handleOpenWorkspaceFolder = useCallback(async (workspace: Parameters<typeof getPrimaryWorkspaceRoute>[0]) => {
+    try {
+      await window.electronAPI.invokeWorkspaceApi(
+        getPrimaryWorkspaceRoute(workspace),
+        'openWorkspaceFolder',
+      )
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      toast.error(t('toast.failedToReveal', { fileManager: getFileManagerName() }), {
+        description: message,
+      })
+    }
+  }, [t])
 
   // Create a new workspace-owned dedicated browser window and focus it.
   const handleNewBrowserWindow = useCallback(async () => {
@@ -1321,17 +1316,27 @@ function AppShellContent({
             {item.hasUnread && <span className="h-1.5 w-1.5 rounded-full bg-accent" aria-label={t('sidebar.groupByUnread')} />}
           </>
         ),
-        contextMenu: item.isActive ? undefined : {
-          type: 'workspace' as const,
-          isActiveWorkspace: false,
-          onOpenWorkspaceInNewWindow: canUseAuxiliaryLayoutWindows()
-            ? () => { void workspaceNavigation.openWorkspaceInNewWindow(workspaceId) }
-            : undefined,
-          onRemoveWorkspace: () => { void workspaceNavigation.removeWorkspace(item.workspace) },
+        quickAction: {
+          label: t('sidebar.newSession'),
+          icon: SquarePen,
+          onClick: () => { void handleWorkspaceNewSession(workspaceId) },
         },
+        menuContent: (
+          <SidebarMenu
+            type="workspace"
+            onEditWorkspace={() => { void handleEditWorkspace(workspaceId) }}
+            onOpenWorkspaceFolder={isPrimaryWorkspaceLocal(item.workspace) && hasPlatformCapability('fileSystemShell')
+              ? () => { void handleOpenWorkspaceFolder(item.workspace) }
+              : undefined}
+            onOpenWorkspaceInNewWindow={!item.isActive && canUseAuxiliaryLayoutWindows()
+              ? () => { void workspaceNavigation.openWorkspaceInNewWindow(workspaceId) }
+              : undefined}
+            onRemoveWorkspace={() => { void workspaceNavigation.removeWorkspace(item.workspace) }}
+          />
+        ),
       }
     }),
-  ], [collapsedWorkspaceIds, handleAllSessionsClick, handleSidebarSessionDelete, handleSidebarSessionMarkUnread, hasOtherWorkspaces, navState, navigateToSessionInPanel, openSidebarSessionRename, selectedSidebarSessionId, setSendToWorkspaceIds, showMoreWorkspaceSessions, t, toggleWorkspaceExpanded, workspaceNavigation, workspaceSessionLimits, workspaceSessionSummaries])
+  ], [collapsedWorkspaceIds, handleAllSessionsClick, handleEditWorkspace, handleOpenWorkspaceFolder, handleSidebarSessionDelete, handleSidebarSessionMarkUnread, handleWorkspaceNewSession, hasOtherWorkspaces, navState, navigateToSessionInPanel, openSidebarSessionRename, selectedSidebarSessionId, setSendToWorkspaceIds, showMoreWorkspaceSessions, t, toggleWorkspaceExpanded, workspaceNavigation, workspaceSessionLimits, workspaceSessionSummaries])
 
   const bottomSidebarItems = React.useMemo<LeftSidebarLinkItem[]>(() => [
     {

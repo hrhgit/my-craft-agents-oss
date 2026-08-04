@@ -285,6 +285,206 @@ describe('buildPiTurns', () => {
     ])
   })
 
+  it('promotes the last terminal thinking block to the response without duplicating it', () => {
+    const turns = buildPiTurns([
+      entity({
+        entityId: 'content:user:user-thinking-fallback', createdSeq: 1,
+        turnId: 'turn-thinking-fallback', kind: 'user_text',
+        payload: {
+          role: 'user', messageId: 'user-thinking-fallback', text: 'answer this', streaming: false,
+        },
+      }),
+      entity({
+        entityId: 'content:thinking:assistant-earlier:0', createdSeq: 2,
+        turnId: 'turn-thinking-tool', kind: 'thinking_end',
+        payload: {
+          role: 'assistant', contentKind: 'thinking', messageId: 'assistant-earlier',
+          contentIndex: 0, text: 'I will inspect it.', streaming: false,
+          isIntermediate: true, isFinal: false, stopReason: 'toolUse',
+        },
+      }),
+      entity({
+        entityId: 'content:text:assistant-empty:1', createdSeq: 3,
+        turnId: 'turn-thinking-tool', kind: 'assistant_text',
+        payload: {
+          role: 'assistant', messageId: 'assistant-empty', contentIndex: 1,
+          text: '', streaming: false, isIntermediate: true, isFinal: false, stopReason: 'toolUse',
+        },
+      }),
+      entity({
+        entityId: 'turn:turn-thinking-fallback', entityType: 'turn', createdSeq: 4, lastSeq: 6,
+        turnId: 'turn-thinking-fallback', kind: 'turn_end',
+        payload: { status: 'completed', stopReason: 'stop' },
+      }),
+      entity({
+        entityId: 'content:thinking:assistant-terminal:0', createdSeq: 5,
+        turnId: 'turn-thinking-fallback', kind: 'thinking_end',
+        payload: {
+          role: 'assistant', contentKind: 'thinking', messageId: 'assistant-terminal',
+          contentIndex: 0, text: 'This is the terminal answer.', streaming: false,
+          isIntermediate: false, isFinal: true, stopReason: 'stop', timestamp: 1_783_861_204_200,
+        },
+      }),
+    ])
+
+    expect(turns).toHaveLength(2)
+    expect(turns[1]).toMatchObject({
+      type: 'assistant', isComplete: true,
+      response: { messageId: 'assistant-terminal', text: 'This is the terminal answer.' },
+    })
+    if (turns[1]?.type !== 'assistant') throw new Error('Expected assistant turn')
+    expect(turns[1].activities.map(activity => activity.content)).toEqual(['I will inspect it.'])
+  })
+
+  it('keeps tool-use thinking as activity instead of promoting it to a response', () => {
+    const turns = buildPiTurns([
+      entity({
+        entityId: 'turn:turn-tool-thinking', entityType: 'turn', createdSeq: 1, lastSeq: 3,
+        turnId: 'turn-tool-thinking', kind: 'turn_end',
+        payload: { status: 'completed', stopReason: 'toolUse' },
+      }),
+      entity({
+        entityId: 'content:thinking:assistant-tool-thinking:0', createdSeq: 2,
+        turnId: 'turn-tool-thinking', kind: 'thinking_end',
+        payload: {
+          role: 'assistant', contentKind: 'thinking', messageId: 'assistant-tool-thinking',
+          contentIndex: 0, text: 'I need a tool.', streaming: false,
+          isIntermediate: true, isFinal: false, stopReason: 'toolUse',
+        },
+      }),
+    ])
+
+    expect(turns).toHaveLength(1)
+    expect(turns[0]).toMatchObject({
+      type: 'assistant', isComplete: true, response: undefined,
+      activities: [{ type: 'intermediate', content: 'I need a tool.' }],
+    })
+  })
+
+  it('omits a withdrawn queued message from the transcript model', () => {
+    const turns = buildPiTurns([entity({
+      entityId: 'content:user:queued-edit-1',
+      createdSeq: 1,
+      turnId: undefined,
+      kind: 'user_text',
+      payload: {
+        role: 'user', messageId: 'queued-edit-1', clientMutationId: 'queued-edit-1',
+        text: 'edit this', streaming: false, queueStatus: 'cancelled',
+      },
+    })])
+
+    expect(turns).toEqual([])
+  })
+
+  it('omits completed empty thinking from the derived activity list', () => {
+    const turns = buildPiTurns([
+      entity({
+        entityId: 'turn:turn-empty-thinking', entityType: 'turn', createdSeq: 1, lastSeq: 4,
+        turnId: 'turn-empty-thinking', kind: 'turn_end',
+        payload: { status: 'completed', stopReason: 'toolUse' },
+      }),
+      entity({
+        entityId: 'content:thinking:assistant-empty-thinking:0', createdSeq: 2,
+        turnId: 'turn-empty-thinking', kind: 'thinking_end',
+        payload: {
+          role: 'assistant', contentKind: 'thinking', messageId: 'assistant-empty-thinking',
+          contentIndex: 0, text: '   ', streaming: false,
+          isIntermediate: true, isFinal: false, stopReason: 'toolUse',
+        },
+      }),
+      entity({
+        entityId: 'tool:read-after-empty-thinking', entityType: 'tool_run', createdSeq: 3,
+        turnId: 'turn-empty-thinking', kind: 'tool_execution_end',
+        payload: {
+          toolCallId: 'read-after-empty-thinking', toolName: 'Read',
+          result: 'source', status: 'completed',
+        },
+      }),
+    ])
+
+    expect(turns).toHaveLength(1)
+    expect(turns[0]).toMatchObject({
+      type: 'assistant', isComplete: true, isStreaming: false,
+      activities: [{ type: 'tool', content: 'source' }],
+    })
+  })
+
+  it('hides empty streaming thinking without clearing the turn running state', () => {
+    const turns = buildPiTurns([
+      entity({
+        entityId: 'tool:completed-before-thinking', entityType: 'tool_run', createdSeq: 1,
+        turnId: 'turn-streaming-empty-thinking', kind: 'tool_execution_end',
+        payload: {
+          toolCallId: 'completed-before-thinking', toolName: 'Read',
+          result: 'source', status: 'completed',
+        },
+      }),
+      entity({
+        entityId: 'content:thinking:assistant-streaming-empty:0', createdSeq: 2,
+        turnId: 'turn-streaming-empty-thinking', kind: 'thinking_start',
+        payload: {
+          role: 'assistant', contentKind: 'thinking', messageId: 'assistant-streaming-empty',
+          contentIndex: 0, text: '', streaming: true,
+        },
+      }),
+    ])
+
+    expect(turns).toHaveLength(1)
+    expect(turns[0]).toMatchObject({
+      type: 'assistant', isComplete: false, isStreaming: true,
+      activities: [{ type: 'tool', content: 'source' }],
+    })
+  })
+
+  it('shows non-empty streaming thinking as a running process activity', () => {
+    const turns = buildPiTurns([
+      entity({
+        entityId: 'content:thinking:assistant-streaming-visible:0', createdSeq: 1,
+        turnId: 'turn-streaming-visible-thinking', kind: 'thinking_delta',
+        payload: {
+          role: 'assistant', contentKind: 'thinking', messageId: 'assistant-streaming-visible',
+          contentIndex: 0, text: 'Inspecting the current state.', streaming: true,
+        },
+      }),
+    ])
+
+    expect(turns).toHaveLength(1)
+    expect(turns[0]).toMatchObject({
+      type: 'assistant', isComplete: false, isStreaming: true,
+      activities: [{
+        type: 'intermediate', status: 'running', content: 'Inspecting the current state.',
+      }],
+    })
+  })
+
+  it('does not create a completed response from empty intermediate text', () => {
+    const turns = buildPiTurns([
+      entity({
+        entityId: 'content:user:user-empty-response', createdSeq: 1,
+        turnId: 'turn-empty-response', kind: 'user_text',
+        payload: {
+          role: 'user', messageId: 'user-empty-response', text: 'answer this', streaming: false,
+        },
+      }),
+      entity({
+        entityId: 'turn:turn-empty-response', entityType: 'turn', createdSeq: 2, lastSeq: 4,
+        turnId: 'turn-empty-response', kind: 'turn_end',
+        payload: { status: 'completed', stopReason: 'stop' },
+      }),
+      entity({
+        entityId: 'content:text:assistant-empty-response:0', createdSeq: 3,
+        turnId: 'turn-empty-response', kind: 'assistant_text',
+        payload: {
+          role: 'assistant', messageId: 'assistant-empty-response', contentIndex: 0,
+          text: '', streaming: false, isIntermediate: true, isFinal: false, stopReason: 'toolUse',
+        },
+      }),
+    ])
+
+    expect(turns).toHaveLength(1)
+    expect(turns[0]).toMatchObject({ type: 'user', message: { id: 'user-empty-response' } })
+  })
+
   it('merges low-level Pi model turns into one user-visible response card', () => {
     const turns = buildPiTurns([
       entity({ entityId: 'agent:start', entityType: 'conversation', createdSeq: 1, lastSeq: 1, turnId: undefined, kind: 'agent_start', payload: { status: 'running' } }),
@@ -445,7 +645,7 @@ describe('buildPiTurns', () => {
     expect(turns[0].activities.some(activity => activity.content === 'Checking.')).toBe(true)
   })
 
-  it('joins text blocks by contentIndex and preserves a streaming turn lifecycle', () => {
+  it('keeps unclassified streaming text in the process stream until finality is known', () => {
     const turns = buildPiTurns([
       entity({ entityId: 'turn:turn-1', entityType: 'turn', createdSeq: 1, kind: 'turn_start', payload: { status: 'running' } }),
       entity({
@@ -459,7 +659,10 @@ describe('buildPiTurns', () => {
     ])
     expect(turns[0]).toMatchObject({
       type: 'assistant', isComplete: false, isStreaming: true,
-      response: { messageId: 'assistant-1', text: 'first\n\nsecond', isStreaming: true },
+      response: undefined,
+      activities: [{
+        type: 'intermediate', status: 'running', messageId: 'assistant-1', content: 'first\n\nsecond',
+      }],
     })
   })
 
@@ -547,7 +750,12 @@ describe('buildPiTurns', () => {
       id: 'assistant-1', role: 'assistant', content: 'legacy text must not render', timestamp: 10,
       annotations: [annotation('assistant-1')],
     } satisfies Message
-    const turns = buildPiTurns([entity()], buildPiTurnOverlay([message]))
+    const turns = buildPiTurns([entity({
+      payload: {
+        role: 'assistant', messageId: 'assistant-1', contentIndex: 0,
+        text: 'hello', streaming: false, isFinal: true,
+      },
+    })], buildPiTurnOverlay([message]))
     expect(turns[0]).toMatchObject({
       type: 'assistant', response: { text: 'hello', annotations: message.annotations },
     })

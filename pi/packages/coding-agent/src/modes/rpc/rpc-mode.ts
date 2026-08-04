@@ -868,7 +868,15 @@ export async function runRpcMode(
 		if (
 			typeof request !== "object" ||
 			request === null ||
-			!hasOnlyKeys(request, ["schemaVersion", "title", "description", "fields", "submitLabel", "cancelLabel"]) ||
+			!hasOnlyKeys(request, [
+				"schemaVersion",
+				"title",
+				"description",
+				"fields",
+				"submitLabel",
+				"cancelLabel",
+				"presentation",
+			]) ||
 			request.schemaVersion !== 1 ||
 			!isOptionalBoundedString(request.title, 256) ||
 			!isOptionalBoundedString(request.description, 4_000) ||
@@ -879,6 +887,18 @@ export async function runRpcMode(
 			request.fields.length > 32
 		) {
 			throw new Error("Interaction v1 requires at least one field");
+		}
+		if (request.presentation !== undefined) {
+			const presentation = request.presentation;
+			if (
+				typeof presentation !== "object" ||
+				presentation === null ||
+				!hasOnlyKeys(presentation, ["mode", "allowSkip", "autoAdvanceSingleChoice"]) ||
+				presentation.mode !== "wizard" ||
+				!isOptionalBoolean(presentation.allowSkip) ||
+				!isOptionalBoolean(presentation.autoAdvanceSingleChoice)
+			)
+				throw new Error("Interaction presentation is invalid");
 		}
 		const fieldIds = new Set<string>();
 		for (const field of request.fields) {

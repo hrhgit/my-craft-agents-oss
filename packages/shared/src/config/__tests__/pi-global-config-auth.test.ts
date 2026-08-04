@@ -6,6 +6,10 @@ import { pathToFileURL } from 'url'
 
 const PI_GLOBAL_CONFIG_MODULE_PATH = pathToFileURL(join(import.meta.dir, '..', 'pi-global-config.ts')).href
 const CONFIG_WATCHER_MODULE_PATH = pathToFileURL(join(import.meta.dir, '..', 'watcher.ts')).href
+const REPO_ROOT = join(import.meta.dir, '..', '..', '..', '..', '..')
+const PI_AUTH_STORAGE_MODULE_PATH = pathToFileURL(join(REPO_ROOT, 'pi', 'packages', 'coding-agent', 'src', 'core', 'auth-storage.ts')).href
+const PI_MODEL_REGISTRY_MODULE_PATH = pathToFileURL(join(REPO_ROOT, 'pi', 'packages', 'coding-agent', 'src', 'core', 'model-registry.ts')).href
+const PI_OPENAI_RESPONSES_MODULE_PATH = pathToFileURL(join(REPO_ROOT, 'pi', 'packages', 'ai', 'src', 'providers', 'openai-responses.ts')).href
 const MASKED_SHORT_KEY = '\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022'
 const SUBPROCESS_TEST_TIMEOUT_MS = 30_000
 
@@ -34,6 +38,7 @@ function runIsolatedPiConfigScript<T>(piAgentDir: string, body: string): T {
       savePiGlobalProvider,
       readPiGlobalProvidersForDisplay,
       maskApiKey,
+      setPiGlobalDefault,
       subscribePiGlobalConfig,
     } from ${JSON.stringify(PI_GLOBAL_CONFIG_MODULE_PATH)};
     import { mkdirSync, readFileSync, writeFileSync } from 'fs';
@@ -181,5 +186,65 @@ describe('pi-global-config auth storage', () => {
     expect(output.display.apiKeyMasked).toBe(MASKED_SHORT_KEY)
     expect(output.shortMask).toBe(MASKED_SHORT_KEY)
     expect(output.longMask).toBe('sk-live...mnop')
+  })
+
+  subprocessIt('enables model reasoning when a non-off default thinking level is saved', () => {
+    const { piAgentDir, modelsPath, authPath } = setupPiAgentDir()
+    writeJson(modelsPath, {
+      providers: {
+        'my-provider': {
+          baseUrl: 'https://example.test/v1',
+          api: 'openai-responses',
+          models: [
+            { id: 'reasoning-model' },
+            { id: 'plain-model', reasoning: false },
+          ],
+        },
+      },
+    })
+    writeJson(authPath, {
+      'my-provider': { type: 'api_key', key: 'test' },
+    })
+
+    const output = runIsolatedPiConfigScript<{
+      reasoningModel: { reasoning?: boolean }
+      plainModel: { reasoning?: boolean }
+      registryReasoning?: boolean
+      requestReasoning?: { effort?: string; summary?: string }
+    }>(piAgentDir, `
+      await setPiGlobalDefault('my-provider', 'reasoning-model', 'high');
+      await setPiGlobalDefault('my-provider', 'plain-model', 'off');
+      const models = JSON.parse(readFileSync(join(piAgentDir, 'models.json'), 'utf-8'));
+      const { AuthStorage } = await import(${JSON.stringify(PI_AUTH_STORAGE_MODULE_PATH)});
+      const { ModelRegistry } = await import(${JSON.stringify(PI_MODEL_REGISTRY_MODULE_PATH)});
+      const { streamSimpleOpenAIResponses } = await import(${JSON.stringify(PI_OPENAI_RESPONSES_MODULE_PATH)});
+      const registry = ModelRegistry.create(
+        AuthStorage.create(join(piAgentDir, 'auth.json')),
+        join(piAgentDir, 'models.json'),
+      );
+      const model = registry.find('my-provider', 'reasoning-model');
+      let capturedPayload;
+      await streamSimpleOpenAIResponses(model, {
+        messages: [{ role: 'user', content: 'probe', timestamp: Date.now() }],
+      }, {
+        apiKey: 'test',
+        reasoning: 'high',
+        onPayload(payload) {
+          capturedPayload = payload;
+          throw new Error('payload captured');
+        },
+      }).result();
+      console.log(JSON.stringify({
+        reasoningModel: models.providers['my-provider'].models[0],
+        plainModel: models.providers['my-provider'].models[1],
+        registryReasoning: model?.reasoning,
+        requestReasoning: capturedPayload?.reasoning,
+      }));
+    `)
+
+    expect(output.reasoningModel.reasoning).toBe(true)
+    expect(output.plainModel.reasoning).toBe(false)
+    expect(output.registryReasoning).toBe(true)
+    expect(output.requestReasoning).toEqual({ effort: 'high', summary: 'auto' })
   })
 })

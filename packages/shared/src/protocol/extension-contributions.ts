@@ -13,10 +13,21 @@ export const EXTENSION_UI_SURFACES = [
 ] as const
 
 export type ExtensionUISurface = typeof EXTENSION_UI_SURFACES[number]
-export type ExtensionUITone = 'default' | 'muted' | 'info' | 'success' | 'warning' | 'danger'
-export type ExtensionUIIconName = 'activity' | 'alert-circle' | 'check' | 'chevron-right' | 'circle' | 'clock' | 'info' | 'loader' | 'settings' | 'sparkles' | 'x'
+export type ExtensionUITone = 'default' | 'muted' | 'info' | 'success' | 'warning' | 'danger' | 'accent'
+export type ExtensionUIIconName = 'activity' | 'alert-circle' | 'check' | 'chevron-right' | 'circle' | 'clock' | 'compass' | 'info' | 'loader' | 'repeat' | 'settings' | 'sparkles' | 'x'
 export type ExtensionUIAction = { kind: 'command'; command: string; args?: string }
 export type ExtensionUIButtonEmphasis = 'primary' | 'secondary' | 'quiet'
+export interface ExtensionUIMenuOptionV1 {
+  id: string
+  label: string
+  description?: string
+  icon?: ExtensionUIIconName
+  tone?: ExtensionUITone
+  action: ExtensionUIAction
+  selected?: boolean
+  disabled?: boolean
+  disabledReason?: string
+}
 export type ExtensionUIStepStatus = 'pending' | 'in_progress' | 'completed' | 'failed' | 'skipped'
 export interface ExtensionUIStepV1 {
   id: string
@@ -60,10 +71,12 @@ export type ExtensionUINode = ({ semanticId?: string } & (
   | { type: 'text'; text: string; tone?: Exclude<ExtensionUITone, 'info'> }
   | { type: 'markdown'; markdown: string }
   | { type: 'icon'; name: ExtensionUIIconName; label: string }
-  | { type: 'badge'; label: string; tone?: Exclude<ExtensionUITone, 'muted'> }
+  | { type: 'badge'; label: string; tone?: Exclude<ExtensionUITone, 'muted' | 'accent'> }
   | { type: 'divider' }
   | { type: 'button'; label: string; icon?: ExtensionUIIconName; action: ExtensionUIAction; disabled?: boolean; disabledReason?: string; emphasis?: ExtensionUIButtonEmphasis }
+  | { type: 'menu'; label: string; icon?: ExtensionUIIconName; tone?: Extract<ExtensionUITone, 'default' | 'info' | 'accent'>; options: ExtensionUIMenuOptionV1[] }
   | { type: 'step-progress'; label: string; steps: ExtensionUIStepV1[] }
+  | { type: 'responsive'; full: ExtensionUINode; compact?: ExtensionUINode; minimal?: ExtensionUINode }
   | {
       type: 'sandbox-app'
       appId: string
@@ -92,7 +105,7 @@ export interface ExtensionContributionV1 {
   order?: number
   group?: string
   collapse?: 'never' | 'auto' | 'always'
-  overflow?: 'menu' | 'collapse' | 'hide'
+  overflow?: 'menu' | 'collapse' | 'scroll' | 'hide'
   exclusive?: boolean
   target?: { turnId?: string; messageId?: string; toolCallId?: string; artifactId?: string }
   workspaceContent?: ExtensionWorkspaceContentMetadataV1
@@ -116,7 +129,7 @@ export type ExtensionContributionDeltaV1 = {
 )
 
 const surfaceSet = new Set<string>(EXTENSION_UI_SURFACES)
-const iconSet = new Set<string>(['activity', 'alert-circle', 'check', 'chevron-right', 'circle', 'clock', 'info', 'loader', 'settings', 'sparkles', 'x'])
+const iconSet = new Set<string>(['activity', 'alert-circle', 'check', 'chevron-right', 'circle', 'clock', 'compass', 'info', 'loader', 'repeat', 'settings', 'sparkles', 'x'])
 const boundedString = (value: unknown, max: number): value is string => typeof value === 'string' && value.trim().length > 0 && value.length <= max
 const onlyKeys = (value: Record<string, unknown>, allowed: readonly string[]): boolean => Object.keys(value).every(key => allowed.includes(key))
 
@@ -161,6 +174,32 @@ function validateNode(value: unknown, depth = 0, count = { value: 0 }): string |
     if (node.emphasis !== undefined && !['primary', 'secondary', 'quiet'].includes(String(node.emphasis))) return 'Unsupported button emphasis'
     return null
   }
+  if (node.type === 'menu') {
+    if (!onlyKeys(node, ['type', 'label', 'icon', 'tone', 'options', 'semanticId'])) return 'Unsupported menu node field'
+    if (!boundedString(node.label, 256)) return 'menu label is required'
+    if (node.icon !== undefined && !iconSet.has(String(node.icon))) return 'Unsupported menu icon'
+    if (node.tone !== undefined && !['default', 'info', 'accent'].includes(String(node.tone))) return 'Unsupported menu tone'
+    if (!Array.isArray(node.options) || node.options.length === 0 || node.options.length > 32) return 'menu options must be a bounded non-empty array'
+    const ids = new Set<string>()
+    for (const candidate of node.options) {
+      if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return 'menu option must be an object'
+      const option = candidate as Record<string, unknown>
+      if (!onlyKeys(option, ['id', 'label', 'description', 'icon', 'tone', 'action', 'selected', 'disabled', 'disabledReason'])) return 'Unsupported menu option field'
+      if (!boundedString(option.id, 128) || ids.has(option.id as string)) return 'menu option ids must be unique bounded strings'
+      if (!boundedString(option.label, 256)) return 'menu option label is required'
+      if (option.description !== undefined && !boundedString(option.description, 512)) return 'menu option description is invalid'
+      if (option.icon !== undefined && !iconSet.has(String(option.icon))) return 'Unsupported menu option icon'
+      if (option.tone !== undefined && !['default', 'muted', 'info', 'success', 'warning', 'danger', 'accent'].includes(String(option.tone))) return 'Unsupported menu option tone'
+      if (!option.action || typeof option.action !== 'object' || Array.isArray(option.action)) return 'menu option action is required'
+      const action = option.action as Record<string, unknown>
+      if (!onlyKeys(action, ['kind', 'command', 'args']) || action.kind !== 'command' || !boundedString(action.command, 256)) return 'menu option action must reference a command'
+      if (option.selected !== undefined && typeof option.selected !== 'boolean') return 'menu option selected must be boolean'
+      if (option.disabled !== undefined && typeof option.disabled !== 'boolean') return 'menu option disabled must be boolean'
+      if (option.disabledReason !== undefined && !boundedString(option.disabledReason, 512)) return 'menu option disabledReason is invalid'
+      ids.add(option.id as string)
+    }
+    return null
+  }
   if (node.type === 'step-progress') {
     if (!onlyKeys(node, ['type', 'label', 'steps', 'semanticId'])) return 'Unsupported step-progress node field'
     if (!boundedString(node.label, 256)) return 'step-progress label is required'
@@ -174,6 +213,16 @@ function validateNode(value: unknown, depth = 0, count = { value: 0 }): string |
       if (!boundedString(step.label, 512)) return 'step-progress step label is required'
       if (!['pending', 'in_progress', 'completed', 'failed', 'skipped'].includes(String(step.status))) return 'Unsupported step-progress step status'
       ids.add(step.id as string)
+    }
+    return null
+  }
+  if (node.type === 'responsive') {
+    if (!onlyKeys(node, ['type', 'full', 'compact', 'minimal', 'semanticId'])) return 'Unsupported responsive node field'
+    if (!node.full || typeof node.full !== 'object' || Array.isArray(node.full)) return 'responsive full node is required'
+    for (const variant of [node.full, node.compact, node.minimal]) {
+      if (variant === undefined) continue
+      const error = validateNode(variant, depth + 1, count)
+      if (error) return error
     }
     return null
   }
@@ -221,12 +270,21 @@ function validateNode(value: unknown, depth = 0, count = { value: 0 }): string |
 
 function containsSandboxNode(value: ExtensionUINode): boolean {
   if (value.type === 'sandbox-app') return true
+  if (value.type === 'responsive') return [value.full, value.compact, value.minimal].filter((variant): variant is ExtensionUINode => variant !== undefined).some(containsSandboxNode)
   if (value.type === 'row' || value.type === 'stack') return value.children.some(containsSandboxNode)
   return false
 }
 
 function validateCompactSurfaceNode(value: ExtensionUINode, depth = 0): string | null {
   if (depth > 2) return 'Compact surface content is too deeply nested'
+  if (value.type === 'responsive') {
+    for (const variant of [value.full, value.compact, value.minimal]) {
+      if (variant === undefined) continue
+      const error = validateCompactSurfaceNode(variant, depth + 1)
+      if (error) return error
+    }
+    return null
+  }
   if (value.type === 'markdown' || value.type === 'stack' || value.type === 'divider' || value.type === 'sandbox-app') return `Compact surfaces do not support ${value.type}`
   if (value.type === 'text' && value.text.length > 512) return 'Compact surface text is too long'
   if (value.type === 'row') {
@@ -251,7 +309,7 @@ export function validateExtensionContributionV1(value: unknown): string | null {
   if (item.order !== undefined && (!Number.isInteger(item.order) || Number(item.order) < -10000 || Number(item.order) > 10000)) return 'order must be a bounded integer'
   if (item.group !== undefined && !boundedString(item.group, 128)) return 'group must be a bounded string'
   if (item.collapse !== undefined && !['never', 'auto', 'always'].includes(String(item.collapse))) return 'Unsupported collapse policy'
-  if (item.overflow !== undefined && !['menu', 'collapse', 'hide'].includes(String(item.overflow))) return 'Unsupported overflow policy'
+  if (item.overflow !== undefined && !['menu', 'collapse', 'scroll', 'hide'].includes(String(item.overflow))) return 'Unsupported overflow policy'
   if (item.exclusive !== undefined && typeof item.exclusive !== 'boolean') return 'exclusive must be boolean'
   const surface = String(item.surface)
   if (surface === 'workspace.content' && item.workspaceContent === undefined) return 'workspace.content requires workspaceContent metadata'
@@ -281,12 +339,13 @@ export function validateExtensionContributionV1(value: unknown): string | null {
   if (surface === 'conversation.artifact.aside' && !boundedString(item.title, 256)) return 'artifact aside contributions require title'
   const nodeError = validateNode(item.content)
   if (nodeError) return nodeError
+  if (item.overflow === 'scroll' && ['composer.toolbar', 'composer.status', 'window.topLeft', 'window.topRight', 'navigation.item', 'session.badge'].includes(surface)) return 'Compact surfaces do not support scroll overflow'
   if (['composer.toolbar', 'composer.status', 'window.topLeft', 'window.topRight', 'navigation.item', 'session.badge'].includes(surface)) {
     return validateCompactSurfaceNode(item.content as ExtensionUINode)
   }
   const sandboxSurfaces = new Set(['conversation.timeline.before', 'conversation.timeline.after', 'conversation.turn.before', 'conversation.turn.after', 'conversation.turn.replace', 'conversation.message.before', 'conversation.message.after', 'conversation.message.replace', 'conversation.tool.before', 'conversation.tool.after', 'conversation.tool.replace', 'conversation.inline', 'conversation.overlay', 'composer.above', 'composer.below', 'composer.replace', 'sidebar.section', 'workspace.content'])
   const content = item.content as ExtensionUINode
-  if ((content.type === 'row' || content.type === 'stack') && containsSandboxNode(content)) return 'Sandbox apps must be the top-level contribution node'
+  if (content.type !== 'sandbox-app' && containsSandboxNode(content)) return 'Sandbox apps must be the top-level contribution node'
   if (content.type === 'sandbox-app' && !sandboxSurfaces.has(surface)) return 'Sandbox apps are not allowed on this surface'
   if (item.target !== undefined && !surface.startsWith('conversation.message.') && !surface.startsWith('conversation.tool.') && !surface.startsWith('conversation.turn.') && !surface.startsWith('conversation.artifact.')) return 'This surface does not accept a target'
   return null

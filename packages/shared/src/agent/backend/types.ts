@@ -135,8 +135,6 @@ export type ExtensionBridgeEvent = {
   | ExtensionInteractionBridgeCancelV1
   | ExtensionInteractionBridgeSettledV1
   | { type: 'extension_command_registered'; name: string; description?: string; source: string }
-  | { type: 'extension_set_title'; title: string }
-  | { type: 'extension_set_editor_text'; text: string }
 );
 
 export interface PiExtensionCommand {
@@ -422,7 +420,7 @@ export interface AgentBackend {
    *
    * Each backend decides its own strategy:
    * - Backends with native steering (e.g., Pi) inject the message into the
-   *   current stream and return true — events continue through the existing
+   *   current stream and resolve true — events continue through the existing
    *   generator, no abort needed.
    * - Backends without steering call forceAbort(Redirect) internally and
    *   return false — the session layer queues the message for re-send.
@@ -431,7 +429,7 @@ export interface AgentBackend {
    * @returns true if steered (events flow through existing stream),
    *          false if aborted (session layer must queue + re-send)
    */
-  redirect(message: string, clientMutationId?: string): boolean;
+  redirect(message: string, clientMutationId?: string): Promise<boolean>;
 
   /**
    * Queue a native follow-up inside the current logical agent run.
@@ -618,6 +616,9 @@ export interface AgentBackend {
    * args 为 JSON 字符串。
    */
   sendExtensionCommandInvoke?(commandId: string, args?: string, ownerExtensionId?: string): Promise<ExtensionCommandResult>;
+
+  /** Reload extension code in an already-open Pi runtime. */
+  reloadExtensions?(): Promise<{ reloaded: boolean; deferred: boolean }>;
 
   /** Inspect the effective prompt and tool registry for settings UI. */
   getAgentProfile?(): Promise<AgentRuntimeProfile>;

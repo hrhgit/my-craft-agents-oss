@@ -5,7 +5,22 @@ import type { BackendConfig } from '../backend/types.ts'
 function createAgent(onExtensionEvent?: BackendConfig['onExtensionEvent']) {
   const agent = new PiAgent({
     provider: 'pi',
-    workspace: { id: 'ws-test', name: 'Test Workspace', rootPath: '/tmp/mortise-test' } as any,
+    workspace: {
+      schemaVersion: 2,
+      id: 'ws-test',
+      revision: 0,
+      primaryLocationId: 'primary',
+      locations: [{
+        id: 'primary',
+        name: 'Primary',
+        rootName: 'mortise-test',
+        endpoint: { kind: 'local', rootPath: '/tmp/mortise-test' },
+      }],
+      name: 'Test Workspace',
+      nameSource: 'custom',
+      slug: 'test-workspace',
+      createdAt: 0,
+    } as BackendConfig['workspace'],
     session: { mortiseId: 'session-test', workspaceRootPath: '/tmp/mortise-test', createdAt: 0, lastUsedAt: 0 } as any,
     isHeadless: true,
     onExtensionEvent,
@@ -33,6 +48,7 @@ describe('PiAgent extension interaction bridge', () => {
       method: 'interact',
       request: {
         schemaVersion: 1,
+        presentation: { mode: 'wizard', allowSkip: true, autoAdvanceSingleChoice: true },
         fields: [{
           id: 'targets',
           kind: 'choice',
@@ -48,6 +64,9 @@ describe('PiAgent extension interaction bridge', () => {
       requestId: 'interaction-1',
       extensionId: 'ask-user',
       runtimeId: 'runtime-1',
+      request: {
+        presentation: { mode: 'wizard', allowSkip: true, autoAdvanceSingleChoice: true },
+      },
     })
     agent.respondToExtensionInteraction('interaction-1', {
       schemaVersion: 1,

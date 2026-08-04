@@ -146,6 +146,11 @@ export interface ExtensionInteractionRequestV1 {
 	fields: ExtensionInteractionFieldV1[];
 	submitLabel?: string;
 	cancelLabel?: string;
+	presentation?: {
+		mode: "wizard";
+		allowSkip?: boolean;
+		autoAdvanceSingleChoice?: boolean;
+	};
 }
 
 export type ExtensionInteractionAnswerV1 =
@@ -203,8 +208,10 @@ export type ExtensionUIIconName =
 	| "chevron-right"
 	| "circle"
 	| "clock"
+	| "compass"
 	| "info"
 	| "loader"
+	| "repeat"
 	| "settings"
 	| "sparkles"
 	| "x";
@@ -216,6 +223,17 @@ export type ExtensionUIAction = {
 };
 
 export type ExtensionUIButtonEmphasis = "primary" | "secondary" | "quiet";
+export interface ExtensionUIMenuOptionV1 {
+	id: string;
+	label: string;
+	description?: string;
+	icon?: ExtensionUIIconName;
+	tone?: "default" | "muted" | "info" | "success" | "warning" | "danger" | "accent";
+	action: ExtensionUIAction;
+	selected?: boolean;
+	disabled?: boolean;
+	disabledReason?: string;
+}
 export type ExtensionUIStepStatus = "pending" | "in_progress" | "completed" | "failed" | "skipped";
 export interface ExtensionUIStepV1 {
 	id: string;
@@ -235,7 +253,7 @@ export interface ExtensionWorkspaceContentMetadataV1 {
 	preferredGroup?: ExtensionWorkspaceContentPreferredGroup;
 }
 
-export type ExtensionUINode =
+export type ExtensionUINode = ({ semanticId?: string } & (
 	| { type: "text"; text: string; tone?: "default" | "muted" | "success" | "warning" | "danger" }
 	| { type: "markdown"; markdown: string }
 	| { type: "icon"; name: ExtensionUIIconName; label: string }
@@ -250,7 +268,9 @@ export type ExtensionUINode =
 			disabledReason?: string;
 			emphasis?: ExtensionUIButtonEmphasis;
 	  }
+	| { type: "menu"; label: string; icon?: ExtensionUIIconName; tone?: "default" | "info" | "accent"; options: ExtensionUIMenuOptionV1[] }
 	| { type: "step-progress"; label: string; steps: ExtensionUIStepV1[] }
+	| { type: "responsive"; full: ExtensionUINode; compact?: ExtensionUINode; minimal?: ExtensionUINode }
 	| {
 			type: "sandbox-app";
 			appId: string;
@@ -265,7 +285,8 @@ export type ExtensionUINode =
 			/** `validation` is a source-development capability and is rejected by hosts that do not advertise it. */
 			permissions?: Array<"commands" | "theme" | "storage" | "resize" | "validation">;
 	  }
-	| { type: "row" | "stack"; children: ExtensionUINode[]; gap?: "none" | "small" | "medium" };
+	| { type: "row" | "stack"; children: ExtensionUINode[]; gap?: "none" | "small" | "medium" }
+));
 
 export interface ExtensionUIContribution {
 	schemaVersion: 1;
@@ -277,7 +298,7 @@ export interface ExtensionUIContribution {
 	order?: number;
 	group?: string;
 	collapse?: "never" | "auto" | "always";
-	overflow?: "menu" | "collapse" | "hide";
+	overflow?: "menu" | "collapse" | "scroll" | "hide";
 	exclusive?: boolean;
 	target?: { turnId?: string; messageId?: string; toolCallId?: string; artifactId?: string };
 	workspaceContent?: ExtensionWorkspaceContentMetadataV1;
@@ -1217,6 +1238,7 @@ export interface ExtensionEnvironment {
 	id: string;
 	sourcePath: string;
 	dataDir: string;
+	config: Readonly<Record<string, unknown>>;
 }
 
 /**
@@ -1564,6 +1586,7 @@ export interface ExtensionSettingsSchemaV1 {
 	schemaVersion: 1;
 	groups?: Array<{ id: string; title: string; description?: string }>;
 	fields: ExtensionSettingFieldV1[];
+	page?: { id: string; title: string; description?: string; icon?: string; order?: number };
 }
 export interface ExtensionManifestUIV1 {
 	schemaVersion: 1;

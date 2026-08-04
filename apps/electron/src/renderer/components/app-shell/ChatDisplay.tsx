@@ -88,6 +88,7 @@ import {
   preserveChatSearchMatchIndex,
 } from "./chat-search-model"
 import { useWorkspaceElectronApi } from "@/context/WorkspaceElectronApiContext"
+import { appendRestoredInput } from '@/lib/input-text'
 import {
   parseUnacceptedSessionFailure,
   snapshotComposerSubmission,
@@ -543,6 +544,14 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
     () => activeSessionId ? buildPiTurns(projectionEntities, projectionOverlay) : [],
     [activeSessionId, projectionEntities, projectionOverlay],
   )
+  const queuedUserTurns = React.useMemo(
+    () => allTurns.filter((turn): turn is Extract<Turn, { type: 'user' }> => turn.type === 'user' && turn.message.isQueued === true),
+    [allTurns],
+  )
+  const transcriptTurns = React.useMemo(
+    () => allTurns.filter(turn => turn.type !== 'user' || turn.message.isQueued !== true),
+    [allTurns],
+  )
 
   // Panel focus state (for multi-panel auto-scroll behavior)
   const appShellContext = useAppShellContext()
@@ -574,8 +583,10 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
   const [sendMessageKey, setSendMessageKey] = useState<'enter' | 'cmd-enter'>('enter')
   const [submissionFailure, setSubmissionFailure] = useState<FailedComposerSubmission | null>(null)
   const [settlementRetrying, setSettlementRetrying] = useState(false)
+  const [editingQueuedMessageId, setEditingQueuedMessageId] = useState<string | null>(null)
   useEffect(() => setSubmissionFailure(null), [session?.id])
   useEffect(() => setSettlementRetrying(false), [session?.id, session?.pendingFailure])
+  useEffect(() => setEditingQueuedMessageId(null), [session?.id])
   const [openAnnotationRequest, setOpenAnnotationRequest] = React.useState<{
     messageId: string
     annotationId: string
@@ -738,7 +749,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
     setIsSearchLoading(true)
 
     void (async () => {
-      const reconciled = await chatSearchIndex.reconcileAsync(allTurns, {
+      const reconciled = await chatSearchIndex.reconcileAsync(transcriptTurns, {
         signal: abortController.signal,
       })
       if (!reconciled || abortController.signal.aborted || lifecycle !== searchLifecycleRef.current) return
@@ -774,7 +785,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
     })
 
     return () => abortController.abort()
-  }, [allTurns, chatSearchIndex, chatSearchPager, isSearchActive, searchQuery])
+  }, [transcriptTurns, chatSearchIndex, chatSearchPager, isSearchActive, searchQuery])
 
   const validMatches = searchResults.query === searchQuery ? searchResults.matches : []
   const matchingTurnIds = useMemo(() => new Set(validMatches.map(match => match.turnId)), [validMatches])
@@ -817,7 +828,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
     if (validMatches.length > 0 && currentMatchIndex < validMatches.length) {
       const matchData = validMatches[currentMatchIndex]
       const { turnId } = matchData
-      const matchedTurn = allTurns[matchData.turnOrder]
+      const matchedTurn = transcriptTurns[matchData.turnOrder]
       const expectsTurnCardTarget = matchedTurn?.type === 'assistant'
         && matchData.target.type !== 'attachment'
       const targetElement = activeSearchTargetElementRef.current
@@ -837,7 +848,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
       // final exact-target scrolling; other Turn kinds settle at the wrapper.
       if (!expectsTurnCardTarget) shouldScrollToMatchRef.current = false
     }
-  }, [allTurns, validMatches, currentMatchIndex, session?.id])
+  }, [transcriptTurns, validMatches, currentMatchIndex, session?.id])
 
   // Highlight only the active turn. Search windowing keeps this DOM walk bounded,
   // while the logical index remains authoritative for navigation and match counts.
@@ -1071,8 +1082,8 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
   const totalTurnCountRef = React.useRef(0)
 
   // Latest projected turn metadata (for commit-time auto-scroll)
-  const messageCount = allTurns.length
-  const lastTurn = allTurns.at(-1)
+  const messageCount = transcriptTurns.length
+  const lastTurn = transcriptTurns.at(-1)
   const lastMessageId = lastTurn
     ? lastTurn.type === 'assistant'
       ? lastTurn.response?.messageId ?? getTurnKey(lastTurn)
@@ -1084,7 +1095,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
     const pending: PendingFollowUpAnnotation[] = []
     const seen = new Set<string>()
 
-    for (const turn of allTurns) {
+    for (const turn of transcriptTurns) {
       if (turn.type !== 'assistant') continue
       const targets = [
         ...(turn.response?.messageId ? [{
@@ -1120,7 +1131,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
     }
 
     return pending.sort((a, b) => a.createdAt - b.createdAt)
-  }, [allTurns])
+  }, [transcriptTurns])
 
   const followUpInputItems = useMemo(() => {
     return pendingFollowUpAnnotations.map((followUp, idx) => ({
@@ -1138,13 +1149,17 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
   // - User scrolls up → unstick (stop auto-scrolling)
   // - User scrolls back to bottom → re-stick (resume auto-scrolling)
   // Also handles loading more turns when scrolling near top
+  const lastScrollTopRef = React.useRef(0)
   const handleScroll = React.useCallback(() => {
     const viewport = scrollViewportRef.current
     if (!viewport) return
     const { scrollTop, scrollHeight, clientHeight } = viewport
     const distanceFromBottom = scrollHeight - scrollTop - clientHeight
-    // 20px threshold for "at bottom" detection
-    isStickToBottomRef.current = distanceFromBottom < 20
+    const isScrollingUp = scrollTop < lastScrollTopRef.current - 1
+    lastScrollTopRef.current = scrollTop
+    // Any deliberate upward movement pauses following immediately. Scrolling
+    // back to the bottom resumes it without requiring another control.
+    isStickToBottomRef.current = !isScrollingUp && distanceFromBottom < 20
 
     // Load more turns when scrolling near top (within 100px)
     if (scrollTop < 100) {
@@ -1187,6 +1202,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
     // On session switch: reset UI state (scroll handled by ScrollOnMount)
     if (isSessionSwitch) {
       isStickToBottomRef.current = true
+      lastScrollTopRef.current = viewport.scrollTop
       setVisibleTurnCount(TURNS_PER_PAGE)
     }
 
@@ -1194,21 +1210,18 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
     let debounceTimer: ReturnType<typeof setTimeout> | null = null
 
     const resizeObserver = new ResizeObserver(() => {
-      // Unfocused panels: always scroll to bottom instantly (user isn't reading them)
-      if (!isFocusedPanelRef.current) {
-        messagesEndRef.current?.scrollIntoView({ behavior: 'instant' })
-        return
-      }
-
-      // Focused panel: respect sticky-bottom preference
       if (!isStickToBottomRef.current) return
 
       // Clear pending scroll and wait for layout to settle
       if (debounceTimer) clearTimeout(debounceTimer)
       debounceTimer = setTimeout(() => {
+        // The user may have scrolled up while this delayed follow was queued.
+        if (!isStickToBottomRef.current) return
         // Skip smooth scroll if we just did an instant scroll (session switch/lazy load)
         if (Date.now() < skipSmoothScrollUntilRef.current) return
-        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+        messagesEndRef.current?.scrollIntoView({
+          behavior: isFocusedPanelRef.current ? 'smooth' : 'instant',
+        })
       }, 200)
     })
 
@@ -1379,6 +1392,153 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
     })
   }
 
+  const handleEditQueuedMessage = React.useCallback(async (messageId: string) => {
+    if (!session || editingQueuedMessageId) return
+    const queuedTurn = queuedUserTurns.find(turn => turn.message.id === messageId)
+    if (!queuedTurn) return
+
+    setEditingQueuedMessageId(messageId)
+    try {
+      if (appShellContext.withdrawQueuedMessage) {
+        await appShellContext.withdrawQueuedMessage(session.id, messageId)
+      } else {
+        await electronApi.sessionCommand(session.id, { type: 'withdrawQueuedMessage', messageId })
+      }
+      const restoredText = appendRestoredInput(inputValue, queuedTurn.message.content)
+      const restoredAttachments = queuedTurn.message.attachments?.map(attachment => ({
+        type: attachment.type,
+        path: attachment.storedPath,
+        storedPath: attachment.storedPath,
+        name: attachment.name,
+        mimeType: attachment.mimeType,
+        size: attachment.size,
+        markdownPath: attachment.markdownPath,
+        thumbnailBase64: attachment.thumbnailBase64,
+      } satisfies FileAttachment)) ?? []
+      const currentAttachments = attachmentsValue ?? []
+      const knownPaths = new Set(currentAttachments.map(attachment => attachment.storedPath ?? attachment.path))
+      const nextAttachments = [
+        ...currentAttachments,
+        ...restoredAttachments.filter(attachment => !knownPaths.has(attachment.storedPath ?? attachment.path)),
+      ]
+
+      onInputChange?.(restoredText)
+      if (restoredAttachments.length > 0) onAttachmentsChange?.(nextAttachments)
+      window.dispatchEvent(new CustomEvent('mortise:restore-input', {
+        detail: { sessionId: session.id, text: restoredText },
+      }))
+      requestAnimationFrame(() => textareaRef.current?.focus())
+    } catch (error) {
+      toast.error(t('toast.cannotSendRightNow'), {
+        description: error instanceof Error ? error.message : 'The queued message could not be edited.',
+      })
+    } finally {
+      setEditingQueuedMessageId(null)
+    }
+  }, [
+    attachmentsValue,
+    appShellContext,
+    editingQueuedMessageId,
+    electronApi,
+    inputValue,
+    onAttachmentsChange,
+    onInputChange,
+    queuedUserTurns,
+    session,
+    t,
+    textareaRef,
+  ])
+
+  const handleDeleteQueuedMessage = React.useCallback(async (messageId: string) => {
+    if (!session || editingQueuedMessageId) return
+    if (!queuedUserTurns.some(turn => turn.message.id === messageId)) return
+
+    setEditingQueuedMessageId(messageId)
+    try {
+      if (appShellContext.withdrawQueuedMessage) {
+        await appShellContext.withdrawQueuedMessage(session.id, messageId)
+      } else {
+        await electronApi.sessionCommand(session.id, { type: 'withdrawQueuedMessage', messageId })
+      }
+    } catch (error) {
+      toast.error(t('toast.cannotSendRightNow'), {
+        description: error instanceof Error ? error.message : 'The queued message could not be deleted.',
+      })
+    } finally {
+      setEditingQueuedMessageId(null)
+    }
+  }, [appShellContext, editingQueuedMessageId, electronApi, queuedUserTurns, session, t])
+
+  const handleSteerQueuedMessage = React.useCallback(async (messageId: string) => {
+    if (!session || editingQueuedMessageId) return
+    const queuedTurn = queuedUserTurns.find(turn => turn.message.id === messageId)
+    if (!queuedTurn) return
+
+    const restoredAttachments = queuedTurn.message.attachments?.map(attachment => ({
+      type: attachment.type,
+      path: attachment.storedPath,
+      storedPath: attachment.storedPath,
+      name: attachment.name,
+      mimeType: attachment.mimeType,
+      size: attachment.size,
+      markdownPath: attachment.markdownPath,
+      thumbnailBase64: attachment.thumbnailBase64,
+    } satisfies FileAttachment)) ?? []
+    let withdrawn = false
+    setEditingQueuedMessageId(messageId)
+    try {
+      if (appShellContext.withdrawQueuedMessage) {
+        await appShellContext.withdrawQueuedMessage(session.id, messageId)
+      } else {
+        await electronApi.sessionCommand(session.id, { type: 'withdrawQueuedMessage', messageId })
+      }
+      withdrawn = true
+      const midStreamBehavior = await electronApi.getMidStreamBehavior()
+      const accepted = await onSendMessage(snapshotComposerSubmission({
+        composerText: queuedTurn.message.content,
+        message: queuedTurn.message.content.trim(),
+        attachments: restoredAttachments,
+        // Force steer regardless of the user's default follow-up behavior.
+        midStreamSendIntent: midStreamBehavior === 'steer' ? 'default' : 'alternate',
+      }))
+      if (!accepted) throw new Error('The queued message could not be guided.')
+    } catch (error) {
+      if (withdrawn) {
+        const restoredText = appendRestoredInput(inputValue, queuedTurn.message.content)
+        const currentAttachments = attachmentsValue ?? []
+        const knownPaths = new Set(currentAttachments.map(attachment => attachment.storedPath ?? attachment.path))
+        const nextAttachments = [
+          ...currentAttachments,
+          ...restoredAttachments.filter(attachment => !knownPaths.has(attachment.storedPath ?? attachment.path)),
+        ]
+        onInputChange?.(restoredText)
+        if (restoredAttachments.length > 0) onAttachmentsChange?.(nextAttachments)
+        window.dispatchEvent(new CustomEvent('mortise:restore-input', {
+          detail: { sessionId: session.id, text: restoredText },
+        }))
+        requestAnimationFrame(() => textareaRef.current?.focus())
+      }
+      toast.error(t('toast.cannotSendRightNow'), {
+        description: error instanceof Error ? error.message : 'The queued message could not be guided.',
+      })
+    } finally {
+      setEditingQueuedMessageId(null)
+    }
+  }, [
+    appShellContext,
+    attachmentsValue,
+    editingQueuedMessageId,
+    electronApi,
+    inputValue,
+    onAttachmentsChange,
+    onInputChange,
+    onSendMessage,
+    queuedUserTurns,
+    session,
+    t,
+    textareaRef,
+  ])
+
   // Per-frame scroll compensation during input height animation
   // Only compensate when user is "stuck to bottom" - otherwise let them control their scroll position
   const handleAnimatedHeightChange = React.useCallback((delta: number) => {
@@ -1436,25 +1596,25 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
   }, [effectivePendingPermission])
 
   // Keep ref in sync for scroll handler
-  totalTurnCountRef.current = allTurns.length
+  totalTurnCountRef.current = transcriptTurns.length
 
   // Reverse pagination: only render last N turns for fast initial render
-  const defaultStartIndex = Math.max(0, allTurns.length - visibleTurnCount)
+  const defaultStartIndex = Math.max(0, transcriptTurns.length - visibleTurnCount)
   const renderedSearchMatch = isSearchActive ? activeSearchMatch : undefined
-  const searchWindow = getChatSearchWindow(allTurns, renderedSearchMatch)
+  const searchWindow = getChatSearchWindow(transcriptTurns, renderedSearchMatch)
   const startIndex = renderedSearchMatch ? searchWindow.startIndex : defaultStartIndex
-  const turns = renderedSearchMatch ? searchWindow.turns : allTurns.slice(defaultStartIndex)
+  const turns = renderedSearchMatch ? searchWindow.turns : transcriptTurns.slice(defaultStartIndex)
   const hasMoreAbove = !renderedSearchMatch && startIndex > 0
 
   const assistantTurnIndexByMessageId = useMemo(() => {
     const map = new Map<string, number>()
-    allTurns.forEach((turn, index) => {
+    transcriptTurns.forEach((turn, index) => {
       if (turn.type !== 'assistant') return
       const messageId = turn.response?.messageId
       if (messageId) map.set(messageId, index)
     })
     return map
-  }, [allTurns])
+  }, [transcriptTurns])
 
   const scrollToFollowUpTurn = useCallback((item: {
     messageId: string
@@ -1463,10 +1623,10 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
     const targetTurnIndex = assistantTurnIndexByMessageId.get(item.messageId)
     if (targetTurnIndex == null) return
 
-    const ensureVisibleCount = allTurns.length - targetTurnIndex
+    const ensureVisibleCount = transcriptTurns.length - targetTurnIndex
 
     const scrollToTurn = () => {
-      const targetTurn = allTurns[targetTurnIndex]
+      const targetTurn = transcriptTurns[targetTurnIndex]
       if (!targetTurn) return false
 
       const turnKey = getTurnKey(targetTurn)
@@ -1496,7 +1656,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
         void scrollToTurn()
       })
     }
-  }, [assistantTurnIndexByMessageId, allTurns, visibleTurnCount])
+  }, [assistantTurnIndexByMessageId, transcriptTurns, visibleTurnCount])
 
   const handleFollowUpChipClick = useCallback((item: {
     messageId: string
@@ -1504,7 +1664,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
   }, anchor?: { x: number; y: number }) => {
     const targetTurnIndex = assistantTurnIndexByMessageId.get(item.messageId)
     if (targetTurnIndex != null) {
-      const ensureVisibleCount = allTurns.length - targetTurnIndex
+      const ensureVisibleCount = transcriptTurns.length - targetTurnIndex
       if (ensureVisibleCount > visibleTurnCount) {
         setVisibleTurnCount(ensureVisibleCount)
       }
@@ -1519,7 +1679,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
       anchorY: anchor?.y,
       nonce: followUpOpenNonceRef.current,
     })
-  }, [assistantTurnIndexByMessageId, allTurns, visibleTurnCount])
+  }, [assistantTurnIndexByMessageId, transcriptTurns, visibleTurnCount])
 
   const handleFollowUpIndexClick = useCallback((item: {
     messageId: string
@@ -1721,7 +1881,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                             onOpenUrl={onOpenUrl}
                             sessionId={session?.id}
                             onRetry={turn.message.role === 'error' ? () => {
-                              const lastUserTurn = allTurns.slice(0, startIndex + index).findLast(candidate => candidate.type === 'user')
+                              const lastUserTurn = transcriptTurns.slice(0, startIndex + index).findLast(candidate => candidate.type === 'user')
                               if (lastUserTurn?.type === 'user') {
                                 void deliverSubmission(snapshotComposerSubmission({
                                   composerText: lastUserTurn.message.content,
@@ -1989,7 +2149,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                 {/* Processing Indicator - always visible while processing */}
                 {effectiveIsProcessing && !session.pendingFailure && (() => {
                   // Find the last user message timestamp for accurate elapsed time
-                  const lastUserTurn = [...allTurns].reverse().find(turn => turn.type === 'user')
+                  const lastUserTurn = [...transcriptTurns].reverse().find(turn => turn.type === 'user')
                   return (
                     <ProcessingIndicator
                       startTime={lastUserTurn?.timestamp}
@@ -2073,7 +2233,6 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                 )}
               </div>
             )}
-            <ExtensionContributionZone sessionId={session.id} surface="composer.toolbar" />
             <ExtensionContributionZone sessionId={session.id} surface="composer.above" />
           </div>
 
@@ -2086,9 +2245,16 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
             tasks={backgroundTasks}
             sessionId={session.id}
             readOnly={session.readOnly}
-            sessionFolderPath={sessionFolderPath}
             onKillTask={(taskId) => killTask(taskId, backgroundTasks.find(t => t.id === taskId)?.type ?? 'shell')}
             onInsertMessage={onInputChange}
+            queuedMessages={queuedUserTurns.map(turn => ({
+              id: turn.message.id,
+              content: turn.message.content,
+            }))}
+            pendingQueuedMessageId={editingQueuedMessageId}
+            onSteerQueuedMessage={handleSteerQueuedMessage}
+            onDeleteQueuedMessage={handleDeleteQueuedMessage}
+            onEditQueuedMessage={handleEditQueuedMessage}
             inputProps={{
               placeholder,
               disabled: isInputDisabled || session.readOnly || !!session.pendingFailure,
@@ -2114,7 +2280,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
               workspaceRoot,
               disableSend: disableSend || providerUnavailable,
               providerUnavailable,
-              isEmptySession: allTurns.length === 0,
+              isEmptySession: transcriptTurns.length === 0,
               currentProvider: session.provider,
               onProviderChange,
               contextStatus: {

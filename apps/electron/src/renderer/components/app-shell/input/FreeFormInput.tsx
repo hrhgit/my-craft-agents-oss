@@ -80,8 +80,10 @@ import {
   snapshotComposerSubmission,
   type ComposerSubmissionAttempt,
 } from './composer-submission'
-import { CompactPermissionModeSelector } from './CompactPermissionModeSelector'
 import { CompactModelSelector } from './CompactModelSelector'
+import { ExtensionContributionZone } from '@/components/extensions/ExtensionContributionZone'
+import { BasicComposerTextarea, InputControlFallback } from './DegradedComposer'
+import { InputErrorBoundary, IsolatedInputSection } from './InputErrorBoundary'
 import {
   formatTokenCount,
   groupProviders,
@@ -345,9 +347,6 @@ export function FreeFormInput({
   onModelChange,
   thinkingLevel = 'medium',
   onThinkingLevelChange,
-  permissionMode = 'ask',
-  onPermissionModeChange,
-  enabledModes = ['safe', 'ask', 'allow-all'],
   inputValue,
   onInputChange,
   attachmentsValue,
@@ -1443,19 +1442,37 @@ export function FreeFormInput({
             where the renderer can both detect text-only models and offer to
             flip the per-model supportsImages override on the spot. */}
         {showVisionWarning && effectiveProviderDetails && (
-          <ImageSupportWarningBanner
-            modelName={currentModelDisplayName}
-            onEnable={() => handleToggleModelVision(effectiveProviderDetails.key, currentModel, true)}
-          />
+          <InputErrorBoundary
+            sessionId={sessionId}
+            resetKey={`${sessionId ?? semanticScopeId ?? 'composer'}::image-warning`}
+            section="image-warning"
+            fallback={null}
+          >
+            <ImageSupportWarningBanner
+              modelName={currentModelDisplayName}
+              onEnable={() => handleToggleModelVision(effectiveProviderDetails.key, currentModel, true)}
+            />
+          </InputErrorBoundary>
         )}
 
         {/* Attachment Preview */}
-        <AttachmentPreview
-          attachments={attachments}
-          onRemove={handleRemoveAttachment}
-          disabled={disabled}
-          loadingCount={loadingCount}
-        />
+        <InputErrorBoundary
+          sessionId={sessionId}
+          resetKey={`${sessionId ?? semanticScopeId ?? 'composer'}::attachments`}
+          section="attachments"
+          fallback={({ retry }) => (
+            <div className="flex justify-end px-2 pt-2">
+              <InputControlFallback onRetry={retry} />
+            </div>
+          )}
+        >
+          <AttachmentPreview
+            attachments={attachments}
+            onRemove={handleRemoveAttachment}
+            disabled={disabled}
+            loadingCount={loadingCount}
+          />
+        </InputErrorBoundary>
 
         {/* Follow-up context chips */}
         <AnimatePresence initial={false}>
@@ -1545,41 +1562,73 @@ export function FreeFormInput({
         {/* In compact mode, hide input while the agent is processing — until the
             user clicks / hovers the collapsed bar to expand it back. */}
         {!isCollapsedInCompact && (
-        <RichTextInput
-          {...inputSemanticProps}
-          data-mortise-ui-interactions="shortcut clipboard ime rich-text"
-          ref={richInputRef}
-          value={input}
-          onChange={handleInputChange}
-          onInput={handleRichInput}
-          onKeyDown={handleKeyDown}
-          onPaste={handlePaste}
-          onLongTextPaste={handleLongTextPaste}
-          onFocus={() => { setIsFocused(true); onFocusChange?.(true) }}
-          onBlur={() => {
-            // Save caret position before losing focus (for restoration via mortise:focus-input)
-            lastCaretPositionRef.current = richInputRef.current?.selectionStart ?? null
-            setIsFocused(false)
-            onFocusChange?.(false)
-          }}
-          placeholder={effectivePlaceholder}
-          disabled={disabled}
-          skills={skills}
-          workspaceId={workspaceSlug}
-          className="pl-5 pr-4 pt-4 pb-3 overflow-y-auto min-h-[88px]"
-          style={{ maxHeight: inputMaxHeight }}
-          data-tutorial="chat-input"
-          spellCheck={spellCheck}
-        />
+          <InputErrorBoundary
+            sessionId={sessionId}
+            resetKey={`${sessionId ?? semanticScopeId ?? 'composer'}::rich-text`}
+            section="rich-text"
+            fallback={({ retry }) => (
+              <BasicComposerTextarea
+                ref={richInputRef}
+                value={input}
+                onValueChange={handleInputChange}
+                onSubmit={() => submitMessage()}
+                onPaste={event => { void handlePaste(event) }}
+                onFocus={() => { setIsFocused(true); onFocusChange?.(true) }}
+                onBlur={() => {
+                  lastCaretPositionRef.current = richInputRef.current?.selectionStart ?? null
+                  setIsFocused(false)
+                  onFocusChange?.(false)
+                }}
+                placeholder={Array.isArray(effectivePlaceholder) ? effectivePlaceholder[0] : effectivePlaceholder}
+                disabled={disabled}
+                maxHeight={inputMaxHeight}
+                onRetry={retry}
+              />
+            )}
+          >
+            <RichTextInput
+              {...inputSemanticProps}
+              data-mortise-ui-interactions="shortcut clipboard ime rich-text"
+              ref={richInputRef}
+              value={input}
+              onChange={handleInputChange}
+              onInput={handleRichInput}
+              onKeyDown={handleKeyDown}
+              onPaste={handlePaste}
+              onLongTextPaste={handleLongTextPaste}
+              onFocus={() => { setIsFocused(true); onFocusChange?.(true) }}
+              onBlur={() => {
+                // Save caret position before losing focus (for restoration via mortise:focus-input)
+                lastCaretPositionRef.current = richInputRef.current?.selectionStart ?? null
+                setIsFocused(false)
+                onFocusChange?.(false)
+              }}
+              placeholder={effectivePlaceholder}
+              disabled={disabled}
+              skills={skills}
+              workspaceId={workspaceSlug}
+              className="pl-5 pr-4 pt-4 pb-3 overflow-y-auto min-h-[88px]"
+              style={{ maxHeight: inputMaxHeight }}
+              data-tutorial="chat-input"
+              spellCheck={spellCheck}
+            />
+          </InputErrorBoundary>
         )}
 
         {/* Bottom Row: Controls - wrapped in relative container for status slot overlay */}
         <div className="relative">
           {/* Status slot overlay - escape interrupt (highest priority), browser status, etc. */}
-          <ToolbarStatusSlot
-            showEscapeOverlay={isProcessing && showEscapeOverlay}
+          <InputErrorBoundary
             sessionId={sessionId}
-          />
+            resetKey={`${sessionId ?? semanticScopeId ?? 'composer'}::toolbar-status`}
+            section="toolbar-status"
+            fallback={null}
+          >
+            <ToolbarStatusSlot
+              showEscapeOverlay={isProcessing && showEscapeOverlay}
+              sessionId={sessionId}
+            />
+          </InputErrorBoundary>
 
           <div className={cn("flex items-center gap-1 px-2 py-2", !compactMode && "border-t border-border/50")}>
           {/* Hidden file input for attach button (shared by compact and desktop) */}
@@ -1610,24 +1659,26 @@ export function FreeFormInput({
             tooltip={t("chat.attachFilesTooltip")}
             disabled={disabled}
           />
-          {onPermissionModeChange && (
-            <CompactPermissionModeSelector
-              permissionMode={permissionMode}
-              onPermissionModeChange={onPermissionModeChange}
-            />
-          )}
+          {sessionId && <ExtensionContributionZone className="w-auto shrink-0" sessionId={sessionId} surface="composer.toolbar" />}
           {enableCompactModelPicker && (
-            <CompactModelSelector
-              currentModel={currentModel}
-              currentProvider={currentProvider}
-              onModelChange={onModelChange}
-              onProviderChange={onProviderChange}
-              thinkingLevel={thinkingLevel}
-              onThinkingLevelChange={onThinkingLevelChange}
-              isEmptySession={isEmptySession}
-              providerUnavailable={providerUnavailable}
-              contextStatus={contextStatus}
-            />
+            <InputErrorBoundary
+              sessionId={sessionId}
+              resetKey={`${sessionId ?? semanticScopeId ?? 'composer'}::compact-model`}
+              section="compact-model"
+              fallback={({ retry }) => <InputControlFallback onRetry={retry} />}
+            >
+              <CompactModelSelector
+                currentModel={currentModel}
+                currentProvider={currentProvider}
+                onModelChange={onModelChange}
+                onProviderChange={onProviderChange}
+                thinkingLevel={thinkingLevel}
+                onThinkingLevelChange={onThinkingLevelChange}
+                isEmptySession={isEmptySession}
+                providerUnavailable={providerUnavailable}
+                contextStatus={contextStatus}
+              />
+            </InputErrorBoundary>
           )}
           </div>
           )}
@@ -1649,14 +1700,7 @@ export function FreeFormInput({
             tooltip={t("chat.attachFilesTooltip")}
             disabled={disabled}
           />
-
-          {/* 2. Permission Mode Selector */}
-          {onPermissionModeChange && (
-            <CompactPermissionModeSelector
-              permissionMode={permissionMode}
-              onPermissionModeChange={onPermissionModeChange}
-            />
-          )}
+          {sessionId && <ExtensionContributionZone className="w-auto shrink-0" sessionId={sessionId} surface="composer.toolbar" />}
 
           </div>
           )}
@@ -1682,13 +1726,27 @@ export function FreeFormInput({
           <div className="flex items-center shrink-0">
           {/* Context usage ring - placed before model selector so it reads as
               "how full is the context" relative to the active model. */}
-          <ContextUsageRing
-            contextStatus={contextStatus}
-            currentModel={currentModel}
-            configuredContextWindow={configuredContextWindow}
-          />
+          <InputErrorBoundary
+            sessionId={sessionId}
+            resetKey={`${sessionId ?? semanticScopeId ?? 'composer'}::context-usage`}
+            section="context-usage"
+            fallback={null}
+          >
+            <ContextUsageRing
+              contextStatus={contextStatus}
+              currentModel={currentModel}
+              configuredContextWindow={configuredContextWindow}
+            />
+          </InputErrorBoundary>
           {/* 5. Model/Connection Selector - Hidden in compact mode (EditPopover embedding) */}
           {!compactMode && (
+          <InputErrorBoundary
+            sessionId={sessionId}
+            resetKey={`${sessionId ?? semanticScopeId ?? 'composer'}::model-selector`}
+            section="model-selector"
+            fallback={({ retry }) => <InputControlFallback onRetry={retry} />}
+          >
+          <IsolatedInputSection render={() => (
           <DropdownMenu open={modelDropdownOpen} onOpenChange={setModelDropdownOpen}>
             <Tooltip>
               <TooltipTrigger asChild>
@@ -2039,18 +2097,33 @@ export function FreeFormInput({
               )}
             </StyledDropdownMenuContent>
           </DropdownMenu>
+          )} />
+          </InputErrorBoundary>
           )}
-          <CompactThinkingBadge
-            thinkingLevel={thinkingLevel}
-            onThinkingLevelChange={onThinkingLevelChange}
-            disabled={thinkingDisabled}
-          />
+          <InputErrorBoundary
+            sessionId={sessionId}
+            resetKey={`${sessionId ?? semanticScopeId ?? 'composer'}::thinking`}
+            section="thinking"
+            fallback={({ retry }) => <InputControlFallback onRetry={retry} />}
+          >
+            <CompactThinkingBadge
+              thinkingLevel={thinkingLevel}
+              onThinkingLevelChange={onThinkingLevelChange}
+              disabled={thinkingDisabled}
+            />
+          </InputErrorBoundary>
 
           {/* 5.5 Context Usage Warning Badge - shows when approaching auto-compaction threshold.
               Percentage matches the ring (full-window denominator); the trigger threshold
               is 80% of the compaction threshold (~62% of the full window) so the user is
               warned before the SDK auto-compacts at ~77.5% of the window. */}
-          {(() => {
+          <InputErrorBoundary
+            sessionId={sessionId}
+            resetKey={`${sessionId ?? semanticScopeId ?? 'composer'}::context-warning`}
+            section="context-warning"
+            fallback={null}
+          >
+          <IsolatedInputSection render={() => {
             const usage = getContextUsagePercent(
               contextStatus,
               currentModel,
@@ -2096,7 +2169,8 @@ export function FreeFormInput({
                 </TooltipContent>
               </Tooltip>
             )
-          })()}
+          }} />
+          </InputErrorBoundary>
 
           {/* 6. Send/Stop Button - Always show stop when processing */}
           {isProcessing ? (

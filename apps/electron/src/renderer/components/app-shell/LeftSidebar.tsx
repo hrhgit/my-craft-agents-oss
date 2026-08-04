@@ -31,8 +31,9 @@ export interface SidebarContextMenuConfig {
   /** Handler for "Add Automation" action - for automations type */
   onAddAutomation?: () => void
   /** Workspace actions for nested workspace rows. */
-  isActiveWorkspace?: boolean
   onOpenWorkspaceInNewWindow?: () => void
+  onEditWorkspace?: () => void
+  onOpenWorkspaceFolder?: () => void
   onRemoveWorkspace?: () => void
 }
 
@@ -62,6 +63,12 @@ export interface LinkItem {
   /** Shared dropdown/context-menu content. When provided, the row gains the
    *  same hover-revealed ellipsis and right-click behavior as entity lists. */
   menuContent?: React.ReactNode
+  /** Frequent object action rendered beside the overflow menu. */
+  quickAction?: {
+    label: string
+    icon: LucideIcon
+    onClick: () => void
+  }
   // Optional element rendered after the title (e.g., label type icon), revealed on hover
   afterTitle?: React.ReactNode
   /** Always-visible trailing status, such as unread/remote/active workspace state. */
@@ -234,6 +241,7 @@ function SidebarLinkRow({
   const [contextMenuOpen, setContextMenuOpen] = React.useState(false)
   const hasContextMenu = Boolean(link.menuContent || link.contextMenu)
   const semanticId = `navigation.${link.id.replace(/[^A-Za-z0-9._-]/g, '_')}`
+  const QuickActionIcon = link.quickAction?.icon
 
   const buttonElement = <SidebarButton link={link} itemProps={itemProps} />
 
@@ -243,8 +251,9 @@ function SidebarLinkRow({
       onMarkAllRead={link.contextMenu.onMarkAllRead}
       onAddSkill={link.contextMenu.onAddSkill}
       onAddAutomation={link.contextMenu.onAddAutomation}
-      isActiveWorkspace={link.contextMenu.isActiveWorkspace}
       onOpenWorkspaceInNewWindow={link.contextMenu.onOpenWorkspaceInNewWindow}
+      onEditWorkspace={link.contextMenu.onEditWorkspace}
+      onOpenWorkspaceFolder={link.contextMenu.onOpenWorkspaceFolder}
       onRemoveWorkspace={link.contextMenu.onRemoveWorkspace}
     />
   ) : null
@@ -297,6 +306,21 @@ function SidebarLinkRow({
                 <DropdownMenuProvider>{link.menuContent}</DropdownMenuProvider>
               </StyledDropdownMenuContent>
             </DropdownMenu>
+            {link.quickAction && QuickActionIcon && (
+              <button
+                type="button"
+                data-mortise-semantic-id={`${semanticId}.quick-action`}
+                aria-label={link.quickAction.label}
+                title={link.quickAction.label}
+                className="flex h-6 w-6 items-center justify-center rounded-[5px] text-muted-foreground outline-none hover:bg-foreground/[0.08] hover:text-foreground focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
+                onClick={(event) => {
+                  event.stopPropagation()
+                  link.quickAction?.onClick()
+                }}
+              >
+                <QuickActionIcon className="h-3.5 w-3.5" />
+              </button>
+            )}
           </div>
         )}
       </div>
@@ -380,7 +404,7 @@ const SidebarButton = React.forwardRef<HTMLButtonElement, SidebarButtonProps & R
           "focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring",
           link.compact ? "h-7" : "h-8",
           "px-2",
-          link.menuContent && "pr-8",
+          link.menuContent && (link.quickAction ? "pr-14" : "pr-8"),
           link.tone === "workspace" && "font-medium text-foreground/85",
           link.tone === "session" && "text-foreground/75",
           link.variant === "default"

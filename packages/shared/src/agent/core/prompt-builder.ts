@@ -1,21 +1,15 @@
 /**
  * PromptBuilder - System Prompt and Context Building
  *
- * Provides utilities for building system prompts and context blocks that
- * agent backends can use. Handles workspace capabilities, recovery
- * context, and user preferences formatting.
+ * Provides recovery context and preference helpers. Mortise intentionally
+ * does not generate per-turn runtime context blocks.
  *
  * Key responsibilities:
- * - Build workspace capabilities context
  * - Format recovery context for session resume failures
- * - Build session state context blocks
  * - Format user preferences for prompt injection
  */
 
 import { formatPreferencesForPrompt } from '../../config/preferences.ts';
-import { formatSessionState } from '../mode-manager.ts';
-import { getDateTimeContext, getWorkingDirectoryContext } from '../../prompts/system.ts';
-import { getSessionPlansPath, getSessionDataPath } from '../../sessions/storage.ts';
 import { requirePrimaryLocalWorkspaceRoot } from '@mortise/core/types';
 import type {
   PromptBuilderConfig,
@@ -44,13 +38,11 @@ import type {
 export class PromptBuilder {
   private config: PromptBuilderConfig;
   private workspaceRootPath: string;
-  private workspaceId: string;
   private pinnedPreferencesPrompt: string | null = null;
 
   constructor(config: PromptBuilderConfig) {
     this.config = config;
     this.workspaceRootPath = requirePrimaryLocalWorkspaceRoot(config.workspace);
-    this.workspaceId = config.workspace.id;
   }
 
   // ============================================================
@@ -74,10 +66,8 @@ export class PromptBuilder {
    * @returns Array of context strings
    */
   buildContextParts(options: ContextBlockOptions): string[] {
-    return [
-      ...this.buildVolatileContextParts(options),
-      ...this.buildStableContextParts(),
-    ];
+    void options;
+    return [];
   }
 
   /**
@@ -99,25 +89,8 @@ export class PromptBuilder {
    * @param options - Context building options
    */
   buildVolatileContextParts(options: ContextBlockOptions): string[] {
-    const parts: string[] = [];
-
-    // Date/time first (kept on the user tail to preserve prompt caching)
-    parts.push(getDateTimeContext());
-
-    // Session state (permission mode, plans folder path, data folder path).
-    // Only this volatile builder may consume the one-shot mode-change signal.
-    const sessionId = this.config.session?.mortiseId ?? `temp-${Date.now()}`;
-    const plansFolderPath = options.plansFolderPath ??
-      getSessionPlansPath(this.workspaceId, sessionId);
-    const dataFolderPath = options.dataFolderPath ??
-      getSessionDataPath(this.workspaceId, sessionId);
-    parts.push(formatSessionState(sessionId, {
-      plansFolderPath,
-      dataFolderPath,
-      consumeModeChangeUserSignal: true,
-    }));
-
-    return parts;
+    void options;
+    return [];
   }
 
   /**
@@ -132,26 +105,14 @@ export class PromptBuilder {
    * number of times per turn.
    */
   buildStableContextParts(): string[] {
-    const parts: string[] = [];
-
-    // Working directory context
-    const workingDirContext = this.getWorkingDirectoryContext();
-    if (workingDirContext) {
-      parts.push(workingDirContext);
-    }
-
-    return parts;
+    return [];
   }
 
   /**
    * Get working directory context for prompt injection.
    */
   getWorkingDirectoryContext(): string | null {
-    return getWorkingDirectoryContext(
-      this.workspaceRootPath,
-      false,
-      this.config.session?.sdkCwd
-    );
+    return null;
   }
 
   // ============================================================
@@ -230,7 +191,6 @@ Please continue the conversation naturally from where we left off.
   setWorkspace(workspace: PromptBuilderConfig['workspace']): void {
     this.config.workspace = workspace;
     this.workspaceRootPath = requirePrimaryLocalWorkspaceRoot(workspace);
-    this.workspaceId = workspace.id;
   }
 
   /**

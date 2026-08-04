@@ -1,9 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
+import { FileArchive, FolderOpen, Loader2, RotateCw } from 'lucide-react'
 import { PanelHeader } from '@/components/app-shell/PanelHeader'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { HeaderMenu } from '@/components/ui/HeaderMenu'
+import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { SettingsCard, SettingsCardContent, SettingsSection } from '@/components/settings'
 import { routes } from '@/lib/navigate'
 import type { DetailsPageMeta } from '@/lib/navigation-registry'
 import type { PiExtensionCatalogEntry, PiExtensionCatalogError, PiExtensionSettingScalar } from '@mortise/shared/config'
@@ -32,6 +36,10 @@ export default function ExtensionsSettingsPage() {
   const [extensionErrors, setExtensionErrors] = useState<PiExtensionCatalogError[]>([])
   const [extensionStates, setExtensionStates] = useState<Record<string, boolean>>({})
   const [selectedExtensionId, setSelectedExtensionId] = useState<string | null>(null)
+  const [reloadPending, setReloadPending] = useState(false)
+  const [importPending, setImportPending] = useState(false)
+  const [reloadConfirmation, setReloadConfirmation] = useState<import('@mortise/shared/config').PiExtensionReloadActiveSession[] | null>(null)
+  const [uninstallTarget, setUninstallTarget] = useState<PiExtensionCatalogEntry | null>(null)
   const configPatchQueues = useRef(new Map<string, Promise<void>>())
   const configPatchVersions = useRef(new Map<string, number>())
   const confirmedConfig = useRef(new Map<string, { present: boolean; value?: PiExtensionSettingScalar }>())
@@ -134,13 +142,72 @@ export default function ExtensionsSettingsPage() {
     setSelectedExtensionId(null)
   }, [])
 
+  const handleReload = useCallback(async (interruptRunning: boolean) => {
+    setReloadPending(true)
+    if (interruptRunning) setReloadConfirmation(null)
+    try {
+      const result = await window.electronAPI.reloadPiExtensions(interruptRunning)
+      if (result.status === 'confirmation_required') {
+        setReloadConfirmation(result.activeSessions)
+        return
+      }
+      await loadCatalog()
+      window.dispatchEvent(new Event('mortise:pi-extensions-reloaded'))
+      if (result.deferredSessionCount > 0) {
+        toast.warning(t('settings.extensions.reloadDeferred', { count: result.deferredSessionCount }))
+      } else {
+        toast.success(t('settings.extensions.reloadSuccess'))
+      }
+    } catch (error) {
+      console.error('Failed to reload extensions:', error)
+      toast.error(t('settings.extensions.reloadFailed'))
+    } finally {
+      setReloadPending(false)
+    }
+  }, [loadCatalog, t])
+
+  const handleImport = useCallback(async (kind: 'folder' | 'zip') => {
+    setImportPending(true)
+    try {
+      const sourcePath = kind === 'folder'
+        ? await window.electronAPI.openFolderDialog()
+        : (await window.electronAPI.openFileDialog())[0]
+      if (!sourcePath) return
+      const result = await window.electronAPI.importPiExtension(sourcePath)
+      await loadCatalog()
+      toast.success(t('settings.extensions.importSuccess', { name: result.packageName }))
+      await handleReload(false)
+    } catch (error) {
+      console.error('Failed to import extension:', error)
+      toast.error(t('settings.extensions.importFailed'))
+    } finally {
+      setImportPending(false)
+    }
+  }, [handleReload, loadCatalog, t])
+
+  const handleUninstall = useCallback(async () => {
+    if (!uninstallTarget) return
+    const target = uninstallTarget
+    setUninstallTarget(null)
+    try {
+      const result = await window.electronAPI.uninstallPiExtension(target.id)
+      if (selectedExtensionId === target.id) setSelectedExtensionId(null)
+      await loadCatalog()
+      toast.success(t('settings.extensions.uninstallSuccess', { name: result.packageName }))
+      await handleReload(false)
+    } catch (error) {
+      console.error('Failed to uninstall extension:', error)
+      toast.error(t('settings.extensions.uninstallFailed'))
+    }
+  }, [handleReload, loadCatalog, selectedExtensionId, t, uninstallTarget])
+
   const selectedExtension = extensionCatalog.find((entry) => entry.id === selectedExtensionId)
   const isDetailView = selectedExtension !== undefined
 
   return (
     <div className="flex flex-col h-full bg-background">
       <PanelHeader
-        title={isDetailView ? selectedExtensionId! : t('settings.extensions.title')}
+        title={isDetailView ? (selectedExtension?.title || selectedExtensionId!) : t('settings.extensions.title')}
         actions={<HeaderMenu route={routes.view.settings('extensions')} />}
       />
       <ScrollArea className="flex-1">
@@ -153,9 +220,43 @@ export default function ExtensionsSettingsPage() {
               onPatch={handleConfigPatch}
               onUnset={(key) => handleConfigPatch(key)}
               onBack={handleBack}
+              onUninstall={selectedExtension?.uninstallable ? () => setUninstallTarget(selectedExtension) : undefined}
             />
           ) : (
             <div className="space-y-6">
+              <SettingsSection
+                title={t('settings.extensions.runtimeTitle')}
+                description={t('settings.extensions.runtimeDescription')}
+              >
+                <SettingsCard>
+                  <SettingsCardContent className="flex flex-wrap items-center justify-between gap-4">
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium">{t('settings.extensions.reload')}</div>
+                      <div className="mt-0.5 text-xs text-muted-foreground">{t('settings.extensions.reloadDescription')}</div>
+                    </div>
+                    <Button variant="outline" size="sm" disabled={reloadPending} onClick={() => void handleReload(false)}>
+                      <RotateCw className={reloadPending ? 'animate-spin' : undefined} />
+                      {t('settings.extensions.reload')}
+                    </Button>
+                  </SettingsCardContent>
+                  <SettingsCardContent className="flex flex-wrap items-center justify-between gap-4 border-t border-border/60">
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium">{t('settings.extensions.import')}</div>
+                      <div className="mt-0.5 text-xs text-muted-foreground">{t('settings.extensions.importDescription')}</div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Button variant="outline" size="sm" disabled={importPending} onClick={() => void handleImport('folder')}>
+                        {importPending ? <Loader2 className="animate-spin" /> : <FolderOpen />}
+                        {t('settings.extensions.importFolder')}
+                      </Button>
+                      <Button variant="outline" size="sm" disabled={importPending} onClick={() => void handleImport('zip')}>
+                        {importPending ? <Loader2 className="animate-spin" /> : <FileArchive />}
+                        {t('settings.extensions.importZip')}
+                      </Button>
+                    </div>
+                  </SettingsCardContent>
+                </SettingsCard>
+              </SettingsSection>
               <ExtensionListPanel
                 extensions={extensionCatalog}
                 errors={extensionErrors}
@@ -167,6 +268,43 @@ export default function ExtensionsSettingsPage() {
           )}
         </div>
       </ScrollArea>
+      <Dialog open={reloadConfirmation !== null} onOpenChange={(open) => { if (!open && !reloadPending) setReloadConfirmation(null) }}>
+        <DialogContent showCloseButton={false}>
+          <DialogHeader>
+            <DialogTitle>{t('settings.extensions.reloadConfirmTitle')}</DialogTitle>
+            <DialogDescription>{t('settings.extensions.reloadConfirmDescription', { count: reloadConfirmation?.length ?? 0 })}</DialogDescription>
+          </DialogHeader>
+          {reloadConfirmation && reloadConfirmation.length > 0 && (
+            <div className="max-h-48 overflow-y-auto rounded-md border border-border/70">
+              {reloadConfirmation.map((session) => (
+                <div key={session.sessionId} className="border-b border-border/50 px-3 py-2 last:border-b-0">
+                  <div className="truncate text-sm font-medium">{session.title || t('settings.extensions.untitledSession')}</div>
+                  <div className="truncate text-xs text-muted-foreground">{session.workspaceName}</div>
+                </div>
+              ))}
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" disabled={reloadPending} onClick={() => setReloadConfirmation(null)}>{t('common.cancel')}</Button>
+            <Button variant="destructive" disabled={reloadPending} onClick={() => void handleReload(true)}>
+              <RotateCw className={reloadPending ? 'animate-spin' : undefined} />
+              {t('settings.extensions.interruptAndReload')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={uninstallTarget !== null} onOpenChange={(open) => { if (!open) setUninstallTarget(null) }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t('settings.extensions.uninstall')}</DialogTitle>
+            <DialogDescription>{t('settings.extensions.uninstallDescription', { name: uninstallTarget?.title || uninstallTarget?.id || '' })}</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setUninstallTarget(null)}>{t('common.cancel')}</Button>
+            <Button variant="destructive" onClick={() => void handleUninstall()}>{t('settings.extensions.uninstall')}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

@@ -30,10 +30,8 @@ import {
 } from './state-contract.ts';
 import type { StoredAttachment, StoredMessage } from '@mortise/core/types';
 import type { Plan } from '../agent/plan-types.ts';
-import type { PermissionMode } from '../agent/mode-manager.ts';
 import type { ThinkingLevel } from '../agent/thinking-levels.ts';
 import { normalizeThinkingLevel } from '../agent/thinking-levels.ts';
-import { parsePermissionMode, PERMISSION_MODE_ORDER } from '../agent/mode-types.ts';
 import { type ConfigDefaults } from './config-defaults-schema.ts';
 import {
   createDefaultPiExtensionSettings,
@@ -260,8 +258,6 @@ const FALLBACK_CONFIG_DEFAULTS: ConfigDefaults = {
   },
   workspaceDefaults: {
     thinkingLevel: 'medium',
-    permissionMode: 'allow-all',
-    cyclablePermissionModes: ['safe', 'ask', 'allow-all'],
   },
 };
 
@@ -308,29 +304,6 @@ export function loadConfigDefaults(): ConfigDefaults {
   }
 
   const defaults = readJsonFileSync<ConfigDefaults>(CONFIG_DEFAULTS_FILE);
-
-  const parsedPermissionMode =
-    typeof defaults.workspaceDefaults?.permissionMode === 'string'
-      ? parsePermissionMode(defaults.workspaceDefaults.permissionMode)
-      : null;
-  defaults.workspaceDefaults.permissionMode = parsedPermissionMode ?? 'ask';
-
-  const rawCyclable = Array.isArray(defaults.workspaceDefaults?.cyclablePermissionModes)
-    ? defaults.workspaceDefaults.cyclablePermissionModes
-    : [];
-
-  const normalizedCyclable: PermissionMode[] = [];
-  for (const mode of rawCyclable) {
-    if (typeof mode !== 'string') continue;
-    const parsed = parsePermissionMode(mode);
-    if (!parsed) continue;
-    if (!normalizedCyclable.includes(parsed)) {
-      normalizedCyclable.push(parsed);
-    }
-  }
-
-  defaults.workspaceDefaults.cyclablePermissionModes =
-    normalizedCyclable.length >= 2 ? normalizedCyclable : [...PERMISSION_MODE_ORDER];
 
   return defaults;
 }

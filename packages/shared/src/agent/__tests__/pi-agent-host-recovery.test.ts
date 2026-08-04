@@ -54,9 +54,44 @@ type PiAgentRecoveryInternals = {
     stderr: string;
   }) => void;
   handlePiClientEvent: (event: Record<string, unknown>) => void;
+  waitForAgentSettled: () => Promise<void>;
+  coordinationBridge: { completeTurn: () => void; close: () => void } | null;
+  eventQueue: { isComplete: boolean; reset: () => void };
 };
 
 describe('PiAgent GlobalHost recovery', () => {
+  it('settles the active turn when its host runtime exits', async () => {
+    const agent = new PiAgent(createConfig());
+    const internals = agent as unknown as PiAgentRecoveryInternals;
+    const completeTurn = mock(() => undefined);
+    const release = mock(async () => undefined);
+    internals.coordinationBridge = { completeTurn, close: mock(() => undefined) };
+    internals.eventQueue.reset();
+    internals.rpcClient = {
+      invokeExtensionCommandResult: mock(async () => ({ invoked: false })),
+      prompt: mock(async () => undefined),
+      getStderr: () => '',
+      stop: mock(async () => undefined),
+    };
+    internals.rpcHostLease = { release };
+
+    const settled = internals.waitForAgentSettled();
+    internals.handleRpcClientLifecycleFailure({
+      type: 'process_exit',
+      code: 255,
+      signal: null,
+      message: 'Agent process exited (code=255 signal=null)',
+      stderr: '',
+    });
+
+    await expect(settled).resolves.toBeUndefined();
+    expect(completeTurn).toHaveBeenCalledTimes(1);
+    expect(internals.eventQueue.isComplete).toBe(true);
+    expect(release).toHaveBeenCalledTimes(1);
+
+    agent.destroy();
+  });
+
   it('reconnects before invoking a command and never replays a prompt', async () => {
     const agent = new PiAgent(createConfig());
     const internals = agent as unknown as PiAgentRecoveryInternals;

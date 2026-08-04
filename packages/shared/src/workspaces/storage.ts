@@ -22,7 +22,6 @@ import {
   MORTISE_SESSIONS_DIR,
   encodePiSessionCwd,
 } from '../config/paths.ts';
-import { loadConfigDefaults } from '../config/storage.ts';
 import { MultiWriterStore, type JsonValue } from '../storage/index.ts';
 import { PERMISSION_MODE_ORDER, type PermissionMode } from '../agent/mode-types.ts';
 import type {
@@ -385,13 +384,9 @@ export function createWorkspaceAtPath(
   const now = Date.now();
   const slug = generateSlug(name);
 
-  // Load global defaults from config-defaults.json
-  const globalDefaults = loadConfigDefaults();
-
-  // Only workspace-scoped defaults are accepted here. AI defaults are global.
+  // Only explicitly supplied workspace defaults are persisted. Permission
+  // defaults are extension-owned and are no longer seeded by Mortise core.
   const workspaceDefaults: WorkspaceConfig['defaults'] = {
-    permissionMode: globalDefaults.workspaceDefaults.permissionMode,
-    cyclablePermissionModes: globalDefaults.workspaceDefaults.cyclablePermissionModes,
     ...defaults, // User-provided defaults override global defaults
   };
 

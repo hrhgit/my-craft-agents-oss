@@ -20,17 +20,30 @@ function publish(ui: ExtensionUIContext, count: number): void {
 		collapse: "auto",
 		overflow: "collapse",
 		content: {
-			type: "row",
-			gap: "small",
-			children: [
-				{ type: "icon", name: "sparkles", label: "Example extension" },
-				{ type: "text", text: `Native Mortise contribution updated ${count} time(s)` },
-				{
-					type: "button",
-					label: "Update",
-					action: { kind: "command", command: "mortise-gui-example-update" },
-				},
-			],
+			type: "responsive",
+			semanticId: "status",
+			full: {
+				type: "row",
+				gap: "small",
+				children: [
+					{ type: "icon", name: "sparkles", label: "Example extension", semanticId: "status-icon" },
+					{ type: "text", text: `Native Mortise contribution updated ${count} time(s)`, semanticId: "status-text" },
+					{
+						type: "button",
+						label: "Update",
+						semanticId: "update",
+						action: { kind: "command", command: "mortise-gui-example-update" },
+					},
+				],
+			},
+			compact: { type: "badge", label: `Updated ${count}`, tone: "info", semanticId: "status-badge" },
+			minimal: {
+				type: "button",
+				label: "Update",
+				icon: "repeat",
+				semanticId: "update",
+				action: { kind: "command", command: "mortise-gui-example-update" },
+			},
 		},
 	});
 	if (ui.validation.available) {

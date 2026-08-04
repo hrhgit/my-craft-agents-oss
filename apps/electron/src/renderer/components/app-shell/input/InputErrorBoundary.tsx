@@ -8,7 +8,18 @@ interface InputErrorBoundaryProps {
   sessionId?: string
   resetKey: string
   onClearDraft?: () => void
+  section?: string
+  fallback?: React.ReactNode | ((actions: InputErrorRecoveryActions) => React.ReactNode)
   children: React.ReactNode
+}
+
+export interface InputErrorRecoveryActions {
+  retry: () => void
+  clearDraft: () => void
+}
+
+export function IsolatedInputSection({ render }: { render: () => React.ReactNode }) {
+  return <>{render()}</>
 }
 
 interface InputErrorBoundaryState {
@@ -34,7 +45,10 @@ export class InputErrorBoundary extends React.Component<
   componentDidCatch(error: Error, info: React.ErrorInfo) {
     console.error('[InputErrorBoundary] Composer crashed:', error)
     Sentry.captureException(error, {
-      tags: { errorSource: 'chat-input' },
+      tags: {
+        errorSource: 'chat-input',
+        inputSection: this.props.section ?? 'composer',
+      },
       extra: {
         sessionId: this.props.sessionId,
         componentStack: info.componentStack,
@@ -59,6 +73,15 @@ export class InputErrorBoundary extends React.Component<
 
   render() {
     if (!this.state.hasError) return this.props.children
+
+    if (this.props.fallback !== undefined) {
+      return typeof this.props.fallback === 'function'
+        ? this.props.fallback({
+            retry: this.retry,
+            clearDraft: this.clearDraftAndRetry,
+          })
+        : this.props.fallback
+    }
 
     return (
       <InputErrorFallback

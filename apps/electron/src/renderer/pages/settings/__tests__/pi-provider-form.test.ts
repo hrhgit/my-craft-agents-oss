@@ -3,6 +3,7 @@ import type { FetchedEndpointModel } from '../../../../shared/types'
 import {
   addSelectedFetchedModel,
   applyFetchedEndpointResolution,
+  normalizeModelsForSave,
   type FormState,
 } from '../PiProviderFormDialog'
 
@@ -53,5 +54,13 @@ describe('Pi provider model fetching', () => {
     })
 
     expect(addSelectedFetchedModel(state, fetchedModels, 'model-a')).toBe(state)
+  })
+
+  it('preserves the reasoning capability enabled in the provider form', () => {
+    expect(normalizeModelsForSave([
+      { id: 'reasoning-model', name: 'Reasoning Model', reasoning: true },
+    ], 'reasoning-model')).toEqual([
+      { id: 'reasoning-model', name: 'Reasoning Model', reasoning: true },
+    ])
   })
 })

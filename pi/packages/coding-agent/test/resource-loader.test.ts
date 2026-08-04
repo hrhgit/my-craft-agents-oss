@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -40,6 +40,27 @@ describe("DefaultResourceLoader", () => {
 			expect(loader.getExtensions().extensions).toEqual([]);
 			expect(loader.getSkills().skills).toEqual([]);
 			expect(loader.getPrompts().prompts).toEqual([]);
+		});
+
+		it("does not evaluate an extension disabled in extensionConfig during reload", async () => {
+			const extensionPath = join(tempDir, "disabled-extension.ts");
+			const markerPath = join(tempDir, "disabled-extension-loaded.txt");
+			writeFileSync(
+				extensionPath,
+				`import { writeFileSync } from "node:fs";
+export default function () { writeFileSync(${JSON.stringify(markerPath)}, "loaded"); }
+`,
+			);
+			const settingsManager = SettingsManager.inMemory({
+				extensions: [extensionEntry("disabled-extension", extensionPath)],
+				extensionConfig: { "disabled-extension": { enabled: false } },
+			});
+			const loader = new DefaultResourceLoader({ cwd, agentDir, settingsManager });
+
+			await loader.reload();
+
+			expect(loader.getExtensions().extensions).toEqual([]);
+			expect(existsSync(markerPath)).toBe(false);
 		});
 
 		it("should discover skills from agentDir", async () => {
@@ -656,6 +677,29 @@ export default function(pi: ExtensionAPI) {
 			expect(runner.getCommand("deploy:1")?.description).toBe("explicit command");
 			expect(runner.getCommand("deploy:2")?.description).toBe("global command");
 			expect(runner.getToolDefinition("duplicate-tool")?.description).toBe("explicit tool");
+		});
+
+		it("should expose the extension's frozen configuration snapshot", async () => {
+			const extensionPath = join(tempDir, "configured-extension.ts");
+			writeFileSync(
+				extensionPath,
+				`export default function(pi) {
+  pi.registerCommand("config-mode", {
+    description: "frozen=" + Object.isFrozen(pi.environment.config) + ";mode=" + pi.environment.config.mode,
+    handler: async () => {},
+  });
+}`,
+			);
+			const settingsManager = SettingsManager.inMemory({
+				extensions: [extensionEntry("configured-extension", extensionPath)],
+				extensionConfig: { "configured-extension": { mode: "ask" } },
+			});
+			const loader = new DefaultResourceLoader({ cwd, agentDir, settingsManager });
+
+			await loader.reload();
+
+			const extension = loader.getExtensions().extensions[0];
+			expect(extension?.commands.get("config-mode")?.description).toBe("frozen=true;mode=ask");
 		});
 	});
 });

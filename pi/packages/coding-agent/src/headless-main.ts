@@ -1,3 +1,4 @@
+import { statSync } from "node:fs";
 import type { Api, Model } from "@mortise/pi-ai";
 import { ENV_SESSION_DIR, expandTildePath, getAgentDir, getProjectConfigDir } from "./config.ts";
 import { type CreateAgentSessionRuntimeFactory, createAgentSessionRuntime } from "./core/agent-session-runtime.ts";
@@ -113,11 +114,11 @@ export async function runHeadlessMain(args: string[], options: HeadlessMainOptio
 			authStorage,
 			deferResourceLoad,
 			resourceLoaderOptions: {
-				additionalExtensionPaths: (extensionPaths ?? []).map((path, index) => ({
-					id: `runtime-extension-${index}`,
-					path,
-					activation: "startup" as const,
-				})),
+				additionalExtensionPaths: (extensionPaths ?? []).map((path, index) =>
+					statSync(path).isDirectory()
+						? path
+						: { id: `runtime-extension-${index}`, path, activation: "startup" as const },
+				),
 				extensionFactories: options.extensionFactories,
 			},
 		});

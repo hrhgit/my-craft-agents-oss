@@ -95,6 +95,24 @@ namespace MortiseDevTool
             process = null;
         }
 
+        public void TerminateTree()
+        {
+            if (!IsRunning) return;
+            try
+            {
+                process.Kill(true);
+                process.WaitForExit(5000);
+            }
+            catch { }
+        }
+
+        public bool WaitForExit(int milliseconds)
+        {
+            if (!IsRunning) return true;
+            try { return process.WaitForExit(milliseconds); }
+            catch { return !IsRunning; }
+        }
+
         private void EnqueueLine(string source, string line)
         {
             if (string.IsNullOrEmpty(line)) return;
@@ -110,8 +128,10 @@ namespace MortiseDevTool
 
     public sealed class MainForm : Form
     {
+        private const int MaxMessagesPerDrain = 100;
         private readonly string repoRoot;
         private readonly string electronProject;
+        private readonly bool stopDesktopOnClose;
         private readonly Label statusDot;
         private readonly Label statusText;
         private readonly Button startButton;
@@ -130,14 +150,16 @@ namespace MortiseDevTool
         private ProcessRunner stopWebuiRunner;
         private ProcessRunner developerKitRunner;
         private bool restarting;
+        private bool closing;
         private bool suppressNextWebuiExitError;
         private string desktopState = "idle";
         private DateTime nextDesktopProbe = DateTime.MinValue;
 
-        public MainForm(string repositoryRoot)
+        public MainForm(string repositoryRoot, bool stopDesktopWhenClosing)
         {
             repoRoot = repositoryRoot;
             electronProject = Path.Combine(repoRoot, "apps", "electron");
+            stopDesktopOnClose = stopDesktopWhenClosing;
 
             Text = "Mortise 源码工具";
             StartPosition = FormStartPosition.CenterScreen;
@@ -265,7 +287,16 @@ namespace MortiseDevTool
             timer.Start();
 
             Shown += (_, __) => DetectExistingDesktop();
-            FormClosed += (_, __) => timer.Stop();
+            FormClosing += (_, __) =>
+            {
+                if (stopDesktopOnClose) StopDesktopOnToolClose();
+            };
+            FormClosed += (_, __) =>
+            {
+                timer.Stop();
+                desktopRunner?.Dispose();
+                stopRunner?.Dispose();
+            };
         }
 
         private static Button CreateButton(string text, bool primary, bool package)
@@ -303,7 +334,7 @@ namespace MortiseDevTool
         private void StartDesktop()
         {
             if (desktopState == "starting" || desktopState == "running" || desktopState == "restarting" || desktopState == "stopping") return;
-            LaunchDesktop();
+            StopDesktopBeforeLaunch(false);
         }
 
         private void LaunchDesktop()
@@ -326,8 +357,13 @@ namespace MortiseDevTool
         private void RestartDesktop()
         {
             if (restarting || (stopRunner != null && stopRunner.IsRunning)) return;
+            StopDesktopBeforeLaunch(true);
+        }
+
+        private void StopDesktopBeforeLaunch(bool explicitRestart)
+        {
             restarting = true;
-            SetDesktopState("restarting");
+            SetDesktopState(explicitRestart ? "restarting" : "starting");
             stopRunner?.Dispose();
             stopRunner = new ProcessRunner();
             AppendCommand("portmux", "stop", "--project", electronProject);
@@ -341,6 +377,64 @@ namespace MortiseDevTool
                 restarting = false;
                 SetDesktopState("error");
             }
+        }
+
+        private void StopDesktopOnToolClose()
+        {
+            closing = true;
+            restarting = false;
+            if ((desktopRunner == null || !desktopRunner.IsRunning)
+                && (stopRunner == null || !stopRunner.IsRunning)
+                && !IsSourceDesktopRunning()) return;
+
+            SetDesktopState("stopping");
+            stopRunner?.TerminateTree();
+            try
+            {
+                using var stop = Process.Start(new ProcessStartInfo
+                {
+                    FileName = "portmux",
+                    WorkingDirectory = repoRoot,
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    ArgumentList = { "stop", "--project", electronProject },
+                });
+                if (stop != null && !stop.WaitForExit(10000))
+                {
+                    stop.Kill(true);
+                    stop.WaitForExit(5000);
+                }
+            }
+            catch { }
+
+            if (desktopRunner != null && !desktopRunner.WaitForExit(5000))
+                desktopRunner.TerminateTree();
+
+            TerminateRemainingSourceDesktopProcesses();
+        }
+
+        private void TerminateRemainingSourceDesktopProcesses()
+        {
+            var expectedExecutable = Path.GetFullPath(Path.Combine(repoRoot, "node_modules", "electron", "dist", "electron.exe"));
+            var deadline = DateTime.UtcNow.AddSeconds(2);
+            do
+            {
+                foreach (var process in Process.GetProcessesByName("electron"))
+                {
+                    try
+                    {
+                        var executable = process.MainModule?.FileName;
+                        if (string.IsNullOrEmpty(executable)
+                            || !string.Equals(Path.GetFullPath(executable), expectedExecutable, StringComparison.OrdinalIgnoreCase)) continue;
+                        process.Kill(true);
+                        process.WaitForExit(5000);
+                    }
+                    catch { }
+                    finally { process.Dispose(); }
+                }
+                if (DateTime.UtcNow < deadline) System.Threading.Thread.Sleep(100);
+            }
+            while (DateTime.UtcNow < deadline);
         }
 
         private void PackageDesktop()
@@ -486,7 +580,8 @@ namespace MortiseDevTool
         {
             if (desktopRunner == null) return;
             ProcessMessage message;
-            while (desktopRunner.Messages.TryDequeue(out message))
+            var remaining = MaxMessagesPerDrain;
+            while (remaining-- > 0 && desktopRunner.Messages.TryDequeue(out message))
             {
                 if (!message.IsExit)
                 {
@@ -503,7 +598,8 @@ namespace MortiseDevTool
         {
             if (stopRunner == null) return;
             ProcessMessage message;
-            while (stopRunner.Messages.TryDequeue(out message))
+            var remaining = MaxMessagesPerDrain;
+            while (remaining-- > 0 && stopRunner.Messages.TryDequeue(out message))
             {
                 if (!message.IsExit)
                 {
@@ -512,6 +608,7 @@ namespace MortiseDevTool
                 }
                 if (message.ExitCode != 0) AppendLog("tool", "停止返回代码 " + message.ExitCode + "，继续启动新实例。");
                 restarting = false;
+                if (closing) continue;
                 LaunchDesktop();
             }
         }
@@ -520,7 +617,8 @@ namespace MortiseDevTool
         {
             if (packageRunner == null) return;
             ProcessMessage message;
-            while (packageRunner.Messages.TryDequeue(out message))
+            var remaining = MaxMessagesPerDrain;
+            while (remaining-- > 0 && packageRunner.Messages.TryDequeue(out message))
             {
                 if (!message.IsExit)
                 {
@@ -537,7 +635,8 @@ namespace MortiseDevTool
         {
             if (webuiRunner == null) return;
             ProcessMessage message;
-            while (webuiRunner.Messages.TryDequeue(out message))
+            var remaining = MaxMessagesPerDrain;
+            while (remaining-- > 0 && webuiRunner.Messages.TryDequeue(out message))
             {
                 if (!message.IsExit)
                 {
@@ -558,7 +657,8 @@ namespace MortiseDevTool
         {
             if (stopWebuiRunner == null) return;
             ProcessMessage message;
-            while (stopWebuiRunner.Messages.TryDequeue(out message))
+            var remaining = MaxMessagesPerDrain;
+            while (remaining-- > 0 && stopWebuiRunner.Messages.TryDequeue(out message))
             {
                 if (!message.IsExit)
                 {
@@ -577,7 +677,8 @@ namespace MortiseDevTool
         {
             if (developerKitRunner == null) return;
             ProcessMessage message;
-            while (developerKitRunner.Messages.TryDequeue(out message))
+            var remaining = MaxMessagesPerDrain;
+            while (remaining-- > 0 && developerKitRunner.Messages.TryDequeue(out message))
             {
                 if (!message.IsExit)
                 {
@@ -676,7 +777,7 @@ namespace MortiseDevTool
 
 [System.Windows.Forms.Application]::EnableVisualStyles()
 [System.Windows.Forms.Application]::SetCompatibleTextRenderingDefault($false)
-$form = [MortiseDevTool.MainForm]::new($repoRoot)
+$form = [MortiseDevTool.MainForm]::new($repoRoot, -not $SmokeTest)
 
 if ($SmokeTest) {
   $form.Show()

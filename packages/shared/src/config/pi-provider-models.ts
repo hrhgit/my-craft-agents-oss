@@ -73,3 +73,17 @@ export function setPiProviderModelSupportsImages(
     }),
   };
 }
+
+export function setPiProviderModelSupportsReasoning(
+  provider: PiGlobalProvider,
+  modelId: string,
+  enabled: boolean,
+): PiGlobalProvider {
+  if (!provider.models?.some(model => model.id === modelId)) return provider;
+  return {
+    ...provider,
+    models: provider.models.map(model => model.id === modelId
+      ? { ...model, reasoning: enabled }
+      : model),
+  };
+}

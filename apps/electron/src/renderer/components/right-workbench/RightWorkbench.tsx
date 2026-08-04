@@ -10,6 +10,7 @@ import {
   ChevronRight,
   Circle,
   Clock,
+  Compass,
   ExternalLink,
   FileText,
   Globe2,
@@ -22,6 +23,7 @@ import {
   Square,
   Sparkles,
   RotateCw,
+  Repeat,
   X,
 } from 'lucide-react'
 import { Spinner, Tooltip, TooltipContent, TooltipTrigger } from '@mortise/ui'
@@ -90,8 +92,10 @@ const extensionToolIcons: Record<ExtensionUIIconName, WorkbenchTool['icon']> = {
   'chevron-right': ChevronRight,
   circle: Circle,
   clock: Clock,
+  compass: Compass,
   info: Info,
   loader: Loader2,
+  repeat: Repeat,
   settings: Settings,
   sparkles: Sparkles,
   x: X,

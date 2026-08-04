@@ -37,6 +37,12 @@ export type ExtensionInteractionFieldV1 =
       maxLength?: number
     })
 
+export interface ExtensionInteractionPresentationV1 {
+  mode: 'wizard'
+  allowSkip?: boolean
+  autoAdvanceSingleChoice?: boolean
+}
+
 export interface ExtensionInteractionRequestV1 {
   schemaVersion: 1
   title?: string
@@ -44,6 +50,7 @@ export interface ExtensionInteractionRequestV1 {
   fields: ExtensionInteractionFieldV1[]
   submitLabel?: string
   cancelLabel?: string
+  presentation?: ExtensionInteractionPresentationV1
 }
 
 export type ExtensionInteractionAnswerV1 =
@@ -129,10 +136,14 @@ function optionalBoundedInteger(value: unknown, min: number, max: number): boole
 export function validateExtensionInteractionRequestV1(value: unknown): string | null {
   const request = record(value)
   if (!request) return 'Interaction request must be an object'
-  if (!onlyKeys(request, ['schemaVersion', 'title', 'description', 'fields', 'submitLabel', 'cancelLabel'])) return 'Unsupported interaction request field'
+  if (!onlyKeys(request, ['schemaVersion', 'title', 'description', 'fields', 'submitLabel', 'cancelLabel', 'presentation'])) return 'Unsupported interaction request field'
   if (request.schemaVersion !== 1) return 'Unsupported interaction schema version'
   if (!optionalString(request.title, 256) || !optionalString(request.description, 4_000)) return 'Interaction text is invalid'
   if (!optionalString(request.submitLabel, 64) || !optionalString(request.cancelLabel, 64)) return 'Interaction action label is invalid'
+  if (request.presentation !== undefined) {
+    const presentation = record(request.presentation)
+    if (!presentation || !onlyKeys(presentation, ['mode', 'allowSkip', 'autoAdvanceSingleChoice']) || presentation.mode !== 'wizard' || !optionalBoolean(presentation.allowSkip) || !optionalBoolean(presentation.autoAdvanceSingleChoice)) return 'Interaction presentation is invalid'
+  }
   if (!Array.isArray(request.fields) || request.fields.length < 1 || request.fields.length > 32) return 'Interaction fields must contain between 1 and 32 items'
 
   const fieldIds = new Set<string>()
@@ -165,7 +176,7 @@ export function validateExtensionInteractionRequestV1(value: unknown): string | 
       if (!optionalString(field.otherLabel, 128) || !optionalString(field.commentLabel, 128)) return `Choice labels on ${field.id} are invalid`
       if (field.otherLabel !== undefined && field.allowOther !== true) return `Choice otherLabel on ${field.id} requires allowOther`
       if (field.commentLabel !== undefined && field.allowComment !== true) return `Choice commentLabel on ${field.id} requires allowComment`
-      const selectionCapacity = field.options.length + (field.allowOther === true ? 1 : 0)
+      const selectionCapacity = field.options.length + 1
       if (!optionalBoundedInteger(field.minSelections, 0, selectionCapacity) || !optionalBoundedInteger(field.maxSelections, 1, selectionCapacity)) return `Choice bounds on ${field.id} are invalid`
       if (typeof field.minSelections === 'number' && typeof field.maxSelections === 'number' && field.minSelections > field.maxSelections) return `Choice bounds on ${field.id} are inconsistent`
       if (field.multiple !== true && (Number(field.maxSelections ?? 1) > 1 || Number(field.minSelections ?? 0) > 1)) return `Single-choice field ${field.id} cannot require multiple selections`

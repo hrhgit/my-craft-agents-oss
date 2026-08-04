@@ -61,6 +61,7 @@ export {
 	type ExtensionUIContext,
 	type ExtensionUIContribution,
 	type ExtensionUIIconName,
+	type ExtensionUIMenuOptionV1,
 	type ExtensionUINode,
 	type ExtensionUISemanticNodeV1,
 	type ExtensionUISurface,

@@ -6,6 +6,11 @@
  * storage reads/writes go through Pi's host facade.
  */
 
+import { existsSync } from 'node:fs';
+import { cp, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { basename, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { unzipSync } from 'fflate';
 import { ResourceResolver, SettingsManager } from '@mortise/pi-coding-agent';
 import {
   deleteGlobalApiKey as deletePiHostGlobalApiKey,
@@ -40,7 +45,7 @@ import {
   type HostGlobalConfigSubscription,
   type HostGlobalProvider,
 } from '@mortise/pi-coding-agent/host-facade';
-import { PI_MODEL_REFERENCE_CURRENT_SESSION, type PiExtensionCatalogEntry, type PiExtensionCatalogResult, type PiExtensionConfigPatch, type PiExtensionSettingField, type PiExtensionSettingScalar } from './pi-extension-settings.ts';
+import { PI_MODEL_REFERENCE_CURRENT_SESSION, type PiExtensionCatalogEntry, type PiExtensionCatalogResult, type PiExtensionConfigPatch, type PiExtensionImportResult, type PiExtensionSettingField, type PiExtensionSettingScalar, type PiExtensionUninstallResult } from './pi-extension-settings.ts';
 import type { PiCustomApi, PiGlobalModel, PiGlobalProvider } from './pi-provider-models.ts';
 import { MORTISE_PROJECT_DIR } from './paths';
 import { DEFAULT_THINKING_LEVEL, type ThinkingLevel } from '../agent/thinking-levels.ts';
@@ -48,12 +53,122 @@ import { DEFAULT_THINKING_LEVEL, type ThinkingLevel } from '../agent/thinking-le
 export {
   piProviderModelSupportsImages,
   setPiProviderModelSupportsImages,
+  setPiProviderModelSupportsReasoning,
 } from './pi-provider-models.ts';
 export type { PiCustomApi, PiGlobalModel, PiGlobalProvider } from './pi-provider-models.ts';
 
 /** Resolve the Pi-owned Agent root through its typed host facade. */
 export function getPiAgentDir(): string {
   return getPiHostAgentDir();
+}
+
+const MANAGED_EXTENSION_SUBDIR = join('extensions', 'imported');
+const MAX_EXTENSION_ARCHIVE_FILES = 5_000;
+const MAX_EXTENSION_ARCHIVE_BYTES = 100 * 1024 * 1024;
+
+function isPathInside(parent: string, candidate: string): boolean {
+  const rel = relative(resolve(parent), resolve(candidate));
+  return rel !== '' && rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
+}
+
+function managedExtensionRoot(agentDir = getPiHostAgentDir()): string {
+  return join(agentDir, MANAGED_EXTENSION_SUBDIR);
+}
+
+function safePackageSlug(value: string, fallback: string): string {
+  const slug = value
+    .replace(/^@/, '')
+    .replace(/[\\/]+/g, '-')
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, '-')
+    .replace(/^[._-]+|[._-]+$/g, '');
+  return slug || fallback;
+}
+
+type ImportManifest = {
+  name?: string;
+  pi?: {
+    extensions?: Array<{ id?: string; path?: string }>;
+  };
+};
+
+async function readImportManifest(directory: string): Promise<{ packageName: string; extensionIds: string[] }> {
+  const manifestPath = join(directory, 'package.json');
+  let manifest: ImportManifest;
+  try {
+    manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as ImportManifest;
+  } catch (error) {
+    throw new Error(`Extension source must contain a readable package.json: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  const entries = manifest.pi?.extensions;
+  if (!Array.isArray(entries) || entries.length === 0) {
+    throw new Error('Extension package.json must declare at least one pi.extensions entry');
+  }
+  const extensionIds: string[] = [];
+  for (const entry of entries) {
+    const id = entry?.id?.trim();
+    const entryPath = entry?.path?.trim();
+    if (!id || !/^[a-z0-9]+(?:[._-][a-z0-9]+)*$/.test(id)) {
+      throw new Error('Every imported extension must declare a lowercase stable id');
+    }
+    if (!entryPath || isAbsolute(entryPath)) {
+      throw new Error(`Extension ${id} must declare a relative path`);
+    }
+    const resolvedEntry = resolve(directory, entryPath);
+    if (!isPathInside(directory, resolvedEntry) || !existsSync(resolvedEntry)) {
+      throw new Error(`Extension ${id} points outside the package or to a missing file`);
+    }
+    extensionIds.push(id);
+  }
+  if (new Set(extensionIds).size !== extensionIds.length) {
+    throw new Error('Extension package contains duplicate ids');
+  }
+  return {
+    packageName: typeof manifest.name === 'string' && manifest.name.trim() ? manifest.name.trim() : extensionIds[0]!,
+    extensionIds,
+  };
+}
+
+async function locateImportRoot(directory: string): Promise<string> {
+  if (existsSync(join(directory, 'package.json'))) return directory;
+  const candidates: string[] = [];
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    if (entry.isDirectory() && existsSync(join(directory, entry.name, 'package.json'))) {
+      candidates.push(join(directory, entry.name));
+    }
+  }
+  if (candidates.length !== 1) {
+    throw new Error('Select a folder or ZIP containing one extension package.json at its root');
+  }
+  return candidates[0]!;
+}
+
+async function extractExtensionArchive(archivePath: string, destination: string): Promise<void> {
+  const files = unzipSync(new Uint8Array(await readFile(archivePath)));
+  const names = Object.keys(files);
+  if (names.length > MAX_EXTENSION_ARCHIVE_FILES) throw new Error('Extension ZIP contains too many files');
+  let totalBytes = 0;
+  for (const [rawName, data] of Object.entries(files)) {
+    const normalized = rawName.replace(/\\/g, '/');
+    const parts = normalized.split('/').filter(Boolean);
+    if (normalized.startsWith('/') || /^[a-zA-Z]:/.test(normalized) || parts.includes('..')) {
+      throw new Error(`Extension ZIP contains an unsafe path: ${rawName}`);
+    }
+    if (parts.length === 0 || normalized.endsWith('/')) continue;
+    totalBytes += data.byteLength;
+    if (totalBytes > MAX_EXTENSION_ARCHIVE_BYTES) throw new Error('Extension ZIP is too large after extraction');
+    const target = join(destination, ...parts);
+    if (!isPathInside(destination, target)) throw new Error(`Extension ZIP contains an unsafe path: ${rawName}`);
+    await mkdir(resolve(target, '..'), { recursive: true });
+    await writeFile(target, data);
+  }
+}
+
+async function persistGlobalExtensionPaths(settingsManager: SettingsManager, paths: ReturnType<SettingsManager['getExtensionPaths']>): Promise<void> {
+  settingsManager.setExtensionPaths(paths);
+  await settingsManager.flush();
+  const errors = settingsManager.drainErrors();
+  if (errors.length > 0) throw new Error(errors.map((item) => item.error.message).join('; '));
 }
 
 export interface PiGlobalModelsFile {
@@ -425,6 +540,27 @@ export function savePiGlobalProvider(key: string, provider: PiGlobalProvider, ap
   });
 }
 
+function ensurePiGlobalModelSupportsConfiguredThinking(
+  providerKey: string,
+  modelId: string,
+  thinkingLevel: string | undefined,
+): void {
+  if (!thinkingLevel || thinkingLevel === 'off') return;
+
+  const provider = readPiGlobalProviders()[providerKey];
+  if (!provider) throw new Error(`Unknown provider: ${providerKey}`);
+  const model = provider.models?.find(candidate => candidate.id === modelId);
+  if (!model) throw new Error(`Unknown model: ${providerKey}/${modelId}`);
+  if (model.reasoning === true) return;
+
+  savePiGlobalProvider(providerKey, {
+    ...provider,
+    models: provider.models?.map(candidate => candidate.id === modelId
+      ? { ...candidate, reasoning: true }
+      : candidate),
+  });
+}
+
 export async function deletePiGlobalProvider(key: string): Promise<void> {
   await deletePiHostGlobalProvider(key);
 }
@@ -434,6 +570,7 @@ export async function setPiGlobalDefault(
   model: string,
   thinkingLevel?: string,
 ): Promise<void> {
+  ensurePiGlobalModelSupportsConfiguredThinking(provider, model, thinkingLevel);
   await setPiHostGlobalDefault({
     provider,
     model,
@@ -448,6 +585,7 @@ export async function setPiGlobalDefaultSlot(
   model: string,
   thinkingLevel: string,
 ): Promise<void> {
+  ensurePiGlobalModelSupportsConfiguredThinking(provider, model, thinkingLevel);
   await setPiHostGlobalModelDefaultSlot({
     slot,
     provider,
@@ -592,11 +730,112 @@ export async function writePiExtensionConcurrency(name: string, concurrency: num
   await writePiExtensionConfig(name, config);
 }
 
+export async function importPiExtension(
+  sourcePath: string,
+  options: { agentDir?: string; cwd?: string } = {},
+): Promise<PiExtensionImportResult> {
+  const source = resolve(sourcePath);
+  const sourceStats = await stat(source).catch(() => null);
+  if (!sourceStats) throw new Error('Selected extension source does not exist');
+  if (!sourceStats.isDirectory() && (!sourceStats.isFile() || extname(source).toLowerCase() !== '.zip')) {
+    throw new Error('Select an extension folder or a .zip package');
+  }
+
+  const agentDir = options.agentDir ?? getPiHostAgentDir();
+  const managedRoot = managedExtensionRoot(agentDir);
+  if (sourceStats.isDirectory() && (resolve(source) === resolve(managedRoot) || isPathInside(source, managedRoot))) {
+    throw new Error('Select one extension package, not the Mortise Agent or managed extensions directory');
+  }
+  if (sourceStats.isFile() && sourceStats.size > MAX_EXTENSION_ARCHIVE_BYTES) {
+    throw new Error('Extension ZIP is too large');
+  }
+  await mkdir(managedRoot, { recursive: true });
+  const stagingRoot = join(managedRoot, `.install-${randomUUID()}`);
+  await mkdir(stagingRoot, { recursive: true });
+
+  try {
+    if (sourceStats.isDirectory()) await cp(source, stagingRoot, { recursive: true });
+    else await extractExtensionArchive(source, stagingRoot);
+
+    const packageRoot = await locateImportRoot(stagingRoot);
+    const metadata = await readImportManifest(packageRoot);
+    const catalog = await getPiExtensionCatalog({ agentDir, cwd: options.cwd });
+    const existingIds = new Set(catalog.extensions.map((entry) => entry.id));
+    const duplicateId = metadata.extensionIds.find((id) => existingIds.has(id));
+    if (duplicateId) throw new Error(`Extension ${duplicateId} is already installed`);
+
+    const packageSlug = safePackageSlug(metadata.packageName, basename(source, extname(source)));
+    const destination = join(managedRoot, packageSlug);
+    if (existsSync(destination)) throw new Error(`Extension package ${packageSlug} is already installed`);
+
+    if (resolve(packageRoot) === resolve(stagingRoot)) {
+      await rename(stagingRoot, destination);
+    } else {
+      await cp(packageRoot, destination, { recursive: true });
+      await rm(stagingRoot, { recursive: true, force: true });
+    }
+
+    const settingsManager = SettingsManager.create(options.cwd ?? process.cwd(), agentDir, MORTISE_PROJECT_DIR);
+    const previousPaths = settingsManager.getExtensionPaths();
+    const relativePackagePath = `./${relative(agentDir, destination).split(sep).join('/')}`;
+    try {
+      await persistGlobalExtensionPaths(settingsManager, [
+        ...previousPaths,
+        { id: `managed-${safePackageSlug(metadata.extensionIds[0]!, 'extension')}`, path: relativePackagePath },
+      ]);
+    } catch (error) {
+      await rm(destination, { recursive: true, force: true });
+      throw error;
+    }
+
+    return { ...metadata, installedPath: destination };
+  } catch (error) {
+    await rm(stagingRoot, { recursive: true, force: true }).catch(() => undefined);
+    throw error;
+  }
+}
+
+export async function uninstallPiExtension(
+  extensionId: string,
+  options: { agentDir?: string; cwd?: string } = {},
+): Promise<PiExtensionUninstallResult> {
+  const agentDir = options.agentDir ?? getPiHostAgentDir();
+  const managedRoot = managedExtensionRoot(agentDir);
+  const catalog = await getPiExtensionCatalog({ agentDir, cwd: options.cwd });
+  const extension = catalog.extensions.find((entry) => entry.id === extensionId);
+  if (!extension) throw new Error(`Unknown extension: ${extensionId}`);
+  if (!extension.uninstallable) throw new Error('Only extensions imported into Mortise can be uninstalled here');
+
+  const rel = relative(managedRoot, resolve(extension.resolvedPath));
+  const packageSegment = rel.split(sep)[0];
+  if (!packageSegment || packageSegment === '..') throw new Error('Managed extension package could not be resolved');
+  const packageRoot = join(managedRoot, packageSegment);
+  if (!isPathInside(managedRoot, packageRoot)) throw new Error('Managed extension package path is invalid');
+  const metadata = await readImportManifest(packageRoot);
+
+  const settingsManager = SettingsManager.create(options.cwd ?? process.cwd(), agentDir, MORTISE_PROJECT_DIR);
+  const previousPaths = settingsManager.getExtensionPaths();
+  const nextPaths = previousPaths.filter((entry) => {
+    if (!entry || typeof entry !== 'object' || typeof entry.path !== 'string') return true;
+    return resolve(agentDir, entry.path) !== resolve(packageRoot);
+  });
+  if (nextPaths.length === previousPaths.length) throw new Error('Managed extension declaration is missing');
+
+  await persistGlobalExtensionPaths(settingsManager, nextPaths);
+  try {
+    await rm(packageRoot, { recursive: true });
+  } catch (error) {
+    await persistGlobalExtensionPaths(settingsManager, previousPaths).catch(() => undefined);
+    throw error;
+  }
+  return metadata;
+}
+
 /**
  * 读取 Pi 扩展 catalog。扩展发现、metadata、enabled/config 均来自 Pi host facade；
  * Mortise 只把结果作为设置 UI 的展示 DTO。
  */
-export async function getPiExtensionCatalog(options: { cwd?: string; agentDir?: string } = {}): Promise<PiExtensionCatalogResult> {
+export async function getPiExtensionCatalog(options: { cwd?: string; agentDir?: string; bundledExtensionPaths?: string[] } = {}): Promise<PiExtensionCatalogResult> {
   const cwd = options.cwd ?? process.cwd();
   const agentDir = options.agentDir ?? getPiHostAgentDir();
   try {
@@ -608,10 +847,24 @@ export async function getPiExtensionCatalog(options: { cwd?: string; agentDir?: 
       settingsManager,
     });
     const result = await resourceResolver.resolve();
+    const bundledExtensionPaths = options.bundledExtensionPaths
+      ?? [process.env.MORTISE_BUNDLED_PI_EXTENSIONS_PATH].filter(
+        (value): value is string => Boolean(value && existsSync(value)),
+      );
+    const bundled = bundledExtensionPaths.length > 0
+      ? await resourceResolver.resolveExtensionSources(bundledExtensionPaths)
+      : { extensions: [] };
+    const seenExtensionIds = new Set<string>();
+    const extensions = [...bundled.extensions, ...result.extensions].filter((resource) => {
+      const id = resource.metadata.extensionId;
+      if (!id || seenExtensionIds.has(id)) return false;
+      seenExtensionIds.add(id);
+      return true;
+    });
     return {
       // PackageManager deliberately retains disabled resources. Loading the
       // runtime (and the host facade catalog built on it) filters them out.
-      extensions: result.extensions
+      extensions: extensions
         .filter((resource) => resource.metadata.extensionId)
         .map((resource): PiExtensionCatalogEntry => {
           const id = resource.metadata.extensionId!;
@@ -624,13 +877,14 @@ export async function getPiExtensionCatalog(options: { cwd?: string; agentDir?: 
           const ui = metadata.extensionUI as PiExtensionCatalogEntry['ui'];
           const manifest = metadata.extensionManifest;
           const config = settingsManager.getExtensionConfig(id) as Record<string, unknown> | undefined;
+          const resolvedPath = resolve(resource.path);
           return {
             id,
             loaded: false,
             title: ui?.title ?? manifest?.name ?? id,
             description: ui?.description ?? manifest?.description ?? '',
             category: ui?.category ?? 'other',
-            configurable: (ui?.settings?.fields.length ?? 0) > 0,
+            configurable: Boolean(ui?.settings?.page) || (ui?.settings?.fields.length ?? 0) > 0,
             manifest,
             manifestStatus: metadata.extensionManifestStatus ?? 'legacy',
             manifestDiagnostics: metadata.extensionManifestDiagnostics ?? [],
@@ -638,10 +892,11 @@ export async function getPiExtensionCatalog(options: { cwd?: string; agentDir?: 
             ui,
             enabled: config?.enabled === undefined ? true : config.enabled !== false,
             path: resource.path,
-            resolvedPath: resource.path,
+            resolvedPath,
             commands: [],
             tools: [],
             config,
+            uninstallable: isPathInside(managedExtensionRoot(agentDir), resolvedPath),
           };
         }),
       errors: [],

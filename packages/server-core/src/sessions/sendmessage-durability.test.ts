@@ -201,7 +201,7 @@ describe('sendMessage durability', () => {
       abort: async () => undefined,
       forceAbort: () => undefined,
       interruptForHandoff: () => undefined,
-      redirect: () => false,
+      redirect: async () => false,
       followUp: async () => false,
       runMiniCompletion: async () => null,
       runIsolatedAgent: async () => null,
@@ -925,11 +925,30 @@ describe('sendMessage durability', () => {
     await Promise.all(pending)
   })
 
-  it('downgrades an unaccepted steer to a visible next-turn pending message', async () => {
+  it('withdraws one queued follow-up without stopping the active turn', async () => {
+    const sessionId = 'durability-withdraw-follow-up'
+    const managed = buildSession(sessionId)
+    managed.isProcessing = true
+    managed.agent = { followUp: mock(() => true), projectQueuedUser: mock(() => undefined) } as never
+
+    const pending = sm.sendMessage(sessionId, 'edit this', undefined, undefined, {
+      optimisticMessageId: 'queued-edit-1',
+    }).catch(error => error)
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    expect(managed.messageQueue).toHaveLength(1)
+    await sm.withdrawQueuedMessage(sessionId, 'queued-edit-1')
+
+    expect(managed.messageQueue).toHaveLength(0)
+    expect(managed.isProcessing).toBe(true)
+    await expect(pending).resolves.toMatchObject({ code: 'QUEUED_MESSAGE_WITHDRAWN' })
+  })
+
+  it('downgrades an asynchronously unaccepted steer to a visible next-turn pending message', async () => {
     const sessionId = 'durability-native-follow-up-rejected'
     const managed = buildSession(sessionId)
     managed.isProcessing = true
-    const redirect = mock(() => false)
+    const redirect = mock(async () => false)
     const followUp = mock(() => true)
     managed.agent = { redirect, followUp, projectQueuedUser: mock(() => undefined) } as never
     const events: unknown[] = []

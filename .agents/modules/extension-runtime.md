@@ -50,7 +50,7 @@ Shared agent backends manage Pi hosts; server-core bridges extension contributio
 
 # Invariants
 
-Extension manifests have one Mortise runtime contract and do not accept `targets` or `engines`; Mortise GlobalHost discovery and child processes are pinned to the runtime's explicit Mortise Agent root rather than inherited Pi defaults; global and `<workspace>/.mortise/extensions` are accepted default-trusted sources and load when a backend opens or attaches the Workspace; file changes take effect only on the next backend/Workspace load; capability negotiation precedes use; parent runtime teardown owns its foreground and background child-task leases. Extension authoring documentation follows Pi's runnable, API-oriented guide style, keeps constraints beside the relevant API, includes complete examples and an examples index, and leaves architecture rationale in separate architecture documents.
+Extension manifests have one Mortise runtime contract and do not accept `targets` or `engines`; Mortise GlobalHost discovery and child processes are pinned to the runtime's explicit Mortise Agent root rather than inherited Pi defaults; global and `<workspace>/.mortise/extensions` are accepted default-trusted sources and load when a backend opens or attaches the Workspace; file changes take effect after an explicit runtime reload or the next backend/Workspace load; capability negotiation precedes use; parent runtime teardown owns its foreground and background child-task leases. Extension authoring documentation follows Pi's runnable, API-oriented guide style, keeps constraints beside the relevant API, includes complete examples and an examples index, and leaves architecture rationale in separate architecture documents.
 
 # Change Impact
 

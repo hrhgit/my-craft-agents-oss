@@ -43,7 +43,6 @@ export const SETTINGS_PAGES = [
   { id: 'appearance' as const, labelKey: 'settings.appearance.title', descriptionKey: 'settings.appearance.description' },
   { id: 'input' as const, labelKey: 'settings.input.title', descriptionKey: 'settings.input.description' },
   { id: 'workspace' as const, labelKey: 'settings.workspace.title', descriptionKey: 'settings.workspace.description' },
-  { id: 'permissions' as const, labelKey: 'settings.permissions.title', descriptionKey: 'settings.permissions.description' },
   { id: 'messaging' as const, labelKey: 'settings.messaging.title', descriptionKey: 'settings.messaging.description' },
   { id: 'server' as const, labelKey: 'settings.server.title', descriptionKey: 'settings.server.description' },
   { id: 'shortcuts' as const, labelKey: 'settings.shortcuts.title', descriptionKey: 'settings.shortcuts.description' },
@@ -54,24 +53,40 @@ export const SETTINGS_PAGES = [
  * Settings subpage type - derived from SETTINGS_PAGES
  * This replaces the manual union type in types.ts
  */
-export type SettingsSubpage = (typeof SETTINGS_PAGES)[number]['id']
+export type BuiltInSettingsSubpage = (typeof SETTINGS_PAGES)[number]['id']
+export type ExtensionSettingsSubpage = `extension-${string}.${string}`
+export type SettingsSubpage = BuiltInSettingsSubpage | ExtensionSettingsSubpage
 
 /**
  * Array of valid settings subpage IDs - for runtime validation
  */
-export const VALID_SETTINGS_SUBPAGES: readonly SettingsSubpage[] = SETTINGS_PAGES.map(p => p.id)
+export const VALID_SETTINGS_SUBPAGES: readonly BuiltInSettingsSubpage[] = SETTINGS_PAGES.map(p => p.id)
+
+export function isBuiltInSettingsSubpage(value: string): value is BuiltInSettingsSubpage {
+  return VALID_SETTINGS_SUBPAGES.includes(value as BuiltInSettingsSubpage)
+}
 
 /**
  * Type guard to check if a string is a valid settings subpage
  */
 export function isValidSettingsSubpage(value: string): value is SettingsSubpage {
-  return VALID_SETTINGS_SUBPAGES.includes(value as SettingsSubpage)
+  return isBuiltInSettingsSubpage(value)
+    || /^extension-[A-Za-z0-9][A-Za-z0-9._-]{0,63}\.[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(value)
+}
+
+export function createExtensionSettingsSubpage(extensionId: string, pageId: string): ExtensionSettingsSubpage {
+  return `extension-${extensionId}.${pageId}`
+}
+
+export function parseExtensionSettingsSubpage(value: string): { extensionId: string; pageId: string } | null {
+  const match = /^extension-([A-Za-z0-9][A-Za-z0-9._-]{0,63})\.([A-Za-z0-9][A-Za-z0-9._-]{0,63})$/.exec(value)
+  return match ? { extensionId: match[1], pageId: match[2] } : null
 }
 
 /**
  * Get settings page definition by ID
  */
-export function getSettingsPage(id: SettingsSubpage): SettingsPageDefinition {
+export function getSettingsPage(id: BuiltInSettingsSubpage): SettingsPageDefinition {
   const page = SETTINGS_PAGES.find(p => p.id === id)
   if (!page) throw new Error(`Unknown settings page: ${id}`)
   return page

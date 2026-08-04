@@ -135,7 +135,6 @@ export const NavigationRegistry = {
       appearance: PlaceholderComponent, // AppearanceSettingsPage
       input: PlaceholderComponent, // InputSettingsPage
       workspace: PlaceholderComponent, // WorkspaceSettingsPage
-      permissions: PlaceholderComponent, // PermissionsSettingsPage
       shortcuts: PlaceholderComponent, // ShortcutsPage
       preferences: PlaceholderComponent, // PreferencesPage
     },

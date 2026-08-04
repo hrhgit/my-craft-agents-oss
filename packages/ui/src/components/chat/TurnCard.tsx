@@ -939,17 +939,19 @@ function TreeViewConnector({ depth }: { depth: number; isLastChild?: boolean }) 
 function ActivityRow({ activity, onOpenDetails, isLastChild, sessionFolderPath, displayMode = 'detailed' }: ActivityRowProps) {
   const depth = activity.depth || 0
 
-  // Intermediate messages (reasoning and commentary) stay fully visible in the activity stream.
+  // Process text is rendered outside the collapsible tool stream, so the card itself has no toggle.
   if (activity.type === 'intermediate') {
     const isThinking = activity.status === 'running'
     const displayContent = activity.content?.trim()
     const isComplete = activity.status === 'completed'
+    if (!displayContent) return null
     return (
-      <div className="flex items-stretch">
+      <div className="flex items-stretch" data-mortise-process-text-card={activity.id}>
         <TreeViewConnector depth={depth} isLastChild={isLastChild} />
         <div
           className={cn(
-            "group/row flex items-start gap-2 py-1 text-foreground/75 flex-1 min-w-0",
+            "group/row flex flex-1 min-w-0 items-start gap-2 rounded-[8px] border border-border/70",
+            "bg-[color-mix(in_oklab,var(--muted)_28%,var(--background))] px-3 py-2.5 text-foreground/80 shadow-minimal",
             SIZE_CONFIG.fontSize
           )}
           onClick={onOpenDetails && isComplete ? onOpenDetails : undefined}
@@ -3106,12 +3108,6 @@ export const TurnCard = React.memo(function TurnCard({
   )
 
 
-  // Compute preview text with cross-fade animation
-  const previewText = useMemo(
-    () => getPreviewText(activities, intent, isStreaming, !!response, isComplete),
-    [activities, intent, isStreaming, response, isComplete]
-  )
-
   // Sort activities by timestamp for correct chronological order
   // This handles the live streaming case (turn-utils sorts on flush for completed turns)
   const allSortedActivities = useMemo(
@@ -3125,9 +3121,18 @@ export const TurnCard = React.memo(function TurnCard({
     () => allSortedActivities.filter(a => a.type === 'plan'),
     [allSortedActivities]
   )
-  const sortedActivities = useMemo(
-    () => allSortedActivities.filter(a => a.type !== 'plan'),
+  const processTextActivities = useMemo(
+    () => allSortedActivities.filter(a => a.type === 'intermediate' && Boolean(a.content?.trim())),
     [allSortedActivities]
+  )
+  const sortedActivities = useMemo(
+    () => allSortedActivities.filter(a => a.type !== 'plan' && a.type !== 'intermediate'),
+    [allSortedActivities]
+  )
+  // The collapsed header describes only the content it controls. Process text is visible separately.
+  const previewText = useMemo(
+    () => getPreviewText(sortedActivities, intent, isStreaming, !!response, isComplete),
+    [sortedActivities, intent, isStreaming, response, isComplete]
   )
   const renderMessageNode = (messageId: string | undefined, builtIn: React.ReactNode) =>
     messageId && renderMessage ? renderMessage(messageId, builtIn) : builtIn
@@ -3182,6 +3187,7 @@ export const TurnCard = React.memo(function TurnCard({
 
   // Only count non-plan activities for the collapsible section
   const hasActivities = sortedActivities.length > 0
+  const hasProcessContent = hasActivities || processTextActivities.length > 0
 
   // Determine if thinking indicator should show using the phase-based state machine.
   // This properly handles the "gap" state (awaiting) between tool completion and next action,
@@ -3381,6 +3387,36 @@ export const TurnCard = React.memo(function TurnCard({
         </div>
       )}
 
+      {/* Non-empty reasoning/commentary stays visible as independent process cards. */}
+      {processTextActivities.length > 0 && (
+        <div className={cn("space-y-2", hasActivities && "mt-2")} data-mortise-process-text-cards>
+          <AnimatePresence mode="sync" initial={false}>
+            {processTextActivities.map((activity, index) => (
+              <motion.div
+                key={activity.id}
+                initial={hasMounted.current ? { opacity: 0, y: 6 } : false}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -4 }}
+                transition={{ duration: 0.18, delay: Math.min(index, 4) * 0.02 }}
+                className="select-text"
+              >
+                {renderActivity ? renderActivity(activity, <ActivityRow
+                  activity={activity}
+                  onOpenDetails={onOpenActivityDetails ? () => onOpenActivityDetails(activity) : undefined}
+                  sessionFolderPath={sessionFolderPath}
+                  displayMode={displayMode}
+                />) : <ActivityRow
+                  activity={activity}
+                  onOpenDetails={onOpenActivityDetails ? () => onOpenActivityDetails(activity) : undefined}
+                  sessionFolderPath={sessionFolderPath}
+                  displayMode={displayMode}
+                />}
+              </motion.div>
+            ))}
+          </AnimatePresence>
+        </div>
+      )}
+
       {/* Standalone thinking indicator - when no activities but still working */}
       {!hasActivities && isThinking && !animateResponse && (
         <div className={cn("flex items-center gap-2 px-3 py-1.5 text-muted-foreground", SIZE_CONFIG.fontSize)}>
@@ -3393,7 +3429,7 @@ export const TurnCard = React.memo(function TurnCard({
       {planActivities.map((planActivity, index) => (
         <div
           key={planActivity.id}
-          className={cn("select-text", (hasActivities || index > 0) && "mt-2")}
+          className={cn("select-text", (hasProcessContent || index > 0) && "mt-2")}
           data-mortise-search-target-type="message"
           data-mortise-search-target-id={planActivity.messageId ?? planActivity.id}
         >
@@ -3433,7 +3469,7 @@ export const TurnCard = React.memo(function TurnCard({
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.3, ease: "easeOut" }}
-              className={cn("select-text", hasActivities && "mt-2")}
+              className={cn("select-text", hasProcessContent && "mt-2")}
               data-mortise-search-target-type="message"
               data-mortise-search-target-id={response.messageId}
             >
@@ -3474,7 +3510,7 @@ export const TurnCard = React.memo(function TurnCard({
       {/* Non-animated version for regular app use */}
       {!animateResponse && response && !isBuffering && (
         <div
-          className={cn("select-text", hasActivities && "mt-2")}
+          className={cn("select-text", hasProcessContent && "mt-2")}
           data-mortise-search-target-type="message"
           data-mortise-search-target-id={response.messageId}
         >

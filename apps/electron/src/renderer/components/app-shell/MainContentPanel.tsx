@@ -34,6 +34,8 @@ import { skillSelection, automationSelection } from '@/hooks/useEntitySelection'
 import { ChatPage, NewConversationPage } from '@/pages'
 import SkillInfoPage from '@/pages/SkillInfoPage'
 import { getSettingsPageComponent } from '@/pages/settings/settings-pages'
+import { ExtensionSettingsPage } from '@/pages/settings/ExtensionSettingsPage'
+import { isBuiltInSettingsSubpage, parseExtensionSettingsSubpage } from '../../../shared/settings-registry'
 import { AutomationInfoPage } from '../automations/AutomationInfoPage'
 import type { ExecutionEntry } from '../automations/types'
 import { automationsAtom } from '@/atoms/automations'
@@ -168,7 +170,16 @@ export function MainContentPanel({
   // App page as the default detail so the right side is never empty.
   if (isSettingsNavigation(navState)) {
     const subpage = navState.subpage ?? 'app'
-    const SettingsPageComponent = getSettingsPageComponent(subpage)
+    const extensionPage = parseExtensionSettingsSubpage(subpage)
+    if (extensionPage) {
+      return wrapWithStoplight(
+        <Panel variant="grow" className={className}>
+          <ExtensionSettingsPage extensionId={extensionPage.extensionId} pageId={extensionPage.pageId} />
+        </Panel>
+      )
+    }
+    const builtInSubpage = isBuiltInSettingsSubpage(subpage) ? subpage : 'app'
+    const SettingsPageComponent = getSettingsPageComponent(builtInSubpage)
     return wrapWithStoplight(
       <Panel variant="grow" className={className}>
         <SettingsPageComponent />

@@ -56,9 +56,9 @@ Initial AppShell scenarios are:
 - `app.loading`, `transport.reconnect`, `transport.error`
 - `session.empty`, `session.streaming`, `tool.approval`
 - `extension.loading`, `extension.ready`, `extension.error`, `extension.reload`
-- `settings.permissions`, `settings.app`
+- `settings.app`
 
-The host renders the production AppShell and production components for transport status, session transcript streaming, approval, extension contributions, permission tables, settings layout, and the application splash. Scenario definitions can only compose registered typed state primitives and registered service operations. The session projection adapter is the sole boundary allowed to update production renderer projections; definitions never receive atoms, a Jotai store, React setters, or arbitrary fixtures.
+The host renders the production AppShell and production components for transport status, session transcript streaming, approval, extension contributions, settings layout, and the application splash. Scenario definitions can only compose registered typed state primitives and registered service operations. The session projection adapter is the sole boundary allowed to update production renderer projections; definitions never receive atoms, a Jotai store, React setters, or arbitrary fixtures.
 
 The frozen clock virtualizes the registered application `timer`, `debounce`, `retry`, and `scheduler` domains. Snapshot, apply, and evidence results report those domains explicitly and always report OS and network clocks as not virtualized. Reset disposes pending work so an old scenario timeline cannot mutate the next scenario. Registered fault points are `transport.connect`, `session.stream`, and `extension.reload`; each is wired through its named service operation, validates its scope, consumes an exact bounded count, and gives `delay`, `error`, `disconnect`, and `drop` distinct observable behavior.
 

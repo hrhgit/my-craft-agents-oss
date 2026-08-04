@@ -38,7 +38,9 @@ bin\mortise-ui.exe start --label native-dialog --surface electron --profile fixt
 ## Validate An Extension
 
 Mount an extension directly from its development directory. Its `package.json`
-must contain host-neutral Manifest V1 `pi.extensions` entries.
+must contain one host-neutral Manifest V1 `pi.extensions` entry per extension.
+Do not add `targets`, `engines`, or the legacy `craft` target; the Developer Kit
+uses the same strict declaration validator as the Mortise runtime.
 
 ```powershell
 bin\mortise-ui.exe start --label package-check --surface electron --profile fixture --extension C:\path\to\my-extension --json

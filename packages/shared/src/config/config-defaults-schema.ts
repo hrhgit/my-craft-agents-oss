@@ -5,7 +5,6 @@
  * This file only defines types - the actual defaults come from the bundled JSON.
  */
 
-import type { PermissionMode } from '../agent/mode-manager.ts';
 import type { ThinkingLevel } from '../agent/thinking-levels.ts';
 import type { PiExtensionSettings } from './pi-extension-settings.ts';
 
@@ -43,7 +42,5 @@ export interface ConfigDefaults {
   };
   workspaceDefaults: {
     thinkingLevel: ThinkingLevel;
-    permissionMode: PermissionMode;
-    cyclablePermissionModes: PermissionMode[];
   };
 }

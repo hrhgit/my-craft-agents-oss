@@ -11,13 +11,13 @@ import {
   type UiValidationScenarioApplyResult,
 } from '@mortise/shared/ui-validation'
 import type { Message, PermissionRequest, Session, TransportConnectionState } from '../../shared/types'
+import type { PiProjectionSnapshotV1 } from '@mortise/shared/protocol'
 import { TooltipProvider } from '@mortise/ui'
 import { TransportConnectionBanner } from '@/components/app-shell/TransportConnectionBanner'
 import { StreamingMarkdown } from '@/components/markdown'
 import { AdminApprovalRequest } from '@/components/app-shell/input/structured/AdminApprovalRequest'
 import { ExtensionContributionZone } from '@/components/extensions/ExtensionContributionZone'
 import { extensionContributionStore } from '@/components/extensions/useExtensionContributions'
-import { PermissionsDataTable } from '@/components/info'
 import { SettingsCard, SettingsRow, SettingsSection } from '@/components/settings'
 import { Button } from '@/components/ui/button'
 import { AppShell } from '@/components/app-shell/AppShell'
@@ -43,9 +43,9 @@ type ScenarioView =
   | 'transport'
   | 'session-empty'
   | 'session-streaming'
+  | 'session-queued'
   | 'tool-approval'
   | 'extension'
-  | 'permissions'
   | 'settings'
 
 type ExtensionPhase = 'loading' | 'ready' | 'error' | 'reloading'
@@ -58,7 +58,7 @@ export interface AppShellScenarioState {
   stream: { text: string; active: boolean }
   approval: { resolved?: 'approved' | 'cancelled' }
   extension: { phase: ExtensionPhase; reloads: number }
-  route: 'chat' | 'settings.permissions' | 'settings.app'
+  route: 'chat' | 'settings.app'
   lastEvent: string
   serviceEvents: Array<{ operation: string; outcome: 'completed' | 'failed' | 'disconnected' | 'dropped' }>
 }
@@ -70,13 +70,13 @@ type ScenarioEvent =
   | { type: 'transport.retrying' }
   | { type: 'show.empty-session' }
   | { type: 'show.streaming'; text: string }
+  | { type: 'show.queued' }
   | { type: 'stream.completed' }
   | { type: 'stream.failed' }
   | { type: 'show.tool-approval' }
   | { type: 'approval.resolved'; result: 'approved' | 'cancelled' }
   | { type: 'show.extension'; phase: ExtensionPhase }
   | { type: 'extension.reloaded' }
-  | { type: 'show.permissions' }
   | { type: 'show.settings' }
   | { type: 'service.outcome'; operation: string; outcome: 'completed' | 'failed' | 'disconnected' | 'dropped' }
 
@@ -100,13 +100,13 @@ function reduceScenario(state: AppShellScenarioState, event: ScenarioEvent): App
     case 'transport.retrying': return state.transport ? { ...state, revision, transport: { ...state.transport, status: 'reconnecting', attempt: state.transport.attempt + 1 }, lastEvent: event.type } : state
     case 'show.empty-session': return { ...INITIAL_STATE, revision, view: 'session-empty', lastEvent: event.type }
     case 'show.streaming': return { ...INITIAL_STATE, revision, view: 'session-streaming', stream: { text: event.text, active: true }, lastEvent: event.type }
+    case 'show.queued': return { ...INITIAL_STATE, revision, view: 'session-queued', lastEvent: event.type }
     case 'stream.completed': return { ...state, revision, stream: { ...state.stream, active: false }, lastEvent: event.type }
     case 'stream.failed': return { ...state, revision, stream: { ...state.stream, active: false }, lastEvent: event.type }
     case 'show.tool-approval': return { ...INITIAL_STATE, revision, view: 'tool-approval', lastEvent: event.type }
     case 'approval.resolved': return { ...state, revision, approval: { resolved: event.result }, lastEvent: event.type }
     case 'show.extension': return { ...INITIAL_STATE, revision, view: 'extension', extension: { ...state.extension, phase: event.phase }, lastEvent: event.type }
     case 'extension.reloaded': return { ...state, revision, extension: { phase: 'ready', reloads: state.extension.reloads + 1 }, lastEvent: event.type }
-    case 'show.permissions': return { ...INITIAL_STATE, revision, view: 'permissions', route: 'settings.permissions', lastEvent: event.type }
     case 'show.settings': return { ...INITIAL_STATE, revision, view: 'settings', route: 'settings.app', lastEvent: event.type }
     case 'service.outcome': return { ...state, revision, serviceEvents: [...state.serviceEvents.slice(-31), { operation: event.operation, outcome: event.outcome }], lastEvent: `${event.operation}.${event.outcome}` }
   }
@@ -212,9 +212,9 @@ export class AppShellScenarioService {
     register('transport.state', validateTransportPhase, status => ({ type: 'show.transport', state: transport(status) }))
     register('session.empty', none, () => ({ type: 'show.empty-session' }))
     register('session.streaming', validateStreamText, text => ({ type: 'show.streaming', text }))
+    register('session.queued', none, () => ({ type: 'show.queued' }))
     register('tool.approval', none, () => ({ type: 'show.tool-approval' }))
     register('extension.phase', validateExtensionPhase, phase => ({ type: 'show.extension', phase }))
-    register('route.permissions', none, () => ({ type: 'show.permissions' }))
     register('route.settings', none, () => ({ type: 'show.settings' }))
   }
 
@@ -291,12 +291,12 @@ export class AppShellScenarioService {
     fixed('transport.error', 'transport.state', 'failed')
     fixed('session.empty', 'session.empty')
     fixed('session.streaming', 'session.streaming', 'The validation stream uses the production markdown renderer.\n\n- first block\n- second block', clock => { void this.completeStream(clock) })
+    fixed('session.queued', 'session.queued')
     fixed('tool.approval', 'tool.approval')
     fixed('extension.loading', 'extension.phase', 'loading')
     fixed('extension.ready', 'extension.phase', 'ready')
     fixed('extension.error', 'extension.phase', 'error')
     fixed('extension.reload', 'extension.phase', 'reloading', clock => { void this.completeExtensionReload(clock) })
-    fixed('settings.permissions', 'route.permissions')
     fixed('settings.app', 'route.settings')
   }
 
@@ -413,7 +413,7 @@ export function ScenarioAppShellHost() {
     )
   }, [state.extension.phase, state.revision, state.view])
 
-  if (['transport', 'session-empty', 'session-streaming', 'tool-approval', 'extension', 'permissions', 'settings'].includes(state.view)) {
+  if (['transport', 'session-empty', 'session-streaming', 'session-queued', 'tool-approval', 'extension', 'settings'].includes(state.view)) {
     return <RealScenarioAppShell state={state} />
   }
 
@@ -428,7 +428,6 @@ export function ScenarioAppShellHost() {
         {state.view === 'session-streaming' && <article className="w-full max-w-2xl"><StreamingMarkdown content={state.stream.text} isStreaming={state.stream.active} /></article>}
         {state.view === 'tool-approval' && <div className="h-80 w-full max-w-xl"><AdminApprovalRequest request={{ appName: 'Scenario tool', reason: 'Validate the production approval card', command: 'mortise scenario --verify', impact: 'No real command is executed.' }} onApprove={() => appShellScenarioService.dispatch({ type: 'approval.resolved', result: 'approved' })} onCancel={() => appShellScenarioService.dispatch({ type: 'approval.resolved', result: 'cancelled' })} /></div>}
         {state.view === 'extension' && <div className="w-full max-w-xl"><ExtensionContributionZone sessionId={SCENARIO_SESSION_ID} surface="composer.above" hydrateRuntime={false} /></div>}
-        {state.view === 'permissions' && <div className="w-full max-w-3xl"><SettingsSection title="Permissions"><PermissionsDataTable data={[{ access: 'allowed', type: 'bash', pattern: 'git status', comment: 'Read-only repository inspection' }, { access: 'blocked', type: 'tool', pattern: 'arbitrary-state-write', comment: 'Scenario safety boundary' }]} searchable /></SettingsSection></div>}
         {state.view === 'settings' && <div className="w-full max-w-2xl"><SettingsSection title="Application"><SettingsCard><SettingsRow label="Browser tools" description="Controlled scenario setting"><Button size="sm" variant="outline">Enabled</Button></SettingsRow><SettingsRow label="Keep awake" description="Uses production settings layout"><span className="text-sm text-muted-foreground">Off</span></SettingsRow></SettingsCard></SettingsSection></div>}
       </section>
       <footer className="border-t px-4 py-2 text-xs text-muted-foreground">{state.lastEvent} · revision {state.revision}</footer>
@@ -437,7 +436,9 @@ export function ScenarioAppShellHost() {
 }
 
 function RealScenarioAppShell({ state }: { state: AppShellScenarioState }) {
-  const needsSession = state.view === 'session-streaming' || state.view === 'tool-approval' || state.view === 'extension'
+  const [draft, setDraft] = React.useState('')
+  const [queuedMessageWithdrawn, setQueuedMessageWithdrawn] = React.useState(false)
+  const needsSession = state.view === 'session-streaming' || state.view === 'session-queued' || state.view === 'tool-approval' || state.view === 'extension'
   const messages = React.useMemo<Message[]>(() => state.view === 'session-streaming' ? [{
     id: 'scenario-stream-message',
     role: 'assistant',
@@ -446,25 +447,69 @@ function RealScenarioAppShell({ state }: { state: AppShellScenarioState }) {
     isStreaming: state.stream.active,
     isPending: state.stream.active,
     turnId: 'scenario-stream-turn',
+  }] : state.view === 'session-queued' ? [{
+    id: 'scenario-active-assistant',
+    role: 'assistant',
+    content: '正在处理当前请求，排队消息会在这一轮结束后发送。',
+    timestamp: 1_785_830_400_000,
+    isPending: true,
+    isStreaming: true,
+    turnId: 'scenario-active-turn',
   }] : [], [state.stream.active, state.stream.text, state.view])
   const session = React.useMemo<Session>(() => ({
     ...createEmptySession(SCENARIO_SESSION_ID, PLAYGROUND_WORKSPACE.id, PLAYGROUND_WORKSPACE.name),
     name: 'Validation session',
     messages,
-    isProcessing: (state.view === 'extension' && state.extension.phase === 'loading') || (state.view === 'session-streaming' && state.stream.active),
+    isProcessing: (state.view === 'extension' && state.extension.phase === 'loading') || (state.view === 'session-streaming' && state.stream.active) || state.view === 'session-queued',
   }), [messages, state.extension.phase, state.stream.active, state.view])
+
+  const piProjection = React.useMemo<PiProjectionSnapshotV1 | undefined>(() => {
+    if (state.view !== 'session-queued') return undefined
+    const entities: PiProjectionSnapshotV1['entities'] = [{
+      entityId: 'runtime:scenario-queued',
+      entityType: 'conversation',
+      entityVersion: 1,
+      createdSeq: 1,
+      kind: 'agent_start',
+      payload: {},
+      lastEventId: 'scenario-queued-agent-start',
+      lastSeq: 1,
+    }]
+    if (!queuedMessageWithdrawn) entities.push({
+      entityId: 'content:user:scenario-queued-message',
+      entityType: 'content_block',
+      entityVersion: 1,
+      createdSeq: 2,
+      createdAt: 1_785_830_400_000,
+      updatedAt: 1_785_830_400_000,
+      kind: 'user_text',
+      payload: {
+        role: 'user', messageId: 'scenario-queued-message', clientMutationId: 'scenario-queued-message',
+        text: '继续完善排队消息的展示与编辑交互', streaming: false, queueStatus: 'queued',
+        source: 'host', timestamp: 1_785_830_400_000,
+      },
+      lastEventId: 'scenario-queued-user',
+      lastSeq: 2,
+    })
+    return {
+      schemaVersion: 1,
+      sessionId: SCENARIO_SESSION_ID,
+      runtimeId: SCENARIO_RUNTIME_ID,
+      lastSeq: 2,
+      entities,
+    }
+  }, [queuedMessageWithdrawn, state.view])
 
   const projection = React.useMemo(() => ({
     sessions: needsSession ? [session] : [],
     ...(needsSession ? { loadedSessionId: session.id } : {}),
-  }), [needsSession, session])
+    ...(piProjection ? { piProjection } : {}),
+  }), [needsSession, piProjection, session])
 
   React.useEffect(() => {
-    const route = state.view === 'permissions'
-      ? routes.view.settings('permissions')
-      : state.view === 'settings'
-        ? routes.view.settings('app')
-        : routes.view.allSessions(needsSession ? SCENARIO_SESSION_ID : undefined)
+    const route = state.view === 'settings'
+      ? routes.view.settings('app')
+      : routes.view.allSessions(needsSession ? SCENARIO_SESSION_ID : undefined)
     navigate(route)
   }, [needsSession, state.view])
 
@@ -484,10 +529,13 @@ function RealScenarioAppShell({ state }: { state: AppShellScenarioState }) {
   const contextValue = React.useMemo(() => createPlaygroundAppShellContext({
     isCompactMode: false,
     pendingPermissions,
+    getDraft: () => draft,
+    onInputChange: (_sessionId, value) => setDraft(value),
+    withdrawQueuedMessage: async () => setQueuedMessageWithdrawn(true),
     onCreateSession: async () => session,
     onRespondToPermission: (_sessionId, _requestId, allowed) => appShellScenarioService.dispatch({ type: 'approval.resolved', result: allowed ? 'approved' : 'cancelled' }),
     onDeleteSession: async () => false,
-  }), [pendingPermissions, session])
+  }), [draft, pendingPermissions, session])
 
   return (
     <div className="flex h-full min-h-[560px] w-full flex-col bg-background text-foreground" data-testid="scenario.real-app-shell" data-scenario={state.activeScenario ?? 'none'}>
@@ -507,8 +555,8 @@ function RealScenarioAppShell({ state }: { state: AppShellScenarioState }) {
                     session,
                     messageId: 'scenario-first-turn',
                   })}
-                  onInputChange={() => undefined}
-                  getDraft={() => ''}
+                  onInputChange={(_sessionId, value) => setDraft(value)}
+                  getDraft={() => draft}
                   onAutoDeleteEmptySession={async () => undefined}
                   isReady
                   isSessionsReady

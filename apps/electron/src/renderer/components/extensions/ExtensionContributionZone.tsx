@@ -1,16 +1,17 @@
 import * as React from 'react'
-import { Activity, AlertCircle, Check, ChevronRight, Circle, Clock, Info, Loader2, MoreHorizontal, Settings, Sparkles, X } from 'lucide-react'
+import { Activity, AlertCircle, Check, ChevronDown, ChevronRight, Circle, Clock, Compass, Info, Loader2, MoreHorizontal, Repeat, Settings, Sparkles, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import type { ExtensionUIIconName, ExtensionUINode, ExtensionUISurface } from '@mortise/shared/protocol'
 import { cn } from '@/lib/utils'
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
+import { DropdownMenu, DropdownMenuTrigger, StyledDropdownMenuContent, StyledDropdownMenuItem } from '@/components/ui/styled-dropdown'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@mortise/ui/tooltip'
 import { useExtensionContributions } from './useExtensionContributions'
 import { Markdown } from '@/components/markdown'
 import { SandboxAppHost } from './SandboxAppHost'
 import { responsiveSurfaceCapacity, selectMountableOverflow } from './extension-contribution-store'
 
-const icons = { activity: Activity, 'alert-circle': AlertCircle, check: Check, 'chevron-right': ChevronRight, circle: Circle, clock: Clock, info: Info, loader: Loader2, settings: Settings, sparkles: Sparkles, x: X }
+const icons = { activity: Activity, 'alert-circle': AlertCircle, check: Check, 'chevron-right': ChevronRight, circle: Circle, clock: Clock, compass: Compass, info: Info, loader: Loader2, repeat: Repeat, settings: Settings, sparkles: Sparkles, x: X }
 
 export interface ExtensionContributionZoneProps {
   sessionId: string
@@ -40,6 +41,7 @@ export function ExtensionContributionZone({ sessionId, surface, className, targe
   const mountableKeys = React.useMemo(() => new Set(mountableOverflow.map(item => `${item.extensionId}\0${item.contribution.id}`)), [mountableOverflow])
   const menuOverflow = layout.menuOverflow.filter(item => mountableKeys.has(`${item.extensionId}\0${item.contribution.id}`))
   const collapsedOverflow = layout.collapsedOverflow.filter(item => mountableKeys.has(`${item.extensionId}\0${item.contribution.id}`))
+  const scrollOverflow = (layout.scrollOverflow ?? []).filter(item => mountableKeys.has(`${item.extensionId}\0${item.contribution.id}`))
   const focusedSemanticId = React.useRef<string | null>(null)
   const layoutIdentity = [...layout.visible, ...mountableOverflow].map(item => `${item.extensionId}:${item.contribution.id}`).join('|')
   React.useLayoutEffect(() => {
@@ -47,13 +49,24 @@ export function ExtensionContributionZone({ sessionId, surface, className, targe
     if (!semanticId || !surfaceElement || surfaceElement.contains(document.activeElement)) return
     const replacement = Array.from(surfaceElement.querySelectorAll<HTMLElement>('[data-mortise-semantic-id]'))
       .find(element => element.dataset.mortiseSemanticId === semanticId)
-    replacement?.focus()
+    if (!replacement) return
+    if (replacement.matches('button, a[href], input, select, textarea, [tabindex]:not([tabindex="-1"])')) {
+      replacement.focus()
+      return
+    }
+    replacement.querySelector<HTMLElement>('button, a[href], input, select, textarea, [tabindex]:not([tabindex="-1"])')?.focus()
   }, [layoutIdentity, surfaceElement])
   if (layout.visible.length === 0 && mountableOverflow.length === 0) return null
   return (
     <div
       ref={setSurfaceElement}
-      className={cn('flex min-w-0 gap-1', compact ? 'relative max-h-8 w-full flex-row items-center' : 'flex-col', className)}
+      className={cn(
+        'flex min-w-0 gap-1',
+        compact
+          ? 'relative h-8 max-h-8 w-full flex-row items-center overflow-hidden'
+          : cn('flex-col', isBoundedSurface(surface) && 'max-h-32 overflow-y-auto overscroll-contain'),
+        className,
+      )}
       data-extension-surface={surface}
       role={surface === 'composer.status' || surface === 'conversation.status' ? 'status' : undefined}
       aria-live={surface === 'composer.status' || surface === 'conversation.status' ? 'polite' : undefined}
@@ -62,10 +75,21 @@ export function ExtensionContributionZone({ sessionId, surface, className, targe
       }}
     >
       {layout.visible.map(item => (
-        <div key={`${item.runtimeId}:${item.extensionId}:${item.contribution.id}`} className={cn('min-w-0', compact && 'max-w-[120px] overflow-hidden')} data-extension-id={item.extensionId}>
+        <div key={`${item.runtimeId}:${item.extensionId}:${item.contribution.id}`} className={cn('min-w-0', compact && 'flex h-7 max-w-[120px] shrink-0 items-center overflow-hidden')} data-extension-id={item.extensionId}>
           <ExtensionNode node={item.contribution.content} contributionId={item.contribution.id} sessionId={item.sessionId} extensionId={item.extensionId} runtimeId={item.runtimeId} />
         </div>
       ))}
+      {scrollOverflow.length > 0 && (
+        <div className="min-w-0 max-h-32 max-w-full overflow-auto overscroll-contain rounded border border-border/60 px-1 py-0.5">
+          <div className="flex min-w-max flex-col gap-1">
+            {scrollOverflow.map(item => (
+              <div key={`${item.runtimeId}:${item.extensionId}:${item.contribution.id}`} className="min-w-0" data-extension-id={item.extensionId}>
+                <ExtensionNode node={item.contribution.content} contributionId={item.contribution.id} sessionId={item.sessionId} extensionId={item.extensionId} runtimeId={item.runtimeId} />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       {menuOverflow.length > 0 && (
         <details className="relative shrink-0 text-xs text-muted-foreground" open={overflowOpen} onToggle={(event) => setOverflowOpen(event.currentTarget.open)}>
           <summary
@@ -226,9 +250,114 @@ function ExtensionNode({ node, contributionId, sessionId, extensionId, runtimeId
       </TooltipProvider>
     )
   }
+  if (node.type === 'menu') return <ExtensionMenu node={node} semanticId={semanticId} sessionId={sessionId} extensionId={extensionId} />
+  if (node.type === 'responsive') return <ExtensionResponsiveNode node={node} semanticId={semanticId} contributionId={contributionId} sessionId={sessionId} extensionId={extensionId} runtimeId={runtimeId} />
   if (node.type === 'sandbox-app') return <div data-mortise-semantic-id={semanticId}><SandboxAppHost node={node} sessionId={sessionId} extensionId={extensionId} runtimeId={runtimeId} /></div>
   const gap = node.gap === 'none' ? 'gap-0' : node.gap === 'medium' ? 'gap-3' : 'gap-1.5'
   return <div data-mortise-semantic-id={semanticId} className={cn('min-w-0', node.type === 'row' ? 'flex flex-wrap items-center' : 'flex flex-col', gap)}>{node.children.map((child, index) => <ExtensionNode key={child.semanticId ?? index} node={child} contributionId={contributionId} sessionId={sessionId} extensionId={extensionId} runtimeId={runtimeId} />)}</div>
+}
+
+function isBoundedSurface(surface: ExtensionUISurface): boolean {
+  return surface === 'composer.above' || surface === 'composer.below' || surface === 'conversation.status'
+}
+
+type ResponsiveNode = Extract<ExtensionUINode, { type: 'responsive' }>
+export type ExtensionResponsiveMode = 'full' | 'compact' | 'minimal'
+
+export function selectResponsiveMode(width: number, node: ResponsiveNode): ExtensionResponsiveMode {
+  if (width <= 220 && node.minimal) return 'minimal'
+  if (width <= 420 && node.compact) return 'compact'
+  return 'full'
+}
+
+function ExtensionResponsiveNode({ node, semanticId, contributionId, sessionId, extensionId, runtimeId }: {
+  node: ResponsiveNode
+  semanticId?: string
+  contributionId: string
+  sessionId: string
+  extensionId: string
+  runtimeId: string
+}) {
+  const [element, setElement] = React.useState<HTMLDivElement | null>(null)
+  const [width, setWidth] = React.useState(Number.POSITIVE_INFINITY)
+  React.useEffect(() => {
+    if (!element) return
+    const update = () => setWidth(element.getBoundingClientRect().width)
+    update()
+    if (typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(update)
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [element])
+  const mode = selectResponsiveMode(width, node)
+  const selected = mode === 'minimal'
+    ? node.minimal ?? node.compact ?? node.full
+    : mode === 'compact'
+      ? node.compact ?? node.full
+      : node.full
+  return (
+    <div ref={setElement} data-mortise-semantic-id={semanticId} data-mortise-responsive-mode={mode} className="min-w-0">
+      <ExtensionNode node={selected} contributionId={contributionId} sessionId={sessionId} extensionId={extensionId} runtimeId={runtimeId} />
+    </div>
+  )
+}
+
+type MenuNode = Extract<ExtensionUINode, { type: 'menu' }>
+
+const menuToneStyles = {
+  default: { className: 'bg-foreground/5 text-foreground/60', shadowVar: 'var(--foreground-rgb)' },
+  info: { className: 'bg-info/10 text-info', shadowVar: 'var(--info-rgb)' },
+  accent: { className: 'bg-accent/5 text-accent', shadowVar: 'var(--accent-rgb)' },
+} as const
+
+function ExtensionMenu({ node, semanticId, sessionId, extensionId }: {
+  node: MenuNode
+  semanticId?: string
+  sessionId: string
+  extensionId: string
+}) {
+  const [open, setOpen] = React.useState(false)
+  const style = menuToneStyles[node.tone ?? 'default']
+  return (
+    <DropdownMenu open={open} onOpenChange={setOpen}>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          aria-label={node.label}
+          data-mortise-semantic-id={semanticId ?? `extension.${extensionId}.menu.${sessionId}`}
+          className={cn('h-8 pl-2.5 pr-3 text-[13px] font-medium rounded-[6px] flex items-center gap-1.5 shadow-tinted outline-none select-none shrink-0', style.className)}
+          style={{ '--shadow-color': style.shadowVar } as React.CSSProperties}
+        >
+          {node.icon && <ExtensionIcon name={node.icon} />}
+          <span className="min-w-0 truncate">{node.label}</span>
+          <ChevronDown className="h-3 w-3 opacity-60" />
+        </button>
+      </DropdownMenuTrigger>
+      <StyledDropdownMenuContent side="top" align="start" sideOffset={4} className="min-w-[220px]">
+        {node.options.map((option) => (
+          <StyledDropdownMenuItem
+            key={option.id}
+            disabled={option.disabled}
+            onSelect={() => {
+              if (!option.disabled) void window.electronAPI?.invokeExtensionCommand?.(sessionId, option.action.command, option.action.args, extensionId)
+              setOpen(false)
+            }}
+            className="flex items-center justify-between px-2 py-2 rounded-lg cursor-pointer"
+            title={option.disabledReason}
+          >
+            <div className="flex items-center gap-2 min-w-0">
+              {option.icon && <span className={cn('shrink-0', option.tone === 'info' && 'text-info', option.tone === 'accent' && 'text-accent')}><ExtensionIcon name={option.icon} /></span>}
+              <div className="min-w-0 text-left">
+                <div className="text-sm font-medium">{option.label}</div>
+                {option.description && <div className="text-xs text-muted-foreground truncate">{option.description}</div>}
+              </div>
+            </div>
+            {option.selected && <Check className="h-3.5 w-3.5 shrink-0 ml-3 text-foreground/60" />}
+          </StyledDropdownMenuItem>
+        ))}
+      </StyledDropdownMenuContent>
+    </DropdownMenu>
+  )
 }
 
 type StepProgressNode = Extract<ExtensionUINode, { type: 'step-progress' }>

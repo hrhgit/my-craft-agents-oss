@@ -380,7 +380,11 @@ export class DefaultResourceLoader implements ResourceLoader {
 		this.extensionSkillSourceInfos = new Map();
 		this.extensionPromptSourceInfos = new Map();
 
-		const enabledExtensions = this.getEnabledPaths(snapshot.resolvedPaths.extensions);
+		// Keep disabled extensions discoverable through the catalog, but exclude
+		// them before module evaluation so reload really unloads their runtime.
+		const enabledExtensions = this.getEnabledResources(snapshot.resolvedPaths.extensions)
+			.filter((resource) => !resource.metadata.extensionId || this.settingsManager.isExtensionEnabled(resource.metadata.extensionId, true))
+			.map((resource) => resource.path);
 		const enabledSkillResources = this.getEnabledResources(snapshot.resolvedPaths.skills);
 		const enabledPrompts = this.getEnabledPaths(snapshot.resolvedPaths.prompts);
 
@@ -420,7 +424,9 @@ export class DefaultResourceLoader implements ResourceLoader {
 			}
 		}
 
-		const cliEnabledExtensions = this.getEnabledPaths(snapshot.cliExtensionPaths.extensions);
+		const cliEnabledExtensions = this.getEnabledResources(snapshot.cliExtensionPaths.extensions)
+			.filter((resource) => !resource.metadata.extensionId || this.settingsManager.isExtensionEnabled(resource.metadata.extensionId, true))
+			.map((resource) => resource.path);
 		const cliEnabledSkills = this.getEnabledPaths(snapshot.cliExtensionPaths.skills);
 		const cliEnabledPrompts = this.getEnabledPaths(snapshot.cliExtensionPaths.prompts);
 
@@ -823,6 +829,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 			const metadata: ExtensionLoadMetadata = {
 				id: resource.metadata.extensionId,
 				agentDir: this.agentDir,
+				config: { ...(this.settingsManager.getExtensionConfig(resource.metadata.extensionId) ?? {}) },
 				manifest: resource.metadata.extensionManifest,
 				manifestStatus: resource.metadata.extensionManifestStatus,
 				manifestDiagnostics: resource.metadata.extensionManifestDiagnostics,

@@ -61,6 +61,7 @@ export const RPC_CHANNELS = {
     GET: 'workspaces:get',
     CREATE: 'workspaces:create',
     CHECK_SLUG: 'workspaces:checkSlug',
+    OPEN_PRIMARY_LOCATION: 'workspaces:openPrimaryLocation',
     GET_TOPOLOGY: 'workspaces:getTopology',
     TOPOLOGY_COMMAND: 'workspaces:topologyCommand',
     DETACH_MARKER: 'workspaces:detachMarker',
@@ -264,15 +265,10 @@ export const RPC_CHANNELS = {
     GET_ALL: 'drafts:getAll',
   },
   workspace: {
-    GET_PERMISSIONS: 'workspace:getPermissions',
     READ_IMAGE: 'workspace:readImage',
     WRITE_IMAGE: 'workspace:writeImage',
     SETTINGS_GET: 'workspaceSettings:get',
     SETTINGS_UPDATE: 'workspaceSettings:update',
-  },
-  permissions: {
-    GET_DEFAULTS: 'permissions:getDefaults',
-    DEFAULTS_CHANGED: 'permissions:defaultsChanged',
   },
   skills: {
     GET: 'skills:get',
@@ -320,6 +316,9 @@ export const RPC_CHANNELS = {
     UPDATE_SETTINGS: 'piExtensions:updateSettings',
     GET_CATALOG: 'piExtensions:getCatalog',
     PATCH_EXTENSION_CONFIG: 'piExtensions:patchExtensionConfig',
+    RELOAD: 'piExtensions:reload',
+    IMPORT: 'piExtensions:import',
+    UNINSTALL: 'piExtensions:uninstall',
     // 逐扩展启停状态（读写 ~/.mortise/agent/settings.json 的 extensions.<name>.enabled）
     GET_EXTENSION_STATES: 'piExtensions:getExtensionStates',
     SET_EXTENSION_ENABLED: 'piExtensions:setExtensionEnabled',

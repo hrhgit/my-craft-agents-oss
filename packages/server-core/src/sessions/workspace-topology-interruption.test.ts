@@ -67,7 +67,7 @@ describe('SessionManager Workspace topology interruption', () => {
       }),
       disposeForRestart: jest.fn(async () => { calls.push('disposeForRestart') }),
       isProcessing: () => true,
-      redirect: () => true,
+      redirect: async () => true,
       followUp: async () => false,
     }
   }

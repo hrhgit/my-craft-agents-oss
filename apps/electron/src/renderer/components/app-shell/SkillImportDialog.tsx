@@ -21,6 +21,41 @@ interface SkillImportDialogProps {
   onImport: (sourcePaths: string[]) => Promise<void>
 }
 
+interface SkillImportGroup {
+  skillsRoot: string
+  candidates: DiscoveredSkill[]
+}
+
+export function groupSkillImportCandidates(candidates: DiscoveredSkill[]): SkillImportGroup[] {
+  const groups = new Map<string, DiscoveredSkill[]>()
+  for (const candidate of candidates) {
+    const group = groups.get(candidate.skillsRoot)
+    if (group) group.push(candidate)
+    else groups.set(candidate.skillsRoot, [candidate])
+  }
+
+  return [...groups.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([skillsRoot, groupCandidates]) => ({
+      skillsRoot,
+      candidates: groupCandidates.sort((left, right) =>
+        left.slug.localeCompare(right.slug) || left.sourcePath.localeCompare(right.sourcePath)),
+    }))
+}
+
+export function toggleSkillImportGroup(
+  selectedPaths: ReadonlySet<string>,
+  candidates: DiscoveredSkill[],
+): Set<string> {
+  const next = new Set(selectedPaths)
+  const allSelected = candidates.every(candidate => next.has(candidate.sourcePath))
+  for (const candidate of candidates) {
+    if (allSelected) next.delete(candidate.sourcePath)
+    else next.add(candidate.sourcePath)
+  }
+  return next
+}
+
 export function SkillImportDialog({
   open,
   candidates,
@@ -37,6 +72,7 @@ export function SkillImportDialog({
     if (open) setSelectedPaths(new Set(candidates.map(candidate => candidate.sourcePath)))
   }, [candidates, open])
 
+  const groups = React.useMemo(() => groupSkillImportCandidates(candidates), [candidates])
   const allSelected = candidates.length > 0 && selectedPaths.size === candidates.length
   const toggleAll = () => {
     setSelectedPaths(allSelected
@@ -50,6 +86,9 @@ export function SkillImportDialog({
       else next.add(sourcePath)
       return next
     })
+  }
+  const toggleGroup = (groupCandidates: DiscoveredSkill[]) => {
+    setSelectedPaths(previous => toggleSkillImportGroup(previous, groupCandidates))
   }
 
   return (
@@ -83,30 +122,66 @@ export function SkillImportDialog({
         </div>
 
         <ScrollArea className="max-h-[min(50vh,420px)] -mx-2 px-2">
-          <div className="divide-y divide-foreground/8" role="list" aria-label={t('skillsImport.title')}>
-            {candidates.map(candidate => {
-              const checked = selectedPaths.has(candidate.sourcePath)
+          <div className="space-y-3" role="list" aria-label={t('skillsImport.title')}>
+            {groups.map(group => {
+              const groupSelected = group.candidates.every(candidate => selectedPaths.has(candidate.sourcePath))
               return (
-                <label
-                  key={candidate.sourcePath}
-                  className="flex min-h-14 items-center gap-3 px-2 py-2 cursor-pointer hover:bg-foreground/3"
+                <section
+                  key={group.skillsRoot}
+                  className="overflow-hidden rounded-md border border-foreground/10"
+                  data-mortise-semantic-kind="skill-import-source"
+                  aria-label={`${t('skillsImport.sourceDirectory')}: ${group.skillsRoot}`}
                 >
-                  <input
-                    type="checkbox"
-                    checked={checked}
-                    disabled={importing}
-                    onChange={() => toggleCandidate(candidate.sourcePath)}
-                    className="size-4 shrink-0 accent-foreground"
-                    aria-label={`${candidate.slug}: ${candidate.sourcePath}`}
-                    data-mortise-semantic-kind="skill-import-candidate"
-                  />
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm font-medium">{candidate.slug}</span>
-                    <span className="block truncate text-xs text-muted-foreground" title={candidate.sourcePath}>
-                      {candidate.sourcePath}
-                    </span>
-                  </span>
-                </label>
+                  <div className="flex min-h-11 items-center gap-3 border-b border-foreground/10 bg-foreground/3 px-3 py-2">
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[11px] font-medium text-muted-foreground">
+                        {t('skillsImport.sourceDirectory')} · {group.candidates.length}
+                      </div>
+                      <div className="truncate text-xs font-mono" title={group.skillsRoot}>
+                        {group.skillsRoot}
+                      </div>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => toggleGroup(group.candidates)}
+                      disabled={importing}
+                      aria-label={`${groupSelected ? t('skillsImport.deselectSource') : t('skillsImport.selectSource')}: ${group.skillsRoot}`}
+                      data-mortise-semantic-kind="skill-import-source-toggle"
+                    >
+                      {groupSelected ? t('skillsImport.deselectSource') : t('skillsImport.selectSource')}
+                    </Button>
+                  </div>
+
+                  <div className="divide-y divide-foreground/8">
+                    {group.candidates.map(candidate => {
+                      const checked = selectedPaths.has(candidate.sourcePath)
+                      return (
+                        <label
+                          key={candidate.sourcePath}
+                          className="flex min-h-14 items-center gap-3 px-3 py-2 cursor-pointer hover:bg-foreground/3"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            disabled={importing}
+                            onChange={() => toggleCandidate(candidate.sourcePath)}
+                            className="size-4 shrink-0 accent-foreground"
+                            aria-label={`${candidate.slug}: ${candidate.sourcePath}`}
+                            data-mortise-semantic-kind="skill-import-candidate"
+                          />
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-sm font-medium">{candidate.slug}</span>
+                            <span className="block truncate text-xs text-muted-foreground" title={candidate.sourcePath}>
+                              {candidate.sourcePath}
+                            </span>
+                          </span>
+                        </label>
+                      )
+                    })}
+                  </div>
+                </section>
               )
             })}
           </div>

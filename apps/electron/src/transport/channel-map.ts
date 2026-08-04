@@ -201,6 +201,7 @@ export const CHANNEL_MAP = {
   // Session-specific model
   getSessionModel: invoke(RPC_CHANNELS.sessions.GET_MODEL),
   setSessionModel: invoke(RPC_CHANNELS.sessions.SET_MODEL),
+  openWorkspaceFolder: invoke(RPC_CHANNELS.workspaces.OPEN_PRIMARY_LOCATION),
 
   // Workspace Settings
   getWorkspaceSettings: invoke(RPC_CHANNELS.workspace.SETTINGS_GET),
@@ -250,10 +251,6 @@ export const CHANNEL_MAP = {
   watchSessionFiles: invoke(RPC_CHANNELS.sessions.WATCH_FILES),
   unwatchSessionFiles: invoke(RPC_CHANNELS.sessions.UNWATCH_FILES),
   onSessionFilesChanged: listener(RPC_CHANNELS.sessions.FILES_CHANGED),
-
-  getWorkspacePermissionsConfig: invoke(RPC_CHANNELS.workspace.GET_PERMISSIONS),
-  getDefaultPermissionsConfig: invoke(RPC_CHANNELS.permissions.GET_DEFAULTS),
-  onDefaultPermissionsChanged: listener(RPC_CHANNELS.permissions.DEFAULTS_CHANGED),
 
   // Session content search
   searchSessionContent: invoke(RPC_CHANNELS.sessions.SEARCH_CONTENT),
@@ -322,6 +319,9 @@ export const CHANNEL_MAP = {
   updatePiExtensionSettings: invoke(RPC_CHANNELS.piExtensions.UPDATE_SETTINGS),
   getPiExtensionCatalog: invoke(RPC_CHANNELS.piExtensions.GET_CATALOG),
   patchPiExtensionConfig: invoke(RPC_CHANNELS.piExtensions.PATCH_EXTENSION_CONFIG),
+  reloadPiExtensions: invoke(RPC_CHANNELS.piExtensions.RELOAD),
+  importPiExtension: invoke(RPC_CHANNELS.piExtensions.IMPORT),
+  uninstallPiExtension: invoke(RPC_CHANNELS.piExtensions.UNINSTALL),
   getPiExtensionStates: invoke(RPC_CHANNELS.piExtensions.GET_EXTENSION_STATES),
   setPiExtensionEnabled: invoke(RPC_CHANNELS.piExtensions.SET_EXTENSION_ENABLED),
 

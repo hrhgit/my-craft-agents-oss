@@ -1,11 +1,14 @@
 import * as React from 'react'
 import { useSetAtom } from 'jotai'
 import type { Session } from '../../shared/types'
+import type { PiProjectionSnapshotV1 } from '@mortise/shared/protocol'
 import { initializeSessionsAtom, replaceLoadedSessionAtom } from '@/atoms/sessions'
+import { applyPiProjectionSnapshot, createPiProjectionState, piProjectionAtomFamily } from '@/atoms/pi-projection'
 
 export interface ScenarioSessionProjection {
   sessions: readonly Session[]
   loadedSessionId?: string
+  piProjection?: PiProjectionSnapshotV1
 }
 
 /**
@@ -16,6 +19,8 @@ export interface ScenarioSessionProjection {
 export function ScenarioSessionProjectionBoundary({ projection }: { projection: ScenarioSessionProjection }) {
   const initializeSessions = useSetAtom(initializeSessionsAtom)
   const replaceLoadedSession = useSetAtom(replaceLoadedSessionAtom)
+  const projectionSessionId = projection.piProjection?.sessionId ?? '__ui-validation-empty-projection__'
+  const setPiProjection = useSetAtom(piProjectionAtomFamily(projectionSessionId))
 
   React.useLayoutEffect(() => {
     const sessions = [...projection.sessions]
@@ -25,6 +30,12 @@ export function ScenarioSessionProjectionBoundary({ projection }: { projection: 
       : undefined
     if (loaded) replaceLoadedSession(loaded)
   }, [initializeSessions, projection, replaceLoadedSession])
+
+  React.useLayoutEffect(() => {
+    if (!projection.piProjection) return
+    setPiProjection(current => applyPiProjectionSnapshot(current, projection.piProjection!))
+    return () => setPiProjection(createPiProjectionState(projectionSessionId))
+  }, [projection.piProjection, projectionSessionId, setPiProjection])
 
   React.useLayoutEffect(() => () => initializeSessions([]), [initializeSessions])
 

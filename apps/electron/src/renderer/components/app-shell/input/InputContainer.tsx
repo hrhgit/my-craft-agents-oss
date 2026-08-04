@@ -17,6 +17,8 @@ interface InputContainerProps extends Omit<FreeFormInputProps, 'inputRef'> {
   textareaRef?: React.RefObject<RichTextInputHandle>
   /** Per-frame callback during height animation (for scroll sync) */
   onAnimatedHeightChange?: (delta: number) => void
+  /** Removes the top rounding when a pending-message strip is attached above. */
+  attachedTop?: boolean
 }
 
 // Animation timing - synced across height and opacity
@@ -48,6 +50,7 @@ export function InputContainer({
   compactMode,
   isProcessing,
   onAnimatedHeightChange,
+  attachedTop = false,
   ...freeFormProps
 }: InputContainerProps) {
   const appShellContext = useOptionalAppShellContext()
@@ -261,7 +264,8 @@ export function InputContainer({
       {/* Visible animated container */}
       <motion.div
         className={cn(
-          "input-container relative rounded-[12px] overflow-hidden transition-colors",
+          "input-container relative overflow-hidden transition-colors",
+          attachedTop ? "rounded-b-[12px] rounded-t-none" : "rounded-[12px]",
           isFocusedPanel ? "shadow-middle" : "shadow-minimal",
           "bg-background"
         )}

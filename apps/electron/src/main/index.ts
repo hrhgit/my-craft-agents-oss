@@ -133,11 +133,9 @@ import { loadWindowState, saveWindowState } from './window-state'
 import { getWorkspaces, getWorkspaceByNameOrId, loadStoredConfig, CONFIG_DIR } from '@mortise/shared/config'
 import { MORTISE_AGENT_DIR } from '@mortise/shared/config/paths'
 import { initializeDocs } from '@mortise/shared/docs'
-import { ensureDefaultPermissions } from '@mortise/shared/agent/permissions-config'
 import { ensureToolIcons, ensurePresetThemes } from '@mortise/shared/config'
 import { errorMessage, flushRuntimeLogs, flushRuntimeLogsSync, setBundledAssetsRoot, writeRuntimeLog } from '@mortise/shared/utils'
 import { initializeBackendHostRuntime } from '@mortise/shared/agent/backend'
-import { setPowerShellValidatorRoot } from '@mortise/shared/agent'
 import { handleDeepLink } from './deep-link'
 import { BrowserPaneManager } from './browser-pane-manager'
 import { createBrowserCapabilityAdapter } from './browser-capability-adapter'
@@ -189,9 +187,12 @@ const electronResourcePaths = resolveElectronResourcePaths({
   sourceRuntimePath: electronRuntime.immutableRuntime?.runtimePath,
 })
 
-// Host-capability tools are Pi extensions, explicitly injected into every Mortise runtime.
+// Bundled capabilities are ordinary Pi extensions discovered from one strict manifest directory.
+process.env.MORTISE_BUNDLED_PI_EXTENSIONS_PATH = electronResourcePaths.bundledPiExtensionsPath
+// File-specific variables remain as compatibility fallbacks for older runtimes.
 process.env.MORTISE_BROWSER_EXTENSION_PATH = electronResourcePaths.browserExtensionPath
 process.env.MORTISE_MESSAGING_EXTENSION_PATH = electronResourcePaths.messagingExtensionPath
+process.env.MORTISE_PERMISSIONS_EXTENSION_PATH = electronResourcePaths.permissionsExtensionPath
 
 // Diagnostic: report main-process i18n hydration result. We log here (not inline
 // at the hydration site above) because mainLog is only available after this point.
@@ -470,13 +471,11 @@ app.whenReady().then(async () => {
 
   // Register PowerShell validator root so it can find the bundled parser script
   // (Windows only: validates PowerShell commands in Explore mode using AST analysis)
-  setPowerShellValidatorRoot(join(__dirname, 'resources'))
 
   // Initialize bundled docs
   initializeDocs()
 
   // Ensure default permissions file exists (copies bundled default.json on first run)
-  ensureDefaultPermissions()
 
   // Seed tool icons to ~/.mortise/tool-icons/ (copies bundled SVGs on first run)
   ensureToolIcons()

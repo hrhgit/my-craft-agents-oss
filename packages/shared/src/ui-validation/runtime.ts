@@ -14,12 +14,12 @@ export const UI_VALIDATION_APP_SHELL_SCENARIO_IDS = [
   'transport.error',
   'session.empty',
   'session.streaming',
+  'session.queued',
   'tool.approval',
   'extension.loading',
   'extension.ready',
   'extension.error',
   'extension.reload',
-  'settings.permissions',
   'settings.app',
 ] as const
 

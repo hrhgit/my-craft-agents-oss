@@ -77,10 +77,11 @@ describe("Pi RPC extension host capabilities", () => {
 			if (result.status !== "cancelled") throw new Error("Capability was not cancelled");
 		},
 	});
-	pi.registerCommand("allow-other", {
-		handler: async (_args, ctx) => {
-			const result = await ctx.ui.interact({
-				schemaVersion: 1,
+		pi.registerCommand("allow-other", {
+			handler: async (_args, ctx) => {
+				const result = await ctx.ui.interact({
+					schemaVersion: 1,
+					presentation: { mode: "wizard", allowSkip: true, autoAdvanceSingleChoice: true },
 				fields: [{
 					id: "choices",
 					kind: "choice",
@@ -136,12 +137,14 @@ describe("Pi RPC extension host capabilities", () => {
 		let receivedLongRequest: RpcExtensionHostCapabilityRequest | undefined;
 		let receivedRebindCancel: RpcExtensionHostCapabilityCancel | undefined;
 		let receivedRouteRejection: { phase: string; reason: string } | undefined;
+		let receivedInteractionPresentation: unknown;
 		client.onClientEvent((event) => {
 			if (event.type === "extension_host_capability_route_rejected") {
 				receivedRouteRejection = event;
 				return;
 			}
 			if (event.type === "extension_ui_request" && event.method === "interact") {
+				receivedInteractionPresentation = event.request.presentation;
 				client.respondToExtensionUI({
 					type: "extension_ui_response",
 					id: event.id,
@@ -229,6 +232,11 @@ describe("Pi RPC extension host capabilities", () => {
 			}),
 		);
 		await expect(client.invokeExtensionCommandResult("allow-other")).resolves.toEqual({ invoked: true });
+		expect(receivedInteractionPresentation).toEqual({
+			mode: "wizard",
+			allowSkip: true,
+			autoAdvanceSingleChoice: true,
+		});
 
 		const pendingInvocation = client.invokeExtensionCommandResult("wait-for-rebind");
 		await vi.waitFor(() => expect(receivedLongRequest).toBeDefined());

@@ -62,6 +62,9 @@ export const HANDLED_CHANNELS = [
   RPC_CHANNELS.piExtensions.UPDATE_SETTINGS,
   RPC_CHANNELS.piExtensions.GET_CATALOG,
   RPC_CHANNELS.piExtensions.PATCH_EXTENSION_CONFIG,
+  RPC_CHANNELS.piExtensions.RELOAD,
+  RPC_CHANNELS.piExtensions.IMPORT,
+  RPC_CHANNELS.piExtensions.UNINSTALL,
   RPC_CHANNELS.piExtensions.GET_EXTENSION_STATES,
   RPC_CHANNELS.piExtensions.SET_EXTENSION_ENABLED,
   RPC_CHANNELS.settings.GET_NETWORK_PROXY,
@@ -375,6 +378,26 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
     )
   })
 
+  server.handle(RPC_CHANNELS.piExtensions.RELOAD, async (
+    _ctx,
+    payload?: boolean | { interruptRunning?: boolean },
+  ) => {
+    const interruptRunning = typeof payload === 'boolean'
+      ? payload
+      : payload?.interruptRunning === true
+    return await deps.sessionManager.requestExtensionReload(interruptRunning)
+  })
+
+  server.handle(RPC_CHANNELS.piExtensions.IMPORT, async (_ctx, sourcePath: string) => {
+    const { importPiExtension } = await import('@mortise/shared/config/pi-global-config')
+    return await importPiExtension(sourcePath)
+  })
+
+  server.handle(RPC_CHANNELS.piExtensions.UNINSTALL, async (_ctx, extensionId: string) => {
+    const { uninstallPiExtension } = await import('@mortise/shared/config/pi-global-config')
+    return await uninstallPiExtension(extensionId)
+  })
+
   // 逐扩展启停：读写 Pi settings.json 的 extensionConfig.<name>.enabled
   server.handle(RPC_CHANNELS.piExtensions.GET_EXTENSION_STATES, async () => {
     const { getPiExtensionCatalog } = await import('@mortise/shared/config/pi-global-config')
@@ -386,9 +409,12 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
     return states
   })
 
-  server.handle(RPC_CHANNELS.piExtensions.SET_EXTENSION_ENABLED, async (_ctx, payload: { name: string; enabled: boolean }) => {
+  server.handle(RPC_CHANNELS.piExtensions.SET_EXTENSION_ENABLED, async (_ctx, name: string, enabled: boolean) => {
+    if (typeof name !== 'string' || !name.trim() || typeof enabled !== 'boolean') {
+      throw new Error('Invalid Pi extension enabled state')
+    }
     const { writePiExtensionEnabled } = await import('@mortise/shared/config/pi-global-config')
-    await writePiExtensionEnabled(payload.name, payload.enabled)
+    await writePiExtensionEnabled(name, enabled)
     return { status: 'saved_for_next_backend_load' as const }
   })
 

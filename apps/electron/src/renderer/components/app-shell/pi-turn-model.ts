@@ -46,6 +46,7 @@ interface UserRecord {
   text: string
   optimistic: boolean
   queued?: boolean
+  cancelled?: boolean
   attachments: UserAttachmentRef[]
 }
 
@@ -75,6 +76,13 @@ interface AssistantUsageRecord {
   outputTokens: number
 }
 
+type AssistantActivityRecord = ActivityItem & {
+  __seq: number
+  __contentKind?: 'thinking'
+  __disposition?: MessageDisposition
+  __stopReason?: string
+}
+
 interface PlanArtifactRecord {
   entityId: string
   seq: number
@@ -90,7 +98,7 @@ interface AssistantRecord {
   turnEntity?: PiProjectionEntityV1
   messages: Map<string, AssistantMessageRecord>
   usages: Map<string, AssistantUsageRecord>
-  activities: Array<ActivityItem & { __seq: number }>
+  activities: AssistantActivityRecord[]
   artifacts: PlanArtifactRecord[]
 }
 
@@ -302,6 +310,10 @@ function latestRuntimeTerminal(entities: readonly PiProjectionEntityV1[]): PiPro
     .sort((a, b) => b.lastSeq - a.lastSeq)[0]
 }
 
+function cancelledState(payload: Record<string, unknown>): boolean {
+  return payload.queueStatus === 'cancelled' || payload.queueStatus === 'interrupted'
+}
+
 function isRuntimeTerminalEntity(entity: PiProjectionEntityV1 | undefined): boolean {
   if (!entity) return false
   if (entity.kind === 'agent_settled' || entity.kind === 'runtime_error') return true
@@ -329,18 +341,50 @@ function buildAssistantTurn(
   const artifactTarget = artifact?.messageId
     ? messages.find(message => message.messageId === artifact.messageId || message.aliases.has(artifact.messageId!))
     : undefined
-  const explicitFinal = [...messages].reverse().find(message => message.blocks.some(block => block.disposition === 'final'))
-  const inferredFinal = [...messages].reverse().find(message => {
-    if (message.blocks.every(block => block.disposition === 'intermediate')) return false
-    return lastToolSeq < 0 || message.seq > lastToolSeq
-  })
-  const responseMessage = artifactTarget ?? explicitFinal ?? inferredFinal ?? (turnComplete ? messages.at(-1) : undefined)
+  const hasDisplayableText = (message: AssistantMessageRecord) => message.blocks.some(block =>
+    block.text.trim().length > 0 || (!turnComplete && block.streaming),
+  )
+  const explicitFinal = [...messages].reverse().find(message =>
+    hasDisplayableText(message) && message.blocks.some(block => block.disposition === 'final'),
+  )
+  const inferredFinal = turnComplete
+    ? [...messages].reverse().find(message => {
+        if (!hasDisplayableText(message)) return false
+        if (message.blocks.every(block => block.disposition === 'intermediate')) return false
+        return lastToolSeq < 0 || message.seq > lastToolSeq
+      })
+    : undefined
+  const responseMessage = artifactTarget ?? explicitFinal ?? inferredFinal
+  const terminalThinking = !artifact && !responseMessage && turnComplete
+    ? [...recordValue.activities].reverse().find(activity =>
+        activity.__contentKind === 'thinking'
+        && activity.__disposition === 'final'
+        && (activity.__stopReason === 'stop' || activity.__stopReason === 'end_turn')
+        && activity.status === 'completed'
+        && Boolean(activity.content?.trim()),
+      )
+    : undefined
 
-  const activities = recordValue.activities.map(({ __seq: _seq, ...activity }) => activity)
+  const hasPendingRawActivity = recordValue.activities.some(activity =>
+    activity.status === 'running' || activity.status === 'pending' || activity.status === 'backgrounded'
+  )
+  const activities = recordValue.activities
+    .filter(activity =>
+      activity !== terminalThinking
+      && !(activity.__contentKind === 'thinking' && !activity.content?.trim())
+    )
+    .map(({
+      __seq: _seq,
+      __contentKind: _contentKind,
+      __disposition: _disposition,
+      __stopReason: _stopReason,
+      ...activity
+    }) => activity)
   for (const message of messages) {
     if (message === responseMessage) continue
     const blocks = [...message.blocks].sort((a, b) => a.contentIndex - b.contentIndex || a.seq - b.seq)
     const content = blocks.map(block => block.text).filter(Boolean).join('\n\n')
+    if (!content.trim()) continue
     activities.push({
       id: blocks[0]?.entityId ?? `content:${message.messageId}`,
       type: 'intermediate',
@@ -355,14 +399,17 @@ function buildAssistantTurn(
   calculateDepths(activities)
 
   let response: AssistantTurn['response']
-  if (responseMessage || artifact) {
+  if (responseMessage || artifact || terminalThinking) {
     const blocks = responseMessage
       ? [...responseMessage.blocks].sort((a, b) => a.contentIndex - b.contentIndex || a.seq - b.seq)
       : []
-    const messageId = artifact?.messageId ?? responseMessage?.messageId
+    const messageId = artifact?.messageId ?? responseMessage?.messageId ?? terminalThinking?.messageId
     const ui = messageId ? overlay.get(messageId) : undefined
     response = {
-      text: artifact?.content || blocks.map(block => block.text).filter(Boolean).join('\n\n'),
+      text: artifact?.content
+        || blocks.map(block => block.text).filter(Boolean).join('\n\n')
+        || terminalThinking?.content
+        || '',
       isStreaming: !turnComplete && blocks.some(block => block.streaming),
       streamStartTime: !turnComplete && blocks.some(block => block.streaming) ? blocks[0]?.seq : undefined,
       messageId,
@@ -373,13 +420,13 @@ function buildAssistantTurn(
 
   const isStreaming = !turnComplete && (
     response?.isStreaming === true
-    || activities.some(activity => activity.status === 'running' || activity.status === 'pending' || activity.status === 'backgrounded')
+    || hasPendingRawActivity
     || recordValue.turnEntity?.kind === 'turn_start'
   )
   const responseCompletedAt = responseMessage?.blocks.reduce<number | undefined>((latest, block) => {
     if (block.timestamp === undefined) return latest
     return latest === undefined || block.timestamp > latest ? block.timestamp : latest
-  }, undefined)
+  }, undefined) ?? terminalThinking?.timestamp
   const completedAt = turnComplete
     ? wallClockTimestamp(recordValue.turnEntity?.updatedAt)
       ?? completedAtOverride
@@ -532,6 +579,7 @@ export function buildPiTurns(
         existing.text = typeof payload.text === 'string' ? payload.text : existing.text
         existing.optimistic = payload.optimistic === true
         existing.queued = queuedState(payload) ?? existing.queued
+        existing.cancelled = cancelledState(payload) || existing.cancelled
         aliases.forEach(alias => existing.aliases.add(alias))
       } else {
         users.set(messageId, {
@@ -543,6 +591,7 @@ export function buildPiTurns(
           text: typeof payload.text === 'string' ? payload.text : '',
           optimistic: payload.optimistic === true,
           queued: queuedState(payload),
+          cancelled: cancelledState(payload),
           attachments: [],
         })
       }
@@ -567,6 +616,7 @@ export function buildPiTurns(
         text: '',
         optimistic: payload.optimistic === true,
         queued: queuedState(payload),
+        cancelled: cancelledState(payload),
         attachments: [],
       }
       user.turnId ??= entity.turnId
@@ -591,6 +641,9 @@ export function buildPiTurns(
       if (contentKind === 'thinking') {
         assistant.activities.push({
           __seq: entity.createdSeq,
+          __contentKind: 'thinking',
+          __disposition: assistantDisposition(payload),
+          __stopReason: stringValue(payload.stopReason),
           id: entity.entityId,
           type: 'intermediate',
           status: payload.streaming === true ? 'running' : 'completed',
@@ -714,6 +767,7 @@ export function buildPiTurns(
   }
 
   for (const user of users.values()) {
+    if (user.cancelled) continue
     const ui = overlay.get(user.messageId)
     const attachments = user.attachments
       .sort((a, b) => a.order - b.order || a.seq - b.seq)

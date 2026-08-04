@@ -46,7 +46,7 @@ Do not hard-code extension-specific screens in core or grant arbitrary global po
 
 # Capabilities
 
-Own contribution schemas, renderer stores, sandbox hosts, remote interaction routing, and extension placement documentation.
+Own contribution schemas, renderer stores, sandbox hosts, remote interaction routing, extension settings-page placement, and extension placement documentation.
 
 Shared protocol defines wire schemas; renderer extension components translate validated contributions into host surfaces.
 

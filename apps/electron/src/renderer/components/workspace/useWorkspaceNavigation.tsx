@@ -36,7 +36,7 @@ export interface WorkspaceNavigationItem {
 export interface WorkspaceNavigationModel {
   items: WorkspaceNavigationItem[]
   activeWorkspaceId: string | null
-  selectWorkspace: (workspaceId: string) => Promise<void>
+  selectWorkspace: (workspaceId: string) => Promise<boolean>
   selectSession: (workspaceId: string, sessionId: string) => Promise<void>
   openWorkspaceInNewWindow: (workspaceId: string) => Promise<void>
   removeWorkspace: (workspace: WorkspaceInfo) => Promise<void>
@@ -101,15 +101,16 @@ export function useWorkspaceNavigation({
 
   const selectWorkspace = React.useCallback(async (workspaceId: string) => {
     const workspace = workspaces.find(item => item.id === workspaceId)
-    if (!workspace) return
+    if (!workspace) return false
     if (isDisconnected(workspace)) {
       if (getPrimaryRemoteLocation(workspace)) {
         setReconnectTarget(workspace)
         setShowCreationDialog(true)
       }
-      return
+      return false
     }
     await Promise.resolve(onSelectWorkspace(workspaceId, false, 'newConversation'))
+    return true
   }, [isDisconnected, onSelectWorkspace, workspaces])
 
   const selectSession = React.useCallback(async (workspaceId: string, sessionId: string) => {
@@ -131,14 +132,19 @@ export function useWorkspaceNavigation({
 
   const removeWorkspace = React.useCallback(async (workspace: WorkspaceInfo) => {
     if (workspace.id === activeWorkspaceId) {
-      toast.error(t('toast.cannotRemoveActiveWorkspace'))
-      return
+      const fallback = workspaces.find(candidate => candidate.id !== workspace.id)
+      if (!fallback) {
+        toast.error(t('toast.cannotRemoveActiveWorkspace'))
+        return
+      }
+      const selected = await selectWorkspace(fallback.id)
+      if (!selected) return
     }
     const removed = await window.electronAPI.removeWorkspace(workspace.id)
     if (!removed) return
     toast.success(t('toast.removedWorkspace', { name: workspace.name }))
-    onRefreshWorkspaces?.()
-  }, [activeWorkspaceId, onRefreshWorkspaces, t])
+    await Promise.resolve(onRefreshWorkspaces?.())
+  }, [activeWorkspaceId, onRefreshWorkspaces, selectWorkspace, t, workspaces])
 
   const handleWorkspaceCreated = React.useCallback((
     workspace: WorkspaceInfo,

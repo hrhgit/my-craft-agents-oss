@@ -24,7 +24,9 @@ describe('resolveElectronResourcePaths', () => {
       platform: 'win32',
     })
 
+    expect(paths.bundledPiExtensionsPath).toBe('C:\\Mortise\\resources\\app\\dist\\resources\\pi-extensions')
     expect(paths.browserExtensionPath).toBe('C:\\Mortise\\resources\\app\\dist\\resources\\pi-extensions\\browser.js')
+    expect(paths.permissionsExtensionPath).toBe('C:\\Mortise\\resources\\app\\dist\\resources\\pi-extensions\\permissions.js')
     expect(paths.commandDocsPath).toBe('C:\\Mortise\\resources\\app\\dist\\resources\\docs\\mortise-cli.md')
     expect(paths.messagingWorkerPath).toBe('C:\\Mortise\\resources\\messaging-whatsapp-worker\\worker.cjs')
   })
@@ -40,6 +42,7 @@ describe('resolveElectronResourcePaths', () => {
 
     expect(paths.appResourcesPath).toBe('E:\\repo\\apps\\electron\\resources')
     expect(paths.toolResourcesPath).toBe(paths.appResourcesPath)
+    expect(paths.bundledPiExtensionsPath).toBe('E:\\repo\\apps\\electron\\resources\\pi-extensions')
   })
 
   it('pins source-development assets to an immutable validation capsule', () => {
@@ -62,6 +65,7 @@ describe('resolveElectronResourcePaths', () => {
     })
 
     expect(paths.appResourcesPath).toBe(sourceResourcesPath)
+    expect(paths.bundledPiExtensionsPath).toBe(join(sourceResourcesPath, 'pi-extensions'))
     expect(paths.browserExtensionPath).toContain(join('dist', 'resources', 'pi-extensions'))
     expect(paths.messagingWorkerPath).toBe(join(sourceRuntimePath, 'messaging-whatsapp-worker', 'worker.cjs'))
     expect(paths.bunBinaryPath).toBe(bunPath)

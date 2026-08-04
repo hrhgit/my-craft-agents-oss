@@ -104,7 +104,11 @@ describe('Pi extension contribution bridge', () => {
       ...route,
       sessionId: 'untrusted-session',
       requestId: 'interaction-1',
-      request: { schemaVersion: 1, fields: [{ id: 'confirm', kind: 'confirm', label: 'Continue?' }] },
+      request: {
+        schemaVersion: 1,
+        presentation: { mode: 'wizard', allowSkip: true, autoAdvanceSingleChoice: true },
+        fields: [{ id: 'confirm', kind: 'confirm', label: 'Continue?' }],
+      },
     })
     forward({
       type: 'extension_interaction_cancel',
@@ -124,7 +128,13 @@ describe('Pi extension contribution bridge', () => {
     })
 
     expect(payloads).toEqual([
-      expect.objectContaining({ type: 'extension_interaction_request', sessionId: 'trusted-session' }),
+      expect.objectContaining({
+        type: 'extension_interaction_request',
+        sessionId: 'trusted-session',
+        request: expect.objectContaining({
+          presentation: { mode: 'wizard', allowSkip: true, autoAdvanceSingleChoice: true },
+        }),
+      }),
       expect.objectContaining({ type: 'extension_interaction_cancel', sessionId: 'trusted-session' }),
       expect.objectContaining({ type: 'extension_interaction_settled', sessionId: 'trusted-session' }),
     ])

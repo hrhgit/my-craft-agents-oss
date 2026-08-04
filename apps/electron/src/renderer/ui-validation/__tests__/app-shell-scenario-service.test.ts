@@ -1,4 +1,6 @@
 import { describe, expect, it, mock } from 'bun:test'
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
 
 mock.module('pdfjs-dist/build/pdf.worker.min.mjs?url', () => ({ default: '' }))
 mock.module('pdfjs-dist', () => ({}))
@@ -36,13 +38,23 @@ describe('AppShellScenarioService', () => {
       'extension.ready',
       'extension.reload',
       'session.empty',
+      'session.queued',
       'session.streaming',
       'settings.app',
-      'settings.permissions',
       'tool.approval',
       'transport.error',
       'transport.reconnect',
     ])
+  })
+
+  it('renders queued sessions through the real AppShell host', async () => {
+    const { appShellScenarioService, ScenarioAppShellHost } = await import('../app-shell-scenario-service')
+    await appShellScenarioService.apply({ name: 'session.queued' })
+    try {
+      expect(renderToStaticMarkup(createElement(ScenarioAppShellHost))).toContain('data-testid="scenario.real-app-shell"')
+    } finally {
+      await appShellScenarioService.reset()
+    }
   })
 
   it('applies through registered reducer events and resets without arbitrary fixtures', async () => {
@@ -94,9 +106,9 @@ describe('AppShellScenarioService', () => {
     expect(service.primitives.list()).toEqual([
       'app.loading',
       'extension.phase',
-      'route.permissions',
       'route.settings',
       'session.empty',
+      'session.queued',
       'session.streaming',
       'tool.approval',
       'transport.state',

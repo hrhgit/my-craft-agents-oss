@@ -30,6 +30,7 @@ import {
   type RpcExtensionHostCapabilityResponse as PiRpcExtensionHostCapabilityResponse,
 } from '@mortise/pi-coding-agent/rpc';
 import { piHostManager, type PiHostLease } from './backend/pi-host-manager.ts';
+import { createMortiseRpcUiCapabilities } from './backend/pi/rpc-ui-capabilities.ts';
 
 import type {
   BackendConfig,
@@ -143,21 +144,6 @@ const PI_ABORT_ACK_TIMEOUT_MS = 5_000;
 const SETTLED_EXTENSION_INTERACTION_TTL_MS = 5 * 60_000;
 const MAX_SETTLED_EXTENSION_INTERACTIONS = 512;
 const PI_AGENT_DIR = getPiAgentDir();
-
-function mortiseRpcUiCapabilities() {
-  const validationEnabled = process.env.MORTISE_UI_VALIDATION_BUILD === '1'
-    && process.env.MORTISE_UI_TEST_HOST === '1'
-    && process.env.NODE_ENV !== 'production';
-  return {
-    kind: 'mortise' as const,
-    dialogs: true,
-    widgets: true,
-    editorControl: true,
-    contributions: true,
-    ...(validationEnabled ? { validation: true } : {}),
-    interactionSchemas: [1],
-  };
-}
 
 interface PendingExtensionInteractionOwner {
   extensionId: string;
@@ -569,7 +555,15 @@ export class PiAgent extends BaseAgent {
   }
 
   private getMortiseExtensionPaths(): string[] {
-    return [process.env.MORTISE_BROWSER_EXTENSION_PATH, process.env.MORTISE_MESSAGING_EXTENSION_PATH]
+    const bundledDirectory = process.env.MORTISE_BUNDLED_PI_EXTENSIONS_PATH;
+    if (bundledDirectory && existsSync(bundledDirectory)) {
+      return [bundledDirectory];
+    }
+    return [
+      process.env.MORTISE_BROWSER_EXTENSION_PATH,
+      process.env.MORTISE_MESSAGING_EXTENSION_PATH,
+      process.env.MORTISE_PERMISSIONS_EXTENSION_PATH,
+    ]
       .filter((value): value is string => Boolean(value && existsSync(value)));
   }
 
@@ -666,7 +660,7 @@ export class PiAgent extends BaseAgent {
         sessionDir,
         sessionId: this.config.session?.mortiseId,
         forkFromSessionPath: this.config.session?.branchFromPiSessionFile,
-        uiCapabilities: mortiseRpcUiCapabilities(),
+        uiCapabilities: createMortiseRpcUiCapabilities(),
       },
     });
     this.rpcHostLease = lease;
@@ -703,7 +697,7 @@ export class PiAgent extends BaseAgent {
     }
 
     await rpcClient.setToolPermissionHandler(async (request) => {
-      const decision = await this.handleToolPermissionRequest(request);
+      const decision = await this.handleToolExecutionBoundary(request);
       return this.getCoordinationBridge().afterPermission({
         toolName: request.toolName,
         toolCallId: request.toolCallId,
@@ -1094,6 +1088,7 @@ export class PiAgent extends BaseAgent {
       stderr: event.stderr || this.getRecentStderr(),
     });
     this.handleRpcError(new Error(event.message));
+    this.settleTurnForRuntimeReplacement();
 
     for (const [, pending] of this.pendingPermissions) {
       pending.resolve(false);
@@ -1182,7 +1177,7 @@ export class PiAgent extends BaseAgent {
             error: result.error ? {
               code: result.error.code,
               message: result.error.message,
-              recoverable: result.error.retryable,
+              recoverable: 'retryable' in result.error && result.error.retryable === true,
             } : undefined,
           };
     } catch (error) {
@@ -1368,16 +1363,10 @@ export class PiAgent extends BaseAgent {
         ...route,
       };
     }
-    if (event.method === 'setTitle') {
-      return { type: 'extension_set_title', title: event.title, ...route };
-    }
-    if (event.method === 'set_editor_text') {
-      return { type: 'extension_set_editor_text', text: event.text, ...route };
-    }
     return null;
   }
 
-  private handleRpcError(error: unknown): void {
+  private reportRpcError(error: unknown): void {
     const rawMessage = error instanceof Error ? error.message : String(error);
     this.debug(`Pi RpcClient error: ${rawMessage}`);
     const errorMsg = rawMessage.toLowerCase();
@@ -1415,8 +1404,17 @@ export class PiAgent extends BaseAgent {
         message: `Pi RpcClient error: ${rawMessage}`,
       });
     }
+  }
+
+  private handleRpcError(error: unknown): void {
+    this.reportRpcError(error);
     this.eventQueue.enqueue({ type: 'complete' });
     this.eventQueue.complete();
+  }
+
+  private handleRpcControlError(operation: string, error: unknown): void {
+    this.writePiRuntimeLog('warn', 'control.failed', { operation, error });
+    this.reportRpcError(error);
   }
 
   /**
@@ -1504,9 +1502,10 @@ export class PiAgent extends BaseAgent {
   }
 
   /**
-   * Runs the centralized permission pipeline for Pi RpcClient tool calls.
+   * Runs host-owned coordination and neutral tool normalization after extensions.
+   * User approval is owned by the bundled permissions extension.
    */
-  private async handleToolPermissionRequest(req: PiRpcToolPermissionRequest, permissionModeOverride?: PermissionMode): Promise<
+  private async handleToolExecutionBoundary(req: PiRpcToolPermissionRequest): Promise<
     { action: 'allow' } | { action: 'block'; reason?: string } | { action: 'modify'; input: Record<string, unknown> }
   > {
     const { toolName, toolCallId, input } = req;
@@ -1556,12 +1555,12 @@ export class PiAgent extends BaseAgent {
       ? { enabled: true, path: getRtkPath(), exclude: [] }
       : undefined;
 
-    const effectivePermissionMode = permissionModeOverride ?? this.permissionManager.getPermissionMode();
     const checkResult = runPreToolUseChecks({
       toolName,
       input,
       sessionId,
-      permissionMode: effectivePermissionMode,
+      permissionMode: 'allow-all',
+      skipPermissionGate: true,
       workspaceRootPath: rootPath,
       workspaceId: workspaceSlug,
       plansFolderPath,
@@ -1580,16 +1579,7 @@ export class PiAgent extends BaseAgent {
         return { action: 'modify', input: checkResult.input };
 
       case 'block': {
-        const diagnostics = getPermissionModeDiagnostics(sessionId);
-        this.debug(`__PERMISSION_BLOCK__${JSON.stringify({
-          sessionId,
-          toolName,
-          effectiveMode: permissionModeOverride ?? diagnostics.permissionMode,
-          modeVersion: diagnostics.modeVersion,
-          changedBy: diagnostics.lastChangedBy,
-          changedAt: diagnostics.lastChangedAt,
-          reason: checkResult.reason,
-        })}`);
+        this.debug(`Host tool boundary blocked ${toolName}: ${checkResult.reason}`);
         return { action: 'block', reason: checkResult.reason };
       }
 
@@ -1598,68 +1588,8 @@ export class PiAgent extends BaseAgent {
         return { action: 'allow' };
 
       case 'prompt': {
-        if (!this.onPermissionRequest) {
-          // No permission handler — allow
-          if (checkResult.modifiedInput) {
-            return { action: 'modify', input: checkResult.modifiedInput };
-          }
-          return { action: 'allow' };
-        }
-
-        const permRequestId = `pi-perm-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-        this.debug(`PreToolUse(sessionId=${sessionId}): Prompting user for ${toolName} - ${checkResult.description}`);
-
-        // Wait for user response via pendingPermissions
-        const permissionPromise = new Promise<boolean>((resolve) => {
-          this.pendingPermissions.set(permRequestId, {
-            resolve,
-            toolName,
-          });
-        });
-
-        this.onPermissionRequest({
-          requestId: permRequestId,
-          toolName,
-          command: checkResult.command,
-          description: checkResult.description,
-          type: checkResult.promptType,
-          appName: checkResult.appName,
-          reason: checkResult.reason,
-          impact: checkResult.impact,
-          requiresSystemPrompt: checkResult.requiresSystemPrompt,
-          rememberForMinutes: checkResult.rememberForMinutes,
-          commandHash: checkResult.commandHash,
-          approvalTtlSeconds: checkResult.approvalTtlSeconds,
-        });
-
-        for (const event of this.getProjectionBuilder()?.acceptPromptRequest({
-          requestId: permRequestId,
-          promptKind: 'permission',
-          toolName,
-          description: checkResult.description,
-          command: checkResult.command,
-          permissionType: checkResult.promptType,
-          appName: checkResult.appName,
-          reason: checkResult.reason,
-          impact: checkResult.impact,
-          requiresSystemPrompt: checkResult.requiresSystemPrompt,
-          rememberForMinutes: checkResult.rememberForMinutes,
-          commandHash: checkResult.commandHash,
-          approvalTtlSeconds: checkResult.approvalTtlSeconds,
-        }) ?? []) {
-          this.config.onPiProjectionEvent?.(event);
-        }
-
-        const allowed = await permissionPromise;
-        this.pendingPermissions.delete(permRequestId);
-        for (const event of this.getProjectionBuilder()?.acceptPromptResolution(permRequestId, allowed ? 'allowed' : 'denied') ?? []) {
-          this.config.onPiProjectionEvent?.(event);
-        }
-
-        if (!allowed) {
-          return { action: 'block', reason: 'Permission denied by user.' };
-        }
-
+        // skipPermissionGate makes this unreachable. Preserve the transform
+        // fallback so the neutral boundary remains fail-open for approvals.
         if (checkResult.modifiedInput) {
           return { action: 'modify', input: checkResult.modifiedInput };
         }
@@ -1976,7 +1906,7 @@ export class PiAgent extends BaseAgent {
     const thinkingLevel = options.thinkingLevel ?? semanticModel?.thinkingLevel ?? parentState.thinkingLevel;
     if (thinkingLevel) await runtime.setThinkingLevel(thinkingLevel);
 
-    await runtime.setToolPermissionHandler(request => this.handleToolPermissionRequest(request, options.permissionMode));
+    await runtime.setToolPermissionHandler(request => this.handleToolExecutionBoundary(request));
     await runtime.setToolResultHandler(result => this.handleCoordinatedToolResult(result));
     this.assertBackendSessionToolParity();
     const sessionToolDefs = getSessionHostToolDefs()
@@ -2691,6 +2621,16 @@ export class PiAgent extends BaseAgent {
     }
   }
 
+  async reloadExtensions(): Promise<{ reloaded: boolean; deferred: boolean }> {
+    const client = this.rpcClient;
+    // An unopened session has no extension runtime to refresh; it will load
+    // the current package state when its next turn initializes the host.
+    if (!client) return { reloaded: false, deferred: false };
+    if (this.rpcClientReady) await this.rpcClientReady;
+    if (this.rpcClient !== client) return { reloaded: false, deferred: false };
+    return await client.reloadExtensions();
+  }
+
   /**
    * Query currently registered Pi extension slash commands.
    *
@@ -2754,7 +2694,7 @@ export class PiAgent extends BaseAgent {
     attachments?: FileAttachment[],
     options?: ChatOptions
   ): AsyncGenerator<AgentEvent> {
-    let message = messageParam;
+    const message = messageParam;
     // Reset state for new turn
     this._isProcessing = true;
     this.abortReason = undefined;
@@ -2796,12 +2736,6 @@ export class PiAgent extends BaseAgent {
           await this.stopRpcClient();
           this.clearSessionForRecovery();
 
-          const recoveryContext = this.buildRecoveryContext();
-          if (recoveryContext) {
-            message = recoveryContext + message;
-            this.debug('Injected recovery context into message');
-          }
-
           client = await this.ensureRpcClient();
         } else {
           throw rpcError;
@@ -2842,24 +2776,6 @@ export class PiAgent extends BaseAgent {
             )
           );
 
-      const promptModeDiagnostics = getPermissionModeDiagnostics(this._sessionId)
-      this.debug(
-        `[ModeSnapshot] sessionId=${this._sessionId} chatPrompt mode=${promptModeDiagnostics.permissionMode} ` +
-        `modeVersion=${promptModeDiagnostics.modeVersion} changedBy=${promptModeDiagnostics.lastChangedBy} changedAt=${promptModeDiagnostics.lastChangedAt}`
-      )
-
-      // Build context parts using centralized PromptBuilder, split into stable
-      // vs volatile (issue #862). Stable blocks (workspace capabilities, working
-      // directory) stay in the cached system prefix; volatile blocks (date/time,
-      // session_state) ride the user-message tail so a per-turn
-      // re-stamp doesn't invalidate the prompt cache. buildVolatileContextParts
-      // consumes the one-shot mode-change signal, so it is called exactly once.
-      const plansFolderPath = getSessionPlansPath(this.config.workspace.id, this._sessionId);
-      const stableParts = this.promptBuilder.buildStableContextParts();
-      const { formatDeveloperKitSystemPrompt } = await import('../config/developer-kit.ts');
-      const developerKitSystemPrompt = formatDeveloperKitSystemPrompt();
-      const volatileParts = this.promptBuilder.buildVolatileContextParts({ plansFolderPath });
-
       // Process attachments
       const attachmentParts: string[] = [];
       const images: Array<{ type: string; data: string; mimeType: string }> = [];
@@ -2883,22 +2799,11 @@ export class PiAgent extends BaseAgent {
         }
       }
 
-      // System prompt carries only stable context (issue #862): the system block
-      // is pi-ai's cache prefix before all history, so anything volatile here
-      // re-stamps the prefix every turn and drops cacheRead to 0. Volatile blocks
-      // ride the user-message tail instead — exactly as the Claude path already
-      // does (buildTextPrompt / buildSDKUserMessage append context to the tail).
-      const fullSystemPrompt = piShellPassthrough
-        ? ''
-        : [
-            systemPrompt,
-            ...stableParts,
-          ].filter(Boolean).join('\n\n');
+      const fullSystemPrompt = piShellPassthrough ? '' : systemPrompt;
 
-      // User message: volatile context + attachments + the actual message
-      // (skill read directive is already prepended to message by BaseAgent.chat())
+      // Keep the user's turn intact. Only explicit attachment references belong
+      // beside it; runtime state and permission mode are enforced out of band.
       const userParts = [
-        ...volatileParts,
         ...attachmentParts,
         message,
       ].filter(Boolean);
@@ -2916,7 +2821,8 @@ export class PiAgent extends BaseAgent {
         {
           systemPrompt: fullSystemPrompt || undefined,
           clearSystemPrompt: piShellPassthrough,
-          appendSystemPrompt: developerKitSystemPrompt ?? '',
+          // Clear any suffix retained by a runtime that handled an earlier turn.
+          appendSystemPrompt: '',
           clientMutationId: options?.clientMutationId,
           attachments: options?.attachmentRefs,
         },
@@ -3008,7 +2914,7 @@ export class PiAgent extends BaseAgent {
       const provider = getBackendRuntime(this.config).piAuthProvider;
       if (provider) {
         this.debug(`Forwarding model change to Pi RpcClient: ${previousModel} → ${model}`);
-        void this.rpcClient.setModel(provider, model).catch(error => this.handleRpcError(error));
+        void this.rpcClient.setModel(provider, model).catch(error => this.handleRpcControlError('set_model', error));
       }
     } else {
       this.debug(`Model updated but no Pi RpcClient to forward to: ${previousModel} → ${model}`);
@@ -3021,7 +2927,7 @@ export class PiAgent extends BaseAgent {
     // Forward to Pi RpcClient so it uses the new thinking level on next turn.
     if (this.rpcClient) {
       this.debug(`Forwarding thinking level change to Pi RpcClient: ${previousLevel} → ${level}`);
-      void this.rpcClient.setThinkingLevel(level as any).catch(error => this.handleRpcError(error));
+      void this.rpcClient.setThinkingLevel(level as any).catch(error => this.handleRpcControlError('set_thinking_level', error));
     } else {
       this.debug(`Thinking level updated but no Pi RpcClient to forward to: ${previousLevel} → ${level}`);
     }
@@ -3149,15 +3055,21 @@ export class PiAgent extends BaseAgent {
    * queued tools, and continues with full context intact.
    * Events flow through the existing generator — no abort needed.
    */
-  override redirect(message: string, clientMutationId?: string): boolean {
+  override async redirect(message: string, clientMutationId?: string): Promise<boolean> {
     if (!this._isProcessing || !this.rpcClient) {
       // Not streaming or no client — fall back to abort
       this.forceAbort(AbortReason.Redirect);
       return false;
     }
     this.debug(`Steering mid-stream: "${message.slice(0, 100)}"`);
-    void this.rpcClient.steer(message, undefined, { clientMutationId }).catch(error => this.handleRpcError(error));
-    return true;
+    try {
+      await this.rpcClient.steer(message, undefined, { clientMutationId });
+      return true;
+    } catch (error) {
+      this.writePiRuntimeLog('warn', 'chat.steer_rejected', { error });
+      this.debug(`Pi steer was rejected: ${error instanceof Error ? error.message : String(error)}`);
+      return false;
+    }
   }
 
   override async followUp(message: string, attachments?: FileAttachment[], options?: ChatOptions): Promise<boolean> {
@@ -3421,7 +3333,7 @@ export class PiAgent extends BaseAgent {
       if (thinkingLevel) await runtime.setThinkingLevel(thinkingLevel);
 
       await runtime.setToolPermissionHandler(async permissionRequest => {
-        const decision = await this.handleToolPermissionRequest(permissionRequest);
+        const decision = await this.handleToolExecutionBoundary(permissionRequest);
         return this.getCoordinationBridge().afterPermission({
           toolName: permissionRequest.toolName,
           toolCallId: permissionRequest.toolCallId,

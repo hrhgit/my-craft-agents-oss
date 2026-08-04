@@ -12,7 +12,7 @@
  */
 
 import type { ComponentType } from 'react'
-import type { SettingsSubpage } from '../../../shared/settings-registry'
+import type { BuiltInSettingsSubpage } from '../../../shared/settings-registry'
 
 import AppSettingsPage from './AppSettingsPage'
 import AiSettingsPage from './AiSettingsPage'
@@ -22,7 +22,6 @@ import ExtensionsSettingsPage from './ExtensionsSettingsPage'
 import DeveloperSettingsPage from './DeveloperSettingsPage'
 import InputSettingsPage from './InputSettingsPage'
 import WorkspaceSettingsPage from './WorkspaceSettingsPage'
-import PermissionsSettingsPage from './PermissionsSettingsPage'
 import MessagingSettingsPage from './MessagingSettingsPage'
 import ServerSettingsPage from './ServerSettingsPage'
 import ShortcutsPage from './ShortcutsPage'
@@ -32,7 +31,7 @@ import PreferencesPage from './PreferencesPage'
  * Map of settings subpage IDs to their page components.
  * TypeScript will error if a page from SETTINGS_PAGES is missing here.
  */
-export const SETTINGS_PAGE_COMPONENTS: Record<SettingsSubpage, ComponentType> = {
+export const SETTINGS_PAGE_COMPONENTS: Record<BuiltInSettingsSubpage, ComponentType> = {
   app: AppSettingsPage,
   ai: AiSettingsPage,
   agents: AgentSettingsPage,
@@ -41,7 +40,6 @@ export const SETTINGS_PAGE_COMPONENTS: Record<SettingsSubpage, ComponentType> = 
   developer: DeveloperSettingsPage,
   input: InputSettingsPage,
   workspace: WorkspaceSettingsPage,
-  permissions: PermissionsSettingsPage,
   messaging: MessagingSettingsPage,
   server: ServerSettingsPage,
   shortcuts: ShortcutsPage,
@@ -51,6 +49,6 @@ export const SETTINGS_PAGE_COMPONENTS: Record<SettingsSubpage, ComponentType> = 
 /**
  * Get the component for a settings subpage
  */
-export function getSettingsPageComponent(subpage: SettingsSubpage): ComponentType {
+export function getSettingsPageComponent(subpage: BuiltInSettingsSubpage): ComponentType {
   return SETTINGS_PAGE_COMPONENTS[subpage]
 }

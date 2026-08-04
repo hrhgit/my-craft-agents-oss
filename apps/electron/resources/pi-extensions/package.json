@@ -1,0 +1,109 @@
+{
+  "name": "@mortise/bundled-pi-extensions",
+  "private": true,
+  "type": "module",
+  "pi": {
+    "extensions": [
+      {
+        "id": "mortise-browser",
+        "path": "./browser.js",
+        "activation": "startup",
+        "manifest": {
+          "schemaVersion": 1,
+          "name": "Mortise Browser",
+          "version": "1.0.0",
+          "author": { "name": "Mortise" },
+          "description": "Connects the Agent to Mortise's session-owned browser.",
+          "capabilities": ["browser.command"],
+          "permissions": []
+        },
+        "ui": {
+          "schemaVersion": 1,
+          "title": "Mortise Browser",
+          "description": "Connects the Agent to Mortise's session-owned browser.",
+          "category": "agent"
+        }
+      },
+      {
+        "id": "mortise-messaging",
+        "path": "./messaging.js",
+        "activation": "startup",
+        "manifest": {
+          "schemaVersion": 1,
+          "name": "Mortise Messaging",
+          "version": "1.0.0",
+          "author": { "name": "Mortise" },
+          "description": "Lets the Agent inspect and disconnect session messaging channels.",
+          "capabilities": ["messaging.session"],
+          "permissions": []
+        },
+        "ui": {
+          "schemaVersion": 1,
+          "title": "Mortise Messaging",
+          "description": "Lets the Agent inspect and disconnect session messaging channels.",
+          "category": "agent"
+        }
+      },
+      {
+        "id": "mortise-permissions",
+        "path": "./permissions.js",
+        "activation": "startup",
+        "manifest": {
+          "schemaVersion": 1,
+          "name": "Mortise Permissions",
+          "version": "1.0.0",
+          "author": { "name": "Mortise" },
+          "description": "Owns tool approval policy and its session controls.",
+          "capabilities": ["ui.contributions", "ui.dialogs"],
+          "permissions": []
+        },
+        "ui": {
+          "schemaVersion": 1,
+          "title": "Mortise Permissions",
+          "description": "Controls whether state-changing tool calls require approval.",
+          "category": "agent",
+          "settings": {
+            "schemaVersion": 1,
+            "page": {
+              "id": "permissions",
+              "title": "Permissions",
+              "description": "Choose how tool calls are approved in new conversations.",
+              "icon": "shield-check",
+              "order": 7.5
+            },
+            "groups": [
+              {
+                "id": "approval-mode",
+                "title": "Approval mode",
+                "description": "Used when a session has no session-specific choice."
+              }
+            ],
+            "fields": [
+              {
+                "key": "mode",
+                "type": "select",
+                "group": "approval-mode",
+                "label": "Default mode",
+                "description": "Used when a session has no session-specific choice.",
+                "default": "allow-all",
+                "requiresReload": true,
+                "options": [
+                  {
+                    "value": "ask",
+                    "label": "Ask",
+                    "description": "Ask before tools that can change state."
+                  },
+                  {
+                    "value": "allow-all",
+                    "label": "Execute",
+                    "description": "Approve tool calls without prompting."
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
+    ]
+  }
+}

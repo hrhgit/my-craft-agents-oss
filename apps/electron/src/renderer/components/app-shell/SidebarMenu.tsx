@@ -21,6 +21,8 @@ import {
   CheckCheck,
   Plus,
   ExternalLink,
+  FolderOpen,
+  Pencil,
   Trash2,
 } from 'lucide-react'
 import { useMenuComponents } from '@/components/ui/menu-context'
@@ -37,8 +39,9 @@ export interface SidebarMenuProps {
   onAddSkill?: () => void
   /** Handler for "Add Automation" action - only for automations type */
   onAddAutomation?: () => void
-  isActiveWorkspace?: boolean
   onOpenWorkspaceInNewWindow?: () => void
+  onEditWorkspace?: () => void
+  onOpenWorkspaceFolder?: () => void
   onRemoveWorkspace?: () => void
 }
 
@@ -51,8 +54,9 @@ export function SidebarMenu({
   onMarkAllRead,
   onAddSkill,
   onAddAutomation,
-  isActiveWorkspace,
   onOpenWorkspaceInNewWindow,
+  onEditWorkspace,
+  onOpenWorkspaceFolder,
   onRemoveWorkspace,
 }: SidebarMenuProps) {
   const { t } = useTranslation()
@@ -80,16 +84,27 @@ export function SidebarMenu({
   }
 
   if (type === 'workspace') {
-    if (isActiveWorkspace) return null
     return (
       <>
+        {onEditWorkspace && (
+          <MenuItem onClick={onEditWorkspace}>
+            <Pencil className="h-3.5 w-3.5" />
+            <span className="flex-1">{t('workspace.editWorkspace')}</span>
+          </MenuItem>
+        )}
+        {onOpenWorkspaceFolder && (
+          <MenuItem onClick={onOpenWorkspaceFolder}>
+            <FolderOpen className="h-3.5 w-3.5" />
+            <span className="flex-1">{t('workspace.openInFileManager')}</span>
+          </MenuItem>
+        )}
         {onOpenWorkspaceInNewWindow && (
           <MenuItem onClick={onOpenWorkspaceInNewWindow}>
             <AppWindow className="h-3.5 w-3.5" />
             <span className="flex-1">{t('sidebarMenu.openInNewWindow')}</span>
           </MenuItem>
         )}
-        {onOpenWorkspaceInNewWindow && onRemoveWorkspace && <Separator />}
+        {(onEditWorkspace || onOpenWorkspaceFolder || onOpenWorkspaceInNewWindow) && onRemoveWorkspace && <Separator />}
         {onRemoveWorkspace && (
           <MenuItem onClick={onRemoveWorkspace}>
             <Trash2 className="h-3.5 w-3.5" />

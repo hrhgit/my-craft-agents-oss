@@ -67,8 +67,6 @@ export interface EditContext {
 
 /** Available edit context keys - add new ones here */
 export type EditContextKey =
-  | 'workspace-permissions'
-  | 'default-permissions'
   | 'preferences-notes'
   | 'edit-tool-icons'
 
@@ -104,47 +102,6 @@ export interface EditConfig {
  * Each entry contains all strings needed for the edit popover and agent context.
  */
 const EDIT_CONFIGS: Record<EditContextKey, (location: string) => EditConfig> = {
-  'workspace-permissions': (location) => ({
-    context: {
-      label: 'Permission Settings',
-      filePath: `${location}/permissions.json`,
-      context:
-        'The user is on the Settings Screen and pressed the edit button on Workspace Permission settings. ' +
-        'Their intent is likely to update the setting immediately unless otherwise specified. ' +
-        'The permissions.json file configures Explore mode rules. It can contain: allowedBashPatterns, ' +
-        'allowedMcpPatterns, blockedTools, and allowedWritePaths. ' +
-        'After editing, call config_validate with target "permissions" to verify the changes. ' +
-        'Confirm clearly when done.',
-    },
-    example: "Allow running 'make build' in Explore mode",
-    displayLabelKey: 'editPopover.label.permissionSettings',
-    exampleKey: 'editPopover.example.workspacePermissions',
-    model: 'default',
-    systemPromptPreset: 'mini',
-    inlineExecution: true,
-  }),
-
-  'default-permissions': (location) => ({
-    context: {
-      label: 'Default Permissions',
-      filePath: location, // location is the full path for default permissions
-      context:
-        'The user is editing app-level default permissions (~/.mortise/permissions/default.json). ' +
-        'This file configures Explore mode rules that apply to ALL workspaces. ' +
-        'It can contain: allowedBashPatterns, allowedMcpPatterns, blockedTools, and allowedWritePaths. ' +
-        'Each pattern can be a string or an object with pattern and comment fields. ' +
-        'Be careful - these are app-wide defaults. ' +
-        'After editing, call config_validate with target "permissions" to verify the changes. ' +
-        'Confirm clearly when done.',
-    },
-    example: 'Allow git fetch command',
-    displayLabelKey: 'editPopover.label.defaultPermissions',
-    exampleKey: 'editPopover.example.defaultPermissions',
-    model: 'default',
-    systemPromptPreset: 'mini',
-    inlineExecution: true,
-  }),
-
   // Preferences editing context
   'preferences-notes': (location) => ({
     context: {
@@ -197,7 +154,7 @@ const EDIT_CONFIGS: Record<EditContextKey, (location: string) => EditConfig> = {
  * @param location - Base path (e.g., workspace root path)
  *
  * @example
- * const { context, example } = getEditConfig('workspace-permissions', workspace.rootPath)
+ * const { context, example } = getEditConfig('preferences-notes', preferencesPath)
  */
 export function getEditConfig(key: EditContextKey, location: string): EditConfig {
   const factory = EDIT_CONFIGS[key]
@@ -721,7 +678,7 @@ export function EditPopover({
  * @example
  * <EditPopover
  *   trigger={<EditButton />}
- *   context={getEditContext('workspace-permissions', { workspacePath })}
+ *   context={getEditConfig('preferences-notes', preferencesPath).context}
  * />
  */
 export const EditButton = React.forwardRef<

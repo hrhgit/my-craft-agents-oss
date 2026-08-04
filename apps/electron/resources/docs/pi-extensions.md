@@ -7,7 +7,7 @@ Pi extensions can add persistent GUI to Mortise without shipping extension-speci
 > **Placement and loading:** Declare each Mortise extension once in the package's `pi.extensions` array. Put the package under `~/.mortise/agent/extensions/` (global) or `.mortise/extensions/` (project-local). Each backend discovers both trusted sources when it opens or attaches the Workspace; file changes take effect on the next backend or Workspace load.
 
 **Key capabilities:**
-- **Host-rendered UI** - Compose text, Markdown, icons, badges, buttons, rows, and stacks with `ctx.ui.upsertContribution()`
+- **Host-rendered UI** - Compose text, Markdown, icons, badges, buttons, compact menus, rows, and stacks with `ctx.ui.upsertContribution()`
 - **Sandbox UI Apps** - Run self-contained HTML, CSS, and JavaScript inside a restricted iframe
 - **Extension actions** - Connect buttons to commands owned by the same extension
 - **Host capabilities** - Request explicitly declared desktop operations without using private Electron APIs
@@ -388,12 +388,21 @@ Host-rendered contributions use a bounded recursive node tree.
 | Badge | `{ type: "badge", label, tone? }` |
 | Divider | `{ type: "divider" }` |
 | Button | `{ type: "button", label, icon?, action, disabled? }` |
+| Compact menu | `{ type: "menu", label, icon?, tone?, options }` |
 | Row or stack | `{ type: "row" | "stack", children, gap? }` |
+| Responsive content | `{ type: "responsive", full, compact?, minimal? }` |
 
 Every node may include a bounded stable `semanticId`. Mortise namespaces it by
 Extension and contribution identity before exposing it to the renderer. Use it
 for stable focus restoration and validation identity; do not derive it from
 display text, array position, or DOM structure.
+
+`responsive` lets an extension preserve its meaning without forcing one layout
+at every width. Mortise observes the contribution's own container and chooses
+`full` above 420px, `compact` at narrower widths, and `minimal` at 220px or
+below. Missing variants fall back to the nearest available variant. The
+thresholds are host policy; extensions describe the alternate semantic forms,
+not pixel coordinates.
 
 Text tones: `default`, `muted`, `success`, `warning`, `danger`.
 
@@ -401,7 +410,7 @@ Badge tones: `default`, `info`, `success`, `warning`, `danger`.
 
 Container gaps: `none`, `small`, `medium`.
 
-Icon names: `activity`, `alert-circle`, `check`, `chevron-right`, `circle`, `clock`, `info`, `loader`, `settings`, `sparkles`, `x`.
+Icon names: `activity`, `alert-circle`, `check`, `chevron-right`, `circle`, `clock`, `compass`, `info`, `loader`, `repeat`, `settings`, `sparkles`, `x`.
 
 Do not put callbacks, HTML, CSS, React components, DOM nodes, or executable code in a host-rendered contribution. Use a sandbox UI App when host-rendered primitives are not sufficient.
 
@@ -532,7 +541,7 @@ Optional contribution fields:
 | `order` | Stable order after priority; integer `-10000..10000` |
 | `group` | Related content that Mortise admits or overflows as one allocation block |
 | `collapse` | `never`, `auto`, or `always` |
-| `overflow` | `menu`, `collapse`, or `hide` |
+| `overflow` | `menu`, `collapse`, `scroll`, or `hide` |
 | `exclusive` | Requests the only visible slot; Mortise chooses one winner |
 | `workspaceContent` | Required metadata for `workspace.content`; rejected on other surfaces |
 
@@ -549,11 +558,11 @@ Maximum capacities are:
 | Workspace content | 4 admitted sandbox apps per renderer; host-rendered content is not subject to the sandbox budget |
 | Replace surfaces | 1 |
 
-Each rendered surface reduces its effective capacity at narrow widths. Grouped contributions move together instead of being split between visible and overflow regions. Extra contributions enter a compact host menu for `overflow: "menu"`, an inline collapsible region for `overflow: "collapse"`, or remain unmounted for `overflow: "hide"`. A shared surface runs at most four mounted sandbox apps at once. `workspace.content` uses one renderer-wide sandbox admission budget even when several dock groups are visible; excess sandbox apps remain unmounted.
+Each rendered surface reduces its effective capacity at narrow widths. Grouped contributions move together instead of being split between visible and overflow regions. Extra contributions enter a compact host menu for `overflow: "menu"`, an inline collapsible region for `overflow: "collapse"`, a bounded scroll rail for `overflow: "scroll"`, or remain unmounted for `overflow: "hide"`. Compact surfaces reject `scroll`; use a menu or a responsive variant there. A shared surface runs at most four mounted sandbox apps at once. `workspace.content` uses one renderer-wide sandbox admission budget even when several dock groups are visible; excess sandbox apps remain unmounted.
 
-Compact surfaces (`composer.toolbar`, `composer.status`, `navigation.item`, `session.badge`, `window.topLeft`, `window.topRight`) accept only text, icon, badge, button, and shallow rows. They reject Markdown, stacks, dividers, sandbox apps, deep trees, and long text.
+Compact surfaces (`composer.toolbar`, `composer.status`, `navigation.item`, `session.badge`, `window.topLeft`, `window.topRight`) accept only text, icon, badge, button, menu, and shallow rows. They reject Markdown, stacks, dividers, sandbox apps, deep trees, and long text.
 
-`collapse: "never"` is a visibility preference. It cannot displace core Mortise controls.
+`collapse: "never"` is a visibility preference. It cannot displace core Mortise controls. Composer zones and conversation status are bounded by the host so extension content cannot push the primary composer out of view; use a responsive variant, collapse, menu, or workspace content for large UI.
 
 Mortise recomputes bounded surface capacity from the rendered width. If a responsive transition moves the focused contribution between visible and overflow regions, the host restores the matching stable semantic node when it is still available. Keep content flexible, accessible, and safe at narrow widths; do not compensate with fixed/absolute positioning, global z-index, or focus stealing.
 
@@ -633,22 +642,21 @@ Manifest validation rules:
 - `visibleWhen.key` must name another declared field; `equals` must be a string, number, or boolean.
 - Number bounds must be finite and `min` cannot exceed `max`.
 - Settings schemas support at most 128 fields and 32 groups.
+- Add `page: { id, title, description?, icon?, order? }` when the extension settings should appear as an independent page in the Settings navigator. Without `page`, the same fields remain available from the Extensions page.
 
 Values are stored under `extensionConfig.<extension-id>` in Pi `settings.json`. Mortise validates unknown keys, types, ranges, and select options before writing.
 
-Read settings through Pi's `SettingsManager`:
+Read the extension's own settings from its environment snapshot:
 
 ```typescript
-import { SettingsManager, getAgentDir } from "@mortise/pi-coding-agent";
-
-const settings = SettingsManager.create(process.cwd(), getAgentDir(), ".mortise");
-const config = settings.getExtensionConfig("my-mortise-ui");
-const visible = config?.visible !== false;
+export default function myExtension(pi) {
+  const visible = pi.environment.config.visible !== false;
+}
 ```
 
 Fields marked `requiresReload` are saved for the next backend or Workspace load.
-They do not interrupt or rebuild active Extension runtimes. Fields without that
-flag take effect immediately through their normal settings read path.
+The frozen `pi.environment.config` snapshot is refreshed when that runtime loads;
+settings do not interrupt or rebuild an active Extension runtime.
 
 ## Error Handling
 

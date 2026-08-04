@@ -447,7 +447,7 @@ function deterministicBackend(
     supportsBranching: true, chat, postInit: async () => ({ authInjected: false }), ensureBranchReady: async () => undefined,
     getModel: () => 'deterministic', setModel: () => undefined, getThinkingLevel: () => 'medium', setThinkingLevel: () => undefined,
     getPermissionMode: () => 'ask', getSessionId: () => sessionId, setSessionId: () => undefined, isProcessing: () => false,
-    abort: async () => undefined, forceAbort: () => undefined, interruptForHandoff: () => undefined, redirect: () => false,
+    abort: async () => undefined, forceAbort: () => undefined, interruptForHandoff: () => undefined, redirect: async () => false,
     followUp: async () => false, runMiniCompletion: async () => null, runIsolatedAgent: async () => null, dispose: () => undefined, destroy: () => undefined,
     respondToPermission: () => undefined, setPermissionMode: () => undefined, cyclePermissionMode: () => 'ask', updateRuntimeConfig: async () => false,
     projectQueuedUser: () => undefined, projectRuntimeError: () => undefined, getSummarizeCallback: () => async () => null,

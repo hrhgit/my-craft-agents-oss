@@ -562,6 +562,8 @@ export interface PreToolUseInput {
   sessionId: string;
   /** Current permission mode */
   permissionMode: PermissionMode;
+  /** Run only neutral prerequisite/validation/transform checks. */
+  skipPermissionGate?: boolean;
   /** Absolute path to workspace root */
   workspaceRootPath: string;
   /** Workspace ID or slug for skill qualification */
@@ -639,6 +641,7 @@ export function runPreToolUseChecks(ctx: PreToolUseInput): PreToolUseCheckResult
     input,
     sessionId,
     permissionMode,
+    skipPermissionGate = false,
     workspaceRootPath,
     workspaceId,
     plansFolderPath,
@@ -654,12 +657,10 @@ export function runPreToolUseChecks(ctx: PreToolUseInput): PreToolUseCheckResult
     workspaceRootPath,
   };
 
-  // Canonical mode source of truth for this session.
-  // Keep incoming permissionMode only for mismatch diagnostics.
-  const diagnostics = getPermissionModeDiagnostics(sessionId);
-  const effectivePermissionMode = diagnostics.permissionMode;
+  const diagnostics = skipPermissionGate ? undefined : getPermissionModeDiagnostics(sessionId);
+  const effectivePermissionMode = diagnostics?.permissionMode ?? permissionMode;
 
-  if (permissionMode !== effectivePermissionMode) {
+  if (diagnostics && permissionMode !== effectivePermissionMode) {
     onDebug?.(
       `[ModeSync] sessionId=${sessionId} incomingMode=${permissionMode} effectiveMode=${effectivePermissionMode} ` +
       `modeVersion=${diagnostics.modeVersion} changedBy=${diagnostics.lastChangedBy} changedAt=${diagnostics.lastChangedAt}`
@@ -669,17 +670,19 @@ export function runPreToolUseChecks(ctx: PreToolUseInput): PreToolUseCheckResult
   // ============================================================
   // 1. PERMISSION MODE CHECK
   // ============================================================
-  const modeResult = shouldAllowToolInMode(
-    toolName,
-    input,
-    effectivePermissionMode,
-    { plansFolderPath, dataFolderPath, permissionsContext }
-  );
+  if (!skipPermissionGate) {
+    const modeResult = shouldAllowToolInMode(
+      toolName,
+      input,
+      effectivePermissionMode,
+      { plansFolderPath, dataFolderPath, permissionsContext }
+    );
 
-  if (!modeResult.allowed) {
-    const reasonWithContext = withPermissionModeContext(modeResult.reason, sessionId, effectivePermissionMode);
-    onDebug?.(`Permission mode ${effectivePermissionMode}: blocking ${toolName} — ${reasonWithContext}`);
-    return { type: 'block', reason: reasonWithContext };
+    if (!modeResult.allowed) {
+      const reasonWithContext = withPermissionModeContext(modeResult.reason, sessionId, effectivePermissionMode);
+      onDebug?.(`Permission mode ${effectivePermissionMode}: blocking ${toolName} — ${reasonWithContext}`);
+      return { type: 'block', reason: reasonWithContext };
+    }
   }
 
   // ============================================================
@@ -782,7 +785,7 @@ export function runPreToolUseChecks(ctx: PreToolUseInput): PreToolUseCheckResult
   // ============================================================
   // 6. ASK MODE PROMPT DECISION
   // ============================================================
-  if (effectivePermissionMode === 'ask') {
+  if (!skipPermissionGate && effectivePermissionMode === 'ask') {
     const promptInfo = shouldPromptInAskMode(
       toolName,
       input, // Use original input for permission decisions (before stripping)

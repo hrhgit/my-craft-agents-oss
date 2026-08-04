@@ -22,6 +22,7 @@ export const LOCAL_ONLY_CHANNELS = new Set<string>([
   RPC_CHANNELS.workspaces.GET,
   RPC_CHANNELS.workspaces.CREATE,
   RPC_CHANNELS.workspaces.CHECK_SLUG,
+  RPC_CHANNELS.workspaces.OPEN_PRIMARY_LOCATION,
   RPC_CHANNELS.workspaces.GET_TOPOLOGY,
   RPC_CHANNELS.workspaces.TOPOLOGY_COMMAND,
   RPC_CHANNELS.workspaces.TOPOLOGY_CHANGED,
@@ -177,6 +178,9 @@ export const LOCAL_ONLY_CHANNELS = new Set<string>([
   RPC_CHANNELS.piExtensions.UPDATE_SETTINGS,
   RPC_CHANNELS.piExtensions.GET_CATALOG,
   RPC_CHANNELS.piExtensions.PATCH_EXTENSION_CONFIG,
+  RPC_CHANNELS.piExtensions.RELOAD,
+  RPC_CHANNELS.piExtensions.IMPORT,
+  RPC_CHANNELS.piExtensions.UNINSTALL,
   RPC_CHANNELS.piExtensions.GET_EXTENSION_STATES,
   RPC_CHANNELS.piExtensions.SET_EXTENSION_ENABLED,
 
@@ -367,15 +371,10 @@ export const REMOTE_ELIGIBLE_CHANNELS = new Set<string>([
   RPC_CHANNELS.drafts.GET_ALL,
 
   // workspace — workspace config + images (sharp on headless)
-  RPC_CHANNELS.workspace.GET_PERMISSIONS,
   RPC_CHANNELS.workspace.READ_IMAGE,
   RPC_CHANNELS.workspace.WRITE_IMAGE,
   RPC_CHANNELS.workspace.SETTINGS_GET,
   RPC_CHANNELS.workspace.SETTINGS_UPDATE,
-
-  // permissions — workspace permissions
-  RPC_CHANNELS.permissions.GET_DEFAULTS,
-  RPC_CHANNELS.permissions.DEFAULTS_CHANGED,
 
   // skills — skill content per-workspace (not openEditor/openFinder which are local OS)
   RPC_CHANNELS.skills.GET,

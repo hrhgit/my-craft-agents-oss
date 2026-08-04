@@ -7,7 +7,7 @@
  * Styling follows SessionList/SourcesListPanel patterns for visual consistency.
  */
 
-import { useState, useMemo } from 'react'
+import { useCallback, useEffect, useState, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { MoreHorizontal, AppWindow } from 'lucide-react'
 import {
@@ -22,7 +22,9 @@ import { Separator } from '@/components/ui/separator'
 import type { DetailsPageMeta } from '@/lib/navigation-registry'
 import type { SettingsSubpage } from '../../../shared/types'
 import { SETTINGS_ITEMS } from '../../../shared/menu-schema'
-import { SETTINGS_ICONS } from '@/components/icons/SettingsIcons'
+import { SETTINGS_ICONS, getExtensionSettingsIcon } from '@/components/icons/SettingsIcons'
+import { createExtensionSettingsSubpage } from '../../../shared/settings-registry'
+import type { PiExtensionCatalogEntry } from '@mortise/shared/config'
 
 export const meta: DetailsPageMeta = {
   navigator: 'settings',
@@ -154,15 +156,48 @@ export default function SettingsNavigator({
   onSelectSubpage,
 }: SettingsNavigatorProps) {
   const { t } = useTranslation()
+  const [extensionPages, setExtensionPages] = useState<PiExtensionCatalogEntry[]>([])
+
+  const loadExtensionPages = useCallback(async () => {
+    const catalog = await window.electronAPI.getPiExtensionCatalog()
+    const nextPages = catalog.extensions.filter((entry) => entry.enabled && entry.ui?.settings?.page)
+    setExtensionPages(nextPages)
+
+    if (selectedSubpage?.startsWith('extension-') && !nextPages.some((entry) => {
+      const pageId = entry.ui?.settings?.page?.id
+      return pageId !== undefined && createExtensionSettingsSubpage(entry.id, pageId) === selectedSubpage
+    })) {
+      onSelectSubpage('extensions')
+    }
+  }, [onSelectSubpage, selectedSubpage])
+
+  useEffect(() => {
+    const handleExtensionsReloaded = () => {
+      void loadExtensionPages().catch((error) => console.error('Failed to refresh extension settings pages:', error))
+    }
+    window.addEventListener('mortise:pi-extensions-reloaded', handleExtensionsReloaded)
+    void loadExtensionPages().catch((error) => console.error('Failed to load extension settings pages:', error))
+    return () => window.removeEventListener('mortise:pi-extensions-reloaded', handleExtensionsReloaded)
+  }, [loadExtensionPages])
 
   const settingsItems: SettingsItem[] = useMemo(() =>
-    SETTINGS_ITEMS.map((item) => ({
+    [...SETTINGS_ITEMS.map((item, index) => ({
       id: item.id,
       label: t(item.labelKey),
       icon: SETTINGS_ICONS[item.id],
       description: t(item.descriptionKey),
-    })),
-    [t]
+      order: index,
+    })), ...extensionPages.map((extension) => {
+      const page = extension.ui!.settings!.page!
+      return {
+        id: createExtensionSettingsSubpage(extension.id, page.id),
+        label: page.title,
+        icon: getExtensionSettingsIcon(page.icon),
+        description: page.description ?? extension.description,
+        order: page.order ?? SETTINGS_ITEMS.length,
+      }
+    })].sort((left, right) => left.order - right.order).map(({ order: _order, ...item }) => item),
+    [extensionPages, t]
   )
 
   return (

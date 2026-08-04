@@ -92,6 +92,8 @@ export interface ISessionManager extends WorkspaceTopologySessionCoordinator {
   ): Promise<void>
   /** Retry only the host-owned durability boundary for an already accepted turn. */
   retryPendingSettlement(sessionId: string): Promise<void>
+  /** Withdraw one queued follow-up while leaving the active turn running. */
+  withdrawQueuedMessage(sessionId: string, messageId: string): Promise<void>
   cancelProcessing(sessionId: string, silent?: boolean): Promise<void>
   killShell(sessionId: string, shellId: string): Promise<{ success: boolean; error?: string }>
   getTaskOutput(taskId: string): Promise<string | null>
@@ -134,6 +136,9 @@ export interface ISessionManager extends WorkspaceTopologySessionCoordinator {
     args?: string,
     ownerExtensionId?: string,
   ): Promise<import('@mortise/core/types').ExtensionCommandResult>
+
+  /** Reload extensions in all open Pi runtimes; running turns require confirmation. */
+  requestExtensionReload(interruptRunning: boolean): Promise<import('@mortise/shared/config').PiExtensionReloadResult>
 
   /**
    * 查询当前会话已注册的 Pi 扩展 slash commands。

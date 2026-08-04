@@ -203,7 +203,7 @@ function normalizeModelForSave(model: PiGlobalModel): PiGlobalModel | null {
   return next
 }
 
-function normalizeModelsForSave(models: PiGlobalModel[], preferredModelId: string): PiGlobalModel[] {
+export function normalizeModelsForSave(models: PiGlobalModel[], preferredModelId: string): PiGlobalModel[] {
   const seen = new Set<string>()
   const normalized: PiGlobalModel[] = []
   for (const model of models) {

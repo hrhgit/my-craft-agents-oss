@@ -56,6 +56,7 @@ export interface PiExtensionSettingsSchema {
   schemaVersion: 1;
   groups?: Array<{ id: string; title: string; description?: string }>;
   fields: PiExtensionSettingField[];
+  page?: { id: string; title: string; description?: string; icon?: string; order?: number };
 }
 export interface PiExtensionManifestUI {
   schemaVersion: 1;
@@ -109,6 +110,32 @@ export interface PiExtensionConfigPatchResult {
   takesEffect: 'immediate' | 'next-backend-load';
 }
 
+export interface PiExtensionReloadActiveSession {
+  sessionId: string;
+  workspaceName: string;
+  title?: string;
+}
+
+export type PiExtensionReloadResult =
+  | { status: 'confirmation_required'; activeSessions: PiExtensionReloadActiveSession[] }
+  | {
+      status: 'reloaded';
+      interruptedSessionCount: number;
+      reloadedSessionCount: number;
+      deferredSessionCount: number;
+    };
+
+export interface PiExtensionImportResult {
+  packageName: string;
+  extensionIds: string[];
+  installedPath: string;
+}
+
+export interface PiExtensionUninstallResult {
+  packageName: string;
+  extensionIds: string[];
+}
+
 /**
  * Pi 返回给 host shell 的扩展展示 DTO。
  * 扩展发现、启停配置和元数据归 Pi；Mortise 只消费这个 catalog 渲染设置 UI。
@@ -131,6 +158,8 @@ export interface PiExtensionCatalogEntry {
   commands: string[];
   tools: string[];
   config?: Record<string, unknown>;
+  /** True only for packages imported into Mortise's managed extension area. */
+  uninstallable?: boolean;
 }
 
 export interface PiExtensionCatalogError {

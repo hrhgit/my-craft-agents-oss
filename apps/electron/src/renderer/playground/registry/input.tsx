@@ -21,7 +21,6 @@ const selectRequest: ExtensionInteractionBridgeRequestV1 = {
       kind: 'choice',
       label: 'Approach',
       required: true,
-      allowOther: true,
       options: [
         { id: 'prototype', label: 'Rapid prototype', description: 'Build a working version first, then refine it.' },
         { id: 'design-first', label: 'Design before implementation', description: 'Clarify architecture and boundaries before coding.' },
@@ -42,9 +41,48 @@ const multipleRequest: ExtensionInteractionBridgeRequestV1 = {
       kind: 'choice',
       label: 'Tools',
       multiple: true,
-      allowOther: true,
       options: ['VS Code', 'Git', 'Docker', 'Postman'].map(label => ({ id: label.toLowerCase().replaceAll(' ', '-'), label })),
     }],
+  },
+}
+
+const wizardRequest: ExtensionInteractionBridgeRequestV1 = {
+  ...requestBase,
+  requestId: 'preview-wizard',
+  extensionId: 'ask-user',
+  request: {
+    schemaVersion: 1,
+    presentation: { mode: 'wizard', allowSkip: true, autoAdvanceSingleChoice: true },
+    fields: [
+      {
+        id: 'direction',
+        kind: 'choice',
+        label: 'Which implementation direction should we use?',
+        description: 'Choose the option that best matches the intended scope.',
+        options: [
+          { id: 'focused', label: 'Focused change', description: 'Keep the current architecture and update only the affected flow.' },
+          { id: 'broader', label: 'Broader redesign', description: 'Rework the surrounding interaction model at the same time.' },
+        ],
+      },
+      {
+        id: 'areas',
+        kind: 'choice',
+        label: 'Which areas matter most?',
+        multiple: true,
+        options: [
+          { id: 'behavior', label: 'Interaction behavior' },
+          { id: 'visual', label: 'Visual polish' },
+          { id: 'accessibility', label: 'Accessibility' },
+        ],
+      },
+      {
+        id: 'notes',
+        kind: 'text',
+        label: 'Anything else we should account for?',
+        description: 'Optional details will be kept with this answer.',
+        multiline: true,
+      },
+    ],
   },
 }
 
@@ -58,6 +96,7 @@ export const inputComponents: ComponentEntry[] = [{
   props: [],
     mockData: () => ({ event: selectRequest, onRespond: () => {} }),
   variants: [
+    { name: 'Wizard', props: { event: wizardRequest } },
     { name: 'Select', props: { event: selectRequest } },
     { name: 'Multiple select', props: { event: multipleRequest } },
     {

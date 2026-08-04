@@ -115,6 +115,7 @@ export interface AppShellContextType {
 
   // Input draft callback
   onInputChange: (sessionId: string, value: string) => void
+  withdrawQueuedMessage?: (sessionId: string, messageId: string) => Promise<void>
 
   // Attachment draft callback — persists attachment refs per session
   onAttachmentsChange: (sessionId: string, attachments: FileAttachment[]) => void
@@ -223,14 +224,13 @@ export function usePendingPermission(sessionId: string): PermissionRequest | und
  *
  * Usage:
  *   const { options, setPermissionMode } = useSessionOptionsFor(sessionId)
- *   setPermissionMode('safe')
+ *   setPermissionMode('ask')
  */
 export function useSessionOptionsFor(sessionId: string): {
   options: SessionOptions
   setOption: <K extends keyof SessionOptions>(key: K, value: SessionOptions[K]) => void
   setOptions: (updates: SessionOptionUpdates) => void
   setPermissionMode: (mode: PermissionMode) => void
-  isSafeModeActive: () => boolean
 } {
   const { sessionOptions, onSessionOptionsChange } = useAppShellContext()
 
@@ -251,15 +251,10 @@ export function useSessionOptionsFor(sessionId: string): {
     setOption('permissionMode', mode)
   }, [setOption])
 
-  const isSafeModeActive = useCallback(() => {
-    return options.permissionMode === 'safe'
-  }, [options.permissionMode])
-
   return {
     options,
     setOption,
     setOptions,
     setPermissionMode,
-    isSafeModeActive,
   }
 }

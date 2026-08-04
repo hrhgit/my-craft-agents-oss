@@ -12,6 +12,7 @@ describe('ElectronAppShellScenarioAdapter', () => {
   it('exposes the fixed initial scenario allowlist', () => {
     expect(APP_SHELL_SCENARIO_IDS.size).toBe(12)
     expect(APP_SHELL_SCENARIO_IDS.has('session.streaming')).toBeTrue()
+    expect(APP_SHELL_SCENARIO_IDS.has('session.queued')).toBeTrue()
     expect(APP_SHELL_SCENARIO_IDS.has('arbitrary' as never)).toBeFalse()
   })
 

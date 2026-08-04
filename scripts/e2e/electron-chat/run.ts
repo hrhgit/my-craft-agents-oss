@@ -26,13 +26,15 @@ const providerLogPath = resolve(process.env.MORTISE_E2E_PROVIDER_LOG_FILE
   ?? join(DEFAULT_MORTISE_UI_RUN_ROOT, `electron-chat-provider-${stamp}.jsonl`))
 const providerHookPath = resolve(import.meta.dir, 'provider-hook.cjs')
 const sentinel = `MORTISE_E2E_${stamp.replace(/[^A-Z0-9]/gi, '_').toUpperCase()}`
-const prompt = `Reply with exactly this token and no extra text: ${sentinel}`
+const sentinelBreak = 'MORTISE_E2E_'.length
+const prompt = `Reply with exactly the concatenation of these two parts and no extra text: "${sentinel.slice(0, sentinelBreak)}" and "${sentinel.slice(sentinelBreak)}"`
+if (prompt.includes(sentinel)) throw new Error('The expected assistant token must not appear verbatim in the user prompt.')
 
 const manifest = await startMortiseUiRun({
   surface: 'electron',
   profileMode: 'clone',
   sourceMortiseConfigDir,
-  waitMs: 300_000,
+  waitMs: 900_000,
   extraEnv: {
     PI_HOST_HOOKS_MODULE: providerHookPath,
     MORTISE_E2E_PROVIDER_LOG_FILE: providerLogPath,
@@ -55,14 +57,13 @@ try {
     target: { ref: newSession.ref },
     action: 'click',
     mode: 'physical',
-    waitUntil: { kind: 'state', scope: 'sessions', phase: 'ready', detail: { count: 1 }, timeoutMs: 60_000 },
     timeoutMs: 60_000,
   }, 'renderer-verified')
 
   const created = await command<Snapshot>('ui.snapshot')
   const composerInput = nodes(created).find(node => node.semanticId?.startsWith('composer.') && node.semanticId.endsWith('.input'))
   if (!composerInput?.semanticId) throw new Error('Created session did not expose its semantic composer input.')
-  sessionId = composerInput.semanticId.slice('composer.'.length, -'.input'.length)
+  const composerId = composerInput.semanticId.slice('composer.'.length, -'.input'.length)
 
   await command('ui.action', {
     revision: created.revision,
@@ -73,16 +74,23 @@ try {
   }, 'scenario-verified')
 
   const filled = await command<Snapshot>('ui.snapshot')
-  const send = nodes(filled).find(node => node.semanticId === `composer.${sessionId}.send`)
+  const send = nodes(filled).find(node => node.semanticId === `composer.${composerId}.send`)
   if (!send) throw new Error('Composer did not expose its stable send action.')
   await command('ui.action', {
     revision: filled.revision,
     target: { ref: send.ref },
     action: 'click',
     mode: 'physical',
-    waitUntil: { kind: 'session-state', sessionId, state: 'busy', timeoutMs: 60_000 },
+    waitUntil: { kind: 'state', scope: 'sessions', phase: 'busy', timeoutMs: 60_000 },
     timeoutMs: 60_000,
   }, 'renderer-verified')
+
+  const accepted = await command<{ observed?: { entityId?: string } }>('ui.wait', {
+    predicate: { kind: 'state', scope: 'session', phase: 'busy' },
+    timeoutMs: 60_000,
+  })
+  sessionId = accepted.observed?.entityId
+  if (!sessionId) throw new Error('Accepted message did not expose its active Session identity.')
 
   await command('ui.wait', {
     predicate: { kind: 'session-state', sessionId, state: 'ready' },

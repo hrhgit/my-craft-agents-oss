@@ -70,16 +70,6 @@ export function useExtensionStatus(sessionId: string): void {
       if (event.sessionId !== sessionId) return
       if (event.type === 'extension_notify') {
         showToast(event.message, event.notificationType)
-        return
-      }
-      if (event.type === 'extension_set_title') {
-        document.title = event.title
-        return
-      }
-      if (event.type === 'extension_set_editor_text') {
-        window.dispatchEvent(new CustomEvent('mortise:restore-input', {
-          detail: { sessionId, text: event.text },
-        }))
       }
     })
 

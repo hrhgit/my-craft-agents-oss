@@ -55,6 +55,7 @@ export type ExtensionPathSource = string | { id?: string; path: string; activati
  * the getter methods below check both locations for compatibility.
  */
 export interface ExtensionNamespaceSettings {
+	[key: string]: unknown;
 	model?: string;
 	enabled?: boolean;
 	concurrency?: number;

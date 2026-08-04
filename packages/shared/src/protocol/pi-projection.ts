@@ -20,7 +20,7 @@ export type PiProjectionContentPayloadV1 =
       text: string
       streaming: false
       clientMutationId?: string
-      queueStatus?: 'queued' | 'accepted'
+      queueStatus?: 'queued' | 'accepted' | 'cancelled' | 'interrupted'
       source?: 'host' | 'pi'
       timestamp?: number
     }
@@ -58,7 +58,7 @@ export interface PiProjectionAttachmentPayloadV1 {
   clientMutationId?: string
   contentEntityId?: string
   order: number
-  queueStatus?: 'queued' | 'accepted'
+  queueStatus?: 'queued' | 'accepted' | 'cancelled' | 'interrupted'
   source?: 'host' | 'pi'
 }
 

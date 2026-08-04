@@ -314,13 +314,13 @@ export function getEventDisplayName(event: AutomationTrigger): string {
 
 /** Maps permission mode values to user-friendly labels */
 export const PERMISSION_DISPLAY_NAMES: Record<PermissionMode, string> = {
-  'safe':      'Explore',
+  'safe':      'Ask',
   'ask':       'Ask',
   'allow-all': 'Execute',
 }
 
 export function getPermissionDisplayName(mode?: PermissionMode): string {
-  if (!mode) return 'Explore'
+  if (!mode) return 'Ask'
   return PERMISSION_DISPLAY_NAMES[mode] ?? mode
 }
 

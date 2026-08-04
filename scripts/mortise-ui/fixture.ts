@@ -19,7 +19,7 @@ const IDENTIFIER_PATTERN = '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$'
 const IDENTIFIER_RE = new RegExp(IDENTIFIER_PATTERN)
 const SESSION_FILE_ROOTS = new Set(['attachments', 'data', 'downloads', 'long_responses', 'plans'])
 const MESSAGE_ROLES = new Set(['user', 'assistant', 'tool', 'error', 'info', 'plan'])
-const PERMISSION_MODES = new Set(['safe', 'ask', 'allow-all'])
+const PERMISSION_MODES = new Set(['ask', 'allow-all'])
 
 export interface MortiseUiFixtureFile {
   path: string
@@ -45,7 +45,7 @@ export interface MortiseUiFixtureSession {
   name?: string
   createdAt?: number
   lastUsedAt?: number
-  permissionMode?: 'safe' | 'ask' | 'allow-all'
+  permissionMode?: 'ask' | 'allow-all'
   hasUnread?: boolean
   hidden?: boolean
   pendingPlanExecution?: {
@@ -64,7 +64,7 @@ export interface MortiseUiFixtureWorkspace {
   id: string
   name: string
   slug?: string
-  permissionMode?: 'safe' | 'ask' | 'allow-all'
+  permissionMode?: 'ask' | 'allow-all'
   files?: MortiseUiFixtureFile[]
   sessions?: MortiseUiFixtureSession[]
 }
@@ -173,7 +173,7 @@ export const MORTISE_UI_FIXTURE_SCHEMA = {
     version: 1,
     active: { workspaceId: 'docs', sessionId: 'review-readme' },
     workspaces: [{
-      id: 'docs', name: 'Documentation', permissionMode: 'safe',
+      id: 'docs', name: 'Documentation', permissionMode: 'ask',
       files: [{ path: 'README.md', content: '# Documentation\n' }],
       sessions: [{
         id: 'review-readme', name: 'Review README', hasUnread: true,
@@ -243,7 +243,7 @@ export const DEFAULT_MORTISE_UI_FIXTURE: MortiseUiFixtureSpec = {
       ],
     },
     {
-      id: 'customer-research', name: 'Customer Research', permissionMode: 'safe',
+      id: 'customer-research', name: 'Customer Research', permissionMode: 'ask',
       files: [
         { path: 'README.md', content: '# Customer Research\n\nInterview synthesis and market comparison workspace.\n' },
         { path: 'research/interview-notes.md', content: '# Interview notes\n\nUsers value fast workspace switching and predictable local file access.\n' },
@@ -522,7 +522,7 @@ function optionalBoolean(value: unknown, path: string): boolean | undefined {
 
 function optionalPermissionMode(value: unknown, path: string): MortiseUiFixtureWorkspace['permissionMode'] {
   if (value === undefined) return undefined
-  if (typeof value !== 'string' || !PERMISSION_MODES.has(value)) fail(path, 'must be safe, ask, or allow-all')
+  if (typeof value !== 'string' || !PERMISSION_MODES.has(value)) fail(path, 'must be ask or allow-all')
   return value as MortiseUiFixtureWorkspace['permissionMode']
 }
 

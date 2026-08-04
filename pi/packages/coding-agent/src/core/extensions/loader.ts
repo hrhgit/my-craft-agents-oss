@@ -47,6 +47,7 @@ import type {
 export interface ExtensionLoadMetadata {
 	id: string;
 	agentDir: string;
+	config?: Record<string, unknown>;
 	manifest?: ExtensionManifestV1;
 	manifestStatus?: ExtensionManifestStatus;
 	manifestDiagnostics?: ExtensionManifestDiagnostic[];
@@ -195,6 +196,7 @@ function createExtensionAPI(
 			id: environment.id,
 			sourcePath: extension.resolvedPath,
 			dataDir,
+			config: Object.freeze({ ...(environment.config ?? {}) }),
 		}),
 		host: {
 			registerBackgroundTask: (type, handler) => {

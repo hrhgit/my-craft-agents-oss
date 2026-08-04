@@ -95,7 +95,6 @@ const ACTION_LABEL_KEYS: Partial<Record<ActionId, string>> = {
   'panel.focusNext': 'shortcuts.action.focusNextPanel',
   'panel.focusPrev': 'shortcuts.action.focusPrevPanel',
   'chat.stopProcessing': 'shortcuts.action.stopProcessing',
-  'chat.cyclePermissionMode': 'shortcuts.action.cyclePermissionMode',
   'chat.nextSearchMatch': 'shortcuts.action.nextSearchMatch',
   'chat.prevSearchMatch': 'shortcuts.action.prevSearchMatch',
 }

@@ -1,8 +1,12 @@
-import { describe, expect, it } from 'bun:test'
+import { describe, expect, it, mock } from 'bun:test'
 import type { PiExtensionCatalogEntry } from '@mortise/shared/config/pi-extension-settings'
-import { isExtensionConfigurable } from '../PiExtensionsSettingsPanel'
-import { buildExtensionSettingSections, parseExtensionNumberDraft } from '../ExtensionDetailPanel'
-import { patchCatalogField } from '../extension-settings-utils'
+
+mock.module('pdfjs-dist/build/pdf.worker.min.mjs?url', () => ({ default: 'pdf.worker.mjs' }))
+mock.module('pdfjs-dist', () => ({ GlobalWorkerOptions: { workerSrc: '' }, getDocument: () => ({}) }))
+
+const { isExtensionConfigurable } = await import('../PiExtensionsSettingsPanel')
+const { buildExtensionSettingSections, parseExtensionNumberDraft } = await import('../ExtensionDetailPanel')
+const { patchCatalogField } = await import('../extension-settings-utils')
 
 function catalogEntry(configurable: boolean, withSchema: boolean): PiExtensionCatalogEntry {
   return {
@@ -22,6 +26,43 @@ describe('Mortise extension settings panels', () => {
     expect(isExtensionConfigurable(catalogEntry(true, true))).toBe(true)
     expect(isExtensionConfigurable(catalogEntry(true, false))).toBe(false)
     expect(isExtensionConfigurable(catalogEntry(false, true))).toBe(false)
+  })
+
+  it('keeps a declared extension settings page navigable without inline fields', () => {
+    const extension = catalogEntry(true, true)
+    extension.ui!.settings = {
+      schemaVersion: 1,
+      page: { id: 'extension-page', title: 'Extension page' },
+      fields: [],
+    }
+    expect(isExtensionConfigurable(extension)).toBe(true)
+  })
+
+  it('keeps the permissions extension settings field on its dedicated page', () => {
+    const extension = catalogEntry(true, true)
+    extension.id = 'mortise-permissions'
+    extension.ui!.settings = {
+      schemaVersion: 1,
+      page: { id: 'permissions', title: 'Permissions' },
+      groups: [{ id: 'approval-mode', title: 'Approval mode' }],
+      fields: [{
+        key: 'mode',
+        type: 'select',
+        group: 'approval-mode',
+        label: 'Default mode',
+        default: 'allow-all',
+        options: [
+          { value: 'ask', label: 'Ask' },
+          { value: 'allow-all', label: 'Execute' },
+        ],
+      }],
+    }
+
+    expect(buildExtensionSettingSections(extension)).toEqual([{
+      id: 'approval-mode',
+      title: 'Approval mode',
+      fields: [expect.objectContaining({ key: 'mode', type: 'select' })],
+    }])
   })
 
   it('keeps ungrouped and unknown-group fields when groups are declared', () => {

@@ -15,9 +15,8 @@ import {
 } from './tree-jsonl.ts';
 
 function normalizePermissionMode(value: unknown): PermissionMode | undefined {
-  return value === 'safe' || value === 'ask' || value === 'allow-all'
-    ? value
-    : undefined;
+  if (value === 'safe' || value === 'explore') return 'ask';
+  return value === 'ask' || value === 'allow-all' ? value : undefined;
 }
 
 function normalizeHeaderPermissionModes<T extends SessionHeader>(header: T): T {
@@ -70,7 +69,8 @@ export function readSessionHeader(sessionFile: string): SessionHeader | null {
  */
 export function readSessionJsonl(sessionFile: string): StoredSession | null {
   try {
-    return readTreeSessionAsStoredSession(sessionFile);
+    const session = readTreeSessionAsStoredSession(sessionFile);
+    return session ? normalizeHeaderPermissionModes(session) : null;
   } catch (error) {
     debug('[jsonl] Failed to read session:', sessionFile, error);
     return null;

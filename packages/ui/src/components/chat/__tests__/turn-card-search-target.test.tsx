@@ -57,4 +57,62 @@ describe('TurnCard search targets', () => {
     expect(markup).toContain('data-mortise-search-target-type="tool-call" data-mortise-search-target-id="nested-tool"')
     expect(markup).toContain('data-mortise-search-target-type="tool-result" data-mortise-search-target-id="nested-tool"')
   })
+
+  it('keeps non-empty process text cards visible while tool activities are collapsed', () => {
+    const processText = {
+      id: 'process-text',
+      type: 'intermediate' as const,
+      status: 'completed' as const,
+      content: 'Visible reasoning block',
+      timestamp: 1,
+    }
+    const emptyProcessText = {
+      ...processText,
+      id: 'empty-process-text',
+      content: '   ',
+      timestamp: 2,
+    }
+    const emptyStreamingProcessText = {
+      ...emptyProcessText,
+      id: 'empty-streaming-process-text',
+      status: 'running' as const,
+      timestamp: 3,
+    }
+    const tool = {
+      id: 'collapsed-tool',
+      type: 'tool' as const,
+      status: 'completed' as const,
+      toolName: 'Read',
+      toolUseId: 'collapsed-tool-use',
+      toolInput: { file_path: 'src/hidden.ts' },
+      timestamp: 4,
+    }
+
+    const collapsedMarkup = renderToStaticMarkup(
+      <TurnCard
+        turnId="process-card-turn"
+        activities={[processText, emptyProcessText, emptyStreamingProcessText, tool]}
+        isStreaming={false}
+        isComplete
+        isExpanded={false}
+      />,
+    )
+
+    expect(collapsedMarkup).toContain('data-mortise-process-text-card="process-text"')
+    expect(collapsedMarkup).toContain('Visible reasoning block')
+    expect(collapsedMarkup).not.toContain('data-mortise-process-text-card="empty-process-text"')
+    expect(collapsedMarkup).not.toContain('data-mortise-process-text-card="empty-streaming-process-text"')
+    expect(collapsedMarkup).not.toContain('data-mortise-search-target-id="collapsed-tool"')
+
+    const expandedMarkup = renderToStaticMarkup(
+      <TurnCard
+        turnId="process-card-turn"
+        activities={[processText, emptyProcessText, emptyStreamingProcessText, tool]}
+        isStreaming={false}
+        isComplete
+        isExpanded
+      />,
+    )
+    expect(expandedMarkup).toContain('data-mortise-search-target-id="collapsed-tool"')
+  })
 })

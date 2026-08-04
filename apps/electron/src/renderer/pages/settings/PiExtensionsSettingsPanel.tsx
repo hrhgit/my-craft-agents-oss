@@ -4,8 +4,8 @@
  * 渲染 Pi host facade 返回的扩展 catalog：
  * - 左侧：扩展名（大标题）+ 简述（下方）
  * - 右侧：启用/禁用 toggle
- * - 可配置扩展（有 GUI 配置页的）：点击左侧区域进入次级页面
- * - 不可配置扩展：仅 toggle 可操作
+ * - 所有扩展：点击左侧区域进入详情页
+ * - 详情页中的设置区域按扩展声明按需显示
  */
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -14,7 +14,10 @@ import { Switch } from '@/components/ui/switch'
 import { SettingsCard } from '@/components/settings'
 import type { PiExtensionCatalogEntry, PiExtensionCatalogError, PiExtensionCategory } from '@mortise/shared/config/pi-extension-settings'
 export function isExtensionConfigurable(extension: PiExtensionCatalogEntry): boolean {
-  return extension.configurable && (extension.ui?.settings?.fields.length ?? 0) > 0
+  return extension.configurable && (
+    Boolean(extension.ui?.settings?.page)
+    || (extension.ui?.settings?.fields.length ?? 0) > 0
+  )
 }
 
 /**
@@ -86,7 +89,6 @@ export function ExtensionListPanel({
           <SettingsCard>
             {entries.map((ext) => {
               const enabled = extensionStates[ext.id] ?? true
-              const configurable = isExtensionConfigurable(ext)
               const descriptionKey = `settings.extensions.ext.${ext.id}.description`
               const translatedDescription = t(descriptionKey)
               const description = translatedDescription === descriptionKey ? ext.description : translatedDescription
@@ -102,7 +104,6 @@ export function ExtensionListPanel({
                   version={ext.manifest?.version}
                   author={ext.manifest?.author.name}
                   diagnostic={ext.manifestDiagnostics[0]}
-                  configurable={configurable}
                   onToggle={(value) => onToggleExtension(ext.id, value)}
                   onSelect={() => onSelectExtension(ext.id)}
                 />
@@ -124,7 +125,6 @@ interface ExtensionRowProps {
   version?: string
   author?: string
   diagnostic?: PiExtensionCatalogEntry['manifestDiagnostics'][number]
-  configurable: boolean
   onToggle: (enabled: boolean) => void
   onSelect: () => void
 }
@@ -138,18 +138,16 @@ function ExtensionRow({
   version,
   author,
   diagnostic,
-  configurable,
   onToggle,
   onSelect,
 }: ExtensionRowProps) {
   return (
     <div className="flex items-center justify-between px-4 py-3.5">
-      {configurable ? (
-        <button
-          type="button"
-          onClick={onSelect}
-          className="flex-1 min-w-0 text-left cursor-pointer hover:text-foreground transition-colors group"
-        >
+      <button
+        type="button"
+        onClick={onSelect}
+        className="flex-1 min-w-0 text-left cursor-pointer hover:text-foreground transition-colors group"
+      >
           <div className="flex items-center gap-1">
             <span className="text-sm font-medium font-sans leading-tight">{title || id}</span>
             {diagnostic && (
@@ -171,30 +169,15 @@ function ExtensionRow({
               {diagnostic.message}
             </div>
           )}
-        </button>
-      ) : (
-        <div className="flex-1 min-w-0">
-          <div className="text-sm font-medium font-sans leading-tight">{title || id}</div>
-          {description && (
-            <div className="text-xs text-muted-foreground mt-0.5 truncate">{description}</div>
-          )}
-          {(version || author) && (
-            <div className="text-[11px] text-muted-foreground mt-0.5">{[version && `v${version}`, author].filter(Boolean).join(' - ')}</div>
-          )}
-          {diagnostic && (
-            <div className={diagnostic.severity === 'error' ? 'text-xs text-destructive mt-1' : 'text-xs text-amber-700 mt-1'}>
-              {diagnostic.message}
-            </div>
-          )}
-        </div>
-      )}
-      <Switch
-        aria-label={`${enabled ? 'Disable' : 'Enable'} ${title || id}`}
-        checked={enabled}
-        disabled={!loadable}
-        onCheckedChange={onToggle}
-        className="ml-4 shrink-0"
-      />
+      </button>
+      <div className="ml-4 flex shrink-0 items-center gap-1">
+        <Switch
+          aria-label={`${enabled ? 'Disable' : 'Enable'} ${title || id}`}
+          checked={enabled}
+          disabled={!loadable}
+          onCheckedChange={onToggle}
+        />
+      </div>
     </div>
   )
 }

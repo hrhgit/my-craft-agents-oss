@@ -16,28 +16,26 @@ import { z } from 'zod';
 /**
  * Available permission modes (internal storage keys).
  *
- * UI-facing canonical names are:
- * - explore  -> safe
- * - ask      -> ask
- * - execute  -> allow-all
+ * `safe` is retained only as a legacy serialized input. Product surfaces and
+ * new writes expose ask and allow-all; legacy safe values normalize to ask.
  */
 export type PermissionMode = 'safe' | 'ask' | 'allow-all';
 
 /**
  * Canonical mode names used in user-facing/session-state surfaces.
  */
-export type PermissionModeCanonical = 'explore' | 'ask' | 'execute';
+export type PermissionModeCanonical = 'ask' | 'execute';
 
 /**
  * Order of modes for cycling with SHIFT+TAB
  */
-export const PERMISSION_MODE_ORDER: PermissionMode[] = ['safe', 'ask', 'allow-all'];
+export const PERMISSION_MODE_ORDER: PermissionMode[] = ['ask', 'allow-all'];
 
 /**
  * Internal -> canonical mapping.
  */
 export const PERMISSION_MODE_TO_CANONICAL: Record<PermissionMode, PermissionModeCanonical> = {
-  safe: 'explore',
+  safe: 'ask',
   ask: 'ask',
   'allow-all': 'execute',
 };
@@ -46,7 +44,6 @@ export const PERMISSION_MODE_TO_CANONICAL: Record<PermissionMode, PermissionMode
  * Canonical -> internal mapping.
  */
 export const CANONICAL_TO_PERMISSION_MODE: Record<PermissionModeCanonical, PermissionMode> = {
-  explore: 'safe',
   ask: 'ask',
   execute: 'allow-all',
 };
@@ -61,14 +58,13 @@ export function toCanonicalPermissionMode(mode: PermissionMode): PermissionModeC
 /**
  * Parse user-facing mode names into internal mode keys.
  *
- * Accepts only canonical user-facing values (explore/ask/execute).
+ * Accepts current names and legacy serialized values.
  */
 export function parsePermissionMode(mode: string): PermissionMode | null {
   const normalized = mode.trim().toLowerCase();
 
-  if (normalized === 'ask') return 'ask';
-  if (normalized === 'explore') return 'safe';
-  if (normalized === 'execute') return 'allow-all';
+  if (normalized === 'ask' || normalized === 'safe' || normalized === 'explore') return 'ask';
+  if (normalized === 'execute' || normalized === 'allow-all') return 'allow-all';
 
   return null;
 }

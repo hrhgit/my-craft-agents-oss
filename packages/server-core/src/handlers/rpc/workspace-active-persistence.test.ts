@@ -45,6 +45,7 @@ const openWorkspaceExtensions = mock(async (_workspace: Workspace) => ({
   extensions: [],
   failures: [],
 }))
+const openPath = mock(async (_path: string) => {})
 
 mock.module('@mortise/shared/config', () => ({
   CONFIG_DIR: 'C:\\mortise-test',
@@ -116,6 +117,7 @@ function createHarness(
       appVersion: 'test',
       isDebugMode: false,
       logger: { info() {}, warn() {}, error() {}, debug() {} },
+      openPath,
       imageProcessor: {
         async getMetadata() { return null },
         async process() { return Buffer.alloc(0) },
@@ -143,6 +145,7 @@ describe('workspace switch active-workspace persistence', () => {
     setActiveWorkspace.mockClear()
     getWorkspaceByNameOrId.mockClear()
     openWorkspaceExtensions.mockClear()
+    openPath.mockClear()
   })
 
   it('persists the workspace only after the window and transport switch succeed', async () => {
@@ -170,6 +173,14 @@ describe('workspace switch active-workspace persistence', () => {
 
     expect(setActiveWorkspace).not.toHaveBeenCalled()
     expect(sequence).toEqual([])
+  })
+
+  it('opens the authenticated Workspace primary folder without exposing its path to the renderer', async () => {
+    const handler = createHarness({}, RPC_CHANNELS.workspaces.OPEN_PRIMARY_LOCATION)
+
+    await expect(handler({ ...ctx, workspaceId: 'workspace-b' })).resolves.toBeUndefined()
+
+    expect(openPath).toHaveBeenCalledWith(workspaceRoot)
   })
 
   it('opens an existing folder with a derived Workspace name using the V2 contract', async () => {

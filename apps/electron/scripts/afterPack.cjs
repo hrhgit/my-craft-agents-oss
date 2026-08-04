@@ -387,6 +387,8 @@ function validatePackagedLayout(layout) {
     path.join(layout.appDist, 'workspace-server.mjs'),
     path.join(layout.appDist, 'resources', 'pi-extensions', 'browser.js'),
     path.join(layout.appDist, 'resources', 'pi-extensions', 'messaging.js'),
+    path.join(layout.appDist, 'resources', 'pi-extensions', 'permissions.js'),
+    path.join(layout.appDist, 'resources', 'pi-extensions', 'package.json'),
     path.join(layout.appDist, 'resources', 'docs', 'mortise-cli.md'),
     path.join(layout.appResources, 'session-mcp-server', 'index.js'),
     path.join(layout.appResources, 'scripts', 'pdf_tool.py'),

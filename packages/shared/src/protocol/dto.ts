@@ -220,6 +220,8 @@ export type SessionCommand =
   | { type: 'setThinkingLevel'; level: ThinkingLevel }
   /** Retries only an already-accepted turn's pending settlement; carries no user payload. */
   | { type: 'retrySettlement' }
+  /** Withdraw one queued follow-up without interrupting the active turn. */
+  | { type: 'withdrawQueuedMessage'; messageId: string }
   | { type: 'showInFinder' }
   | { type: 'copyPath' }
   | { type: 'shareToViewer' }

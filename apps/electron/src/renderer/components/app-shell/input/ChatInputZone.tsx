@@ -8,6 +8,8 @@ import { InputContainer } from './InputContainer'
 import { InputErrorBoundary } from './InputErrorBoundary'
 import { useOptionalAppShellContext } from '@/context/AppShellContext'
 import { ExtensionInteractionComposer } from '@/components/extensions/ExtensionInteractionComposer'
+import { DegradedComposer } from './DegradedComposer'
+import { QueuedMessageList, type QueuedMessageListItem } from './QueuedMessageList'
 
 interface ChatInputZoneProps {
   compactMode?: boolean
@@ -17,10 +19,14 @@ interface ChatInputZoneProps {
   tasks?: BackgroundTask[]
   sessionId: string
   readOnly?: boolean
-  sessionFolderPath?: string
   onKillTask?: (taskId: string) => void
   onInsertMessage?: (text: string) => void
   className?: string
+  queuedMessages?: QueuedMessageListItem[]
+  pendingQueuedMessageId?: string | null
+  onSteerQueuedMessage?: (messageId: string) => void
+  onDeleteQueuedMessage?: (messageId: string) => void
+  onEditQueuedMessage?: (messageId: string) => void
   inputProps: React.ComponentProps<typeof InputContainer>
 }
 
@@ -32,10 +38,14 @@ export function ChatInputZone({
   tasks = [],
   sessionId,
   readOnly = false,
-  sessionFolderPath,
   onKillTask,
   onInsertMessage,
   className,
+  queuedMessages = [],
+  pendingQueuedMessageId,
+  onSteerQueuedMessage,
+  onDeleteQueuedMessage,
+  onEditQueuedMessage,
   inputProps,
 }: ChatInputZoneProps) {
   const appShellContext = useOptionalAppShellContext()
@@ -50,6 +60,31 @@ export function ChatInputZone({
     inputProps.onAttachmentsChange?.([])
   }, [inputProps])
 
+  const standardComposer = (
+    <InputErrorBoundary
+      sessionId={sessionId}
+      resetKey={inputResetKey}
+      section="composer-shell"
+      onClearDraft={handleClearDraft}
+      fallback={({ retry }) => (
+        <DegradedComposer
+          sessionId={sessionId}
+          inputProps={inputProps}
+          onRetry={retry}
+        />
+      )}
+    >
+      <InputContainer
+        {...inputProps}
+        attachedTop={queuedMessages.length > 0}
+        compactMode={compactMode}
+        permissionMode={permissionMode}
+        onPermissionModeChange={onPermissionModeChange}
+        sessionId={sessionId}
+      />
+    </InputErrorBoundary>
+  )
+
   return (
     <div className={cn(
       CHAT_LAYOUT.maxWidth,
@@ -58,16 +93,22 @@ export function ChatInputZone({
       className,
     )}>
       {shouldShowOptionBadges && (
-        <ActiveOptionBadges
-          permissionMode={permissionMode}
-          onPermissionModeChange={onPermissionModeChange}
-          showPermissionModeBadge={false}
-          tasks={tasks}
+        <InputErrorBoundary
           sessionId={sessionId}
-          sessionFolderPath={sessionFolderPath}
-          onKillTask={onKillTask}
-          onInsertMessage={onInsertMessage ?? inputProps.onInputChange}
-        />
+          resetKey={`${sessionId}::option-badges`}
+          section="option-badges"
+          fallback={null}
+        >
+          <ActiveOptionBadges
+            permissionMode={permissionMode}
+            onPermissionModeChange={onPermissionModeChange}
+            showPermissionModeBadge={false}
+            tasks={tasks}
+            sessionId={sessionId}
+            onKillTask={onKillTask}
+            onInsertMessage={onInsertMessage ?? inputProps.onInputChange}
+          />
+        </InputErrorBoundary>
       )}
 
       {readOnly && (
@@ -76,25 +117,30 @@ export function ChatInputZone({
         </div>
       )}
 
-      {extensionInteraction && appShellContext?.respondToExtensionInteraction ? (
-        <ExtensionInteractionComposer
-          event={extensionInteraction}
-          onRespond={appShellContext.respondToExtensionInteraction}
+      {onSteerQueuedMessage && onDeleteQueuedMessage && onEditQueuedMessage && (
+        <QueuedMessageList
+          items={queuedMessages}
+          pendingId={pendingQueuedMessageId}
+          onSteer={onSteerQueuedMessage}
+          onDelete={onDeleteQueuedMessage}
+          onEdit={onEditQueuedMessage}
         />
-      ) : (
+      )}
+
+      {extensionInteraction && appShellContext?.respondToExtensionInteraction ? (
         <InputErrorBoundary
           sessionId={sessionId}
-          resetKey={inputResetKey}
-          onClearDraft={handleClearDraft}
+          resetKey={`${sessionId}::extension-interaction::${extensionInteraction.requestId}`}
+          section="extension-interaction"
+          fallback={standardComposer}
         >
-          <InputContainer
-            {...inputProps}
-            compactMode={compactMode}
-            permissionMode={permissionMode}
-            onPermissionModeChange={onPermissionModeChange}
-            sessionId={sessionId}
+          <ExtensionInteractionComposer
+            event={extensionInteraction}
+            onRespond={appShellContext.respondToExtensionInteraction}
           />
         </InputErrorBoundary>
+      ) : (
+        standardComposer
       )}
     </div>
   )

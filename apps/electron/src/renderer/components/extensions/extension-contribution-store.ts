@@ -138,6 +138,7 @@ export interface SurfaceLayout {
   visible: RegisteredExtensionContribution[]
   menuOverflow: RegisteredExtensionContribution[]
   collapsedOverflow: RegisteredExtensionContribution[]
+  scrollOverflow?: RegisteredExtensionContribution[]
   /** Compatibility view for callers that only need all non-visible items. */
   overflow: RegisteredExtensionContribution[]
 }
@@ -278,7 +279,8 @@ function splitOverflow(
   const compact = ['composer.toolbar', 'composer.status', 'window.topLeft', 'window.topRight', 'navigation.item', 'session.badge'].includes(surface)
   const menuOverflow = overflow.filter(item => (item.contribution.overflow ?? (compact ? 'menu' : 'collapse')) === 'menu')
   const collapsedOverflow = overflow.filter(item => (item.contribution.overflow ?? (compact ? 'menu' : 'collapse')) === 'collapse')
-  return { visible, menuOverflow, collapsedOverflow, overflow: [...menuOverflow, ...collapsedOverflow] }
+  const scrollOverflow = overflow.filter(item => item.contribution.overflow === 'scroll')
+  return { visible, menuOverflow, collapsedOverflow, scrollOverflow, overflow: [...menuOverflow, ...collapsedOverflow, ...scrollOverflow] }
 }
 
 export function responsiveSurfaceCapacity(surface: ExtensionUISurface, viewportWidth: number): number | undefined {

@@ -31,6 +31,7 @@ export type WebPlatformCapabilityName = keyof typeof WEBUI_CAPABILITY_DEFINITION
 export const WEBUI_UNSUPPORTED_OPERATION_CAPABILITIES = Object.freeze({
   openFile: 'fileSystemShell',
   showInFolder: 'fileSystemShell',
+  openWorkspaceFolder: 'fileSystemShell',
   openFileDialog: 'nativeFileDialogs',
   openFolderDialog: 'nativeFileDialogs',
   setTrafficLightsVisible: 'nativeWindowLifecycle',

@@ -2,14 +2,14 @@
  * SkillInfoPage
  *
  * Displays comprehensive skill details including metadata,
- * permission modes, and instructions.
+ * metadata and instructions.
  * Uses the shared Info_ component system for consistent detail-page styling.
  */
 
 import * as React from 'react'
 import { useTranslation } from 'react-i18next'
 import { useEffect, useState, useCallback } from 'react'
-import { Check, X, Minus, Pencil } from 'lucide-react'
+import { Pencil } from 'lucide-react'
 import { useSetAtom } from 'jotai'
 import { Button } from '@/components/ui/button'
 import { managementEditorAtom } from '@/atoms/management-editor'
@@ -197,44 +197,6 @@ export default function SkillInfoPage({ skillSlug, workspaceId }: SkillInfoPageP
               </Info_Table.Row>
             </Info_Table>
           </Info_Section>
-
-          {/* Permission Modes */}
-          {skill.metadata.alwaysAllow && skill.metadata.alwaysAllow.length > 0 && (
-            <Info_Section title={t('skillInfo.permissionModes')}>
-              <div className="space-y-2 px-4 py-3">
-                <p className="text-xs text-muted-foreground mb-3">
-                  {t('skillInfo.permissionModesDesc')}
-                </p>
-                <div className="rounded-[8px] border border-border/50 overflow-hidden">
-                  <table className="w-full text-sm">
-                    <tbody>
-                      <tr className="border-b border-border/30">
-                        <td className="px-3 py-2 font-medium text-muted-foreground w-[140px]">{t('skillInfo.explore')}</td>
-                        <td className="px-3 py-2 flex items-center gap-2">
-                          <X className="h-3.5 w-3.5 text-destructive shrink-0" />
-                          <span className="text-foreground/80">{t('skillInfo.exploreDesc')}</span>
-                        </td>
-                      </tr>
-                      <tr className="border-b border-border/30">
-                        <td className="px-3 py-2 font-medium text-muted-foreground">{t('skillInfo.askToEdit')}</td>
-                        <td className="px-3 py-2 flex items-center gap-2">
-                          <Check className="h-3.5 w-3.5 text-success shrink-0" />
-                          <span className="text-foreground/80">{t('skillInfo.askToEditDesc')}</span>
-                        </td>
-                      </tr>
-                      <tr>
-                        <td className="px-3 py-2 font-medium text-muted-foreground">{t('skillInfo.auto')}</td>
-                        <td className="px-3 py-2 flex items-center gap-2">
-                          <Minus className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                          <span className="text-foreground/80">{t('skillInfo.autoDesc')}</span>
-                        </td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </Info_Section>
-          )}
 
           {/* Instructions */}
           <Info_Section

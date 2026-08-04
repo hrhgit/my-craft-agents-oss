@@ -176,10 +176,33 @@ function assertValidExtensionUI(value: unknown, context: string): asserts value 
 	if (!ui.settings || typeof ui.settings !== "object" || Array.isArray(ui.settings))
 		throw new Error(`${context}: extension settings must be an object`);
 	const settings = ui.settings as Record<string, unknown>;
-	if (!hasOnlyKeys(settings, ["schemaVersion", "groups", "fields"]))
+	if (!hasOnlyKeys(settings, ["schemaVersion", "groups", "fields", "page"]))
 		throw new Error(`${context}: extension settings contains unknown fields`);
 	if (settings.schemaVersion !== 1 || !Array.isArray(settings.fields) || settings.fields.length > 128)
 		throw new Error(`${context}: extension settings schema is invalid`);
+	if (settings.page !== undefined) {
+		if (!settings.page || typeof settings.page !== "object" || Array.isArray(settings.page))
+			throw new Error(`${context}: extension settings page is invalid`);
+		const page = settings.page as Record<string, unknown>;
+		if (
+			!hasOnlyKeys(page, ["id", "title", "description", "icon", "order"]) ||
+			typeof page.id !== "string" ||
+			!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(page.id) ||
+			typeof page.title !== "string" ||
+			page.title.length === 0 ||
+			page.title.length > 256
+		)
+			throw new Error(`${context}: extension settings page requires a bounded id and title`);
+		if (page.description !== undefined && (typeof page.description !== "string" || page.description.length > 2000))
+			throw new Error(`${context}: extension settings page description is invalid`);
+		if (page.icon !== undefined && (typeof page.icon !== "string" || !/^[A-Za-z][A-Za-z0-9-]{0,31}$/.test(page.icon)))
+			throw new Error(`${context}: extension settings page icon is invalid`);
+		if (
+			page.order !== undefined &&
+			(typeof page.order !== "number" || !Number.isFinite(page.order) || page.order < -1000 || page.order > 1000)
+		)
+			throw new Error(`${context}: extension settings page order is invalid`);
+	}
 	const groups = new Set<string>();
 	if (settings.groups !== undefined) {
 		if (!Array.isArray(settings.groups) || settings.groups.length > 32)
@@ -292,28 +315,26 @@ function getResourceEntryId(entry: ResourcePathEntry): string | undefined {
 	return id && isExtensionManifestId(id) ? id : undefined;
 }
 
-function assertStrictExtensionEntry(
-	entry: ResourcePathEntry,
-	context: string,
-): asserts entry is ExtensionManifestEntry {
-	if (typeof entry === "string") {
+export function assertValidExtensionEntry(entry: unknown, context: string): asserts entry is ExtensionManifestEntry {
+	if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
 		throw new Error(`${context}: extension entries must be objects with id and path`);
 	}
-	const extensionId = getResourceEntryId(entry);
+	const candidate = entry as Exclude<ResourcePathEntry, string>;
+	const extensionId = getResourceEntryId(candidate);
 	if (!extensionId) {
 		throw new Error(`${context}: extension id must be a lowercase stable identifier`);
 	}
 	if (!hasOnlyKeys(entry as Record<string, unknown>, ["id", "path", "activation", "manifest", "ui"])) {
 		throw new Error(`${context}: extension entry contains unknown fields`);
 	}
-	if (typeof entry.path !== "string" || !entry.path.trim()) {
+	if (typeof candidate.path !== "string" || !candidate.path.trim()) {
 		throw new Error(`${context}: extension path must be a non-empty string`);
 	}
-	if (entry.activation !== undefined && parseExtensionActivation(entry.activation) === undefined) {
+	if (candidate.activation !== undefined && parseExtensionActivation(candidate.activation) === undefined) {
 		throw new Error(`${context}: extension activation is invalid`);
 	}
-	if (entry.manifest !== undefined) assertValidExtensionManifest(entry.manifest, extensionId, context);
-	if (entry.ui !== undefined) assertValidExtensionUI(entry.ui, context);
+	if (candidate.manifest !== undefined) assertValidExtensionManifest(candidate.manifest, extensionId, context);
+	if (candidate.ui !== undefined) assertValidExtensionUI(candidate.ui, context);
 }
 
 function getSettingsResourceEntries(
@@ -622,7 +643,7 @@ function resolveExtensionEntries(dir: string): ExtensionDiscoveryEntry[] | null 
 		if (manifest?.extensions?.length) {
 			const entries: ExtensionDiscoveryEntry[] = [];
 			for (const entry of manifest.extensions) {
-				assertStrictExtensionEntry(entry, packageJsonPath);
+				assertValidExtensionEntry(entry, packageJsonPath);
 				const extPath = getResourceEntryPath(entry);
 				const resolvedExtPath = resolve(dir, extPath);
 				if (existsSync(resolvedExtPath)) {
@@ -888,7 +909,7 @@ export class ResourceResolver {
 				});
 				continue;
 			}
-			assertStrictExtensionEntry(source, "runtime extension source");
+			assertValidExtensionEntry(source, "runtime extension source");
 			this.addExtensionEntry(accumulator.extensions, source, this.cwd, {
 				source: "runtime",
 				scope: "temporary",
@@ -910,7 +931,7 @@ export class ResourceResolver {
 		metadata: PathMetadata,
 	): void {
 		for (const extension of getSettingsResourceEntries(settings, "extensions")) {
-			assertStrictExtensionEntry(extension, `${baseDir}/settings.json`);
+			assertValidExtensionEntry(extension, `${baseDir}/settings.json`);
 			this.addExtensionEntry(accumulator.extensions, extension, baseDir, metadata);
 		}
 		for (const resourceType of ["skills", "prompts"] as const) {

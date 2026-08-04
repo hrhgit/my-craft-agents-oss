@@ -77,7 +77,9 @@ function parseTransferPayload(input: unknown): RemoteSessionTransferPayload {
     sourceSessionId,
     summary,
     ...(optionalString(value.name, 'name', TRANSFER_NAME_MAX_LENGTH) ? { name: value.name as string } : {}),
-    ...(value.permissionMode ? { permissionMode: value.permissionMode as RemoteSessionTransferPayload['permissionMode'] } : {}),
+    ...(value.permissionMode ? {
+      permissionMode: (value.permissionMode === 'safe' ? 'ask' : value.permissionMode) as RemoteSessionTransferPayload['permissionMode'],
+    } : {}),
   }
 }
 

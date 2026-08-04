@@ -9,7 +9,7 @@ import { basename, dirname, isAbsolute, join, relative } from 'path'
 import { existsSync } from 'fs'
 import { readFile, writeFile, mkdir, rename, rm, lstat, open } from 'fs/promises'
 import { randomUUID } from 'node:crypto'
-import { setPermissionMode, hydratePreviousPermissionMode, getPermissionModeDiagnostics, type PermissionMode, unregisterSessionScopedToolCallbacks, mergeSessionScopedToolCallbacks, AbortReason, type BrowserPaneFns, generateConversationSummary } from '@mortise/shared/agent'
+import { setPermissionMode, hydratePreviousPermissionMode, getPermissionModeDiagnostics, parsePermissionMode, type PermissionMode, unregisterSessionScopedToolCallbacks, mergeSessionScopedToolCallbacks, AbortReason, type BrowserPaneFns, generateConversationSummary } from '@mortise/shared/agent'
 import { requirePrimaryLocalWorkspaceRoot, type AgentEvent, type PlanArtifactV1, type PlanModeStateV1 } from '@mortise/core/types'
 import {
   resolveSessionProvider,
@@ -30,14 +30,13 @@ import {
   backendTypeFromProcess,
   type BackendExtensionWorkspaceSnapshot,
 } from '@mortise/shared/agent/backend'
-import { alternateMidStreamBehavior, readPiGlobalProviders, readPiGlobalSettings, getDefaultThinkingLevel, getMidStreamBehavior, resetManagedAnthropicAuthEnvVars, getPersistedUiLanguage, resolveTitleLanguageName, listSubagentTemplates } from '@mortise/shared/config'
+import { alternateMidStreamBehavior, readPiGlobalProviders, readPiGlobalSettings, getDefaultThinkingLevel, getMidStreamBehavior, resetManagedAnthropicAuthEnvVars, getPersistedUiLanguage, resolveTitleLanguageName, listSubagentTemplates, type PiExtensionReloadActiveSession, type PiExtensionReloadResult } from '@mortise/shared/config'
 import { PrivilegedExecutionBroker, SessionShareTransferService } from '@mortise/server-core/services'
 import { InitGate, WorkspaceLocationActivityRegistry, type WorkspaceTopologySessionCoordinator } from '@mortise/server-core/domain'
 import { i18n } from '@mortise/shared/i18n'
 import {
   getWorkspaces,
   getWorkspaceByNameOrId,
-  loadConfigDefaults,
   loadPreferences,
   MODEL_REGISTRY,
   type Workspace,
@@ -86,7 +85,7 @@ import {
 import { ConfigWatcher, type ConfigWatcherCallbacks } from '@mortise/shared/config'
 import { getLastApiError } from '@mortise/shared/interceptor'
 import { restoreFiles } from '@mortise/shared/utils/bundle-files'
-import { type Session, type SessionEvent, type FileAttachment, type SendMessageOptions, type UnreadSummary, type PiProjectionEventV1, type PiProjectionSnapshotV1, type ExtensionInteractionResponseV1, type ExtensionFileStateV1, validateExtensionFileStateV1, RPC_CHANNELS, SESSION_SETTLEMENT_ERROR_CODE, generateMessageId } from '@mortise/shared/protocol'
+import { CodedError, type Session, type SessionEvent, type FileAttachment, type SendMessageOptions, type UnreadSummary, type PiProjectionEventV1, type PiProjectionSnapshotV1, type ExtensionInteractionResponseV1, type ExtensionFileStateV1, validateExtensionFileStateV1, RPC_CHANNELS, SESSION_SETTLEMENT_ERROR_CODE, generateMessageId } from '@mortise/shared/protocol'
 import {
   ConversationProjector,
   resolvePiBranchTarget,
@@ -1275,6 +1274,7 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
   private readonly toolSideEffectRecorderFactory: (workspaceId: string, sessionId: string) => ToolSideEffectRecorder
   private readonly toolSideEffectWrites = new Map<string, Promise<void>>()
   private sessions: Map<string, ManagedSession> = new Map()
+  private extensionReloadPromise: Promise<PiExtensionReloadResult> | null = null
   private piProjectionBySession = new Map<string, ConversationProjector>()
   private piProjectionRetiredRuntimeIds = new Map<string, Set<string>>()
   private piProjectionWrites = new Map<string, Promise<void>>()
@@ -1796,10 +1796,6 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
         sessionLog.info(`App theme changed`)
         this.broadcastAppThemeChanged(theme)
       },
-      onDefaultPermissionsChange: () => {
-        sessionLog.info('Default permissions changed')
-        this.broadcastDefaultPermissionsChanged()
-      },
       onSkillsListChange: async (skills) => {
         sessionLog.info(`Skills list changed in ${workspaceRootPath} (${skills.length} skills)`)
         this.broadcastSkillsChanged(workspaceId, skills)
@@ -1924,12 +1920,6 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
     if (!this.eventSink) return
     sessionLog.info(`Broadcasting skills changed (${skills.length} skills)`)
     this.eventSink(RPC_CHANNELS.skills.CHANGED, { to: 'workspace', workspaceId }, workspaceId, skills)
-  }
-
-  private broadcastDefaultPermissionsChanged(): void {
-    if (!this.eventSink) return
-    sessionLog.info('Broadcasting default permissions changed')
-    this.eventSink(RPC_CHANNELS.permissions.DEFAULTS_CHANGED, { to: 'all' }, null)
   }
 
   /**
@@ -3116,16 +3106,13 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
       throw new Error(`Workspace ${workspaceId} not found`)
     }
 
-    // Workspace defaults remain for workspace-scoped behavior such as permissions.
-    // Options.permissionMode overrides the workspace default (used by EditPopover for auto-execute).
+    // Explicit and legacy workspace values remain available to extensions and
+    // compatibility flows; Mortise core no longer seeds a permission default.
     const workspaceRootPath = requirePrimaryLocalWorkspaceRoot(workspace)
     const wsConfig = loadWorkspaceConfig(workspaceRootPath)
-    const globalDefaults = loadConfigDefaults()
-
-    // Read permission mode from workspace config, fallback to global defaults
-    const defaultPermissionMode = options?.permissionMode
-      ?? wsConfig?.defaults?.permissionMode
-      ?? globalDefaults.workspaceDefaults.permissionMode
+    // Permission defaults are extension-owned. Keep explicit and legacy
+    // workspace values as compatibility inputs for session restoration.
+    const defaultPermissionMode = options?.permissionMode ?? wsConfig?.defaults?.permissionMode
 
     // AI defaults are global. An explicit Session value must already be part of
     // the current contract; retired values never silently fall back to default.
@@ -4496,6 +4483,72 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
     }
   }
 
+  private getExtensionReloadActiveSessions(): PiExtensionReloadActiveSession[] {
+    const active: PiExtensionReloadActiveSession[] = []
+    for (const managed of this.sessions.values()) {
+      if (!managed.isProcessing && !this.isPiProjectionProcessing(managed.id)) continue
+      active.push({
+        sessionId: managed.id,
+        workspaceName: managed.workspace.name,
+        title: managed.name || undefined,
+      })
+    }
+    return active
+  }
+
+  async requestExtensionReload(interruptRunning: boolean): Promise<PiExtensionReloadResult> {
+    if (this.extensionReloadPromise) return await this.extensionReloadPromise
+    const activeSessions = this.getExtensionReloadActiveSessions()
+    if (activeSessions.length > 0 && !interruptRunning) {
+      return { status: 'confirmation_required', activeSessions }
+    }
+
+    this.extensionReloadPromise = (async () => {
+      const currentActiveSessions = this.getExtensionReloadActiveSessions()
+      if (currentActiveSessions.length > 0 && !interruptRunning) {
+        return { status: 'confirmation_required', activeSessions: currentActiveSessions }
+      }
+      if (interruptRunning) {
+        await Promise.all(currentActiveSessions.map((session) => this.cancelProcessing(session.sessionId, false)))
+      }
+
+      const targets = Array.from(this.sessions.values()).filter(
+        (managed) => managed.agent && typeof managed.agent.reloadExtensions === 'function',
+      )
+      const results = await Promise.allSettled(targets.map(async (managed) => ({
+        sessionId: managed.id,
+        result: await managed.agent!.reloadExtensions!(),
+      })))
+      const failures = results.flatMap((result, index) => result.status === 'rejected'
+        ? [`${targets[index]?.id ?? 'unknown session'}: ${result.reason instanceof Error ? result.reason.message : String(result.reason)}`]
+        : [])
+      if (failures.length > 0) throw new Error(`Failed to reload Pi extensions: ${failures.join('; ')}`)
+
+      let reloadedSessionCount = 0
+      let deferredSessionCount = 0
+      for (const result of results) {
+        if (result.status !== 'fulfilled') continue
+        if (result.value.result.reloaded) reloadedSessionCount += 1
+        if (result.value.result.deferred) deferredSessionCount += 1
+      }
+
+      this.extensionRuntime.clear()
+      await Promise.all(getWorkspaces().map((workspace) => this.openWorkspaceExtensions(workspace)))
+      return {
+        status: 'reloaded',
+        interruptedSessionCount: interruptRunning ? currentActiveSessions.length : 0,
+        reloadedSessionCount,
+        deferredSessionCount,
+      }
+    })()
+
+    try {
+      return await this.extensionReloadPromise
+    } finally {
+      this.extensionReloadPromise = null
+    }
+  }
+
   async getAgentRuntimeProfile(): Promise<import('@mortise/shared/config').AgentRuntimeProfile | null> {
     for (const managed of this.sessions.values()) {
       if (!managed.agent?.getAgentProfile) continue
@@ -5479,7 +5532,7 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
       let steered = false
       let downgradedSteer = false
       if (behavior === 'steer') {
-        steered = agent?.redirect(message, messageId) ?? false
+        steered = await (agent?.redirect(message, messageId) ?? false)
         downgradedSteer = !steered
       }
 
@@ -5677,13 +5730,10 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
       // in the rawText, and canUseTool in mortise.ts provides a fallback
       // to qualify short names. No transformation needed here.
 
-      // Inject interruption context so the LLM knows the previous turn was cut short.
-      // Uses <system-reminder> tags so the LLM treats it as transient system guidance
-      // rather than part of the user's message content. The original message is stored
-      // in session JSONL (line ~3952); this only affects the SDK's in-process context.
+      // Inject interruption context for the next message without assuming why it happened.
       let effectiveMessage = message
       if (managed.wasInterrupted) {
-        effectiveMessage = `${message}\n\n<system-reminder>The previous assistant response was interrupted by the user and may be incomplete. Do not repeat or continue the interrupted response unless asked. Focus on the new message above.</system-reminder>`
+        effectiveMessage = `${message}\n\n<system-reminder>The previous attempt was interrupted. Some tools or commands may still be running or may have partially executed. Check the current state before retrying.</system-reminder>`
         managed.wasInterrupted = false
       }
 
@@ -6923,6 +6973,7 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
    * Set the permission mode for a session ('safe', 'ask', 'allow-all')
    */
   setSessionPermissionMode(sessionId: string, mode: PermissionMode): void {
+    mode = parsePermissionMode(mode) ?? 'ask'
     const managed = this.sessions.get(sessionId)
     if (managed) {
       const previousManagedMode = managed.permissionMode ?? 'ask'
@@ -7550,7 +7601,7 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
       message: input.prompt,
       createOptions: {
         name: sessionName,
-        permissionMode: input.permissionMode || 'safe',
+        permissionMode: parsePermissionMode(input.permissionMode ?? '') ?? 'ask',
         provider: automationProvider,
         model: input.model,
         thinkingLevel: normalizeThinkingLevel(input.thinkingLevel),
@@ -7650,6 +7701,70 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
         )
       }
     }
+  }
+
+  /**
+   * Remove one follow-up from the host queue without stopping the active turn.
+   * The original send RPC is rejected with a typed, non-terminal error so the
+   * renderer can remove its optimistic carrier while preserving processing state.
+   */
+  async withdrawQueuedMessage(sessionId: string, messageId: string): Promise<void> {
+    const managed = this.sessions.get(sessionId)
+    if (!managed) throw new Error(`Session ${sessionId} not found`)
+    const index = managed.messageQueue.findIndex(item =>
+      item.messageId === messageId || item.optimisticMessageId === messageId,
+    )
+    if (index < 0) {
+      throw new CodedError('QUEUED_MESSAGE_WITHDRAWN', 'This queued message is no longer waiting to be sent.', {
+        sessionId,
+        messageId,
+        alreadyProcessed: true,
+      })
+    }
+
+    const [queued] = managed.messageQueue.splice(index, 1)
+    queued?.onReject?.(new CodedError('QUEUED_MESSAGE_WITHDRAWN', 'Queued message withdrawn for editing.', {
+      sessionId,
+      messageId: queued.messageId ?? queued.optimisticMessageId ?? messageId,
+    }))
+    if (queued) {
+      queued.onAck = undefined
+      queued.onReject = undefined
+    }
+
+    const projector = this.piProjectionBySession.get(sessionId)
+    if (projector) {
+      const snapshot = projector.createSnapshot()
+      let seq = snapshot.lastSeq + 1
+      for (const entity of snapshot.entities) {
+        if (!entity.payload || typeof entity.payload !== 'object') continue
+        const payload = entity.payload as Record<string, unknown>
+        if (payload.queueStatus !== 'queued') continue
+        if (payload.messageId !== messageId && payload.clientMutationId !== messageId && payload.ownerMessageId !== messageId) continue
+        this.applyPiProjectionEvent({
+          schemaVersion: 1,
+          eventId: `${snapshot.runtimeId}:host-queue-cancelled:${seq}`,
+          seq,
+          sessionId,
+          runtimeId: snapshot.runtimeId,
+          entityId: entity.entityId,
+          entityType: entity.entityType,
+          entityVersion: entity.entityVersion + 1,
+          kind: entity.kind,
+          payload: { ...payload, queueStatus: 'cancelled' },
+        })
+        seq++
+      }
+    }
+
+    const overlay = managed.messages.find(message => message.id === messageId)
+    if (overlay) {
+      overlay.isQueued = false
+      overlay.isPending = false
+    }
+    this.persistSession(managed)
+    await this.flushSession(sessionId)
+    await this.flushPiProjectionWrites(managed)
   }
 
   private resolveAutomationSessionReference(

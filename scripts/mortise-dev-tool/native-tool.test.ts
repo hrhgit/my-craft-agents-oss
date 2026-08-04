@@ -30,9 +30,34 @@ describe('Mortise Windows desktop tool', () => {
   it('routes start and restart through the existing Electron portmux project', () => {
     expect(script).toContain('"start", "--project", electronProject')
     expect(script).toContain('"stop", "--project", electronProject')
+    expect(script).toContain('StopDesktopBeforeLaunch(false)')
+    expect(script).toContain('StopDesktopBeforeLaunch(true)')
     expect(script).toContain(String.raw`Starting Electron\\.\\.\\.\\s*$`)
     expect(script).toContain('IsSourceDesktopRunning()')
     expect(script).not.toContain('assigned_port_status')
+  })
+
+  it('stops the Mortise desktop process tree before the tool closes', () => {
+    expect(script).toContain('if (stopDesktopOnClose) StopDesktopOnToolClose()')
+    expect(script).toContain('private void StopDesktopOnToolClose()')
+    expect(script).toContain('stopRunner?.TerminateTree()')
+    expect(script).toContain('!desktopRunner.WaitForExit(5000)')
+    expect(script).toContain('desktopRunner.TerminateTree()')
+    expect(script).toContain('TerminateRemainingSourceDesktopProcesses()')
+    expect(script).toContain('Process.GetProcessesByName("electron")')
+    expect(script).toContain('Path.Combine(repoRoot, "node_modules", "electron", "dist", "electron.exe")')
+    expect(script).toContain('process.Kill(true)')
+    expect(script).toContain('if (closing) continue;')
+    expect(script).not.toContain('CancelIncompleteDesktopStart')
+  })
+
+  it('keeps the layout-only smoke test from stopping an active desktop', () => {
+    expect(script).toContain('[MortiseDevTool.MainForm]::new($repoRoot, -not $SmokeTest)')
+  })
+
+  it('keeps process log draining bounded so the close event remains responsive', () => {
+    expect(script).toContain('private const int MaxMessagesPerDrain = 100;')
+    expect(script.match(/while \(remaining-- > 0 && .*\.Messages\.TryDequeue\(out message\)\)/g)?.length).toBe(6)
   })
 
   it('lets the tool return to idle after the source Electron window closes', () => {

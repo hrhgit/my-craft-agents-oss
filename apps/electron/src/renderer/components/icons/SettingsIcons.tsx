@@ -21,7 +21,7 @@ import {
   UserCircle,
   Wrench,
 } from 'lucide-react'
-import type { SettingsSubpage } from '../../../shared/types'
+import type { BuiltInSettingsSubpage } from '../../../shared/settings-registry'
 
 type IconProps = { className?: string }
 
@@ -44,7 +44,7 @@ export const PreferencesIcon = ({ className }: IconProps) => <UserCircle classNa
  * Map of settings subpage IDs to their icon components.
  * Used by both AppMenu and SettingsNavigator for consistent icons.
  */
-export const SETTINGS_ICONS: Record<SettingsSubpage, React.ComponentType<IconProps>> = {
+export const SETTINGS_ICONS: Record<BuiltInSettingsSubpage, React.ComponentType<IconProps>> = {
   app: AppSettingsIcon,
   ai: AiSettingsIcon,
   agents: AgentsSettingsIcon,
@@ -53,9 +53,14 @@ export const SETTINGS_ICONS: Record<SettingsSubpage, React.ComponentType<IconPro
   appearance: AppearanceIcon,
   input: InputIcon,
   workspace: WorkspaceIcon,
-  permissions: PermissionsIcon,
   messaging: MessagingSettingsIcon,
   server: ServerSettingsIcon,
   shortcuts: ShortcutsIcon,
   preferences: PreferencesIcon,
+}
+
+export function getExtensionSettingsIcon(icon?: string): React.ComponentType<IconProps> {
+  if (icon === 'shield-check') return PermissionsIcon
+  if (icon === 'sparkles') return AiSettingsIcon
+  return ExtensionsSettingsIcon
 }

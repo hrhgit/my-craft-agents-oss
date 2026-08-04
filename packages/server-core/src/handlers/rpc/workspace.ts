@@ -17,7 +17,11 @@ import {
   type WorkspaceTopologyStore,
 } from '@mortise/shared/workspaces'
 import { perf } from '@mortise/shared/utils'
-import { pushTyped, type RpcServer } from '@mortise/server-core/transport'
+import {
+  CLIENT_OPEN_PATH,
+  pushTyped,
+  type RpcServer,
+} from '@mortise/server-core/transport'
 import type { HandlerDeps } from '../handler-deps'
 import { isValidWorkspaceRootPath } from '../../utils/path-validation'
 import {
@@ -40,6 +44,7 @@ export const CORE_HANDLED_CHANNELS = [
   RPC_CHANNELS.workspaces.GET,
   RPC_CHANNELS.workspaces.CREATE,
   RPC_CHANNELS.workspaces.CHECK_SLUG,
+  RPC_CHANNELS.workspaces.OPEN_PRIMARY_LOCATION,
   RPC_CHANNELS.window.GET_WORKSPACE,
   RPC_CHANNELS.window.GET_MODE,
   RPC_CHANNELS.window.SWITCH_WORKSPACE,
@@ -94,6 +99,22 @@ export function registerWorkspaceCoreHandlers(
   // Client projections never expose local paths or credential references.
   server.handle(RPC_CHANNELS.workspaces.GET, async () => {
     return sessionManager.getWorkspaces().map(candidate => ensureWorkspaceTopology(topologyStore, candidate))
+  })
+
+  server.handle(RPC_CHANNELS.workspaces.OPEN_PRIMARY_LOCATION, async (ctx) => {
+    if (!ctx.workspaceId) throw new Error('Workspace identity is required')
+    const rootPath = requireLocalPrimaryRoot(ctx.workspaceId)
+
+    if (server.hasClientCapability(ctx.clientId, CLIENT_OPEN_PATH)) {
+      const result = await server.invokeClient(ctx.clientId, CLIENT_OPEN_PATH, rootPath) as { error?: string } | undefined
+      if (result?.error) throw new Error(result.error)
+      return
+    }
+    if (deps.platform.openPath) {
+      await deps.platform.openPath(rootPath)
+      return
+    }
+    throw new Error('Opening the workspace folder is unavailable on this client')
   })
 
   server.handle(RPC_CHANNELS.workspaces.CREATE, async (_ctx, requestValue: unknown): Promise<WorkspaceCreationResultV1> => {

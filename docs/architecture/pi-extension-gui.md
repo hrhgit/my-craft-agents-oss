@@ -58,7 +58,7 @@ Mortise GUI 必须跟随 Pi 扩展分发，而不是由 Mortise 按扩展名称�
 
 ### Rendering Levels
 
-Level 1 is host-rendered and is the default. It supports text, markdown, stack, row, badge, icon, divider, button and command actions. It inherits Mortise theme and primitive accessibility. Host-owned capacity responds to each rendered surface's viewport while preserving deterministic maximums.
+Level 1 is host-rendered and is the default. It supports text, markdown, stack, row, badge, icon, divider, button, compact menu, responsive variants and command actions. It inherits Mortise theme and primitive accessibility. Host-owned capacity responds to each rendered surface's viewport while preserving deterministic maximums.
 
 Level 2 is a sandbox UI App. Each self-contained app receives an opaque-origin iframe document, CSP, a private `MessageChannel`, bounded session/runtime-scoped storage and explicitly declared permissions. Multiple apps may be visible in one Mortise UI, but each occupies a layout slot assigned by Mortise. They cannot access the parent DOM, global CSS, credentials, Electron IPC, workers, raw network APIs or arbitrary filesystem APIs. Omitted permissions mean no host bridge access.
 
@@ -118,15 +118,22 @@ Default capacities:
 
 `navigation.item`, `session.badge`, and targeted message/tool/turn contribution counts are not capacity-bounded beyond the sandbox limit. Authors must keep these contributions compact; host policy may add tighter allocation if they become high-demand shared regions.
 
-Compact hotspots accept only shallow rows of text, icons, badges, and buttons. They reject Markdown, stacks, dividers, deep trees, and long text; the renderer clamps height and width before overflow allocation. A contribution's `collapse: never` is a preference, not permission to displace core Mortise controls.
+Compact hotspots accept only shallow rows of text, icons, badges, buttons, and compact menus. They reject Markdown, stacks, dividers, deep trees, and long text; the renderer clamps height and width before overflow allocation. A contribution's `collapse: never` is a preference, not permission to displace core Mortise controls.
 
 `overflow: menu` uses the compact host menu, `overflow: collapse` uses an inline
-collapsible region, and `overflow: hide` remains unmounted. When responsive
+collapsible region, `overflow: scroll` uses a bounded host scroll rail, and
+`overflow: hide` remains unmounted. Compact surfaces reject `scroll`. When responsive
 allocation moves a focused contribution between visible and overflow regions,
 the host restores focus to the same stable semantic node when it remains
 available. Host-rendered nodes may declare a bounded `semanticId`; Mortise
 namespaces it by Extension and contribution identity before exposing it to the
 renderer and validation surface.
+
+Host-rendered `responsive` nodes carry a required `full` form and optional
+`compact` and `minimal` forms. Mortise selects them from the contribution's
+actual container width (full above 420px, compact below that, minimal at 220px
+or below) and falls back to the nearest declared form. Extensions describe
+semantic alternatives; they do not provide host coordinates or global styles.
 
 ## Security And Validation
 
@@ -162,4 +169,4 @@ Completed migration inventory:
 
 Each migration remains complete only while its extension package owns contribution declarations and command handlers, Mortise contains no extension-ID, widget-key, or extension-specific transcript renderer branch for that GUI, and focused tests cover the generic upsert/remove/reset and overflow behavior. A source guard prevents the removed Plan and `ask_user` host branches from returning.
 
-Extension settings are declared statically in `pi.extensions[].ui.settings`, validated by Pi at the manifest boundary, and stored under `extensionConfig.<id>`. Mortise renders the schema generically and validates every patch before writing it. No active chat session and no extension-ID switch are required.
+Extension settings are declared statically in `pi.extensions[].ui.settings`, validated by Pi at the manifest boundary, and stored under `extensionConfig.<id>`. Mortise renders the schema generically and validates every patch before writing it. An optional `settings.page` declaration places the same schema in an independent Settings page without an extension-ID switch; otherwise it remains available from the Extensions page. No active chat session is required.

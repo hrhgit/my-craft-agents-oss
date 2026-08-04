@@ -366,10 +366,10 @@ export const DEBUG_MENU: MenuSection = {
  * Settings item definition
  * Used by both AppMenu (logo dropdown) and SettingsNavigator (sidebar panel)
  */
-import { SETTINGS_PAGES, type SettingsSubpage } from './settings-registry'
+import { SETTINGS_PAGES, type BuiltInSettingsSubpage } from './settings-registry'
 
 export interface SettingsMenuItem {
-  id: SettingsSubpage
+  id: BuiltInSettingsSubpage
   labelKey: string    // i18n key - resolve with t() at render time
   icon: string        // Lucide icon name for AppMenu
   descriptionKey: string // i18n key - resolve with t() at render time
@@ -379,7 +379,7 @@ export interface SettingsMenuItem {
  * Icon mapping for settings pages (Lucide icon names)
  * Only icons need to be defined here - page data comes from settings-registry
  */
-const SETTINGS_ICONS: Record<SettingsSubpage, string> = {
+const SETTINGS_ICONS: Record<BuiltInSettingsSubpage, string> = {
   app: 'ToggleRight',
   ai: 'Sparkles',
   agents: 'Bot',
@@ -388,7 +388,6 @@ const SETTINGS_ICONS: Record<SettingsSubpage, string> = {
   appearance: 'Palette',
   input: 'Keyboard',
   workspace: 'Building2',
-  permissions: 'ShieldCheck',
   messaging: 'MessageSquare',
   server: 'Server',
   shortcuts: 'Keyboard',

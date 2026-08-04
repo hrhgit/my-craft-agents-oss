@@ -28,9 +28,18 @@ export interface UsePiGlobalConfigResult {
   refresh: () => Promise<void>
 }
 
-export function usePiGlobalConfig(): UsePiGlobalConfigResult {
+export interface UsePiGlobalConfigOptions {
+  /** Disable live reloads when a caller applies its own local mutation state. */
+  subscribe?: boolean
+}
+
+const EMPTY_PROVIDERS: PiGlobalProviderForDisplay[] = []
+const EMPTY_SETTINGS: PiGlobalSettings = {}
+
+export function usePiGlobalConfig({ subscribe = true }: UsePiGlobalConfigOptions = {}): UsePiGlobalConfigResult {
   // No workspaceId: global config. `undefined` tells useWorkspaceEntity to fetch
-  // without workspace scoping (and still subscribe to global change events).
+  // without workspace scoping. Callers can opt out of global change broadcasts
+  // when they update the current view locally after a successful mutation.
   const { data, isLoading, error, refresh } = useWorkspaceEntity<PiGlobalConfigData>({
     workspaceId: undefined,
     fetcher: async () => {
@@ -41,16 +50,16 @@ export function usePiGlobalConfig(): UsePiGlobalConfigResult {
       ])
       return { providers: list, settings: s }
     },
-    subscribe: (_wid, onChange) => {
+    subscribe: subscribe ? (_wid, onChange) => {
       if (!window.electronAPI) return () => {}
       return window.electronAPI.onPiGlobalChanged(onChange)
-    },
+    } : undefined,
     tag: 'usePiGlobalConfig',
   })
 
   return {
-    providers: data?.providers ?? [],
-    settings: data?.settings ?? {},
+    providers: data?.providers ?? EMPTY_PROVIDERS,
+    settings: data?.settings ?? EMPTY_SETTINGS,
     isLoading,
     error,
     refresh,

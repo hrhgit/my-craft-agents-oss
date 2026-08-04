@@ -52,7 +52,7 @@ export const parseSidebarModeKey = (key: string): SidebarMode | null => {
   if (key === 'allSessions') return { type: 'sessions', filter: { kind: 'allSessions' } }
   if (key.startsWith('settings:')) {
     const subpage = key.slice(9) as SettingsSubpage
-    if (['app', 'appearance', 'workspace', 'permissions', 'shortcuts', 'preferences'].includes(subpage)) {
+    if (['app', 'appearance', 'workspace', 'shortcuts', 'preferences'].includes(subpage)) {
       return { type: 'settings', subpage }
     }
   }

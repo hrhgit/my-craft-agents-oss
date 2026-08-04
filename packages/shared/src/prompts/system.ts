@@ -4,7 +4,6 @@ import { debug } from '../utils/debug.ts';
 import { existsSync, readFileSync, readdirSync } from 'fs';
 import { join, relative } from 'path';
 import { DOC_REFS, APP_ROOT } from '../docs/index.ts';
-import { PERMISSION_MODE_CONFIG } from '../agent/mode-types.ts';
 import { FEATURE_FLAGS } from '../feature-flags.ts';
 import { APP_VERSION } from '../version/index.ts';
 import { globSync } from 'glob';
@@ -545,7 +544,6 @@ Read relevant context files using the Read tool - they contain architecture info
 
 | Topic | Documentation | When to Read |
 |-------|---------------|--------------|
-| Permissions | \`${DOC_REFS.permissions}\` | BEFORE modifying ${PERMISSION_MODE_CONFIG['safe'].displayName} mode rules |
 | Skills | \`${DOC_REFS.skills}\` | BEFORE creating custom skills |
 | Automations | \`${DOC_REFS.hooks}\` | BEFORE creating/modifying automations |
 | Themes | \`${DOC_REFS.themes}\` | BEFORE customizing colors |
@@ -593,54 +591,7 @@ When creating git commits, include Mortise Agent as a co-author:
 \`\`\`
 Co-Authored-By: Mortise Agent <agents-noreply@mortise.do>
 \`\`\`
-` : ''}## Permission Modes
-
-| Mode | Description |
-|------|-------------|
-| **${PERMISSION_MODE_CONFIG['safe'].displayName}** | Read-only. Explore, search, read files. Guide the user through the problem space and potential solutions to their problems/tasks/questions. You can use the write/edit to tool to write/edit plans only. |
-| **${PERMISSION_MODE_CONFIG['ask'].displayName}** | Prompts before edits. Read operations run freely. |
-| **${PERMISSION_MODE_CONFIG['allow-all'].displayName}** | Full autonomous execution. No prompts. |
-
-**Mode switching is normal:** Users may switch between exploration and implementation multiple times during the same conversation. Do not be surprised when this happens. Adapt to the current mode and respect the user's latest intention as it changes.
-
-Current mode is in \`<session_state>\`, along with last mode-transition metadata when available (for example: \`modeTransition\`, \`modeChangedBy\`, \`modeChangedAt\`, \`modeVersion\`). \`plansFolderPath\` shows the **exact path** where you can write plan files. \`dataFolderPath\` shows where you can write data files (e.g. \`transform_data\` output). In Explore mode, writes are only allowed to these two folders — writes to any other location will be blocked.
-
-**${PERMISSION_MODE_CONFIG['safe'].displayName} mode:** Read, search, and explore freely. When ready to implement, write the plan file to \`plansFolderPath\` and tell the user the plan is ready — the user sees an "Accept Plan" button to transition to execution.
-Be decisive: when you have enough context, present your approach and ask "Ready for a plan?" or write it directly. This will help the user move forward.
-
-!!Important!! - Before executing a plan you need to present it to the user by writing the plan file to \`plansFolderPath\` and informing them.
-When a plan file is written, the system will show the user an "Accept Plan" button and pause for confirmation. Expect, and prepare for this.
-Never try to execute a plan without presenting it first - it will fail, especially if user is in ${PERMISSION_MODE_CONFIG['safe'].displayName} mode.
-
-**CRITICAL:** You MUST write plan files to the **exact \`plansFolderPath\`** and data files to the **exact \`dataFolderPath\`** from \`<session_state>\`. These folders already exist (created by the system). Writes to any other path (including the parent session folder) will be blocked.
-**Do NOT** write to \`.copilot-config/\`, \`session-state/\`, or any other directory — those paths will be rejected. Use ONLY \`plansFolderPath\` or \`dataFolderPath\`.
-${backendName === 'Codex' ? `
-### Planning tools (Codex)
-- **update_plan** — Live task tracking within a turn/session (statuses: pending/in_progress/completed). Does not pause execution or request approval.
-
-Recommended flow:
-1. Start multi-step work with \`update_plan\`.
-2. Keep \`update_plan\` updated as steps progress for turncard/tasklist accuracy.
-3. When ready to implement (especially in Explore mode), write the plan file to \`plansFolderPath\` and inform the user — the system shows an "Accept Plan" button for confirmation.
-4. After acceptance and execution starts, continue using \`update_plan\` for granular progress.
-
-**Writing plan files (Codex):** Create plan files using shell commands. Do NOT use heredocs (\`<<EOF\`) as they are blocked by the sandbox.
-
-Examples (replace \`$PLANS_PATH\` with your actual \`plansFolderPath\` value):
-
-Unix/macOS:
-\`\`\`bash
-printf '%s\\n' "# Plan Title" "" "## Goal" "Description" "" "## Steps" "1. Step one" > "$PLANS_PATH/my-plan.md"
-\`\`\`
-
-Windows (PowerShell) - use single quotes to avoid escaping issues:
-\`\`\`powershell
-@('# Plan Title', '', '## Goal', 'Description', '', '## Steps', '1. Step one') | Out-File -FilePath '$PLANS_PATH\\my-plan.md' -Encoding utf8
-\`\`\`
-` : ''}
-**Full reference on what commands are enablled:** \`${DOC_REFS.permissions}\` (bash command lists, blocked constructs, planning workflow, customization). Read if unsure, or user has questions about permissions.
-
-## Web Search
+` : ''}## Web Search
 
 You have access to web search for up-to-date information. Use it proactively to get up-to-date information and best practices.
 Your memory is limited as of cut-off date, so it contain wrong or stale info, or be out-of-date, specifically for fast-changing topics like technology, current events, and recent developments.
@@ -724,7 +675,7 @@ The file should contain \`{"rows": [...]}\` or just a rows array \`[...]\`. Inli
 - Input files: relative to session dir (e.g., \`long_responses/tool_result_abc.txt\`)
 - Output file: written to session \`data/\` dir
 - Runs in isolated subprocess (no API keys, 30s timeout)
-- Available in all permission modes including Explore
+- Available whenever the tool is enabled
 
 **Example:**
 \`\`\`
@@ -750,7 +701,7 @@ ${browserToolsSection}
 You can inspect your session and query other sessions in the workspace.
 
 **Introspecting your session:**
-\`get_session_info\` — returns the current name, permission mode, model, and other metadata. Pass a \`sessionId\` to query a different session.
+\`get_session_info\` — returns the current name, model, and other metadata. Pass a \`sessionId\` to query a different session.
 
 **Querying sessions:**
 \`list_sessions\` — returns \`{ total, returned, sessions }\` with pagination. Use the search filter to narrow results. Default limit is 20 sessions.
@@ -885,7 +836,7 @@ You can render \`markdown-preview\` code blocks as inline rendered markdown. Use
 **\`src\` field:** References a markdown file on disk. Use an absolute path from tool results (Write, Read, transform_data) or a path the user has referenced.
 
 **Workflow for showing a markdown file you just wrote:**
-1. Write the file via the \`Write\` tool to an allowed path for the current permission mode (in Explore mode, use only \`plansFolderPath\` or \`dataFolderPath\`; in execution modes, use the appropriate workspace/session path).
+1. Write the file via the \`Write\` tool to the appropriate workspace or session path.
 2. Output a \`markdown-preview\` block with \`"src"\` pointing to the absolute path you wrote.
 
 **When to use:**

@@ -278,6 +278,20 @@ describe('ContributionStore', () => {
     expect(layout.collapsedOverflow.map(value => value.contribution.id)).toEqual(['group-a', 'group-b'])
   })
 
+  it('keeps explicitly scrollable overflow in a bounded host rail', () => {
+    const item: RegisteredExtensionContribution = {
+      extensionId: 'logs', backendType: 'electron', workspaceId: 'workspace', sessionId: 'session', runtimeId: 'runtime', revision: 1,
+      contribution: {
+        schemaVersion: 1, id: 'log-items', surface: 'conversation.inline', overflow: 'scroll',
+        content: { type: 'row', children: [{ type: 'text', text: 'A long ordered item' }] },
+      },
+    }
+    const layout = new SurfaceLayoutManager().resolve('conversation.inline', [item], 0)
+
+    expect(layout.visible).toHaveLength(0)
+    expect(layout.scrollOverflow?.map(value => value.contribution.id)).toEqual(['log-items'])
+  })
+
   it('reduces constrained capacity with the available viewport width', () => {
     expect(responsiveSurfaceCapacity('composer.toolbar', 700)).toBe(4)
     expect(responsiveSurfaceCapacity('composer.toolbar', 250)).toBe(1)
