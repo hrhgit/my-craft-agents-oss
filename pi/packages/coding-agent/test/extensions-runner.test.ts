@@ -224,6 +224,29 @@ describe("ExtensionRunner", () => {
 		});
 	});
 
+	describe("frontend channels", () => {
+		it("retains load-time registrations until the host binds channel handlers", async () => {
+			fs.writeFileSync(
+				path.join(extensionsDir, "frontend-channel.ts"),
+				`
+				export default function(pi) {
+					pi.registerFrontendChannel("counter", { scope: "session", snapshot: { count: 0 } });
+				}
+			`,
+			);
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			expect(result.runtime.pendingFrontendChannels).toHaveLength(1);
+			const registrations: Array<{ extensionId: string; id: string; snapshot: unknown }> = [];
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			runner.setFrontendChannelHandlers(
+				(extensionId, id, options) => registrations.push({ extensionId, id, snapshot: options.snapshot }),
+				() => {},
+			);
+			expect(registrations).toEqual([{ extensionId: "runner-test-0", id: "counter", snapshot: { count: 0 } }]);
+			expect(result.runtime.pendingFrontendChannels).toHaveLength(0);
+		});
+	});
+
 	describe("context creation", () => {
 		it("exposes the shared session activity registry", async () => {
 			const result = await discoverAndLoadExtensions([], tempDir, tempDir);

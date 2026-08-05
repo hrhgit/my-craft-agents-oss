@@ -18,6 +18,7 @@ import type { CapabilityRequestV1, CapabilityResultV1 } from '../../protocol/cap
 import type { ExtensionContributionDeltaV1 } from '../../protocol/extension-contributions.ts';
 import type { ExtensionInteractionBridgeCancelV1, ExtensionInteractionBridgeRequestV1, ExtensionInteractionBridgeSettledV1, ExtensionInteractionResponseV1 } from '../../protocol/extension-interactions.ts';
 import type { ExtensionUIValidationDeltaV1 } from '../../protocol/extension-ui-validation.ts';
+import type { ExtensionFrontendStateV2 } from '../../protocol/extension-frontend-channels.ts';
 import type { FileAttachment } from '../../utils/files.ts';
 import type { ThinkingLevel } from '../thinking-levels.ts';
 import type { PermissionMode } from '../mode-manager.ts';
@@ -130,6 +131,7 @@ export type ExtensionBridgeEvent = {
   | { type: 'extension_status'; key?: string; status: string; source?: string }
   | { type: 'extension_contribution'; delta: ExtensionContributionDeltaV1 }
   | { type: 'extension_ui_validation'; delta: ExtensionUIValidationDeltaV1 }
+  | { type: 'extension_frontend_state'; state: ExtensionFrontendStateV2; workspaceId?: string; backendType?: 'electron' | 'webui' }
   | { type: 'extension_contributions_runtime_reset'; workspaceId?: string; backendType?: 'electron' | 'webui' }
   | ExtensionInteractionBridgeRequestV1
   | ExtensionInteractionBridgeCancelV1
@@ -628,6 +630,7 @@ export interface AgentBackend {
    * 仅 Pi 后端实现；非 Pi 后端可不实现。
    */
   listExtensionCommands?(): Promise<PiExtensionCommand[]>;
+  sendExtensionFrontendMessage?(extensionId: string, channelId: string, message: unknown): Promise<unknown>;
 
   /** Project a Host failure through Pi's sequence-owning projection builder. */
   projectRuntimeError?(error: HostRuntimeErrorProjection): void;

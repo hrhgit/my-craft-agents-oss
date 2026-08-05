@@ -6,7 +6,7 @@ import {
   ELECTRON_BUILD_PRODUCER_VERSION,
   ELECTRON_BUILD_SCHEMA_VERSION,
 } from '../../build/electron-build-cache.ts'
-import { DEFAULT_MORTISE_UI_START_WAIT_MS, MORTISE_UI_MAX_START_WAIT_MS, getDefaultAdapterCommand, getMortiseUiRunStatus, mortiseUiHostRequestTimeoutMs, readPackagedDeveloperHostIdentity, readRunManifest, resolveRunDir, restartMortiseUiRun, startMortiseUiRun, stopMortiseUiRun, updateRunManifest } from '../controller.ts'
+import { DEFAULT_MORTISE_UI_START_WAIT_MS, MORTISE_UI_MAX_START_WAIT_MS, MORTISE_UI_MIN_RENDERER_READINESS_MS, getDefaultAdapterCommand, getMortiseUiRunStatus, mortiseUiHostRequestTimeoutMs, mortiseUiRendererReadinessDeadline, readPackagedDeveloperHostIdentity, readRunManifest, resolveRunDir, restartMortiseUiRun, startMortiseUiRun, stopMortiseUiRun, updateRunManifest } from '../controller.ts'
 import { requestMortiseUiHost } from '../client.ts'
 import { collectLocalEvidence, registerReturnedArtifacts } from '../evidence.ts'
 
@@ -29,6 +29,14 @@ describe('mortise-ui controller', () => {
     expect(mortiseUiHostRequestTimeoutMs(DEFAULT_MORTISE_UI_START_WAIT_MS)).toBe(600_000)
     expect(mortiseUiHostRequestTimeoutMs(45_000)).toBe(45_000)
     expect(mortiseUiHostRequestTimeoutMs(0)).toBe(1)
+  })
+
+  it('does not let a cold build consume the renderer readiness window', () => {
+    const endpointOpenedAt = 1_000_000
+    expect(mortiseUiRendererReadinessDeadline(endpointOpenedAt + 2_000, endpointOpenedAt))
+      .toBe(endpointOpenedAt + MORTISE_UI_MIN_RENDERER_READINESS_MS)
+    expect(mortiseUiRendererReadinessDeadline(endpointOpenedAt + 120_000, endpointOpenedAt))
+      .toBe(endpointOpenedAt + 120_000)
   })
 
   it('uses an explicitly configured packaged Developer Host', () => {

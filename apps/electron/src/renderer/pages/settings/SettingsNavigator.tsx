@@ -26,6 +26,11 @@ import { SETTINGS_ICONS, getExtensionSettingsIcon } from '@/components/icons/Set
 import { createExtensionSettingsSubpage } from '../../../shared/settings-registry'
 import type { PiExtensionCatalogEntry } from '@mortise/shared/config'
 
+interface ExtensionPageItem {
+  extension: PiExtensionCatalogEntry
+  page: { id: string; title: string; description?: string; icon?: string; order?: number }
+}
+
 export const meta: DetailsPageMeta = {
   navigator: 'settings',
   slug: 'navigator',
@@ -156,17 +161,23 @@ export default function SettingsNavigator({
   onSelectSubpage,
 }: SettingsNavigatorProps) {
   const { t } = useTranslation()
-  const [extensionPages, setExtensionPages] = useState<PiExtensionCatalogEntry[]>([])
+  const [extensionPages, setExtensionPages] = useState<ExtensionPageItem[]>([])
 
   const loadExtensionPages = useCallback(async () => {
     const catalog = await window.electronAPI.getPiExtensionCatalog()
-    const nextPages = catalog.extensions.filter((entry) => entry.enabled && entry.ui?.settings?.page)
+    const nextPages = catalog.extensions.flatMap<ExtensionPageItem>((extension) => {
+      if (!extension.enabled) return []
+      if (extension.ui?.schemaVersion === 1 && extension.ui.settings?.page) {
+        return [{ extension, page: extension.ui.settings.page }]
+      }
+      return (extension.frontendDescriptors ?? [])
+        .filter((descriptor) => descriptor.surface === 'settings.page' && descriptor.page)
+        .map((descriptor) => ({ extension, page: descriptor.page! }))
+    })
     setExtensionPages(nextPages)
 
-    if (selectedSubpage?.startsWith('extension-') && !nextPages.some((entry) => {
-      const pageId = entry.ui?.settings?.page?.id
-      return pageId !== undefined && createExtensionSettingsSubpage(entry.id, pageId) === selectedSubpage
-    })) {
+    if (selectedSubpage?.startsWith('extension-') && !nextPages.some(({ extension, page }) =>
+      createExtensionSettingsSubpage(extension.id, page.id) === selectedSubpage)) {
       onSelectSubpage('extensions')
     }
   }, [onSelectSubpage, selectedSubpage])
@@ -187,8 +198,7 @@ export default function SettingsNavigator({
       icon: SETTINGS_ICONS[item.id],
       description: t(item.descriptionKey),
       order: index,
-    })), ...extensionPages.map((extension) => {
-      const page = extension.ui!.settings!.page!
+    })), ...extensionPages.map(({ extension, page }) => {
       return {
         id: createExtensionSettingsSubpage(extension.id, page.id),
         label: page.title,

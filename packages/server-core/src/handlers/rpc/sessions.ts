@@ -12,6 +12,7 @@ import {
   type ExtensionInteractionResponseV1,
   type SessionSettlementFailure,
   isSessionSettlementFailure,
+  isSerializableFrontendValue,
   validateExtensionInteractionResponseV1,
 } from '@mortise/shared/protocol'
 import type { StoredAttachment } from '@mortise/core/types'
@@ -529,13 +530,6 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
     }
   })
 
-  // Respond to a permission request (bash command approval)
-  // Returns true if the response was delivered, false if agent/session is gone
-  server.handle(RPC_CHANNELS.sessions.RESPOND_TO_PERMISSION, async (ctx, sessionId: string, requestId: string, allowed: boolean, alwaysAllow: boolean) => {
-    await assertSessionWorkspace(sessionManager, ctx.workspaceId, sessionId)
-    return sessionManager.respondToPermission(sessionId, requestId, allowed, alwaysAllow)
-  })
-
   server.handle(RPC_CHANNELS.extensions.INTERACTION_RESPONSE, async (ctx, sessionId: string, requestId: string, response: ExtensionInteractionResponseV1) => {
     await assertSessionWorkspace(sessionManager, ctx.workspaceId, sessionId)
     const error = validateExtensionInteractionResponseV1(response)
@@ -555,6 +549,30 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
   server.handle(RPC_CHANNELS.extensions.GET_COMMANDS, async (ctx, sessionId: string) => {
     await assertSessionWorkspace(sessionManager, ctx.workspaceId, sessionId)
     return sessionManager.listExtensionCommands(sessionId)
+  })
+
+  // Compatibility route for messaging clients. Renderer approval UI uses the
+  // permissions extension frontend channel instead.
+  server.handle(RPC_CHANNELS.sessions.RESPOND_TO_PERMISSION, async (ctx, sessionId: string, requestId: string, allowed: boolean, alwaysAllow: boolean) => {
+    await assertSessionWorkspace(sessionManager, ctx.workspaceId, sessionId)
+    return sessionManager.respondToPermission(sessionId, requestId, allowed, alwaysAllow)
+  })
+
+  server.handle(RPC_CHANNELS.extensions.FRONTEND_MESSAGE, async (
+    ctx,
+    sessionId: string,
+    request: import('@mortise/shared/protocol').ExtensionFrontendMessageV2,
+  ) => {
+    if (sessionId) await assertSessionWorkspace(sessionManager, ctx.workspaceId, sessionId)
+    else if (!ctx.workspaceId) throw new Error('Extension frontend messages require a Workspace route')
+    if (!request || request.schemaVersion !== 2 || typeof request.channelId !== 'string' || typeof request.extensionId !== 'string'
+      || !request.route || !['session', 'workspace', 'global'].includes(request.scope)
+      || !isSerializableFrontendValue(request.message)) {
+      throw new TypeError('Invalid extension frontend channel message')
+    }
+    if (request.route.sessionId && request.route.sessionId !== sessionId) throw new Error('Frontend channel route mismatch')
+    if (request.route.workspaceId && request.route.workspaceId !== ctx.workspaceId) throw new Error('Frontend channel workspace mismatch')
+    return sessionManager.sendExtensionFrontendMessage(sessionId, request.extensionId, request.channelId, request.message, ctx.workspaceId)
   })
 
   server.handle(RPC_CHANNELS.extensions.GET_FILE_STATE, async (ctx, workspaceId: string, extensionId: string) => {

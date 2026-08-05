@@ -9,19 +9,28 @@ import { createExtensionSettingsSubpage } from '../../../shared/settings-registr
 import type { PiExtensionCatalogEntry, PiExtensionCatalogError, PiExtensionSettingScalar } from '@mortise/shared/config'
 import { ExtensionDetailPanel } from './ExtensionDetailPanel'
 import { usePiGlobalConfig } from '@/hooks/usePiGlobalConfig'
+import { ExtensionFrontendZone } from '@/components/extensions/ExtensionFrontendZone'
 
 export function ExtensionSettingsPage({ extensionId, pageId }: { extensionId: string; pageId: string }) {
   const { providers, settings } = usePiGlobalConfig()
   const [extension, setExtension] = useState<PiExtensionCatalogEntry | null>(null)
   const [error, setError] = useState<PiExtensionCatalogError | null>(null)
+  const [frontendDescriptor, setFrontendDescriptor] = useState<NonNullable<PiExtensionCatalogEntry['frontendDescriptors']>[number] | null>(null)
   const pageRoute = createExtensionSettingsSubpage(extensionId, pageId)
 
   const load = useCallback(async () => {
     try {
       const catalog = await window.electronAPI.getPiExtensionCatalog()
-      const next = catalog.extensions.find((entry) => entry.enabled && entry.id === extensionId && entry.ui?.settings?.page?.id === pageId)
+      const next = catalog.extensions.find((entry) => entry.enabled
+        && entry.id === extensionId
+        && entry.ui?.schemaVersion === 1
+        && entry.ui.settings?.page?.id === pageId)
+      const frontend = catalog.extensions
+        .find((entry) => entry.enabled && entry.id === extensionId)
+        ?.frontendDescriptors?.find((descriptor) => descriptor.surface === 'settings.page' && descriptor.page?.id === pageId)
       setExtension(next ?? null)
-      setError(next ? null : catalog.errors[0] ?? { path: extensionId, error: 'Extension settings page is unavailable.' })
+      setFrontendDescriptor(frontend ?? null)
+      setError(next || frontend ? null : catalog.errors[0] ?? { path: extensionId, error: 'Extension settings page is unavailable.' })
     } catch (cause) {
       setError({ path: extensionId, error: cause instanceof Error ? cause.message : String(cause) })
     }
@@ -39,10 +48,13 @@ export function ExtensionSettingsPage({ extensionId, pageId }: { extensionId: st
     setExtension((current) => current ? { ...current, config: result.config } : current)
   }, [extension])
 
-  const page = extension?.ui?.settings?.page
-  const title = page?.title ?? extension?.title ?? 'Extension settings'
+  const page = extension?.ui?.schemaVersion === 1 ? extension.ui.settings?.page : frontendDescriptor?.page
+  const title = page?.title ?? extension?.title ?? frontendDescriptor?.title ?? 'Extension settings'
   const description = page?.description ?? extension?.description
   const settingsContent = useMemo(() => {
+    if (frontendDescriptor) {
+      return <ExtensionFrontendZone extensionId={extensionId} frontendId={frontendDescriptor.frontendId} surface="settings.page" route={{ path: pageRoute }} />
+    }
     if (extension) {
       return (
         <ExtensionDetailPanel
@@ -58,7 +70,7 @@ export function ExtensionSettingsPage({ extensionId, pageId }: { extensionId: st
     }
     if (error) return <SettingsCard className="p-4 text-sm text-destructive">{error.error}</SettingsCard>
     return <div className="flex items-center justify-center py-12"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
-  }, [error, extension, patchField, providers, settings.defaultSlots])
+  }, [error, extension, extensionId, frontendDescriptor, pageRoute, patchField, providers, settings.defaultSlots])
 
   return (
     <div className="h-full flex flex-col">

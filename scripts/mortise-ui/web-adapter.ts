@@ -101,6 +101,9 @@ try {
     MORTISE_WEBUI_WS_URL: `ws://127.0.0.1:${rpcPort}`,
     MORTISE_BUNDLED_ASSETS_ROOT: join(repoRoot, 'apps', 'electron'),
     MORTISE_DEBUG: 'true',
+    // The WebUI validation host runs the source tree, so the backend resolver
+    // may use the locally built Pi runtime just like the Electron dev host.
+    MORTISE_DEV_RUNTIME: '1',
   }
   children.push(spawnLogged('rpc', bunExecutable, ['run', 'packages/server/src/index.ts'], commonEnv))
   children.push(spawnLogged('vite', bunExecutable, ['x', 'vite', '--config', 'apps/webui/vite.config.ts'], commonEnv))
@@ -174,6 +177,8 @@ try {
   throw error
 }
 
+const responseCache = new Map<string, Record<string, unknown>>()
+
 const commandServer = createServer(async (request, response) => {
     if (request.method !== 'POST' || request.url !== '/v1/command') return sendNodeJson(response, 404, { error: 'Not found' })
     if (!authorized(request.headers.authorization ?? null)) return sendNodeJson(response, 401, { error: 'Unauthorized' })
@@ -195,6 +200,8 @@ const commandServer = createServer(async (request, response) => {
       }
       envelope = parseUiValidationRequestEnvelope(JSON.parse(Buffer.concat(chunks).toString('utf8')))
       if (envelope.runId !== runId) throw new UiValidationError('INVALID_REQUEST', 'runId does not match this Test Host.')
+      const cachedResponse = responseCache.get(envelope.requestId)
+      if (cachedResponse) return sendNodeJson(response, 200, cachedResponse)
       const commandSeq = ++seq
       const result = await dispatch(envelope.method, recordParams(envelope.params), abortController.signal)
       const level = resultVerificationLevel(envelope.method, result)
@@ -203,6 +210,8 @@ const commandServer = createServer(async (request, response) => {
         v: UI_VALIDATION_PROTOCOL_VERSION, kind: 'response' as const, id: envelope.id, requestId: envelope.requestId, runId,
         seq: commandSeq, revision: await liveRevision(), verificationLevel: level, ok: true as const, result,
       }
+      responseCache.set(envelope.requestId, payload)
+      while (responseCache.size > 128) responseCache.delete(responseCache.keys().next().value!)
       if (envelope.method === 'app.shutdown') setTimeout(() => void shutdown(), 10)
       return sendNodeJson(response, 200, payload)
     } catch (error) {
@@ -218,11 +227,16 @@ const commandServer = createServer(async (request, response) => {
       }
       const payloadError = typed.toPayload()
       if (automaticEvidence !== undefined) payloadError.details = { ...payloadError.details, automaticEvidence }
-      return sendNodeJson(response, envelope ? 200 : 400, {
+      const failurePayload = {
         v: UI_VALIDATION_PROTOCOL_VERSION, kind: 'response', id: envelope?.id ?? 'invalid', requestId: envelope?.requestId ?? 'invalid', runId,
         seq: ++seq, revision: await liveRevision().catch(() => lastSnapshot?.revision ?? 0),
         verificationLevel: verificationLevel(envelope?.method ?? ''), ok: false, error: payloadError,
-      })
+      }
+      if (envelope) {
+        responseCache.set(envelope.requestId, failurePayload)
+        while (responseCache.size > 128) responseCache.delete(responseCache.keys().next().value!)
+      }
+      return sendNodeJson(response, envelope ? 200 : 400, failurePayload)
     }
 })
 await new Promise<void>((resolveListen, rejectListen) => {

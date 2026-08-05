@@ -36,7 +36,8 @@ import type {
 	ExtensionAPI,
 	ExtensionFactory,
 	ExtensionFactoryV2,
-	ExtensionManifestUIV1,
+	ExtensionFrontendDiagnostic,
+	ExtensionManifestUI,
 	ExtensionRuntime,
 	LoadExtensionsResult,
 	ProviderConfig,
@@ -51,7 +52,9 @@ export interface ExtensionLoadMetadata {
 	manifest?: ExtensionManifestV1;
 	manifestStatus?: ExtensionManifestStatus;
 	manifestDiagnostics?: ExtensionManifestDiagnostic[];
-	manifestUI?: ExtensionManifestUIV1;
+	manifestUI?: ExtensionManifestUI;
+	frontendLoadable?: boolean;
+	frontendDiagnostics?: ExtensionFrontendDiagnostic[];
 }
 
 const require = createRequire(import.meta.url);
@@ -157,6 +160,7 @@ export function createExtensionRuntime(): ExtensionRuntime {
 		getThinkingLevel: notInitialized,
 		setThinkingLevel: notInitialized,
 		pendingProviderRegistrations: [],
+		pendingFrontendChannels: [],
 		assertActive,
 		invalidate: (message) => {
 			state.staleMessage ??=
@@ -171,6 +175,10 @@ export function createExtensionRuntime(): ExtensionRuntime {
 		unregisterProvider: (name) => {
 			runtime.pendingProviderRegistrations = runtime.pendingProviderRegistrations.filter((r) => r.name !== name);
 		},
+		registerFrontendChannel: (extensionId, id, options) => {
+			runtime.pendingFrontendChannels.push({ extensionId, id, options });
+		},
+		publishFrontendState: () => {},
 	};
 
 	return runtime;
@@ -252,6 +260,13 @@ function createExtensionAPI(
 				sourceInfo: extension.sourceInfo,
 				...options,
 			});
+		},
+		registerFrontendChannel(id, options): void {
+			runtime.assertActive();
+			const channelId = id.trim();
+			if (!channelId || channelId.length > 128)
+				throw new Error("Frontend channel id must be a bounded non-empty string");
+			runtime.registerFrontendChannel(extension.id, channelId, options);
 		},
 
 		// Action methods - delegate to shared runtime
@@ -370,7 +385,16 @@ async function loadExtensionModule(extensionPath: string) {
 function createExtension(
 	extensionPath: string,
 	resolvedPath: string,
-	identity: Pick<ExtensionLoadMetadata, "id" | "manifest" | "manifestStatus" | "manifestDiagnostics" | "manifestUI">,
+	identity: Pick<
+		ExtensionLoadMetadata,
+		| "id"
+		| "manifest"
+		| "manifestStatus"
+		| "manifestDiagnostics"
+		| "manifestUI"
+		| "frontendLoadable"
+		| "frontendDiagnostics"
+	>,
 	activation: ExtensionActivation = "beforeFirstRequest",
 ): Extension {
 	const source =
@@ -389,6 +413,8 @@ function createExtension(
 		manifestStatus: identity.manifestStatus ?? "legacy",
 		manifestDiagnostics: [...(identity.manifestDiagnostics ?? [])],
 		manifestUI: identity.manifestUI,
+		frontendLoadable: identity.frontendLoadable,
+		frontendDiagnostics: [...(identity.frontendDiagnostics ?? [])],
 		hostCapabilities: [],
 		handlers: new Map(),
 		tools: new Map(),

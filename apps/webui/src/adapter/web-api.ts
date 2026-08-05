@@ -21,6 +21,7 @@ import {
   createUnsupportedWebApiOverrides,
 } from './platform-capabilities'
 import { BACKEND_TYPE_CAPABILITY } from '@mortise/shared/protocol'
+import { toWebExtensionResourceUrl } from './extension-resource-url'
 
 // ---------------------------------------------------------------------------
 // Web platform contract
@@ -99,6 +100,30 @@ export function createWebApi(options: WebApiOptions): {
     getRuntimeEnvironment: () => 'web',
     getSystemWarnings: () => Promise.resolve({ vcredistMissing: false, workspaceRuntimeDegraded: false }),
     isDebugMode: () => Promise.resolve(import.meta.env.DEV),
+    getPiExtensionCatalog: async () => {
+      const result = await baseApi.getPiExtensionCatalog()
+      return {
+        ...result,
+        extensions: result.extensions.map((extension) => ({
+          ...extension,
+          frontendDescriptors: extension.frontendDescriptors?.map((descriptor) => ({
+            ...descriptor,
+            entryUrl: toWebExtensionResourceUrl(descriptor.entryUrl),
+            styleUrls: descriptor.styleUrls.map(toWebExtensionResourceUrl),
+          })),
+          moduleDescriptors: extension.moduleDescriptors?.map((descriptor) => ({
+            ...descriptor,
+            entryUrl: toWebExtensionResourceUrl(descriptor.entryUrl),
+            styleUrls: descriptor.styleUrls.map(toWebExtensionResourceUrl),
+          })),
+          overrideDescriptors: extension.overrideDescriptors?.map((descriptor) => ({
+            ...descriptor,
+            entryUrl: toWebExtensionResourceUrl(descriptor.entryUrl),
+            styleUrls: descriptor.styleUrls.map(toWebExtensionResourceUrl),
+          })),
+        })),
+      }
+    },
 
     // Theme
     getSystemTheme: () => Promise.resolve(getSystemTheme()),

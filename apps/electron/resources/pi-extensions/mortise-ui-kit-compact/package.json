@@ -1,0 +1,12 @@
+{
+  "name": "mortise-ui-kit-compact",
+  "private": true,
+  "type": "module",
+  "pi": { "extensions": [{
+    "id": "mortise-ui-kit-compact",
+    "path": "./index.js",
+    "activation": "startup",
+    "manifest": { "schemaVersion": 1, "name": "Mortise UI Kit Compact", "version": "1.0.0", "author": { "name": "Mortise" }, "description": "A spacing and control decoration for the UI kit.", "dependencies": { "mortise-ui-kit": "^1.0.0" }, "permissions": [] },
+    "ui": { "schemaVersion": 2, "title": "Mortise UI Kit Compact", "category": "ui", "compatibility": { "uiApi": "^2.0.0", "mortise": ">=0.1.0 <0.2.0" }, "overrides": [{ "id": "compact-components", "target": { "extensionId": "mortise-ui-kit", "kind": "module", "id": "components" }, "mode": "decorate", "entry": "./dist/compact-components.js", "styles": ["./dist/compact.css"] }] }
+  }] }
+}

@@ -6,9 +6,9 @@
  * storage reads/writes go through Pi's host facade.
  */
 
-import { existsSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
 import { cp, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
-import { basename, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { unzipSync } from 'fflate';
 import { ResourceResolver, SettingsManager } from '@mortise/pi-coding-agent';
@@ -831,6 +831,40 @@ export async function uninstallPiExtension(
   return metadata;
 }
 
+const frontendAssetRevisions = new Map<string, { fingerprint: string; revision: number }>();
+
+function frontendAssetRevision(extensionId: string, frontendId: string, root: string, assets: string[]): number {
+  const fingerprint = assets.map((asset) => {
+    try {
+      const info = statSync(resolve(root, asset));
+      return `${asset}:${info.mtimeMs}:${info.size}`;
+    } catch {
+      return `${asset}:missing`;
+    }
+  }).join('|');
+  const key = `${extensionId}\0${frontendId}\0${root}`;
+  const previous = frontendAssetRevisions.get(key);
+  if (previous?.fingerprint === fingerprint) return previous.revision;
+  const revision = (previous?.revision ?? 0) + 1;
+  frontendAssetRevisions.set(key, { fingerprint, revision });
+  return revision;
+}
+
+function extensionFrontendDevServer(extensionId: string): URL | undefined {
+  const raw = process.env.MORTISE_EXTENSION_UI_DEV_SERVERS;
+  if (!raw) return undefined;
+  try {
+    const value = (JSON.parse(raw) as Record<string, unknown>)[extensionId];
+    if (typeof value !== 'string') return undefined;
+    const url = new URL(value.endsWith('/') ? value : `${value}/`);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return undefined;
+    if (!['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname)) return undefined;
+    return url;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * 读取 Pi 扩展 catalog。扩展发现、metadata、enabled/config 均来自 Pi host facade；
  * Mortise 只把结果作为设置 UI 的展示 DTO。
@@ -861,7 +895,7 @@ export async function getPiExtensionCatalog(options: { cwd?: string; agentDir?: 
       seenExtensionIds.add(id);
       return true;
     });
-    return {
+    const catalogResult: PiExtensionCatalogResult = {
       // PackageManager deliberately retains disabled resources. Loading the
       // runtime (and the host facade catalog built on it) filters them out.
       extensions: extensions
@@ -873,23 +907,86 @@ export async function getPiExtensionCatalog(options: { cwd?: string; agentDir?: 
             extensionManifestStatus?: PiExtensionCatalogEntry['manifestStatus'];
             extensionManifestDiagnostics?: PiExtensionCatalogEntry['manifestDiagnostics'];
             extensionLoadable?: boolean;
+            extensionFrontendLoadable?: PiExtensionCatalogEntry['frontendLoadable'];
+            extensionFrontendDiagnostics?: PiExtensionCatalogEntry['frontendDiagnostics'];
           };
           const ui = metadata.extensionUI as PiExtensionCatalogEntry['ui'];
           const manifest = metadata.extensionManifest;
           const config = settingsManager.getExtensionConfig(id) as Record<string, unknown> | undefined;
           const resolvedPath = resolve(resource.path);
+          const extensionRoot = dirname(resolvedPath);
+          const devServer = extensionFrontendDevServer(id);
+          const frontendDescriptors = ui?.schemaVersion === 2
+            ? (ui.frontends ?? [])
+              .filter((frontend) => !metadata.extensionFrontendDiagnostics?.some((diagnostic) =>
+                diagnostic.severity === 'error' && (diagnostic.frontendId === undefined || diagnostic.frontendId === frontend.id)))
+              .map((frontend) => ({
+                schemaVersion: 2 as const,
+                extensionId: id,
+                frontendId: frontend.id,
+                entryUrl: devServer
+                  ? new URL(frontend.entry.slice(2), devServer).toString()
+                  : `mortise-extension://frontend/${encodeURIComponent(id)}/${encodeURIComponent(frontend.id)}/entry`,
+                styleUrls: (frontend.styles ?? []).map((style, index) => devServer
+                  ? new URL(style.slice(2), devServer).toString()
+                  : `mortise-extension://frontend/${encodeURIComponent(id)}/${encodeURIComponent(frontend.id)}/style/${index}`),
+                surface: frontend.surface,
+                mode: frontend.mode,
+                scope: frontend.scope,
+                revision: frontendAssetRevision(id, frontend.id, extensionRoot, [frontend.entry, ...(frontend.styles ?? [])]),
+                title: ui.title,
+                page: frontend.page,
+              }))
+            : undefined;
+          const moduleDescriptors = ui?.schemaVersion === 2
+            ? (ui.modules ?? []).map((module) => ({
+              schemaVersion: 2 as const,
+              extensionId: id,
+              moduleId: module.id,
+              entryUrl: devServer
+                ? new URL(module.entry.slice(2), devServer).toString()
+                : `mortise-extension://module/${encodeURIComponent(id)}/${encodeURIComponent(module.id)}/entry`,
+              styleUrls: (module.styles ?? []).map((style, index) => devServer
+                ? new URL(style.slice(2), devServer).toString()
+                : `mortise-extension://module/${encodeURIComponent(id)}/${encodeURIComponent(module.id)}/style/${index}`),
+              apiVersion: module.apiVersion,
+              revision: frontendAssetRevision(id, `module:${module.id}`, extensionRoot, [module.entry, ...(module.styles ?? [])]),
+            }))
+            : undefined;
+          const overrideDescriptors = ui?.schemaVersion === 2
+            ? (ui.overrides ?? []).map((override) => ({
+              schemaVersion: 2 as const,
+              extensionId: id,
+              overrideId: override.id,
+              target: override.target,
+              mode: override.mode,
+              entryUrl: devServer
+                ? new URL(override.entry.slice(2), devServer).toString()
+                : `mortise-extension://override/${encodeURIComponent(id)}/${encodeURIComponent(override.id)}/entry`,
+              styleUrls: (override.styles ?? []).map((style, index) => devServer
+                ? new URL(style.slice(2), devServer).toString()
+                : `mortise-extension://override/${encodeURIComponent(id)}/${encodeURIComponent(override.id)}/style/${index}`),
+              revision: frontendAssetRevision(id, `override:${override.id}`, extensionRoot, [override.entry, ...(override.styles ?? [])]),
+            }))
+            : undefined;
           return {
             id,
             loaded: false,
             title: ui?.title ?? manifest?.name ?? id,
             description: ui?.description ?? manifest?.description ?? '',
             category: ui?.category ?? 'other',
-            configurable: Boolean(ui?.settings?.page) || (ui?.settings?.fields.length ?? 0) > 0,
+            configurable: ui?.schemaVersion === 1
+              && (Boolean(ui.settings?.page) || (ui.settings?.fields.length ?? 0) > 0),
             manifest,
             manifestStatus: metadata.extensionManifestStatus ?? 'legacy',
             manifestDiagnostics: metadata.extensionManifestDiagnostics ?? [],
             loadable: metadata.extensionLoadable ?? resource.enabled,
             ui,
+            frontendLoadable: metadata.extensionFrontendLoadable,
+            frontendDiagnostics: metadata.extensionFrontendDiagnostics,
+            frontendDescriptors,
+            moduleDescriptors,
+            overrideDescriptors,
             enabled: config?.enabled === undefined ? true : config.enabled !== false,
             path: resource.path,
             resolvedPath,
@@ -901,6 +998,7 @@ export async function getPiExtensionCatalog(options: { cwd?: string; agentDir?: 
         }),
       errors: [],
     };
+    return catalogResult;
   } catch (error) {
     return {
       extensions: [],
@@ -927,7 +1025,7 @@ function validateSettingValue(field: PiExtensionSettingField, value: PiExtension
 
 export function validatePiExtensionConfigPatch(entry: PiExtensionCatalogEntry, patch: PiExtensionConfigPatch): { requiresReload: boolean } {
   if (patch.schemaVersion !== 1 || patch.extensionId !== entry.id) throw new Error('Extension config patch identity is invalid');
-  const fields = new Map((entry.ui?.settings?.fields ?? []).map((field) => [field.key, field]));
+  const fields = new Map((entry.ui?.schemaVersion === 1 ? entry.ui.settings?.fields ?? [] : []).map((field) => [field.key, field]));
   const touched = [...Object.keys(patch.set ?? {}), ...(patch.unset ?? [])];
   if (new Set(touched).size !== touched.length) throw new Error('Extension config patch contains duplicate keys');
   let requiresReload = false;

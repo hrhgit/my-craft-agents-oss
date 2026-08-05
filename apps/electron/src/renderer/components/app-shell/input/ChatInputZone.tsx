@@ -1,7 +1,6 @@
 import * as React from 'react'
 import { cn } from '@/lib/utils'
 import { CHAT_LAYOUT } from '@/config/layout'
-import type { PermissionMode } from '@mortise/shared/agent/modes'
 import type { BackgroundTask } from '../ActiveTasksBar'
 import { ActiveOptionBadges } from '../ActiveOptionBadges'
 import { InputContainer } from './InputContainer'
@@ -14,8 +13,6 @@ import { QueuedMessageList, type QueuedMessageListItem } from './QueuedMessageLi
 interface ChatInputZoneProps {
   compactMode?: boolean
   showOptionBadges?: boolean
-  permissionMode?: PermissionMode
-  onPermissionModeChange?: (mode: PermissionMode) => void
   tasks?: BackgroundTask[]
   sessionId: string
   readOnly?: boolean
@@ -33,8 +30,6 @@ interface ChatInputZoneProps {
 export function ChatInputZone({
   compactMode = false,
   showOptionBadges,
-  permissionMode = 'ask',
-  onPermissionModeChange,
   tasks = [],
   sessionId,
   readOnly = false,
@@ -50,7 +45,7 @@ export function ChatInputZone({
 }: ChatInputZoneProps) {
   const appShellContext = useOptionalAppShellContext()
   const shouldShowOptionBadges = showOptionBadges ?? !compactMode
-  const inputResetKey = `${sessionId}::${inputProps.structuredInput?.type ?? 'freeform'}`
+  const inputResetKey = `${sessionId}::freeform`
   const extensionInteraction = appShellContext?.extensionInteraction?.sessionId === sessionId
     ? appShellContext.extensionInteraction
     : null
@@ -78,8 +73,6 @@ export function ChatInputZone({
         {...inputProps}
         attachedTop={queuedMessages.length > 0}
         compactMode={compactMode}
-        permissionMode={permissionMode}
-        onPermissionModeChange={onPermissionModeChange}
         sessionId={sessionId}
       />
     </InputErrorBoundary>
@@ -100,8 +93,6 @@ export function ChatInputZone({
           fallback={null}
         >
           <ActiveOptionBadges
-            permissionMode={permissionMode}
-            onPermissionModeChange={onPermissionModeChange}
             showPermissionModeBadge={false}
             tasks={tasks}
             sessionId={sessionId}

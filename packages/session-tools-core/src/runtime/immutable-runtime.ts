@@ -65,7 +65,6 @@ export function immutableRuntimeRequiredAppPaths(
     'dist/resources/docs/mortise-cli.md',
     'dist/resources/pi-extensions/browser.js',
     'dist/resources/pi-extensions/messaging.js',
-    'dist/resources/pi-extensions/permissions.js',
     'dist/resources/pi-extensions/package.json',
     `dist/resources/pi-runtime/pi${executable}`,
     'dist/resources/pi-runtime/package.json',

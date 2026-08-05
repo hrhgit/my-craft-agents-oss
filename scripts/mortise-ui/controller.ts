@@ -18,9 +18,14 @@ import {
 export const DEFAULT_MORTISE_UI_RUN_ROOT = resolve(process.env.MORTISE_UI_RUN_ROOT ?? join(process.cwd(), 'output', 'mortise-ui'))
 export const MORTISE_UI_MAX_START_WAIT_MS = 900_000
 export const DEFAULT_MORTISE_UI_START_WAIT_MS = MORTISE_UI_MAX_START_WAIT_MS
+export const MORTISE_UI_MIN_RENDERER_READINESS_MS = UI_VALIDATION_DEFAULT_TIMEOUT_MS
 
 export function mortiseUiHostRequestTimeoutMs(remainingStartWaitMs: number): number {
   return Math.min(UI_VALIDATION_MAX_WAIT_MS, Math.max(1, remainingStartWaitMs))
+}
+
+export function mortiseUiRendererReadinessDeadline(startDeadline: number, endpointOpenedAt = Date.now()): number {
+  return Math.max(startDeadline, endpointOpenedAt + MORTISE_UI_MIN_RENDERER_READINESS_MS)
 }
 const MORTISE_UI_RUN_LABEL_PATTERN = /^[a-z0-9](?:[a-z0-9._-]{0,62}[a-z0-9])?$/
 const MORTISE_UI_SHUTDOWN_REQUEST_TIMEOUT_MS = 30_000
@@ -411,7 +416,11 @@ export async function startMortiseUiRun(args: {
         hostPid: endpoint.pid,
         hostStartedAt: endpoint.pid === child.pid ? launcherStartedAt : getProcessStartTime(endpoint.pid),
       })
-      const appReadyTimeoutMs = mortiseUiHostRequestTimeoutMs(deadline - Date.now())
+      // A cold source build can consume nearly the entire startup budget before
+      // the Electron endpoint exists. Preserve a real renderer-readiness window
+      // instead of immediately shutting down a healthy application shell.
+      const rendererReadinessDeadline = mortiseUiRendererReadinessDeadline(deadline)
+      const appReadyTimeoutMs = mortiseUiHostRequestTimeoutMs(rendererReadinessDeadline - Date.now())
       const readiness = await requestMortiseUiHost({
         ...readyManifest,
         command: 'ui.wait',
@@ -426,7 +435,7 @@ export async function startMortiseUiRun(args: {
         throw new MortiseUiStartError(error, failed)
       }
       readyManifest = updateRunManifest(runDir, { lastResponseSeq: readiness.seq, lastRevision: readiness.revision, verificationLevel: readiness.verificationLevel })
-      const semanticReadyTimeoutMs = mortiseUiHostRequestTimeoutMs(deadline - Date.now())
+      const semanticReadyTimeoutMs = mortiseUiHostRequestTimeoutMs(rendererReadinessDeadline - Date.now())
       const semanticReadiness = await requestMortiseUiHost({
         ...readyManifest,
         command: 'ui.wait',

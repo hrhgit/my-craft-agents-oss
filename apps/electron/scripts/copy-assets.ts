@@ -11,7 +11,8 @@
  * Run: bun scripts/copy-assets.ts
  */
 
-import { cpSync, copyFileSync, mkdirSync, rmSync } from 'fs';
+import { cpSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync } from 'fs';
+import { spawnSync } from 'child_process';
 import { dirname, join, resolve } from 'path';
 import {
   stageCompiledPiRuntime,
@@ -48,6 +49,7 @@ function getCurrentBuildConfig(): BuildConfig {
 // Copy all resources (icons, themes, docs, permissions, tool-icons, etc.)
 const resourcesSrc = join(ELECTRON_DIR, 'resources');
 const resourcesDest = join(ELECTRON_DIR, 'dist', 'resources');
+buildBundledExtensionFrontends(join(resourcesSrc, 'pi-extensions'));
 mkdirSync(dirname(resourcesDest), { recursive: true });
 rmSync(resourcesDest, { recursive: true, force: true });
 cpSync(resourcesSrc, resourcesDest, { recursive: true, force: true });
@@ -68,3 +70,35 @@ try {
 }
 
 stageCompiledPiRuntime(getCurrentBuildConfig(), join(resourcesDest, 'pi-runtime'));
+
+/** Build ignored frontend artifacts before the source capsule is staged. */
+function buildBundledExtensionFrontends(extensionsRoot: string): void {
+  if (!existsSync(extensionsRoot)) return;
+  for (const entry of readdirSync(extensionsRoot, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const packageRoot = join(extensionsRoot, entry.name);
+    const packagePath = join(packageRoot, 'package.json');
+    if (!existsSync(packagePath)) continue;
+    let packageJson: unknown;
+    try {
+      packageJson = JSON.parse(readFileSync(packagePath, 'utf8'));
+    } catch {
+      continue;
+    }
+    if (!packageJson || typeof packageJson !== 'object' || Array.isArray(packageJson)) continue;
+    const packageRecord = packageJson as { scripts?: { build?: unknown }; pi?: { extensions?: unknown[] } };
+    const hasV2Frontend = Array.isArray(packageRecord.pi?.extensions)
+      && packageRecord.pi.extensions.some((extension) => {
+        if (!extension || typeof extension !== 'object' || Array.isArray(extension)) return false;
+        return (extension as { ui?: { schemaVersion?: unknown } }).ui?.schemaVersion === 2;
+      });
+    if (!hasV2Frontend || typeof packageRecord.scripts?.build !== 'string') continue;
+    if (!statSync(packageRoot).isDirectory()) continue;
+    const result = spawnSync(process.execPath, ['run', 'build'], {
+      cwd: packageRoot,
+      stdio: 'inherit',
+      windowsHide: true,
+    });
+    if (result.status !== 0) throw new Error(`Bundled extension frontend build failed: ${entry.name}`);
+  }
+}

@@ -237,6 +237,14 @@
         "@modelcontextprotocol/sdk": ">=1.29.0",
       },
     },
+    "packages/extension-ui": {
+      "name": "@mortise/extension-ui",
+      "version": "0.1.0",
+      "peerDependencies": {
+        "react": ">=18",
+        "react-dom": ">=18",
+      },
+    },
     "packages/messaging-gateway": {
       "name": "@mortise/messaging-gateway",
       "version": "0.1.0",
@@ -989,6 +997,8 @@
     "@mortise/core": ["@mortise/core@workspace:packages/core"],
 
     "@mortise/electron": ["@mortise/electron@workspace:apps/electron"],
+
+    "@mortise/extension-ui": ["@mortise/extension-ui@workspace:packages/extension-ui"],
 
     "@mortise/messaging-gateway": ["@mortise/messaging-gateway@workspace:packages/messaging-gateway"],
 

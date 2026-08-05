@@ -13,12 +13,15 @@ describe('extension GUI migration guard', () => {
     expect(existsSync(resolve(root, 'packages/ui/src/components/chat/PlanArtifactCard.tsx'))).toBe(false)
 
     const hostSources = [
+      read('apps/electron/src/renderer/App.tsx'),
       read('apps/electron/src/renderer/components/app-shell/input/ChatInputZone.tsx'),
       read('apps/electron/src/renderer/components/app-shell/input/FreeFormInput.tsx'),
+      read('apps/electron/src/shared/types.ts'),
+      read('apps/electron/src/transport/channel-map.ts'),
       read('packages/ui/src/components/chat/TurnCard.tsx'),
       read('packages/shared/src/config/pi-extension-settings.ts'),
     ].join('\n')
-    expect(hostSources).not.toMatch(/ConversationModeSelector|PlanArtifactCard|showDiscussionButton|showPlanButton|renderPlanMarkdown|mortise:approve-plan/)
+    expect(hostSources).not.toMatch(/ConversationModeSelector|PlanArtifactCard|AcceptPlanDropdown|CompactAcceptPlanDrawer|showDiscussionButton|showPlanButton|renderPlanMarkdown|mortise:approve-plan|mortise:compaction-complete|getPendingPlanExecution/)
   })
 
   it('does not restore ask_user identity branches in the generic host adapters', () => {

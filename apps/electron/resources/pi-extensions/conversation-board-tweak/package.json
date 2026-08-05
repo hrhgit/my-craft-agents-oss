@@ -1,0 +1,12 @@
+{
+  "name": "conversation-board-tweak",
+  "private": true,
+  "type": "module",
+  "pi": { "extensions": [{
+    "id": "conversation-board-tweak",
+    "path": "./index.js",
+    "activation": "startup",
+    "manifest": { "schemaVersion": 1, "name": "Conversation Board Tweak", "version": "1.0.0", "author": { "name": "Mortise" }, "description": "Continues modifying the board replacement extension.", "dependencies": { "conversation-board-replace": "^1.0.0" }, "permissions": [] },
+    "ui": { "schemaVersion": 2, "title": "Conversation Board Tweak", "category": "ui", "compatibility": { "uiApi": "^2.0.0", "mortise": ">=0.1.0 <0.2.0" }, "overrides": [{ "id": "board-tweak", "target": { "extensionId": "conversation-board-replace", "kind": "frontend", "id": "board-replace" }, "mode": "replace", "entry": "./dist/tweak-toolbar.js", "styles": ["./dist/tweak.css"] }] }
+  }] }
+}

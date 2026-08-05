@@ -169,37 +169,39 @@ export type ExtensionInteractionResponseV1 =
 	| { schemaVersion: 1; status: "cancelled"; reason?: ExtensionInteractionCancelReasonV1 };
 
 /** Mortise host surfaces available to serializable extension UI contributions. */
-export type ExtensionUISurface =
-	| "conversation.timeline.before"
-	| "conversation.timeline.after"
-	| "conversation.turn.before"
-	| "conversation.turn.after"
-	| "conversation.turn.replace"
-	| "conversation.message.before"
-	| "conversation.message.after"
-	| "conversation.message.footer"
-	| "conversation.message.replace"
-	| "conversation.artifact.aside"
-	| "conversation.artifact.footer"
-	| "conversation.tool.before"
-	| "conversation.tool.after"
-	| "conversation.tool.replace"
-	| "conversation.inline"
-	| "conversation.overlay"
-	| "conversation.status"
-	| "composer.above"
-	| "composer.below"
-	| "composer.toolbar"
-	| "composer.status"
-	| "composer.replace"
-	| "sidebar.header"
-	| "sidebar.section"
-	| "sidebar.footer"
-	| "navigation.item"
-	| "session.badge"
-	| "workspace.content"
-	| "window.topLeft"
-	| "window.topRight";
+export const ExtensionUISurfaces = [
+	"conversation.timeline.before",
+	"conversation.timeline.after",
+	"conversation.turn.before",
+	"conversation.turn.after",
+	"conversation.turn.replace",
+	"conversation.message.before",
+	"conversation.message.after",
+	"conversation.message.footer",
+	"conversation.message.replace",
+	"conversation.artifact.aside",
+	"conversation.artifact.footer",
+	"conversation.tool.before",
+	"conversation.tool.after",
+	"conversation.tool.replace",
+	"conversation.inline",
+	"conversation.overlay",
+	"conversation.status",
+	"composer.above",
+	"composer.below",
+	"composer.toolbar",
+	"composer.status",
+	"composer.replace",
+	"sidebar.header",
+	"sidebar.section",
+	"sidebar.footer",
+	"navigation.item",
+	"session.badge",
+	"workspace.content",
+	"window.topLeft",
+	"window.topRight",
+] as const;
+export type ExtensionUISurface = (typeof ExtensionUISurfaces)[number];
 
 export type ExtensionUIIconName =
 	| "activity"
@@ -253,7 +255,7 @@ export interface ExtensionWorkspaceContentMetadataV1 {
 	preferredGroup?: ExtensionWorkspaceContentPreferredGroup;
 }
 
-export type ExtensionUINode = ({ semanticId?: string } & (
+export type ExtensionUINode = { semanticId?: string } & (
 	| { type: "text"; text: string; tone?: "default" | "muted" | "success" | "warning" | "danger" }
 	| { type: "markdown"; markdown: string }
 	| { type: "icon"; name: ExtensionUIIconName; label: string }
@@ -268,7 +270,13 @@ export type ExtensionUINode = ({ semanticId?: string } & (
 			disabledReason?: string;
 			emphasis?: ExtensionUIButtonEmphasis;
 	  }
-	| { type: "menu"; label: string; icon?: ExtensionUIIconName; tone?: "default" | "info" | "accent"; options: ExtensionUIMenuOptionV1[] }
+	| {
+			type: "menu";
+			label: string;
+			icon?: ExtensionUIIconName;
+			tone?: "default" | "info" | "accent";
+			options: ExtensionUIMenuOptionV1[];
+	  }
 	| { type: "step-progress"; label: string; steps: ExtensionUIStepV1[] }
 	| { type: "responsive"; full: ExtensionUINode; compact?: ExtensionUINode; minimal?: ExtensionUINode }
 	| {
@@ -286,7 +294,7 @@ export type ExtensionUINode = ({ semanticId?: string } & (
 			permissions?: Array<"commands" | "theme" | "storage" | "resize" | "validation">;
 	  }
 	| { type: "row" | "stack"; children: ExtensionUINode[]; gap?: "none" | "small" | "medium" }
-));
+);
 
 export interface ExtensionUIContribution {
 	schemaVersion: 1;
@@ -384,6 +392,8 @@ export interface ExtensionUIContext {
 	removeContribution(id: string): void;
 	/** Remove every host-rendered GUI contribution owned by this extension runtime. */
 	clearContributions(): void;
+	/** Publish a complete serializable snapshot for a browser-style frontend channel. */
+	publishFrontendState(channelId: string, state: unknown): void;
 	/** Request a versioned, host-rendered interaction containing one or more fields. */
 	interact(
 		request: ExtensionInteractionRequestV1,
@@ -408,6 +418,13 @@ export interface ExtensionUICapabilities {
 	contributions: boolean;
 	/** Structured interaction schema versions supported by this host. */
 	interactionSchemas: readonly number[];
+}
+
+export type ExtensionFrontendChannelScope = "session" | "workspace" | "global";
+export interface ExtensionFrontendChannelOptions {
+	scope: ExtensionFrontendChannelScope;
+	snapshot?: unknown;
+	onMessage?: (message: unknown, ctx: ExtensionContext) => unknown | Promise<unknown>;
 }
 
 export interface HostCapabilityInvokeOptions {
@@ -1309,6 +1326,8 @@ export interface ExtensionAPI {
 
 	/** Register a custom command. */
 	registerCommand(name: string, options: Omit<RegisteredCommand, "name" | "sourceInfo" | "extensionId">): void;
+	/** Register the backend half of a browser-style frontend channel. */
+	registerFrontendChannel(id: string, options: ExtensionFrontendChannelOptions): void;
 
 	// =========================================================================
 	// Actions
@@ -1595,6 +1614,69 @@ export interface ExtensionManifestUIV1 {
 	category?: ExtensionUICategory;
 	settings?: ExtensionSettingsSchemaV1;
 }
+export type ExtensionFrontendModeV2 = "append" | "replace" | "overlay";
+export type ExtensionFrontendScopeV2 = "session" | "workspace" | "global";
+export type ExtensionFrontendSurfaceV2 = ExtensionUISurface | "settings.page";
+export interface ExtensionFrontendPageV2 {
+	id: string;
+	title: string;
+	description?: string;
+	icon?: string;
+	order?: number;
+}
+export interface ExtensionFrontendEntryV2 {
+	id: string;
+	entry: string;
+	styles?: string[];
+	surface: ExtensionFrontendSurfaceV2;
+	mode: ExtensionFrontendModeV2;
+	scope: ExtensionFrontendScopeV2;
+	page?: ExtensionFrontendPageV2;
+}
+export interface ExtensionUIModuleEntryV2 {
+	id: string;
+	entry: string;
+	styles?: string[];
+	apiVersion: string;
+}
+export interface ExtensionUIOverrideEntryV2 {
+	id: string;
+	target: { extensionId: string; kind: "frontend" | "module"; id: string };
+	mode: "decorate" | "replace";
+	entry: string;
+	styles?: string[];
+}
+export interface ExtensionManifestUIV2 {
+	schemaVersion: 2;
+	title?: string;
+	description?: string;
+	category?: ExtensionUICategory;
+	compatibility: {
+		uiApi: string;
+		mortise: string;
+	};
+	frontends?: ExtensionFrontendEntryV2[];
+	modules?: ExtensionUIModuleEntryV2[];
+	overrides?: ExtensionUIOverrideEntryV2[];
+}
+export type ExtensionManifestUI = ExtensionManifestUIV1 | ExtensionManifestUIV2;
+export interface ExtensionFrontendDiagnostic {
+	code: string;
+	severity: "warning" | "error";
+	message: string;
+	frontendId?: string;
+	resource?: string;
+}
+
+/** Return whether a value can cross the JSON frontend channel boundary. */
+export function isSerializableFrontendValue(value: unknown, seen = new Set<object>()): boolean {
+	if (value === null || typeof value === "string" || typeof value === "boolean") return true;
+	if (typeof value === "number") return Number.isFinite(value);
+	if (typeof value !== "object" || seen.has(value)) return false;
+	seen.add(value);
+	if (Array.isArray(value)) return value.every((item) => isSerializableFrontendValue(item, seen));
+	return Object.entries(value).every(([key, item]) => key.length <= 256 && isSerializableFrontendValue(item, seen));
+}
 
 export interface RegisteredTool {
 	definition: ToolDefinition;
@@ -1647,6 +1729,7 @@ export type SetLabelHandler = (entryId: string, label: string | undefined) => vo
 export interface ExtensionRuntimeState {
 	/** Provider registrations queued during extension loading, processed when runner binds */
 	pendingProviderRegistrations: Array<{ name: string; config: ProviderConfig; extensionPath: string }>;
+	pendingFrontendChannels: Array<{ extensionId: string; id: string; options: ExtensionFrontendChannelOptions }>;
 	/** Throws when this extension instance is stale after runtime replacement. */
 	assertActive: () => void;
 	/** Marks this extension instance as stale after runtime replacement or reload. */
@@ -1659,6 +1742,8 @@ export interface ExtensionRuntimeState {
 	 */
 	registerProvider: (name: string, config: ProviderConfig, extensionPath?: string) => void;
 	unregisterProvider: (name: string, extensionPath?: string) => void;
+	registerFrontendChannel: (extensionId: string, id: string, options: ExtensionFrontendChannelOptions) => void;
+	publishFrontendState: (extensionId: string, channelId: string, state: unknown) => void;
 }
 
 /**
@@ -1741,7 +1826,9 @@ export interface Extension {
 	manifest?: ExtensionManifestV1;
 	manifestStatus?: ExtensionManifestStatus;
 	manifestDiagnostics?: ExtensionManifestDiagnostic[];
-	manifestUI?: ExtensionManifestUIV1;
+	manifestUI?: ExtensionManifestUI;
+	frontendLoadable?: boolean;
+	frontendDiagnostics?: ExtensionFrontendDiagnostic[];
 	hostCapabilities?: HostCapabilityDeclaration[];
 	handlers: Map<string, HandlerFn[]>;
 	tools: Map<string, RegisteredTool>;

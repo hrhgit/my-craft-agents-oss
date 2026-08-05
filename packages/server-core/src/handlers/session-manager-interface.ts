@@ -110,6 +110,7 @@ export interface ISessionManager extends WorkspaceTopologySessionCoordinator {
   // Permissions & credentials
   // ---------------------------------------------------------------------------
 
+  /** Legacy transport bridge for non-renderer clients; V2 UI uses extension channels. */
   respondToPermission(
     sessionId: string,
     requestId: string,
@@ -117,6 +118,7 @@ export interface ISessionManager extends WorkspaceTopologySessionCoordinator {
     alwaysAllow: boolean,
     options?: PermissionResponseOptions,
   ): boolean
+
   getSessionPermissionModeState(sessionId: string): PermissionModeState | null
 
   respondToExtensionInteraction(
@@ -145,6 +147,7 @@ export interface ISessionManager extends WorkspaceTopologySessionCoordinator {
    * 非 Pi 后端或会话未就绪时返回空数组。
    */
   listExtensionCommands(sessionId: string): Promise<import('@mortise/shared/agent').PiExtensionCommand[]>
+  sendExtensionFrontendMessage(sessionId: string, extensionId: string, channelId: string, message: unknown, workspaceId?: string | null): Promise<unknown>
 
   getExtensionFileState(workspaceId: string, extensionId: string): import('@mortise/shared/protocol').ExtensionFileStateV1
   setExtensionFileState(

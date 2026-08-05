@@ -2,11 +2,15 @@
 
 # Mortise GUI Extensions
 
-Pi extensions can add persistent GUI to Mortise without shipping extension-specific code inside Mortise. Extensions publish serializable contributions; Mortise owns rendering, layout, validation, permissions, recovery, and fallback.
+Browser-style renderer frontends use Extension UI V2. The source architecture guide at `docs/architecture/extension-ui-v2.md` defines its manifest, lifecycle, channels, React adapter, and development-server workflow. Existing V1 contributions and iframe applications continue to work.
 
-> **Placement and loading:** Declare each Mortise extension once in the package's `pi.extensions` array. Put the package under `~/.mortise/agent/extensions/` (global) or `.mortise/extensions/` (project-local). Each backend discovers both trusted sources when it opens or attaches the Workspace; file changes take effect on the next backend or Workspace load.
+Pi extensions can add persistent GUI to Mortise without shipping extension-specific code inside Mortise. V2 frontends load the extension's built renderer module directly in the host renderer; the extension owns its business state, controls, persistence, and styling. Mortise owns only the stable mount points, lifecycle, routing, layout allocation, and fallback behavior.
+
+> **Placement and loading:** Declare each Mortise extension once in the package's `pi.extensions` array. Put the package under `~/.mortise/agent/extensions/` (global) or `.mortise/extensions/` (project-local). Each backend discovers both sources when it opens or attaches the Workspace; V2 frontend build changes reload in a development host.
 
 **Key capabilities:**
+- **V2 renderer frontends** - Mount arbitrary DOM or React UI into stable semantic surfaces with `defineExtensionUI()` and the extension lifecycle API
+- **V2 channels** - Subscribe to session/workspace snapshots and send extension commands without coupling to Mortise's internal state
 - **Host-rendered UI** - Compose text, Markdown, icons, badges, buttons, compact menus, rows, and stacks with `ctx.ui.upsertContribution()`
 - **Sandbox UI Apps** - Run self-contained HTML, CSS, and JavaScript inside a restricted iframe
 - **Extension actions** - Connect buttons to commands owned by the same extension
@@ -131,7 +135,7 @@ Open or attach the Workspace in Mortise. The contribution appears above the comp
 
 ## Extension Locations
 
-> **Security:** Extension backend code runs in Pi's child process with your system permissions. Only install extensions from sources you trust. A sandbox UI App restricts its iframe; it does not sandbox the extension backend.
+> **Runtime boundary:** Extension backend code runs in Pi's child process with your system permissions. A sandbox UI App restricts its iframe; it does not sandbox the extension backend.
 
 Mortise extensions use these discovery locations:
 
@@ -149,6 +153,27 @@ running Sessions or hot-reload an active Extension; reopen the Workspace or
 restart the backend to load the changed package. One failing Extension is
 reported and disabled for that load without retrying in a loop or preventing
 other Extensions from loading.
+
+## Package Manifest V2 Frontends
+
+Keep the backend `manifest` at schema version 1 and add a V2 `ui` declaration for renderer entry points. The entry and style paths are relative to the extension package and must point to built files.
+
+```json
+{
+  "id": "mortise-permissions",
+  "path": "./index.ts",
+  "manifest": { "schemaVersion": 1, "name": "Permissions", "version": "1.0.0", "author": { "name": "Example" }, "permissions": [] },
+  "ui": {
+    "schemaVersion": 2,
+    "compatibility": { "uiApi": "^2.0.0", "mortise": ">=0.1.0 <0.2.0" },
+    "frontends": [
+      { "id": "approval", "entry": "./dist/ui/approval.js", "styles": ["./dist/ui/permissions.css"], "surface": "composer.above", "mode": "append", "scope": "session" }
+    ]
+  }
+}
+```
+
+The frontend exports `mount(context)` and returns a disposer. Use `context.backend.channel()` for extension state, `context.host` for stable semantic anchors, and `context.signal` or `createExtensionLifecycle()` for cleanup. V1 contributions and iframe applications remain supported alongside V2. V2 `replace` surfaces keep the host fallback until mount succeeds and restore it when the extension is disposed.
 
 ## Package Manifest V1
 
@@ -219,12 +244,15 @@ The Developer Kit includes `schemas/extension-manifest-v1.schema.json` and a com
 
 ## How Mortise GUI Extensions Work
 
-Extensions execute in Pi's child process. They do not receive Mortise's React tree, `window`, `document`, global CSS, credentials, Electron IPC, or the parent DOM. GUI communication crosses the Pi RPC boundary as versioned JSON.
+The backend entry executes in Pi's child process and communicates through the versioned RPC contract. A V2 package may also ship renderer frontend entries: those entries are imported directly by Electron/WebUI in the host renderer and may use `window`, `document`, and the DOM within their declared surface. The backend and frontend are one extension package but separate entry points; they communicate through serializable V2 channels rather than private Electron APIs.
 
 There are two rendering levels:
 
-1. **Host-rendered UI** is the default. Mortise renders a bounded declarative node tree using its theme, accessibility, focus, and responsive behavior.
-2. **Sandbox UI App** is for arbitrary application UI. Mortise creates an isolated iframe inside a host-assigned surface slot.
+1. **V1 host-rendered UI** is the compatibility level. Mortise renders a bounded declarative node tree using its theme, accessibility, focus, and responsive behavior.
+2. **V2 renderer frontends** are browser-style modules mounted into documented host surfaces. They own their DOM, styles, and component dependencies, and must return cleanup through `mount(context)`.
+3. **Sandbox UI App** remains available for arbitrary application UI that should be isolated in an iframe.
+
+Use V2 for business-owned GUI such as plan workflows, user questions, and tool approval cards. Mortise keeps only the generic surface, lifecycle, fallback, and channel plumbing; the business state machine and visual implementation remain in the extension. `mortise-ui-kit` is a normal independently installable extension module, not a core package.
 
 Use existing dialog methods for transient interaction:
 

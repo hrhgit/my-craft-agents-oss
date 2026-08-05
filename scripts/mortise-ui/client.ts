@@ -38,12 +38,14 @@ export async function requestMortiseUiHost<T>(args: {
   params?: Record<string, unknown>
   timeoutMs?: number
   minimumSeqExclusive?: number
+  /** Reuse a request ID when a caller retries an uncertain transport operation. */
+  requestId?: string
 }): Promise<MortiseUiResponse<T>> {
   const endpoint = readEndpointManifest(args.endpointManifestPath)
   if (endpoint.runId !== args.runId) throw new MortiseUiClientError('RUN_ID_MISMATCH', 'Endpoint belongs to a different run')
   const token = readFileSync(args.tokenPath, 'utf8').trim()
   if (!token) throw new MortiseUiClientError('TOKEN_MISSING', 'Run token is empty')
-  const requestId = randomUUID()
+  const requestId = args.requestId ?? randomUUID()
   const request: MortiseUiRequest = {
     v: MORTISE_UI_PROTOCOL_VERSION,
     kind: 'request',

@@ -383,7 +383,11 @@ export class DefaultResourceLoader implements ResourceLoader {
 		// Keep disabled extensions discoverable through the catalog, but exclude
 		// them before module evaluation so reload really unloads their runtime.
 		const enabledExtensions = this.getEnabledResources(snapshot.resolvedPaths.extensions)
-			.filter((resource) => !resource.metadata.extensionId || this.settingsManager.isExtensionEnabled(resource.metadata.extensionId, true))
+			.filter(
+				(resource) =>
+					!resource.metadata.extensionId ||
+					this.settingsManager.isExtensionEnabled(resource.metadata.extensionId, true),
+			)
 			.map((resource) => resource.path);
 		const enabledSkillResources = this.getEnabledResources(snapshot.resolvedPaths.skills);
 		const enabledPrompts = this.getEnabledPaths(snapshot.resolvedPaths.prompts);
@@ -425,7 +429,11 @@ export class DefaultResourceLoader implements ResourceLoader {
 		}
 
 		const cliEnabledExtensions = this.getEnabledResources(snapshot.cliExtensionPaths.extensions)
-			.filter((resource) => !resource.metadata.extensionId || this.settingsManager.isExtensionEnabled(resource.metadata.extensionId, true))
+			.filter(
+				(resource) =>
+					!resource.metadata.extensionId ||
+					this.settingsManager.isExtensionEnabled(resource.metadata.extensionId, true),
+			)
 			.map((resource) => resource.path);
 		const cliEnabledSkills = this.getEnabledPaths(snapshot.cliExtensionPaths.skills);
 		const cliEnabledPrompts = this.getEnabledPaths(snapshot.cliExtensionPaths.prompts);
@@ -834,6 +842,8 @@ export class DefaultResourceLoader implements ResourceLoader {
 				manifestStatus: resource.metadata.extensionManifestStatus,
 				manifestDiagnostics: resource.metadata.extensionManifestDiagnostics,
 				manifestUI: resource.metadata.extensionUI,
+				frontendLoadable: resource.metadata.extensionFrontendLoadable,
+				frontendDiagnostics: resource.metadata.extensionFrontendDiagnostics,
 			};
 			const resolvedPath = this.resolveResourcePath(resource.path);
 			result.set(resource.path, metadata);

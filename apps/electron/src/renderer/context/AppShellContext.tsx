@@ -14,8 +14,6 @@ import type {
   Session,
   WorkspaceInfo,
   FileAttachment,
-  PermissionRequest,
-  PermissionMode,
   LoadedSkill,
   NewChatActionParams,
   PiGlobalProviderForDisplay,
@@ -52,7 +50,6 @@ export interface AppShellContextType {
   piProviders: PiGlobalProviderForDisplay[]
   piGlobalSettings: PiGlobalSettings
   refreshPiGlobalConfig: () => Promise<void>
-  pendingPermissions: Map<string, PermissionRequest[]>
   /** Get draft input text for a session - reads from ref without triggering re-renders */
   getDraft: (sessionId: string) => string
   /** Get persisted attachment refs (path + name) for a session's draft - no file IO */
@@ -63,8 +60,6 @@ export interface AppShellContextType {
   clearDraft: (sessionId: string) => Promise<void>
   /** All skills for this workspace - provided by AppShell component (for @mentions) */
   skills?: LoadedSkill[]
-  /** Enabled permission modes for Shift+Tab cycling */
-  enabledModes?: PermissionMode[]
 
   /** Pi extension input currently replacing the composer for its owning session. */
   extensionInteraction?: ExtensionInteractionBridgeRequestV1 | null
@@ -86,15 +81,6 @@ export interface AppShellContextType {
   /** Track which session user is viewing (for unread state machine) */
   onSetActiveViewingSession: (sessionId: string) => void
   onDeleteSession: (sessionId: string, skipConfirmation?: boolean) => Promise<boolean>
-
-  // Permission handling
-  onRespondToPermission?: (
-    sessionId: string,
-    requestId: string,
-    allowed: boolean,
-    alwaysAllow: boolean,
-    options?: import('../../shared/types').PermissionResponseOptions
-  ) => void
 
   // File/URL handlers - these can open in tabs or external apps
   onOpenFile: (path: string) => void
@@ -211,26 +197,16 @@ export function useActiveWorkspace(): WorkspaceInfo | null {
 }
 
 /**
- * Get pending permission for a session (first in queue)
- */
-export function usePendingPermission(sessionId: string): PermissionRequest | undefined {
-  const { pendingPermissions } = useAppShellContext()
-  return pendingPermissions.get(sessionId)?.[0]
-}
-
-/**
  * Hook to get and update session options for a specific session.
  * This is the primary way components should access session options.
  *
  * Usage:
- *   const { options, setPermissionMode } = useSessionOptionsFor(sessionId)
- *   setPermissionMode('ask')
+ *   const { options, setOption } = useSessionOptionsFor(sessionId)
  */
 export function useSessionOptionsFor(sessionId: string): {
   options: SessionOptions
   setOption: <K extends keyof SessionOptions>(key: K, value: SessionOptions[K]) => void
   setOptions: (updates: SessionOptionUpdates) => void
-  setPermissionMode: (mode: PermissionMode) => void
 } {
   const { sessionOptions, onSessionOptionsChange } = useAppShellContext()
 
@@ -247,14 +223,9 @@ export function useSessionOptionsFor(sessionId: string): {
     onSessionOptionsChange(sessionId, updates)
   }, [sessionId, onSessionOptionsChange])
 
-  const setPermissionMode = useCallback((mode: PermissionMode) => {
-    setOption('permissionMode', mode)
-  }, [setOption])
-
   return {
     options,
     setOption,
     setOptions,
-    setPermissionMode,
   }
 }

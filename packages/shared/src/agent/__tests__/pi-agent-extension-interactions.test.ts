@@ -34,6 +34,25 @@ function createAgent(onExtensionEvent?: BackendConfig['onExtensionEvent']) {
 }
 
 describe('PiAgent extension interaction bridge', () => {
+  it('forwards frontend channel state without sending it through the conversation adapter', () => {
+    const bridgeEvents: unknown[] = []
+    const { agent } = createAgent(event => bridgeEvents.push(event))
+    ;(agent as any).handlePiEvent({
+      type: 'extension_frontend_state',
+      extensionId: 'extension-ui-v2-lab',
+      runtimeId: 'runtime-test',
+      state: { schemaVersion: 2, channelId: 'session-counter', scope: 'session', revision: 2, state: { count: 1 } },
+    })
+    expect(bridgeEvents).toContainEqual({
+      type: 'extension_frontend_state',
+      extensionId: 'extension-ui-v2-lab',
+      runtimeId: 'runtime-test',
+      sessionId: 'session-test',
+      workspaceId: 'ws-test',
+      state: { schemaVersion: 2, channelId: 'session-counter', scope: 'session', revision: 2, state: { count: 1 } },
+    })
+  })
+
   it('passes interaction v1 through with trusted ownership and structured answers', () => {
     const bridgeEvents: unknown[] = []
     const { agent, responses } = createAgent(event => bridgeEvents.push(event))

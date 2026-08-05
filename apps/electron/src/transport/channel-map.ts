@@ -50,14 +50,13 @@ export const CHANNEL_MAP = {
   sendMessage: invoke(RPC_CHANNELS.sessions.SEND_MESSAGE, undefined, 2, SEND_MESSAGE_RPC_TIMEOUT_MS, 0),
   cancelProcessing: invoke(RPC_CHANNELS.sessions.CANCEL),
   killShell: invoke(RPC_CHANNELS.sessions.KILL_SHELL),
-  getTaskOutput: invoke(RPC_CHANNELS.tasks.GET_OUTPUT),
   respondToPermission: invoke(RPC_CHANNELS.sessions.RESPOND_TO_PERMISSION),
+  getTaskOutput: invoke(RPC_CHANNELS.tasks.GET_OUTPUT),
   sessionCommand: invoke(RPC_CHANNELS.sessions.COMMAND),
   exportSession: invoke(RPC_CHANNELS.sessions.EXPORT),
   importSession: invoke(RPC_CHANNELS.sessions.IMPORT, undefined, 1),
   exportRemoteSessionTransfer: invoke(RPC_CHANNELS.sessions.EXPORT_REMOTE_TRANSFER),
   importRemoteSessionTransfer: invoke(RPC_CHANNELS.sessions.IMPORT_REMOTE_TRANSFER, undefined, 1),
-  getPendingPlanExecution: invoke(RPC_CHANNELS.sessions.GET_PENDING_PLAN_EXECUTION),
   getSessionPermissionModeState: invoke(RPC_CHANNELS.sessions.GET_PERMISSION_MODE_STATE),
 
   // Event listeners
@@ -332,6 +331,7 @@ export const CHANNEL_MAP = {
   getExtensionCommands: invoke(RPC_CHANNELS.extensions.GET_COMMANDS),
   getExtensionFileState: invoke(RPC_CHANNELS.extensions.GET_FILE_STATE),
   setExtensionFileState: invoke(RPC_CHANNELS.extensions.SET_FILE_STATE),
+  sendExtensionFrontendMessage: invoke(RPC_CHANNELS.extensions.FRONTEND_MESSAGE),
 
   // Pi session tree — list child sessions spawned via spawn_session tool
   listChildSessions: invoke(RPC_CHANNELS.sessions.LIST_CHILD_SESSIONS),

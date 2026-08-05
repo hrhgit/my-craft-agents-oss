@@ -191,4 +191,152 @@ describe("unified Mortise extension manifest", () => {
 		expect(result.extensions[0]).not.toHaveProperty("target");
 		expect(result.extensions[0]).not.toHaveProperty("hostVersion");
 	});
+
+	it("discovers V1 and V2 UI declarations side by side", async () => {
+		const packageDir = join(agentDir, "extensions");
+		writeFileSync(join(packageDir, "legacy.js"), "export default function() {}", "utf8");
+		writeFileSync(join(packageDir, "modern.js"), "export default function() {}", "utf8");
+		mkdirSync(join(packageDir, "dist", "ui"), { recursive: true });
+		writeFileSync(join(packageDir, "dist", "ui", "toolbar.js"), "export default { mount() {} }", "utf8");
+		writeFileSync(join(packageDir, "dist", "ui", "toolbar.css"), ".toolbar {}", "utf8");
+		writeFileSync(
+			join(packageDir, "package.json"),
+			JSON.stringify({
+				pi: {
+					extensions: [
+						{ id: "legacy-ui", path: "./legacy.js", ui: { schemaVersion: 1, title: "Legacy" } },
+						{
+							id: "modern-ui",
+							path: "./modern.js",
+							ui: {
+								schemaVersion: 2,
+								title: "Modern",
+								compatibility: { uiApi: "^2.0.0", mortise: ">=0.1.0 <0.2.0" },
+								frontends: [
+									{
+										id: "toolbar",
+										entry: "./dist/ui/toolbar.js",
+										styles: ["./dist/ui/toolbar.css"],
+										surface: "composer.toolbar",
+										mode: "append",
+										scope: "session",
+									},
+								],
+							},
+						},
+					],
+				},
+			}),
+			"utf8",
+		);
+
+		const result = await getExtensionCatalog({ cwd, agentDir });
+		expect(result.errors).toEqual([]);
+		expect(result.extensions.map((entry) => [entry.id, entry.ui?.schemaVersion])).toEqual([
+			["legacy-ui", 1],
+			["modern-ui", 2],
+		]);
+		expect(result.extensions[1]).toMatchObject({ frontendLoadable: true, frontendDiagnostics: [] });
+	});
+
+	it.each([
+		[
+			"ui-api-version-mismatch",
+			{ compatibility: { uiApi: "^3.0.0", mortise: ">=0.1.0 <0.2.0" }, entry: "./frontend.js" },
+		],
+		[
+			"frontend-resource-missing",
+			{ compatibility: { uiApi: "^2.0.0", mortise: ">=0.1.0 <0.2.0" }, entry: "./missing.js" },
+		],
+		[
+			"invalid-ui-manifest",
+			{ compatibility: { uiApi: "^2.0.0", mortise: ">=0.1.0 <0.2.0" }, entry: "./../outside.js" },
+		],
+		[
+			"frontend-entry-mime-invalid",
+			{ compatibility: { uiApi: "^2.0.0", mortise: ">=0.1.0 <0.2.0" }, entry: "./frontend.css" },
+		],
+	])("keeps the backend enabled when V2 frontend validation reports %s", async (code, input) => {
+		const packageDir = join(agentDir, "extensions");
+		writeFileSync(join(packageDir, "backend.js"), "export default function() {}", "utf8");
+		writeFileSync(join(packageDir, "frontend.js"), "export default { mount() {} }", "utf8");
+		writeFileSync(join(packageDir, "frontend.css"), ".frontend {}", "utf8");
+		writeFileSync(
+			join(packageDir, "package.json"),
+			JSON.stringify({
+				pi: {
+					extensions: [
+						{
+							id: "frontend-failure",
+							path: "./backend.js",
+							ui: {
+								schemaVersion: 2,
+								compatibility: input.compatibility,
+								frontends: [
+									{
+										id: "toolbar",
+										entry: input.entry,
+										surface: "composer.toolbar",
+										mode: "append",
+										scope: "session",
+									},
+								],
+							},
+						},
+					],
+				},
+			}),
+			"utf8",
+		);
+
+		const resolved = await new ResourceResolver({
+			cwd,
+			agentDir,
+			settingsManager: SettingsManager.inMemory(),
+		}).resolve();
+		const extension = resolved.extensions[0];
+		expect(extension?.enabled).toBe(true);
+		expect(extension?.metadata.extensionFrontendLoadable).toBe(false);
+		expect(extension?.metadata.extensionFrontendDiagnostics).toContainEqual(expect.objectContaining({ code }));
+	});
+
+	it("accepts module-only UI manifests and validates module resources", async () => {
+		const packageDir = join(agentDir, "extensions", "module-kit");
+		mkdirSync(join(packageDir, "dist"), { recursive: true });
+		writeFileSync(join(packageDir, "index.js"), "export default function() {}", "utf8");
+		writeFileSync(join(packageDir, "dist", "components.js"), "export default {}", "utf8");
+		writeFileSync(join(packageDir, "dist", "components.css"), ".kit {}", "utf8");
+		writeFileSync(
+			join(packageDir, "package.json"),
+			JSON.stringify({
+				pi: {
+					extensions: [
+						{
+							id: "module-kit",
+							path: "./index.js",
+							manifest: manifest("Module Kit"),
+							ui: {
+								schemaVersion: 2,
+								compatibility: { uiApi: "^2.0.0", mortise: ">=0.1.0 <0.2.0" },
+								modules: [
+									{
+										id: "components",
+										entry: "./dist/components.js",
+										styles: ["./dist/components.css"],
+										apiVersion: "1.0.0",
+									},
+								],
+							},
+						},
+					],
+				},
+			}),
+			"utf8",
+		);
+		const result = await resolve([{ id: "module-kit", path: "extensions/module-kit" }]);
+		expect(result.extensions[0]?.metadata.extensionFrontendDiagnostics).toEqual([]);
+		expect(result.extensions[0]?.metadata.extensionUI).toMatchObject({
+			modules: [{ id: "components", apiVersion: "1.0.0" }],
+		});
+	});
 });

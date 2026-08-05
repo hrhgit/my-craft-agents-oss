@@ -21,6 +21,11 @@ function catalogEntry(configurable: boolean, withSchema: boolean): PiExtensionCa
   }
 }
 
+function v1UI(extension: PiExtensionCatalogEntry) {
+  if (!extension.ui || extension.ui.schemaVersion !== 1) throw new Error('Expected a V1 extension UI')
+  return extension.ui
+}
+
 describe('Mortise extension settings panels', () => {
   it('derives configurability from the extension manifest schema', () => {
     expect(isExtensionConfigurable(catalogEntry(true, true))).toBe(true)
@@ -30,7 +35,7 @@ describe('Mortise extension settings panels', () => {
 
   it('keeps a declared extension settings page navigable without inline fields', () => {
     const extension = catalogEntry(true, true)
-    extension.ui!.settings = {
+    v1UI(extension).settings = {
       schemaVersion: 1,
       page: { id: 'extension-page', title: 'Extension page' },
       fields: [],
@@ -41,7 +46,7 @@ describe('Mortise extension settings panels', () => {
   it('keeps the permissions extension settings field on its dedicated page', () => {
     const extension = catalogEntry(true, true)
     extension.id = 'mortise-permissions'
-    extension.ui!.settings = {
+    v1UI(extension).settings = {
       schemaVersion: 1,
       page: { id: 'permissions', title: 'Permissions' },
       groups: [{ id: 'approval-mode', title: 'Approval mode' }],
@@ -67,7 +72,7 @@ describe('Mortise extension settings panels', () => {
 
   it('keeps ungrouped and unknown-group fields when groups are declared', () => {
     const extension = catalogEntry(true, true)
-    extension.ui!.settings = {
+    v1UI(extension).settings = {
       schemaVersion: 1,
       groups: [{ id: 'advanced', title: 'Advanced' }],
       fields: [

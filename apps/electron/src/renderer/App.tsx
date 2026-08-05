@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { useTheme } from '@/hooks/useTheme'
 import type { ThemeOverrides } from '@config/theme'
 import { useSetAtom, useStore, useAtomValue, useAtom } from 'jotai'
-import type { Session, WorkspaceInfo, SessionEvent, Message, FileAttachment, StoredAttachment, PermissionRequest, NewChatActionParams, ContentBadge, PermissionModeState } from '../shared/types'
+import type { Session, WorkspaceInfo, SessionEvent, Message, FileAttachment, StoredAttachment, NewChatActionParams, ContentBadge, PermissionModeState } from '../shared/types'
 import type { SessionDraft, DraftAttachmentRef } from '@mortise/shared/config'
 import type { MidStreamSendIntent } from '@mortise/shared/protocol'
 import type { SessionOptions, SessionOptionUpdates } from './hooks/useSessionOptions'
@@ -344,8 +344,6 @@ export default function App() {
   } = usePiGlobalConfig()
 
   const [menuNewChatTrigger, setMenuNewChatTrigger] = useState(0)
-  // Permission requests per session (queue to handle multiple concurrent requests)
-  const [pendingPermissions, setPendingPermissions] = useState<Map<string, PermissionRequest[]>>(new Map())
   // Draft composer state per session (text + attachment refs), preserved across mode
   // switches, conversation changes, and app restarts. Using a ref avoids re-renders
   // during typing; attachments are stored as lightweight refs (path + name) and
@@ -737,13 +735,6 @@ export default function App() {
     nextMetaMap.set(handoff.sessionId, extractSessionMeta(updatedSession))
     store.set(sessionMetaMapAtom, nextMetaMap)
 
-    setPendingPermissions(previousPermissions => {
-      if (!previousPermissions.has(handoff.sessionId)) return previousPermissions
-      const next = new Map(previousPermissions)
-      next.delete(handoff.sessionId)
-      return next
-    })
-
     if (!updatedSession.hidden) {
       const preview = handoff.preview
         ? stripMarkdown(handoff.preview.substring(0, 200)).substring(0, 100) || undefined
@@ -849,25 +840,6 @@ export default function App() {
     const handleEffects = (effects: Effect[], sessionId: string, eventType: string) => {
       for (const effect of effects) {
         switch (effect.type) {
-          case 'permission_request': {
-            setPendingPermissions(prevPerms => {
-              const next = new Map(prevPerms)
-              const existingQueue = next.get(sessionId) || []
-              next.set(sessionId, [...existingQueue, effect.request])
-              return next
-            })
-
-            // Native notification for approval-required pauses (same gating as completion notifications)
-            const notifySession = store.get(sessionAtomFamily(sessionId))
-            if (notifySession && !notifySession.hidden) {
-              const isAdminPrompt = effect.request.type === 'admin_approval'
-              const promptBody = isAdminPrompt
-                ? `Admin approval required: ${effect.request.appName || effect.request.toolName}`
-                : `Permission required: ${effect.request.toolName}`
-              showSessionNotification(notifySession, promptBody)
-            }
-            break
-          }
           case 'permission_mode_changed': {
             if (typeof effect.modeVersion === 'number' && effect.changedAt && effect.changedBy) {
               applyPermissionModeState(effect.sessionId, {
@@ -912,17 +884,6 @@ export default function App() {
         }
       }
 
-      // Clear pending permissions on complete
-      if (eventType === 'complete') {
-        setPendingPermissions(prevPerms => {
-          if (prevPerms.has(sessionId)) {
-            const next = new Map(prevPerms)
-            next.delete(sessionId)
-            return next
-          }
-          return prevPerms
-        })
-      }
     }
 
     const cleanup = window.electronAPI.onSessionEvent((event: SessionEvent) => {
@@ -965,16 +926,6 @@ export default function App() {
 
       // Track activity for stale session watchdog
       trackSessionActivity(sessionId)
-
-      // Dispatch window event when compaction completes
-      // This allows FreeFormInput to sequence the plan execution message after compaction
-      // Note: markCompactionComplete is called on the backend (sessions.ts) to ensure
-      // it happens even if CMD+R occurs during compaction
-      if (event.type === 'info' && event.statusType === 'compaction_complete') {
-        window.dispatchEvent(new CustomEvent('mortise:compaction-complete', {
-          detail: { sessionId }
-        }))
-      }
 
       // Check if session is currently streaming (atom is source of truth)
       const atomSession = store.get(sessionAtomFamily(sessionId))
@@ -1653,46 +1604,6 @@ export default function App() {
     navigate(routes.action.newSession(params))
   }, [windowWorkspaceId])
 
-  const handleRespondToPermission = useCallback(async (
-    sessionId: string,
-    requestId: string,
-    allowed: boolean,
-    alwaysAllow: boolean,
-    options?: import('../shared/types').PermissionResponseOptions,
-  ) => {
-    const success = await window.electronAPI.respondToPermission(sessionId, requestId, allowed, alwaysAllow, options)
-
-    if (success) {
-      // Remove only the first permission from the queue (the one we just responded to)
-      setPendingPermissions(prev => {
-        const next = new Map(prev)
-        const queue = next.get(sessionId) || []
-        const remainingQueue = queue.slice(1) // Remove first item
-        if (remainingQueue.length === 0) {
-          next.delete(sessionId)
-        } else {
-          next.set(sessionId, remainingQueue)
-        }
-        return next
-      })
-      // Note: No need to force session refresh - per-session atoms update automatically
-    } else {
-      // Response failed (agent/session gone) - clear the permission anyway
-      // to avoid UI being stuck with stale permission
-      setPendingPermissions(prev => {
-        const next = new Map(prev)
-        const queue = next.get(sessionId) || []
-        const remainingQueue = queue.slice(1)
-        if (remainingQueue.length === 0) {
-          next.delete(sessionId)
-        } else {
-          next.set(sessionId, remainingQueue)
-        }
-        return next
-      })
-    }
-  }, [])
-
   // Centralized link interceptor: classifies file types and decides whether to
   // show an in-app preview overlay or open externally. Replaces the old
   // handleOpenFile/handleOpenUrl that always opened in external apps.
@@ -1912,7 +1823,6 @@ export default function App() {
 
       // Clear workspace-scoped transient state.
       if (rendererWorkspaceChanged) {
-        setPendingPermissions(new Map())
         setSessionOptions(new Map())
         store.set(skillsAtom, [])
       }
@@ -1971,7 +1881,6 @@ export default function App() {
     piProviders,
     piGlobalSettings,
     refreshPiGlobalConfig,
-    pendingPermissions,
     getDraft,
     getDraftAttachmentRefs,
     hydrateDraftAttachments,
@@ -1986,7 +1895,6 @@ export default function App() {
     onMarkSessionUnread: handleMarkSessionUnread,
     onSetActiveViewingSession: handleSetActiveViewingSession,
     onDeleteSession: handleDeleteSession,
-    onRespondToPermission: handleRespondToPermission,
     // File/URL handlers
     onOpenFile: handleOpenFile,
     onOpenUrl: handleOpenUrl,
@@ -2013,7 +1921,6 @@ export default function App() {
     piProviders,
     piGlobalSettings,
     refreshPiGlobalConfig,
-    pendingPermissions,
     getDraft,
     getDraftAttachmentRefs,
     hydrateDraftAttachments,
@@ -2027,7 +1934,6 @@ export default function App() {
     handleMarkSessionUnread,
     handleSetActiveViewingSession,
     handleDeleteSession,
-    handleRespondToPermission,
     handleOpenFile,
     handleOpenUrl,
     handleSelectWorkspace,

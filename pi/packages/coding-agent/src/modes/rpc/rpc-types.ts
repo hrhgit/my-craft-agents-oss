@@ -259,6 +259,13 @@ export type RpcCommand = RpcEnvelope &
 		// Commands (available for invocation via prompt)
 		| { id?: string; type: "get_commands" }
 		| { id?: string; type: "invoke_extension_command"; commandId: string; args?: string; ownerExtensionId?: string }
+		| {
+				id?: string;
+				type: "send_extension_frontend_message";
+				extensionId: string;
+				channelId: string;
+				message: unknown;
+		  }
 		| { id?: string; type: "reload_extensions" }
 
 		// Host facade (config/credentials/session/resources)
@@ -416,6 +423,23 @@ export interface RpcExtensionCommandResult {
 export interface RpcBackgroundTaskEvent {
 	type: "background_task_event";
 	task: GlobalBackgroundTaskSnapshot;
+}
+
+export interface RpcExtensionFrontendStateEvent extends RpcEnvelope {
+	type: "extension_frontend_state";
+	extensionId: string;
+	state: {
+		schemaVersion: 2;
+		channelId: string;
+		scope: "session" | "workspace" | "global";
+		revision: number;
+		state: unknown;
+	};
+}
+
+export interface RpcExtensionFrontendResetEvent extends RpcEnvelope {
+	type: "extension_frontend_reset";
+	extensionId: string;
 }
 
 // ============================================================================
@@ -634,6 +658,13 @@ export type RpcResponse = RpcEnvelope &
 		| { id?: string; type: "response"; command: "resolve_skill"; success: true; data: HostResolvedSkill | null }
 		| { id?: string; type: "response"; command: "get_extensions"; success: true; data: HostExtensionsResult }
 		| { id?: string; type: "response"; command: "set_extension_config"; success: true }
+		| {
+				id?: string;
+				type: "response";
+				command: "send_extension_frontend_message";
+				success: true;
+				data?: { result?: unknown };
+		  }
 		| { id?: string; type: "response"; command: "get_model_catalog"; success: true; data: HostModelCatalog }
 
 		// Error response (any command can fail)

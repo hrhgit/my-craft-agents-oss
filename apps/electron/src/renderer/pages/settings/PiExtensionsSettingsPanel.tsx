@@ -15,8 +15,9 @@ import { SettingsCard } from '@/components/settings'
 import type { PiExtensionCatalogEntry, PiExtensionCatalogError, PiExtensionCategory } from '@mortise/shared/config/pi-extension-settings'
 export function isExtensionConfigurable(extension: PiExtensionCatalogEntry): boolean {
   return extension.configurable && (
-    Boolean(extension.ui?.settings?.page)
-    || (extension.ui?.settings?.fields.length ?? 0) > 0
+    extension.ui?.schemaVersion === 1
+    && (Boolean(extension.ui.settings?.page)
+      || (extension.ui.settings?.fields.length ?? 0) > 0)
   )
 }
 

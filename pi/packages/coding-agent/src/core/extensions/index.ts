@@ -75,6 +75,7 @@ export type {
 	ExtensionIsolation,
 	// Runtime
 	ExtensionRuntime,
+	ExtensionRuntimeState,
 	ExtensionUIAction,
 	ExtensionUICapabilities,
 	ExtensionUIContext,
@@ -192,6 +193,7 @@ export {
 	isGrepToolResult,
 	isLsToolResult,
 	isReadToolResult,
+	isSerializableFrontendValue,
 	isToolCallEventType,
 	isWebFetchToolResult,
 	isWriteToolResult,

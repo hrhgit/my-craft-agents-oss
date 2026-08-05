@@ -256,7 +256,6 @@ const mockAppShellContext = {
   workspaces: [{ id: 'playground-workspace', name: 'Playground', path: '/playground', rootPath: '/playground' }],
   activeWorkspaceId: 'playground-workspace',
   activeSessionId: null,
-  pendingPermissions: new Map(),
   pendingCredentials: new Map(),
   currentModel: 'haiku',
   providerDefaultModel: null,

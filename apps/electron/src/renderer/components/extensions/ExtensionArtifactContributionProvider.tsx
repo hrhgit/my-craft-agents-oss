@@ -2,6 +2,7 @@ import * as React from 'react'
 import { ArtifactContributionProvider } from '@mortise/ui'
 import { selectMountableOverflow } from './extension-contribution-store'
 import { ExtensionContributionZone } from './ExtensionContributionZone'
+import { ExtensionFrontendZone } from './ExtensionFrontendZone'
 import { useExtensionContributions } from './useExtensionContributions'
 
 export function ExtensionArtifactContributionProvider({
@@ -26,7 +27,17 @@ export function ExtensionArtifactContributionProvider({
     <ArtifactContributionProvider presentation={{
       aside: hasAside ? <ExtensionContributionZone sessionId={sessionId} surface="conversation.artifact.aside" target={target} /> : undefined,
       asideTitle,
-      footer: hasFooter ? <ExtensionContributionZone sessionId={sessionId} surface="conversation.artifact.footer" target={target} /> : undefined,
+      footer: (
+        <>
+          {hasFooter ? <ExtensionContributionZone sessionId={sessionId} surface="conversation.artifact.footer" target={target} /> : null}
+          <ExtensionFrontendZone
+            className="contents"
+            sessionId={sessionId}
+            surface="conversation.artifact.footer"
+            route={{ path: artifactId }}
+          />
+        </>
+      ),
     }}>
       {children}
     </ArtifactContributionProvider>

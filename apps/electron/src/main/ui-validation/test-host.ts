@@ -181,6 +181,7 @@ export async function startUiTestHost(options: UiTestHostOptions): Promise<UiTes
   let closing = false
   let runVerificationLevel: UiVerificationLevel = 'scenario-verified'
   const activeWaits = new Set<AbortController>()
+  const responseCache = new Map<string, Record<string, unknown>>()
   const evidenceCollector = new ElectronEvidenceCollector({
     artifactsDir,
     runId,
@@ -228,6 +229,12 @@ export async function startUiTestHost(options: UiTestHostOptions): Promise<UiTes
       return
     }
 
+    const cachedResponse = responseCache.get(body.requestId)
+    if (cachedResponse) {
+      sendJson(response, 200, cachedResponse)
+      return
+    }
+
     try {
       const commandSeq = ++seq
       const command = normalizeMethod(body.method)
@@ -238,7 +245,7 @@ export async function startUiTestHost(options: UiTestHostOptions): Promise<UiTes
         runVerificationLevel = level
       }
       revision = Math.max(revision, snapshotRevision(result), lastSnapshot?.revision ?? 0)
-      sendJson(response, 200, {
+      const successResponse = {
         v: 1,
         kind: 'response',
         id: body.id,
@@ -249,7 +256,10 @@ export async function startUiTestHost(options: UiTestHostOptions): Promise<UiTes
         verificationLevel: level,
         ok: true,
         result,
-      })
+      }
+      responseCache.set(body.requestId, successResponse)
+      while (responseCache.size > 128) responseCache.delete(responseCache.keys().next().value!)
+      sendJson(response, 200, successResponse)
     } catch (error) {
       const command = normalizeMethod(body.method)
       let evidenceBundle: string | undefined
@@ -261,9 +271,12 @@ export async function startUiTestHost(options: UiTestHostOptions): Promise<UiTes
           // The original typed failure remains authoritative when evidence is unavailable.
         }
       }
-      sendJson(response, 200, {
+      const failureResponse = {
         ...failureEnvelope(body.requestId, runId, ++seq, revision, verificationLevel(command), error, evidenceBundle ? { evidenceBundle } : undefined),
-      })
+      }
+      responseCache.set(body.requestId, failureResponse)
+      while (responseCache.size > 128) responseCache.delete(responseCache.keys().next().value!)
+      sendJson(response, 200, failureResponse)
     } finally {
       backgroundWindows?.refresh()
       activeWaits.delete(abortController)

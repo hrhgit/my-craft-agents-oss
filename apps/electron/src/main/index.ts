@@ -140,6 +140,7 @@ import { handleDeepLink } from './deep-link'
 import { BrowserPaneManager } from './browser-pane-manager'
 import { createBrowserCapabilityAdapter } from './browser-capability-adapter'
 import { registerThumbnailScheme, registerThumbnailHandler } from './thumbnail-protocol'
+import { registerExtensionScheme, registerExtensionHandler } from './extension-protocol'
 import { isDebugMode, mainLog, getLogFilePath, getMessagingGatewayLogFilePath, messagingGatewayLog, autoUpdateLog, flushDedicatedLogs, flushDedicatedLogsSync, initializeRendererLoggingBridge, rootLog } from './logger'
 import { setPerfEnabled, enableDebug } from '@mortise/shared/utils'
 import { initNotificationService, initBadgeIcon, initInstanceBadge, updateBadgeCount, showNotification } from './notifications'
@@ -192,7 +193,6 @@ process.env.MORTISE_BUNDLED_PI_EXTENSIONS_PATH = electronResourcePaths.bundledPi
 // File-specific variables remain as compatibility fallbacks for older runtimes.
 process.env.MORTISE_BROWSER_EXTENSION_PATH = electronResourcePaths.browserExtensionPath
 process.env.MORTISE_MESSAGING_EXTENSION_PATH = electronResourcePaths.messagingExtensionPath
-process.env.MORTISE_PERMISSIONS_EXTENSION_PATH = electronResourcePaths.permissionsExtensionPath
 
 // Diagnostic: report main-process i18n hydration result. We log here (not inline
 // at the hydration site above) because mainLog is only available after this point.
@@ -354,6 +354,7 @@ if (process.env.MORTISE_SERVER_URL && process.env.MORTISE_ALLOW_INSECURE_TLS ===
 // Register thumbnail:// custom protocol for file preview thumbnails in the sidebar.
 // Must happen before app.whenReady() — Electron requires early scheme registration.
 registerThumbnailScheme()
+registerExtensionScheme()
 
 // Handle deeplink on macOS (when app is already running)
 app.on('open-url', (event, url) => {
@@ -485,6 +486,7 @@ app.whenReady().then(async () => {
 
   // Register thumbnail:// protocol handler (scheme was registered earlier, before app.whenReady)
   registerThumbnailHandler()
+  registerExtensionHandler()
 
   // Re-apply proxy settings now that Electron sessions are available
   // (first call before app.whenReady only configured Node-level proxy)

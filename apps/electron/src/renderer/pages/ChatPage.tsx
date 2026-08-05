@@ -21,7 +21,7 @@ import { toast } from 'sonner'
 import { PanelHeaderCenterButton } from '@/components/ui/PanelHeaderCenterButton'
 import { DropdownMenu, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { StyledDropdownMenuContent, StyledDropdownMenuItem, StyledDropdownMenuSeparator } from '@/components/ui/styled-dropdown'
-import { useAppShellContext, usePendingPermission, useSessionOptionsFor, useSession as useSessionData } from '@/context/AppShellContext'
+import { useAppShellContext, useSessionOptionsFor, useSession as useSessionData } from '@/context/AppShellContext'
 import { rendererPerf } from '@/lib/perf'
 import { navigate, routes } from '@/lib/navigate'
 import { coerceInputText } from '@/lib/input-text'
@@ -55,7 +55,6 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
     onSendMessage,
     onOpenFile,
     onOpenUrl,
-    onRespondToPermission,
     onMarkSessionRead,
     onMarkSessionUnread,
     onSetActiveViewingSession,
@@ -64,7 +63,6 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
     onInputChange,
     onAttachmentsChange,
     skills,
-    enabledModes,
     onRenameSession,
     onDeleteSession,
     panelHeaderTrailingAction,
@@ -90,7 +88,6 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
   const {
     options: sessionOpts,
     setOption,
-    setPermissionMode,
   } = useSessionOptionsFor(sessionId)
 
   // Use per-session atom for isolated updates
@@ -167,9 +164,6 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session?.id, isWindowFocused, isFocusedPanel, onSetActiveViewingSession])
-
-  // Get pending permission for this session
-  const pendingPermission = usePendingPermission(sessionId)
 
   // Track draft value for this session
   const [inputValue, setInputValue] = React.useState(() => coerceInputText(getDraft(sessionId)))
@@ -588,13 +582,8 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
                 currentModel={effectiveModel}
                 onModelChange={handleModelChange}
                 onProviderChange={handleProviderChange}
-                pendingPermission={undefined}
-                onRespondToPermission={onRespondToPermission}
                 thinkingLevel={sessionOpts.thinkingLevel}
                 onThinkingLevelChange={(level) => setOption('thinkingLevel', level)}
-                permissionMode={sessionOpts.permissionMode}
-                onPermissionModeChange={setPermissionMode}
-                enabledModes={enabledModes}
                 inputValue={inputValue}
                 onInputChange={handleInputChange}
                 attachmentsValue={attachmentsValue}
@@ -663,13 +652,8 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
             currentModel={effectiveModel}
             onModelChange={handleModelChange}
             onProviderChange={handleProviderChange}
-            pendingPermission={pendingPermission}
-            onRespondToPermission={onRespondToPermission}
             thinkingLevel={sessionOpts.thinkingLevel}
             onThinkingLevelChange={(level) => setOption('thinkingLevel', level)}
-            permissionMode={sessionOpts.permissionMode}
-            onPermissionModeChange={setPermissionMode}
-            enabledModes={enabledModes}
             inputValue={inputValue}
             onInputChange={handleInputChange}
             attachmentsValue={attachmentsValue}

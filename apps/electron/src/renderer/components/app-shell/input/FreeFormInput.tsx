@@ -63,7 +63,6 @@ import { derivePickerMode } from './picker-mode'
 import { matchExactExtensionCommand } from './extension-command-submit'
 import type { FileAttachment, LoadedSkill } from '../../../../shared/types'
 import type { MidStreamSendIntent } from '@mortise/shared/protocol'
-import type { PermissionMode } from '@mortise/shared/agent/modes'
 import { type ThinkingLevel, THINKING_LEVELS, getThinkingLevelNameKey } from '@mortise/shared/agent/thinking-levels'
 import {
   ATTACHMENT_INLINE_RPC_LIMIT_BYTES,
@@ -82,6 +81,7 @@ import {
 } from './composer-submission'
 import { CompactModelSelector } from './CompactModelSelector'
 import { ExtensionContributionZone } from '@/components/extensions/ExtensionContributionZone'
+import { ExtensionFrontendZone } from '@/components/extensions/ExtensionFrontendZone'
 import { BasicComposerTextarea, InputControlFallback } from './DegradedComposer'
 import { InputErrorBoundary, IsolatedInputSection } from './InputErrorBoundary'
 import {
@@ -245,11 +245,6 @@ export interface FreeFormInputProps {
   thinkingLevel?: ThinkingLevel
   /** Callback when thinking level changes */
   onThinkingLevelChange?: (level: ThinkingLevel) => void
-  // Advanced options
-  permissionMode?: PermissionMode
-  onPermissionModeChange?: (mode: PermissionMode) => void
-  /** Enabled permission modes for Shift+Tab cycling (min 2 modes) */
-  enabledModes?: PermissionMode[]
   // Controlled input value (for persisting across mode switches and conversation changes)
   /** Current input value - if provided, component becomes controlled */
   inputValue?: string
@@ -1398,7 +1393,7 @@ export function FreeFormInput({
     && !piProviderModelSupportsImages(effectiveProviderDetails!.provider, currentModel)
 
   return (
-    <form onSubmit={handleSubmit}>
+    <form onSubmit={handleSubmit} data-mortise-ui-anchor="composer.root">
       <div
         ref={containerRef}
         className={cn(
@@ -1630,7 +1625,10 @@ export function FreeFormInput({
             />
           </InputErrorBoundary>
 
-          <div className={cn("flex items-center gap-1 px-2 py-2", !compactMode && "border-t border-border/50")}>
+          <div
+            className={cn("flex items-center gap-1 px-2 py-2", !compactMode && "border-t border-border/50")}
+            data-mortise-ui-anchor="composer.toolbar"
+          >
           {/* Hidden file input for attach button (shared by compact and desktop) */}
           <input
             ref={fileInputRef}
@@ -1660,6 +1658,7 @@ export function FreeFormInput({
             disabled={disabled}
           />
           {sessionId && <ExtensionContributionZone className="w-auto shrink-0" sessionId={sessionId} surface="composer.toolbar" />}
+          {sessionId && <ExtensionFrontendZone className="contents" sessionId={sessionId} workspaceId={workspaceId} surface="composer.toolbar" />}
           {enableCompactModelPicker && (
             <InputErrorBoundary
               sessionId={sessionId}
@@ -1701,6 +1700,7 @@ export function FreeFormInput({
             disabled={disabled}
           />
           {sessionId && <ExtensionContributionZone className="w-auto shrink-0" sessionId={sessionId} surface="composer.toolbar" />}
+          {sessionId && <ExtensionFrontendZone className="contents" sessionId={sessionId} workspaceId={workspaceId} surface="composer.toolbar" />}
 
           </div>
           )}

@@ -27,6 +27,7 @@ import { expandPath } from '@mortise/shared/utils/paths'
 import {
   getWorkspaceConfigRecordIdentity,
 } from '@mortise/shared/workspaces/state-contract'
+import { WorkspaceTopologyStore } from '@mortise/shared/workspaces'
 import type { MortiseUiMountedExtension, MortiseUiProfileMode } from './protocol.ts'
 import { mountMortiseUiExtensions } from './extension-mount.ts'
 import {
@@ -255,6 +256,36 @@ async function seedFixtureProfile(root: string, mortiseConfigDir: string, mortis
     })
   } finally {
     stateStore.close()
+  }
+
+  // The workspace authority is topology-based now. Keep the legacy per-root
+  // records above for older fixture consumers, but also seed the canonical
+  // registry so a real renderer can resolve the active workspace.
+  const topologyStore = new WorkspaceTopologyStore({
+    databasePath: stateDatabasePath(mortiseConfigDir),
+    writerId: `mortise-ui-profile-topology-${process.pid}-${randomUUID()}`,
+  })
+  try {
+    for (const workspace of workspaces) {
+      topologyStore.create({
+        schemaVersion: 2,
+        id: workspace.id,
+        name: workspace.name,
+        nameSource: 'custom',
+        slug: workspace.slug ?? workspace.id,
+        revision: 1,
+        primaryLocationId: 'primary',
+        locations: [{
+          id: 'primary',
+          name: workspace.name,
+          rootName: workspace.slug ?? workspace.id,
+          endpoint: { kind: 'local', rootPath: workspace.rootPath },
+        }],
+        createdAt: FIXTURE_CREATED_AT,
+      })
+    }
+  } finally {
+    topologyStore.close()
   }
 
   setSharedPiSessionsDirForTests(join(mortiseAgentDir, 'sessions'))

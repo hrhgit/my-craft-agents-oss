@@ -108,21 +108,6 @@ interface PermissionMessageRecord {
   threadId?: number
 }
 
-interface PendingCompactAccept {
-  token: string
-  sessionId: string
-  bindingId: string
-  platform: PlatformType
-  channelId: string
-  /** Forum topic id where the press came from (Telegram supergroup), if any. */
-  threadId?: number
-  messageId: string
-  planPath: string
-  createdAt: number
-}
-
-const COMPACT_ACCEPT_TTL_MS = 10 * 60 * 1000
-
 const HOST_INTERACTION_EVENT_TYPES = new Set([
   'permission_request',
   'credential_request',
@@ -141,7 +126,6 @@ export class MessagingGateway {
   private readonly planMessages = new Map<string, PlanMessageRecord>()
   /** Live permission prompts, keyed by `requestId`. See PermissionMessageRecord. */
   private readonly permissionMessages = new Map<string, PermissionMessageRecord>()
-  private readonly pendingCompactAccepts = new Map<string, PendingCompactAccept>()
   private readonly adapters = new Map<PlatformType, PlatformAdapter>()
   private readonly log: MessagingLogger
   private started = false
@@ -349,16 +333,6 @@ export class MessagingGateway {
     const event = args[0] as SessionEvent | undefined
     if (!event?.sessionId) return
 
-    // If this session has a pending "accept & compact" that is now finishing
-    // compaction, dispatch the approval now. Before the fan-out so the
-    // renderer's own `info:compaction_complete` path doesn't race.
-    if (
-      event.type === 'info' &&
-      (event as { statusType?: string }).statusType === 'compaction_complete'
-    ) {
-      void this.finishPendingCompactAccept(event.sessionId)
-    }
-
     // Conversation output and lifecycle are exclusively projected from Pi.
     // The Host session channel remains only for interactive prompts that are
     // not transcript projections.
@@ -393,7 +367,6 @@ export class MessagingGateway {
   }
 
   private onPiProjectionEvent(event: PiProjectionEventV1): void {
-    if (event.kind === 'compaction_end') void this.finishPendingCompactAccept(event.sessionId)
     if (event.kind === 'prompt_resolved') this.sweepResolvedProjectionPrompt(event)
 
     const bindings = this.bindingStore.findBySession(event.sessionId)
@@ -638,9 +611,22 @@ export class MessagingGateway {
     this.planTokens.revoke(token)
     this.planMessages.delete(token)
 
+    const invokePlanCommand = async (commandId: string) => {
+      const result = await this.sessionManager.invokeExtensionCommand(
+        entry.sessionId,
+        commandId,
+        JSON.stringify({ planPath: entry.planPath }),
+        'plan-mode',
+      )
+      if (!result.invoked) {
+        throw new Error(result.error ?? 'The plan-mode extension is unavailable.')
+      }
+      return result
+    }
+
     if (action === 'accept') {
       try {
-        await this.sessionManager.acceptPlan(entry.sessionId, entry.planPath)
+        await invokePlanCommand('plan-execute')
         await adapter.sendText(press.channelId, '✅ Plan accepted. Agent resuming.', pressOpts)
       } catch (err) {
         this.log.error('acceptPlan failed', {
@@ -657,34 +643,19 @@ export class MessagingGateway {
       return
     }
 
-    // action === 'compact': persist the "waiting for compaction" intent, send
-    // /compact, and let onSessionEvent → finishPendingCompactAccept dispatch
-    // the approval once compaction finishes.
+    // The plan-mode extension owns compaction and the follow-up execution. The
+    // gateway only invokes its command and reports the request to the user.
     const binding = this.bindingStore.findByChannel(platform, press.channelId, press.threadId)
     if (!binding) return
 
-    this.pendingCompactAccepts.set(entry.sessionId, {
-      token,
-      sessionId: entry.sessionId,
-      bindingId: binding.id,
-      platform,
-      channelId: press.channelId,
-      ...(press.threadId !== undefined ? { threadId: press.threadId } : {}),
-      messageId: record?.messageId ?? '',
-      planPath: entry.planPath,
-      createdAt: Date.now(),
-    })
-
     try {
-      await this.sessionManager.setPendingPlanExecution(entry.sessionId, entry.planPath)
-      await this.sessionManager.sendMessage(entry.sessionId, '/compact')
+      await invokePlanCommand('plan-execute')
       await adapter.sendText(
         press.channelId,
         '♻️ Compacting conversation, then executing the plan…',
         pressOpts,
       )
     } catch (err) {
-      this.pendingCompactAccepts.delete(entry.sessionId)
       this.log.error('compact dispatch failed', {
         event: 'plan_compact_failed',
         sessionId: entry.sessionId,
@@ -794,43 +765,6 @@ export class MessagingGateway {
       text: '',
       timestamp: Date.now(),
       raw: press,
-    }
-  }
-
-  private async finishPendingCompactAccept(sessionId: string): Promise<void> {
-    const entry = this.pendingCompactAccepts.get(sessionId)
-    if (!entry) return
-    this.pendingCompactAccepts.delete(sessionId)
-
-    if (Date.now() - entry.createdAt > COMPACT_ACCEPT_TTL_MS) {
-      this.log.warn('dropping stale compact-accept entry', {
-        event: 'plan_compact_stale',
-        sessionId,
-      })
-      return
-    }
-
-    const adapter = this.adapters.get(entry.platform)
-    const opts = entry.threadId !== undefined ? { threadId: entry.threadId } : {}
-    try {
-      await this.sessionManager.acceptPlan(sessionId, entry.planPath)
-      await this.sessionManager.clearPendingPlanExecution(sessionId)
-      if (adapter?.isConnected()) {
-        await adapter.sendText(entry.channelId, '✅ Plan executing after compaction.', opts)
-      }
-    } catch (err) {
-      this.log.error('post-compaction acceptPlan failed', {
-        event: 'plan_post_compact_accept_failed',
-        sessionId,
-        error: err,
-      })
-      if (adapter?.isConnected()) {
-        await adapter.sendText(
-          entry.channelId,
-          '❌ Compaction finished but the plan couldn\'t execute. Check the desktop app.',
-          opts,
-        )
-      }
     }
   }
 

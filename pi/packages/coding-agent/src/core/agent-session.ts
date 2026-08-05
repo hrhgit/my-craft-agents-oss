@@ -54,6 +54,7 @@ import {
 	type ExtensionCommandContextActions,
 	type ExtensionErrorListener,
 	ExtensionRunner,
+	type ExtensionRuntimeState,
 	type ExtensionUIContext,
 	type InputSource,
 	type MessageEndEvent,
@@ -221,6 +222,8 @@ export interface AgentSessionConfig {
 export interface ExtensionBindings {
 	uiContext?: ExtensionUIContext;
 	uiContextFactory?: (extensionId: string) => ExtensionUIContext;
+	registerFrontendChannel?: ExtensionRuntimeState["registerFrontendChannel"];
+	publishFrontendState?: ExtensionRuntimeState["publishFrontendState"];
 	capabilitiesContextFactory?: (extensionId: string) => ExtensionCapabilitiesContext;
 	commandContextActions?: ExtensionCommandContextActions;
 	abortHandler?: () => void;
@@ -2719,6 +2722,12 @@ export class AgentSession {
 		if (bindings.uiContextFactory !== undefined) {
 			this._extensionUIContextFactory = bindings.uiContextFactory;
 		}
+		if (bindings.registerFrontendChannel || bindings.publishFrontendState) {
+			this._extensionRunner.setFrontendChannelHandlers(
+				bindings.registerFrontendChannel ?? (() => {}),
+				bindings.publishFrontendState ?? (() => {}),
+			);
+		}
 		if (bindings.capabilitiesContextFactory !== undefined) {
 			this._extensionCapabilitiesContextFactory = bindings.capabilitiesContextFactory;
 		}
@@ -2752,6 +2761,12 @@ export class AgentSession {
 		}
 		if (bindings.uiContextFactory !== undefined) {
 			this._extensionUIContextFactory = bindings.uiContextFactory;
+		}
+		if (bindings.registerFrontendChannel || bindings.publishFrontendState) {
+			this._extensionRunner.setFrontendChannelHandlers(
+				bindings.registerFrontendChannel ?? (() => {}),
+				bindings.publishFrontendState ?? (() => {}),
+			);
 		}
 		if (bindings.capabilitiesContextFactory !== undefined) {
 			this._extensionCapabilitiesContextFactory = bindings.capabilitiesContextFactory;

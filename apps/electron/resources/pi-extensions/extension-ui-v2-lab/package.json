@@ -1,0 +1,47 @@
+{
+  "name": "extension-ui-v2-lab",
+  "private": true,
+  "type": "module",
+  "pi": {
+    "extensions": [{
+      "id": "extension-ui-v2-lab",
+      "path": "./index.js",
+      "activation": "startup",
+      "manifest": {
+        "schemaVersion": 1,
+        "name": "Extension UI V2 Lab",
+        "version": "0.1.0",
+        "author": { "name": "Mortise" },
+        "description": "Reference browser-style extension frontend and channel contract.",
+        "capabilities": ["ui.contributions"],
+        "permissions": []
+      },
+      "ui": {
+        "schemaVersion": 2,
+        "title": "Extension UI V2 Lab",
+        "description": "Reference implementation for browser-style extension frontends.",
+        "category": "ui",
+        "compatibility": { "uiApi": "^2.0.0", "mortise": ">=0.1.0 <0.2.0" },
+        "frontends": [
+          { "id": "toolbar", "entry": "./dist/ui/toolbar.js", "styles": ["./dist/ui/toolbar.css"], "surface": "composer.toolbar", "mode": "append", "scope": "session" },
+          { "id": "conversation-review", "entry": "./dist/ui/conversation-review.js", "styles": ["./dist/ui/conversation-review.css"], "surface": "conversation.timeline.before", "mode": "append", "scope": "session" },
+          { "id": "settings", "entry": "./dist/ui/settings.js", "styles": ["./dist/ui/settings.css"], "surface": "settings.page", "mode": "replace", "scope": "workspace", "page": { "id": "v2-lab", "title": "V2 UI Lab", "description": "A native DOM settings surface.", "icon": "sparkles", "order": 8 } },
+          { "id": "workspace-status", "entry": "./dist/ui/workspace-status.js", "styles": ["./dist/ui/toolbar.css"], "surface": "composer.status", "mode": "append", "scope": "workspace" },
+          { "id": "replace-failure", "entry": "./dist/ui/replace-failure.js", "surface": "composer.replace", "mode": "replace", "scope": "session" }
+        ]
+      }
+    }]
+  },
+  "scripts": {
+    "build": "esbuild src/toolbar.tsx src/conversation-review.tsx src/settings.ts src/workspace-status.ts src/replace-failure.ts --bundle --format=esm --platform=browser --outdir=dist/ui && node build-styles.mjs"
+  },
+  "dependencies": {
+    "@mortise/extension-ui": "workspace:*",
+    "lucide-react": "^0.561.0",
+    "react": "^18.3.0",
+    "react-dom": "^18.3.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0"
+  }
+}

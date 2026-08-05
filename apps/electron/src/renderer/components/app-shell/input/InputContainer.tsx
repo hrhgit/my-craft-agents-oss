@@ -2,17 +2,10 @@ import * as React from 'react'
 import { motion, AnimatePresence, useMotionValue, useMotionValueEvent, animate } from 'motion/react'
 import { cn } from '@/lib/utils'
 import { FreeFormInput, type FreeFormInputProps } from './FreeFormInput'
-import { StructuredInput } from './StructuredInput'
 import type { RichTextInputHandle } from '@/components/ui/rich-text-input'
 import { useOptionalAppShellContext } from '@/context/AppShellContext'
-import type { StructuredInputState, StructuredResponse, InputMode } from './structured/types'
-import { getStructuredInputMaxHeight } from './structured-height'
 
 interface InputContainerProps extends Omit<FreeFormInputProps, 'inputRef'> {
-  /** Structured input state - when present, shows structured UI instead of freeform */
-  structuredInput?: StructuredInputState
-  /** Callback when user responds to structured input */
-  onStructuredResponse?: (response: StructuredResponse) => void
   /** External ref for the input (for focus control) */
   textareaRef?: React.RefObject<RichTextInputHandle>
   /** Per-frame callback during height animation (for scroll sync) */
@@ -26,16 +19,10 @@ const TRANSITION_DURATION = 0.25
 const TRANSITION_EASE = [0.4, 0, 0.2, 1] as const
 
 // Fallback heights (used on first render before measurement)
-const FALLBACK_HEIGHTS: Record<InputMode | string, number> = {
-  freeform: 114,
-  'freeform-compact': 70,  // Smaller for compact mode
-  permission: 200,
-  credential: 240,  // Taller for form fields + hint
-  admin_approval: 220,
-}
+const FALLBACK_HEIGHTS = { freeform: 114, 'freeform-compact': 70 } as const
 
 /**
- * InputContainer - Main orchestrator for FreeFormInput and StructuredInput
+ * InputContainer - Main orchestrator for the extension-safe freeform composer.
  *
  * Animation approach:
  * - Uses a hidden measuring div to get the natural height of content
@@ -44,8 +31,6 @@ const FALLBACK_HEIGHTS: Record<InputMode | string, number> = {
  * - All visible children use absolute positioning to stack during transition
  */
 export function InputContainer({
-  structuredInput,
-  onStructuredResponse,
   textareaRef,
   compactMode,
   isProcessing,
@@ -55,22 +40,15 @@ export function InputContainer({
 }: InputContainerProps) {
   const appShellContext = useOptionalAppShellContext()
   const isFocusedPanel = appShellContext?.isFocusedPanel ?? true
-  const mode: InputMode = structuredInput ? 'structured' : 'freeform'
-  const measureRef = React.useRef<HTMLDivElement>(null)
-  // Separate height states: freeform uses callback, structured uses measuring div
-  // Use smaller fallback height for compact mode
+  const mode = 'freeform' as const
   const [freeformHeight, setFreeformHeight] = React.useState<number>(
     compactMode ? FALLBACK_HEIGHTS['freeform-compact'] : FALLBACK_HEIGHTS.freeform
-  )
-  const [structuredHeight, setStructuredHeight] = React.useState<number | null>(null)
-  const [viewportHeight, setViewportHeight] = React.useState<number>(() =>
-    typeof window === 'undefined' ? 0 : window.innerHeight
   )
   const [isFocused, setIsFocused] = React.useState(false)
   const hasInitializedRef = React.useRef(false)
 
-  // Create a stable key for the current content
-  const contentKey = mode === 'freeform' ? 'freeform' : `structured-${structuredInput?.type}`
+  // The business UI is supplied by V2 frontends around this fallback.
+  const contentKey = 'freeform'
 
   // Track mode transitions - animate height for a short period after mode change
   const [isAnimating, setIsAnimating] = React.useState(false)
@@ -143,51 +121,7 @@ export function InputContainer({
     setIsFocused(focused)
   }, [])
 
-  React.useEffect(() => {
-    if (typeof window === 'undefined') return
-
-    const updateViewportHeight = () => setViewportHeight(window.innerHeight)
-    updateViewportHeight()
-    window.addEventListener('resize', updateViewportHeight)
-    return () => window.removeEventListener('resize', updateViewportHeight)
-  }, [])
-
-  // Use ResizeObserver only for structured inputs (freeform uses onHeightChange callback)
-  React.useEffect(() => {
-    // Skip for freeform - it uses the onHeightChange callback
-    if (mode === 'freeform') return
-
-    const measureEl = measureRef.current
-    if (!measureEl) return
-
-    const observer = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        const height = entry.contentRect.height
-        if (height > 0) {
-          setStructuredHeight(height)
-          // Mark as initialized after first measurement
-          if (!hasInitializedRef.current) {
-            requestAnimationFrame(() => {
-              hasInitializedRef.current = true
-            })
-          }
-        }
-      }
-    })
-
-    observer.observe(measureEl)
-    return () => observer.disconnect()
-  }, [contentKey, mode])
-
-  // Use appropriate height source based on mode. Structured prompts are clamped
-  // to viewport-aware bounds; their internals scroll so action buttons stay reachable.
-  const rawTargetHeight = mode === 'freeform'
-    ? freeformHeight
-    : (structuredHeight ?? FALLBACK_HEIGHTS[structuredInput?.type ?? 'freeform'] ?? FALLBACK_HEIGHTS.freeform)
-  const structuredMaxHeight = getStructuredInputMaxHeight(viewportHeight)
-  const targetHeight = mode === 'freeform'
-    ? rawTargetHeight
-    : Math.min(rawTargetHeight, structuredMaxHeight)
+  const targetHeight = freeformHeight
 
   // Motion value for frame-synchronized height animation
   const heightMotionValue = useMotionValue(targetHeight)
@@ -216,11 +150,7 @@ export function InputContainer({
     }
   }, [targetHeight, shouldAnimateHeight, heightMotionValue])
 
-  const handleStructuredResponse = (response: StructuredResponse) => {
-    onStructuredResponse?.(response)
-  }
-
-  // Render the current content (measuring div only for structured, freeform uses callback)
+  // Render the current content. V2 frontends own all business-specific UI.
   const renderContent = (forMeasuring: boolean) => {
     if (mode === 'freeform') {
       return (
@@ -237,30 +167,11 @@ export function InputContainer({
         />
       )
     }
-    return (
-      <StructuredInput
-        state={structuredInput!}
-        onResponse={forMeasuring ? () => {} : handleStructuredResponse}
-        unstyled
-      />
-    )
+    return null
   }
 
   return (
     <div className="relative">
-      {/* Hidden measuring div - only needed for structured inputs (freeform uses onHeightChange) */}
-      {mode !== 'freeform' && (
-        <div
-          ref={measureRef}
-          className="absolute top-0 left-0 right-0 invisible pointer-events-none"
-          aria-hidden="true"
-        >
-          <div className="rounded-[8px] bg-background overflow-hidden">
-            {renderContent(true)}
-          </div>
-        </div>
-      )}
-
       {/* Visible animated container */}
       <motion.div
         className={cn(
@@ -271,7 +182,6 @@ export function InputContainer({
         )}
         style={{
           height: heightMotionValue,
-          ...(mode !== 'freeform' ? { maxHeight: structuredMaxHeight } : {}),
         }}
       >
         {/* Crossfading content - freeform anchored to bottom (for auto-grow), others fill */}

@@ -476,6 +476,7 @@ export class WindowManager {
       platform: process.platform,
       validationBuild: __MORTISE_UI_VALIDATION_BUILD__,
       testHostEnabled: process.env.MORTISE_UI_TEST_HOST === '1',
+      directScenarioHost: process.env.MORTISE_UI_DIRECT_SCENARIO_HOST !== '0',
       windowMode: process.env.MORTISE_UI_WINDOW_MODE,
     })
     let rendererQuery = directValidationScenarioHost

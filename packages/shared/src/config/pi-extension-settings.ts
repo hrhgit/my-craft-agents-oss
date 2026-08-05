@@ -65,6 +65,66 @@ export interface PiExtensionManifestUI {
   category?: PiExtensionCategory;
   settings?: PiExtensionSettingsSchema;
 }
+export type PiExtensionFrontendMode = 'append' | 'replace' | 'overlay';
+export type PiExtensionFrontendScope = 'session' | 'workspace' | 'global';
+export type PiExtensionFrontendSurface =
+  | import('../protocol/extension-contributions.ts').ExtensionUISurface
+  | 'settings.page';
+
+export interface PiExtensionFrontendPageV2 {
+  id: string;
+  title: string;
+  description?: string;
+  icon?: string;
+  order?: number;
+}
+
+export interface PiExtensionFrontendEntryV2 {
+  id: string;
+  entry: string;
+  styles?: string[];
+  surface: PiExtensionFrontendSurface;
+  mode: PiExtensionFrontendMode;
+  scope: PiExtensionFrontendScope;
+  page?: PiExtensionFrontendPageV2;
+}
+export interface PiExtensionUIModuleEntryV2 {
+  id: string;
+  entry: string;
+  styles?: string[];
+  apiVersion: string;
+}
+export interface PiExtensionUIOverrideEntryV2 {
+  id: string;
+  target: { extensionId: string; kind: 'frontend' | 'module'; id: string };
+  mode: 'decorate' | 'replace';
+  entry: string;
+  styles?: string[];
+}
+
+export interface PiExtensionManifestUIV2 {
+  schemaVersion: 2;
+  title?: string;
+  description?: string;
+  category?: PiExtensionCategory;
+  compatibility: {
+    uiApi: string;
+    mortise: string;
+  };
+  frontends?: PiExtensionFrontendEntryV2[];
+  modules?: PiExtensionUIModuleEntryV2[];
+  overrides?: PiExtensionUIOverrideEntryV2[];
+}
+
+export type PiExtensionManifestUIAny = PiExtensionManifestUI | PiExtensionManifestUIV2;
+
+export interface PiExtensionFrontendDiagnostic {
+  code: string;
+  severity: 'warning' | 'error';
+  message: string;
+  frontendId?: string;
+  resource?: string;
+}
 export interface PiExtensionManifestV1 {
   schemaVersion: 1;
   name: string;
@@ -151,7 +211,12 @@ export interface PiExtensionCatalogEntry {
   manifestStatus: PiExtensionManifestStatus;
   manifestDiagnostics: PiExtensionManifestDiagnostic[];
   loadable: boolean;
-  ui?: PiExtensionManifestUI;
+  ui?: PiExtensionManifestUIAny;
+  frontendLoadable?: boolean;
+  frontendDiagnostics?: PiExtensionFrontendDiagnostic[];
+  frontendDescriptors?: import('../protocol/extension-frontends.ts').ExtensionFrontendDescriptorV2[];
+  moduleDescriptors?: import('../protocol/extension-frontends.ts').ExtensionUIModuleDescriptorV2[];
+  overrideDescriptors?: import('../protocol/extension-frontends.ts').ExtensionUIOverrideDescriptorV2[];
   enabled: boolean;
   path: string;
   resolvedPath: string;

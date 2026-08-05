@@ -31,7 +31,7 @@ import {
   type BackendExtensionWorkspaceSnapshot,
 } from '@mortise/shared/agent/backend'
 import { alternateMidStreamBehavior, readPiGlobalProviders, readPiGlobalSettings, getDefaultThinkingLevel, getMidStreamBehavior, resetManagedAnthropicAuthEnvVars, getPersistedUiLanguage, resolveTitleLanguageName, listSubagentTemplates, type PiExtensionReloadActiveSession, type PiExtensionReloadResult } from '@mortise/shared/config'
-import { PrivilegedExecutionBroker, SessionShareTransferService } from '@mortise/server-core/services'
+import { SessionShareTransferService } from '@mortise/server-core/services'
 import { InitGate, WorkspaceLocationActivityRegistry, type WorkspaceTopologySessionCoordinator } from '@mortise/server-core/domain'
 import { i18n } from '@mortise/shared/i18n'
 import {
@@ -408,7 +408,6 @@ export const AGENT_FLAGS = {
   defaultModesEnabled: true,
 } as const
 
-const MAX_ADMIN_REMEMBER_MINUTES = 60
 const MAX_ANNOTATIONS_PER_MESSAGE = 200
 const MAX_ANNOTATION_JSON_BYTES = 32 * 1024
 
@@ -422,7 +421,6 @@ const METADATA_WRITE_GUARD_MS = 5000
  * (for example, from a messaging integration). The agent reads this text,
  * so it intentionally remains stable and is not localized.
  */
-const PLAN_APPROVAL_MESSAGE = 'Plan approved, please execute.'
 
 // validateSpawnAttachmentPath removed — use shared validateFilePath from @mortise/server-core/handlers
 
@@ -792,6 +790,8 @@ interface ManagedSession {
   planModeState?: PlanModeStateV1
   /** Durable Accept & Compact handoff state. */
   pendingPlanExecution?: SessionHeader['pendingPlanExecution']
+  /** Legacy test/compatibility marker; plan-mode now owns this lifecycle. */
+  pendingCompactionCompletion?: boolean
   // SDK session ID for conversation continuity
   sdkSessionId?: string
   // Token usage for display
@@ -884,10 +884,6 @@ interface ManagedSession {
   // durable yet. New sends must retry this boundary before entering a new turn.
   pendingSettlementReason?: 'complete' | 'interrupted' | 'error' | 'timeout'
   settlementPromise?: Promise<void>
-  // Pi reported compaction complete, but the pending-plan sidecar has not yet
-  // crossed its durable write boundary. Settlement retries this without
-  // re-entering the Pi turn.
-  pendingCompactionCompletion?: boolean
   // Map of shellId -> command for killing background shells
   backgroundShellCommands: Map<string, string>
   // Map of taskId -> output info for background task results
@@ -1009,10 +1005,6 @@ export function createManagedSession(
   if (managed.branchContextStrategy === 'seeded-fresh-session' && managed.branchSeedApplied === undefined) {
     // If an SDK session ID already exists, first turn has already happened.
     managed.branchSeedApplied = !!managed.sdkSessionId
-  }
-
-  if (managed.pendingPlanExecution) {
-    managed.activeWorkspaceLocationId ??= workspace.primaryLocationId
   }
 
   managed.sdkCwd = managed.sdkCwd ?? requirePrimaryLocalWorkspaceRoot(workspace)
@@ -1379,20 +1371,6 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
   // Canonical V3 host runtime - one scheduler/store/ledger owner per workspace.
   private automationHosts: Map<string, AutomationWorkspaceHostV3> = new Map()
   private automationSessionMetadata = new Map<string, { permissionMode?: string; sessionName?: string }>()
-  // Permission request metadata tracking (keyed by requestId)
-  private pendingPermissionRequests: Map<string, {
-    sessionId: string
-    type?: 'bash' | 'file_write' | 'tool_mutation' | 'mcp_mutation' | 'admin_approval'
-    commandHash?: string
-  }> = new Map()
-  // Privileged approval binding + audit logger
-  private privilegedExecutionBroker = new PrivilegedExecutionBroker(sessionLog)
-  // Session-local admin remember windows (exact command hash binding)
-  private adminRememberApprovals: Map<string, {
-    createdAt: number
-    expiresAt: number
-    sourceRequestId: string
-  }> = new Map()
   // Promise deduplication for lazy-loading messages (prevents race conditions)
   private messageLoadingPromises: Map<string, Promise<void>> = new Map()
   /**
@@ -1672,69 +1650,6 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
     const now = Date.now()
     this.lastTimestamp = now > this.lastTimestamp ? now : this.lastTimestamp + 1
     return this.lastTimestamp
-  }
-
-  private getAdminRememberKey(sessionId: string, commandHash: string): string {
-    return `${sessionId}:${commandHash}`
-  }
-
-  private hasActiveAdminRememberApproval(sessionId: string, commandHash: string): boolean {
-    const key = this.getAdminRememberKey(sessionId, commandHash)
-    const entry = this.adminRememberApprovals.get(key)
-    if (!entry) {
-      return false
-    }
-
-    if (Date.now() > entry.expiresAt) {
-      this.adminRememberApprovals.delete(key)
-      this.privilegedExecutionBroker.auditEvent('privileged_remember_window_expired', {
-        sessionId,
-        commandHash,
-        sourceRequestId: entry.sourceRequestId,
-        expiresAt: entry.expiresAt,
-      })
-      return false
-    }
-
-    return true
-  }
-
-  private storeAdminRememberApproval(sessionId: string, commandHash: string, sourceRequestId: string, rememberForMinutes: number): void {
-    const boundedMinutes = Math.min(Math.max(Math.floor(rememberForMinutes), 1), MAX_ADMIN_REMEMBER_MINUTES)
-    const now = Date.now()
-    const expiresAt = now + boundedMinutes * 60 * 1000
-
-    this.adminRememberApprovals.set(this.getAdminRememberKey(sessionId, commandHash), {
-      createdAt: now,
-      expiresAt,
-      sourceRequestId,
-    })
-
-    this.privilegedExecutionBroker.auditEvent('privileged_remember_window_stored', {
-      sessionId,
-      commandHash,
-      sourceRequestId,
-      rememberForMinutes: boundedMinutes,
-      createdAt: now,
-      expiresAt,
-    })
-  }
-
-  private clearAdminRememberApprovalsForSession(sessionId: string): void {
-    const prefix = `${sessionId}:`
-    for (const key of this.adminRememberApprovals.keys()) {
-      if (key.startsWith(prefix)) {
-        this.adminRememberApprovals.delete(key)
-      }
-    }
-  }
-
-  private clearPendingPermissionRequestsForSession(sessionId: string): void {
-    for (const [requestId, metadata] of this.pendingPermissionRequests.entries()) {
-      if (metadata.sessionId === sessionId) {
-        this.pendingPermissionRequests.delete(requestId)
-      }
-    }
   }
 
   /**
@@ -3779,7 +3694,10 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
       // 扩展事件桥接：将 Pi RpcClient的扩展事件转发到渲染进程
       const provisionalAwareEventSink: EventSink | null = this.eventSink
         ? ((channel, target, ...args) => {
-            if (!managed.publicationState) this.eventSink?.(channel, target, ...args)
+            const event = args[0] as { type?: unknown } | undefined
+            const frontendState = event?.type === 'extension_frontend_state'
+              || event?.type === 'extension_contributions_runtime_reset'
+            if (!managed.publicationState || frontendState) this.eventSink?.(channel, target, ...args)
           })
         : null
       const onExtensionEvent = createExtensionEventForwarder(
@@ -4051,84 +3969,9 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
       // Signal that the agent instance is ready (unblocks title generation)
       managed.agentReadyResolve?.()
 
-      // Set up permission handler to forward requests to renderer
-      managed.agent.onPermissionRequest = (request: {
-        requestId: string;
-        toolName: string;
-        command?: string;
-        description: string;
-        type?: 'bash' | 'file_write' | 'tool_mutation' | 'mcp_mutation' | 'admin_approval';
-        appName?: string;
-        reason?: string;
-        impact?: string;
-        requiresSystemPrompt?: boolean;
-        rememberForMinutes?: number;
-        commandHash?: string;
-        approvalTtlSeconds?: number;
-      }) => {
-        sessionLog.info(`Permission request for session ${managed.id}:`, request.command)
-        let brokerMetadata: {
-          commandHash?: string
-          approvalTtlSeconds?: number
-        } = {}
-
-        if (request.type === 'admin_approval' && request.command) {
-          const brokerRequest = this.privilegedExecutionBroker.createRequest({
-            requestId: request.requestId,
-            sessionId: managed.id,
-            command: request.command,
-            reason: request.reason,
-            impact: request.impact,
-            approvalTtlSeconds: request.approvalTtlSeconds,
-          })
-
-          brokerMetadata = {
-            commandHash: brokerRequest.commandHash,
-            approvalTtlSeconds: brokerRequest.approvalTtlSeconds,
-          }
-        }
-
-        const effectiveCommandHash = brokerMetadata.commandHash ?? request.commandHash
-
-        this.pendingPermissionRequests.set(request.requestId, {
-          sessionId: managed.id,
-          type: request.type,
-          commandHash: effectiveCommandHash,
-        })
-
-        if (request.type === 'admin_approval' && effectiveCommandHash && this.hasActiveAdminRememberApproval(managed.id, effectiveCommandHash)) {
-          const brokerResult = this.privilegedExecutionBroker.resolveApproval(request.requestId, true, {
-            expectedCommandHash: effectiveCommandHash,
-          })
-
-          this.pendingPermissionRequests.delete(request.requestId)
-
-          if (brokerResult.ok) {
-            this.privilegedExecutionBroker.auditEvent('privileged_auto_approved_remember_window', {
-              sessionId: managed.id,
-              requestId: request.requestId,
-              commandHash: effectiveCommandHash,
-            })
-            const liveAgent = managed.agent
-            if (liveAgent) {
-              liveAgent.respondToPermission(request.requestId, true, false)
-              return
-            }
-          }
-
-          sessionLog.warn(`Remember-window auto-approval skipped for ${request.requestId}: ${brokerResult.reason}`)
-        }
-
-        this.sendEvent({
-          type: 'permission_request',
-          sessionId: managed.id,
-          request: {
-            ...request,
-            ...brokerMetadata,
-            sessionId: managed.id,
-          }
-        }, managed.workspace.id)
-      }
+      // Permission prompts are owned by the permissions extension. The host
+      // only supplies the neutral tool execution boundary and channel router;
+      // no renderer-facing permission queue is maintained here.
 
       // Set up mode change handlers
       managed.agent.onPermissionModeChange = (mode) => {
@@ -4598,9 +4441,9 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
   // ============================================
 
   /**
-   * Set pending plan execution state.
-   * Called when user clicks "Accept & Compact" to persist the plan path
-   * so execution can resume after compaction (even if page reloads).
+   * Read/write compatibility for sessions created before plan-mode became a
+   * V2 extension. New plan frontends persist their own state and must not call
+   * this host method.
    */
   async setPendingPlanExecution(sessionId: string, target: string | { planPath?: string; artifactId?: string }, draftInputSnapshot?: string): Promise<void> {
     const managed = this.sessions.get(sessionId)
@@ -4617,11 +4460,7 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
     }
   }
 
-  /**
-   * Mark compaction as complete for pending plan execution.
-   * Called when compaction_complete event fires - allows reload recovery
-   * to know that compaction finished and plan can be executed.
-   */
+  /** Legacy pending-plan compatibility; V2 extensions receive compaction events directly. */
   async markCompactionComplete(sessionId: string): Promise<void> {
     const managed = this.sessions.get(sessionId)
     if (managed) {
@@ -4634,11 +4473,7 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
     }
   }
 
-  /**
-   * Mark pending plan execution as already dispatched from the UI.
-   * This prevents reload recovery from double-submitting the same plan if
-   * sending succeeded but cleanup failed due a reconnect/disconnect.
-   */
+  /** Legacy pending-plan compatibility; kept for old RPC clients only. */
   async markPendingPlanExecutionDispatched(sessionId: string): Promise<void> {
     const managed = this.sessions.get(sessionId)
     if (managed) {
@@ -4647,25 +4482,17 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
     }
   }
 
-  /**
-   * Clear pending plan execution state.
-   * Called after plan execution is triggered, on new user message,
-   * or when the pending execution is no longer relevant.
-   */
+  /** Legacy pending-plan compatibility cleanup. */
   async clearPendingPlanExecution(sessionId: string): Promise<void> {
     const managed = this.sessions.get(sessionId)
     if (managed) {
       await clearStoredPendingPlanExecution(managed.workspace.id, sessionId)
       managed.pendingPlanExecution = undefined
-      managed.pendingCompactionCompletion = false
       sessionLog.info(`Session ${sessionId}: cleared pending plan execution`)
     }
   }
 
-  /**
-   * Get pending plan execution state for a session.
-   * Used on reload/init to check if we need to resume plan execution.
-   */
+  /** Read-only legacy pending-plan state for one-time extension migration. */
   getPendingPlanExecution(sessionId: string): { planPath?: string; artifactId?: string; draftInputSnapshot?: string; awaitingCompaction: boolean; executionDispatched: boolean } | null {
     const managed = this.sessions.get(sessionId)
     if (!managed) return null
@@ -4673,24 +4500,17 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
   }
 
   /**
-   * Dispatch a plan approval for a session, equivalent to the desktop
-   * "Accept plan" button. Switches the session out of Explore mode (safe)
-   * into allow-all if needed so the plan can execute without per-tool
-   * prompts, then sends the approval message through the normal sendMessage
-   * path.
+   * Legacy non-renderer compatibility route. Plan execution is owned by the
+   * plan-mode extension; the host only forwards the command.
    */
-  async acceptPlan(sessionId: string, _planPath?: string): Promise<void> {
-    const managed = this.sessions.get(sessionId)
-    if (!managed) {
-      sessionLog.warn(`acceptPlan: session ${sessionId} not found`)
-      return
-    }
-
-    if (managed.permissionMode === 'safe') {
-      this.setSessionPermissionMode(sessionId, 'allow-all')
-    }
-
-    await this.sendMessage(sessionId, PLAN_APPROVAL_MESSAGE)
+  async acceptPlan(sessionId: string, planPath?: string): Promise<void> {
+    const result = await this.invokeExtensionCommand(
+      sessionId,
+      'plan-execute',
+      JSON.stringify({ ...(planPath ? { planPath } : {}) }),
+      'plan-mode',
+    )
+    if (!result.invoked) throw new Error(result.error ?? 'The plan-mode extension is unavailable.')
   }
 
   /**
@@ -5389,8 +5209,6 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
       }
     }
 
-    this.clearAdminRememberApprovalsForSession(sessionId)
-    this.clearPendingPermissionRequestsForSession(sessionId)
 
     // Destroy browser instances bound to this session
     const sessionBpm = this.getBrowserPaneManagerForSession(sessionId)
@@ -5597,7 +5415,6 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
 
     const turnControl = await this.acquireTurnControl(managed)
     try {
-      await clearStoredPendingPlanExecution(managed.workspace.id, sessionId)
       await this.ensureMessagesLoaded(managed)
     } catch (error) {
       await this.releaseTurnControl(managed)
@@ -6301,9 +6118,9 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
       await this.disposeManagedAgentRuntime(managed, 'deferred provider registry reload')
     }
 
-    // A compaction info event can arrive before Pi's terminal event. If its
-    // sidecar write failed, retry it as part of the accepted turn settlement;
-    // retryPendingSettlement will re-enter here without rerunning agent.chat.
+    // Legacy sessions written before plan-mode moved to its extension may
+    // still carry this sidecar. Keep its durability boundary readable and
+    // recoverable, but never create it for V2 extension-owned plans.
     if (managed.pendingCompactionCompletion) {
       await this.markCompactionComplete(sessionId)
     }
@@ -6486,15 +6303,12 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
       || managed.replayingQueuedMessageId
       || managed.pendingSettlementReason
       || managed.settlementPromise
-      || managed.pendingCompactionCompletion
-      || managed.pendingPlanExecution
       || managed.authRetryInProgress
       || managed.stopRequested
       || managed.backgroundShellCommands.size > 0
       || (this.subagentLifecycleTasks.get(managed.id)?.size ?? 0) > 0
       || this.subagentDeliveryWrites.has(managed.id)
       || Array.from(this.subagentDeliveryTasks.keys()).some(key => key.startsWith(`${managed.id}:`))
-      || Array.from(this.pendingPermissionRequests.values()).some(request => request.sessionId === managed.id)
     )
   }
 
@@ -6506,7 +6320,6 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
     }
 
     const sessionId = managed.id
-    const hadPendingPlanExecution = Boolean(managed.pendingPlanExecution)
     const hadProjectionWork = this.isPiProjectionProcessing(sessionId)
       || this.piProjectionBySession.get(sessionId)?.createSnapshot().entities.some((entity) => (
         entity.payload && typeof entity.payload === 'object'
@@ -6519,8 +6332,6 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
     managed.processingGeneration++
     managed.messageQueue = []
     managed.replayingQueuedMessageId = undefined
-    managed.pendingPlanExecution = undefined
-    managed.pendingCompactionCompletion = false
     managed.authRetryAttempted = true
     managed.authRetryInProgress = false
     managed.lastSentMessage = undefined
@@ -6529,14 +6340,9 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
     managed.lastSentOptions = undefined
     managed.stopRequested = true
     managed.wasInterrupted = true
-    this.clearPendingPermissionRequestsForSession(sessionId)
 
     const work = (async () => {
       const errors: unknown[] = []
-      const clearPendingPlan = hadPendingPlanExecution
-        ? clearStoredPendingPlanExecution(managed.workspace.id, sessionId).catch(error => { errors.push(error) })
-        : Promise.resolve()
-
       const agent = managed.agent
       if (agent) {
         try {
@@ -6563,8 +6369,6 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
       } catch (error) {
         errors.push(error)
       }
-      await clearPendingPlan
-
       this.interruptQueuedPiProjectionMessages(managed)
       if (hadProjectionWork && this.isPiProjectionProcessing(sessionId)) {
         this.closeStalePiProjection(sessionId)
@@ -6745,47 +6549,6 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
       sessionLog.error(`Failed to read task output file: ${info.outputFile}`, err)
       // Fall back to SDK-provided summary
       return info.summary || null
-    }
-  }
-
-  /**
-   * Respond to a pending permission request
-   * Returns true if the response was delivered, false if agent/session is gone
-   */
-  respondToPermission(
-    sessionId: string,
-    requestId: string,
-    allowed: boolean,
-    alwaysAllow: boolean,
-    options?: import('@mortise/shared/protocol').PermissionResponseOptions,
-  ): boolean {
-    const managed = this.sessions.get(sessionId)
-    if (managed?.agent) {
-      const requestMeta = this.pendingPermissionRequests.get(requestId)
-      this.pendingPermissionRequests.delete(requestId)
-
-      if (requestMeta?.type === 'admin_approval') {
-        const brokerResult = this.privilegedExecutionBroker.resolveApproval(requestId, allowed, {
-          expectedCommandHash: requestMeta.commandHash,
-        })
-        if (!brokerResult.ok) {
-          sessionLog.warn(`Admin approval rejected by broker for ${requestId}: ${brokerResult.reason}`)
-          // Broker rejection should fail closed.
-          managed.agent.respondToPermission(requestId, false, false)
-          return false
-        }
-
-        if (allowed && requestMeta.commandHash && options?.rememberForMinutes) {
-          this.storeAdminRememberApproval(sessionId, requestMeta.commandHash, requestId, options.rememberForMinutes)
-        }
-      }
-
-      sessionLog.info(`Permission response for ${requestId}: allowed=${allowed}, alwaysAllow=${alwaysAllow}`)
-      managed.agent.respondToPermission(requestId, allowed, alwaysAllow)
-      return true
-    } else {
-      sessionLog.warn(`Cannot respond to permission - no agent for session ${sessionId}`)
-      return false
     }
   }
 
@@ -7256,9 +7019,6 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
             state: artifactProjection.artifact.state,
             isUpdate: artifactProjection.isUpdate,
           })
-          if (artifactProjection.artifact.state === 'executing' || artifactProjection.artifact.state === 'completed') {
-            await clearStoredPendingPlanExecution(managed.workspace.id, sessionId)
-          }
           this.persistSession(managed)
           break
         }
@@ -7330,22 +7090,16 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
       case 'info': {
         const isCompactionComplete = event.message.startsWith('Compacted')
         if (isCompactionComplete) {
-          // Mark compaction complete in the session state.
-          // This is done here (backend) rather than in the renderer so it's
-          // not affected by CMD+R during compaction. The frontend reload
-          // recovery will see awaitingCompaction=false and trigger execution.
-          managed.pendingCompactionCompletion = true
-          try {
-            await this.markCompactionComplete(sessionId)
-          } catch (error) {
-            // Keep consuming Pi events so its terminal event remains the turn
-            // boundary. settleProcessing retries this durable write and turns
-            // a persistent failure into a typed settlement failure.
-            sessionLog.warn(`Session ${sessionId}: compaction completion persistence pending settlement retry`, error)
+          // The plan-mode extension owns new handoffs. Only the legacy
+          // session header compatibility field uses the host sidecar.
+          if (managed.pendingPlanExecution) {
+            managed.pendingCompactionCompletion = true
+            try {
+              await this.markCompactionComplete(sessionId)
+            } catch (error) {
+              sessionLog.warn(`Session ${sessionId}: legacy compaction compatibility write pending settlement retry`, error)
+            }
           }
-
-          // Emit usage_update so the context count badge refreshes immediately
-          // after compaction, without waiting for the next message
           if (managed.tokenUsage) {
             this.sendEvent({
               type: 'usage_update',
@@ -7701,6 +7455,34 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
         )
       }
     }
+  }
+
+  /**
+   * Legacy non-renderer bridge retained for messaging clients. The renderer
+   * permissions UI no longer uses this path; approvals are resolved by the
+   * permissions extension channel.
+   */
+  respondToPermission(
+    sessionId: string,
+    requestId: string,
+    allowed: boolean,
+    alwaysAllow: boolean,
+    _options?: import('@mortise/shared/protocol').PermissionResponseOptions,
+  ): boolean {
+    const agent = this.sessions.get(sessionId)?.agent
+    if (!agent) return false
+    agent.respondToPermission(requestId, allowed, alwaysAllow)
+    return true
+  }
+
+  async sendExtensionFrontendMessage(sessionId: string, extensionId: string, channelId: string, message: unknown, workspaceId?: string | null): Promise<unknown> {
+    const managed = sessionId
+      ? this.sessions.get(sessionId)
+      : [...this.sessions.values()].find((candidate) => candidate.workspace.id === workspaceId)
+    if (!managed) return undefined
+    const agent = managed.agent ?? await this.getOrCreateAgent(managed)
+    if (typeof agent.sendExtensionFrontendMessage !== 'function') return undefined
+    return await agent.sendExtensionFrontendMessage(extensionId, channelId, message)
   }
 
   /**
@@ -8204,8 +7986,6 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
     this.automationHosts.clear()
     this.extensionRuntime.clear()
 
-    this.pendingPermissionRequests.clear()
-    this.adminRememberApprovals.clear()
 
     await this.sessionTurnControl.close({ graceMs: 1_000 })
 

@@ -216,7 +216,6 @@ const NewConversationPage = React.memo(function NewConversationPage({ draftId }:
     onAttachmentsChange,
     clearDraft,
     skills = [],
-    enabledModes,
     isCompactMode,
     leadingAction,
     onCreateAndSendFirstTurn,
@@ -423,9 +422,6 @@ const NewConversationPage = React.memo(function NewConversationPage({ draftId }:
           providerUnavailable={providerUnavailable}
           thinkingLevel={options.thinkingLevel}
           onThinkingLevelChange={thinkingLevel => setOptions(current => ({ ...current, thinkingLevel }))}
-          permissionMode={options.permissionMode}
-          onPermissionModeChange={permissionMode => setOptions(current => ({ ...current, permissionMode }))}
-          enabledModes={enabledModes}
           inputValue={inputValue}
           onInputChange={handleInputChange}
           attachmentsValue={attachmentsValue}

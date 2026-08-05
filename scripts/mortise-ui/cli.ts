@@ -19,6 +19,7 @@ import { collectLocalEvidence, registerReturnedArtifacts } from './evidence.ts'
 import { MORTISE_UI_FIXTURE_SCHEMA, loadMortiseUiFixtureSpec } from './fixture.ts'
 import { readArtifactManifest } from './artifacts.ts'
 import { createActionObservation, createRunBriefing, createSnapshotBriefing, historyEntry, selectRelevantCapabilities } from './ai-assistant.ts'
+import { runWorkflowCommand } from './workflow.ts'
 
 function option(args: string[], name: string): string | undefined {
   const index = args.indexOf(name)
@@ -41,11 +42,68 @@ function options(args: string[], name: string): string[] {
   return values
 }
 
+const MORTISE_UI_KNOWN_OPTIONS = new Set([
+  '--label', '--surface', '--adapter-command-json', '--profile', '--window-mode', '--fixture', '--extension',
+  '--file', '--execution',
+  '--ui-dev-server', '--scenario', '--scenario-params', '--wait-ms', '--no-wait', '--full', '--full-observation',
+  '--full-evidence', '--source-mortise-profile', '--skip-build', '--run-root', '--run', '--limit', '--all',
+  '--older-than-hours', '--keep', '--apply', '--kind', '--id', '--params', '--params-file', '--timeout-ms', '--ms',
+  '--json', '--help', '-h',
+])
+
+function assertKnownOptions(args: string[]): void {
+  for (const value of args) {
+    if (!value.startsWith('--') && value !== '-h') continue
+    const name = value.includes('=') ? value.slice(0, value.indexOf('=')) : value
+    if (!MORTISE_UI_KNOWN_OPTIONS.has(name)) {
+      const suggestions = [...MORTISE_UI_KNOWN_OPTIONS]
+        .map(candidate => ({ candidate, distance: levenshtein(name, candidate) }))
+        .sort((left, right) => left.distance - right.distance)
+        .slice(0, 2)
+        .map(item => item.candidate)
+      throw new Error(`Unknown option ${name}${suggestions.length > 0 ? `. Did you mean ${suggestions.join(' or ')}?` : ''}`)
+    }
+  }
+}
+
+function levenshtein(left: string, right: string): number {
+  const row = Array.from({ length: right.length + 1 }, (_, index) => index)
+  for (let i = 1; i <= left.length; i += 1) {
+    let diagonal = row[0]!
+    row[0] = i
+    for (let j = 1; j <= right.length; j += 1) {
+      const above = row[j]!
+      row[j] = left[i - 1] === right[j - 1]
+        ? diagonal
+        : Math.min(row[j - 1]! + 1, above + 1, diagonal + 1)
+      diagonal = above
+    }
+  }
+  return row[right.length]!
+}
+
+export function parseUiDevServers(values: string[]): Record<string, string> {
+  const result: Record<string, string> = {}
+  for (const value of values) {
+    const separator = value.indexOf('=')
+    if (separator <= 0) throw new Error('--ui-dev-server must use extension-id=http://loopback:port/')
+    const extensionId = value.slice(0, separator)
+    if (!/^[a-z0-9][a-z0-9._-]{0,63}$/.test(extensionId)) throw new Error('--ui-dev-server extension id is invalid')
+    const url = new URL(value.slice(separator + 1))
+    if (!['http:', 'https:'].includes(url.protocol) || !['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname)) {
+      throw new Error('--ui-dev-server URL must use an HTTP loopback address')
+    }
+    result[extensionId] = url.toString()
+  }
+  return result
+}
+
 function output(value: unknown): void { process.stdout.write(`${JSON.stringify(value)}\n`) }
 
 function help(): void {
-  process.stdout.write('AI workflow additions:\n  mortise-ui capabilities relevant [--run <id-or-label>] [--json]\n  Default responses disclose only information needed for the current decision and point to exact detail commands. Pass --full-observation for raw semantic state, --full-evidence for complete evidence manifests, or use runs inspect for lifecycle internals.\n\n')
-  process.stdout.write(`mortise-ui - AI-facing Mortise UI validation assistant\n\nUsage:\n  mortise-ui fixture schema [--json]\n  mortise-ui start [--label <semantic-label>] [--surface electron|webui] [--adapter-command-json '["bun","..."]'] [--profile fixture|isolated|clone]\n                 [--window-mode foreground|background] [--fixture <fixture.json>] [--extension <directory>]...\n                 [--scenario <id>] [--scenario-params <json>] [--wait-ms <1..900000>] [--no-wait] [--full]\n                 [--source-mortise-profile <path>] [--json]\n  mortise-ui runs list [--limit <count> | --all] [--run-root <path>] [--json]\n  mortise-ui runs inspect|resume|history --run <id-or-label> [--run-root <path>] [--json]\n  mortise-ui runs prune [--older-than-hours <hours>] [--keep <count>] [--apply] [--run-root <path>] [--json]\n  mortise-ui resume [--run <id-or-label>] [--run-root <path>] [--json]\n  mortise-ui status [--run <id-or-label>] [--run-root <path>] [--full] [--json]\n  mortise-ui capabilities list [--kind route|scenario|action] [--run <id-or-label>] [--json]\n  mortise-ui capabilities describe --kind route|scenario|action --id <id> [--run <id-or-label>] [--json]\n  mortise-ui open|snapshot|action|wait|assert|windows|screenshot|logs|resize|native|window|browser-key\n                 [--params <json> | --params-file <path>] [--run <id-or-label>] [--json]\n  mortise-ui scenario apply|reset [--id <id>] [--params <json>] [--run <id-or-label>] [--json]\n  mortise-ui clock advance --ms <milliseconds> [--run <id-or-label>] [--json]\n  mortise-ui fault set|clear|status [--params <json>] [--run <id-or-label>] [--json]\n  mortise-ui evidence [--params <json>] [--run <id-or-label>] [--json]\n  mortise-ui request <command> [--params <json>] [--run <id-or-label>] [--json]\n  mortise-ui stop [--run <id-or-label>] [--full] [--json]\n\nSnapshot and action commands include an AI briefing, immediately actionable targets, and contextual next actions. Action automatically observes the settled UI. Runs retain a bounded activity history so another AI context can resume the workflow. All commands emit one V1 JSON response envelope. Host requests accept --timeout-ms <1..600000>.\n`)
+  process.stdout.write('AI workflow additions:\n  mortise-ui workflow schema\n  mortise-ui workflow validate --file <workflow.json>\n  mortise-ui workflow run --file <workflow.json>\n  mortise-ui workflow resume --execution <id>\n  mortise-ui workflow inspect --execution <id>\n  mortise-ui capabilities relevant [--run <id-or-label>] [--json]\n  Default responses disclose only information needed for the current decision and point to exact detail commands. Pass --full-observation, --full-evidence, or inspect commands for raw details.\n\n')
+  process.stdout.write('Electron start also accepts --skip-build when validating an already-built host.\n')
+  process.stdout.write(`mortise-ui - AI-facing Mortise UI validation assistant\n\nUsage:\n  mortise-ui fixture schema [--json]\n  mortise-ui start [--label <semantic-label>] [--surface electron|webui] [--adapter-command-json '["bun","..."]'] [--profile fixture|isolated|clone]\n                 [--window-mode foreground|background] [--fixture <fixture.json>] [--extension <directory>]...\n                 [--ui-dev-server <extension-id=http://127.0.0.1:port/>]...\n                 [--scenario <id>] [--scenario-params <json>] [--wait-ms <1..900000>] [--no-wait] [--full]\n                 [--source-mortise-profile <path>] [--json]\n  mortise-ui runs list [--limit <count> | --all] [--run-root <path>] [--json]\n  mortise-ui runs inspect|resume|history --run <id-or-label> [--run-root <path>] [--json]\n  mortise-ui runs prune [--older-than-hours <hours>] [--keep <count>] [--apply] [--run-root <path>] [--json]\n  mortise-ui resume [--run <id-or-label>] [--run-root <path>] [--json]\n  mortise-ui status [--run <id-or-label>] [--run-root <path>] [--full] [--json]\n  mortise-ui capabilities list [--kind route|scenario|action] [--run <id-or-label>] [--json]\n  mortise-ui capabilities describe --kind route|scenario|action --id <id> [--run <id-or-label>] [--json]\n  mortise-ui open|snapshot|action|wait|assert|windows|screenshot|logs|resize|native|window|browser-key\n                 [--params <json> | --params-file <path>] [--run <id-or-label>] [--json]\n  mortise-ui scenario apply|reset [--id <id>] [--params <json>] [--run <id-or-label>] [--json]\n  mortise-ui clock advance --ms <milliseconds> [--run <id-or-label>] [--json]\n  mortise-ui fault set|clear|status [--params <json>] [--run <id-or-label>] [--json]\n  mortise-ui evidence [--params <json>] [--run <id-or-label>] [--json]\n  mortise-ui request <command> [--params <json>] [--run <id-or-label>] [--json]\n  mortise-ui stop [--run <id-or-label>] [--full] [--json]\n\nSnapshot and action commands include an AI briefing, immediately actionable targets, and contextual next actions. Action automatically observes the settled UI. Runs retain a bounded activity history so another AI context can resume the workflow. All commands emit one V1 JSON response envelope. Host requests accept --timeout-ms <1..600000>.\n`)
 }
 
 function jsonOption(args: string[], name: string, fallback: Record<string, unknown> = {}): Record<string, unknown> {
@@ -61,10 +119,16 @@ export async function main(argv = process.argv): Promise<number> {
   const args = argv.slice(2)
   const command = args[0] ?? 'help'
   if (command === 'help' || command === '--help' || command === '-h') { help(); return 0 }
+  assertKnownOptions(args)
   const runRoot = option(args, '--run-root') ?? DEFAULT_MORTISE_UI_RUN_ROOT
   const localRequestId = randomUUID()
   let activeManifest: MortiseUiRunManifest | undefined
   try {
+    if (command === 'workflow') {
+      const result = await runWorkflowCommand(args.slice(1), runRoot)
+      output(localUnassignedSuccess(localRequestId, result))
+      return result.status === 'failed' ? 2 : 0
+    }
     if (command === 'fixture') {
       if ((args[1] ?? 'schema') !== 'schema') throw new Error('fixture requires schema')
       output(localUnassignedSuccess(localRequestId, { schema: MORTISE_UI_FIXTURE_SCHEMA }))
@@ -187,6 +251,8 @@ export async function main(argv = process.argv): Promise<number> {
       const fixturePath = option(args, '--fixture')
       if (fixturePath && profileMode !== 'fixture') throw new Error('--fixture requires --profile fixture')
       const fixtureSpec = fixturePath ? loadMortiseUiFixtureSpec(fixturePath) : undefined
+      const uiDevServers = parseUiDevServers(options(args, '--ui-dev-server'))
+      if (has(args, '--skip-build') && surface !== 'electron') throw new Error('--skip-build requires --surface electron')
       const rawAdapter = option(args, '--adapter-command-json')
       const adapterCommand = rawAdapter ? JSON.parse(rawAdapter) : undefined
       if (adapterCommand !== undefined && (!Array.isArray(adapterCommand) || adapterCommand.some(part => typeof part !== 'string'))) throw new Error('--adapter-command-json must be a JSON string array')
@@ -200,6 +266,12 @@ export async function main(argv = process.argv): Promise<number> {
         surface, label, profileMode, windowMode, adapterCommand, runRoot,
         sourceMortiseConfigDir: option(args, '--source-mortise-profile'),
         extensionPaths: options(args, '--extension'),
+        extraEnv: {
+          ...(Object.keys(uiDevServers).length > 0
+            ? { MORTISE_EXTENSION_UI_DEV_SERVERS: JSON.stringify(uiDevServers) }
+            : {}),
+          ...(has(args, '--skip-build') ? { MORTISE_UI_SKIP_BUILD: '1' } : {}),
+        },
         waitForReady: !has(args, '--no-wait'),
         waitMs,
         scenario,

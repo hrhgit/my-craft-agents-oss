@@ -10,7 +10,8 @@
  *    for separate-port deployments or development.
  */
 
-import { join, extname } from 'node:path'
+import { dirname, extname, join, relative, resolve } from 'node:path'
+import { existsSync, realpathSync, statSync } from 'node:fs'
 import {
   RateLimiter,
   initPasswordHash,
@@ -325,6 +326,62 @@ export function createWebuiHandler(options: WebuiHandlerOptions): WebuiHandler {
         return Response.redirect('/login', 302)
       }
       return Response.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
+    // Authenticated V2 extension assets. The request names a manifest frontend,
+    // never a filesystem path; the catalog remains the source of truth.
+    if (path.startsWith('/api/extensions/ui/')) {
+      const parts = path.split('/').filter(Boolean)
+      if (![6, 7, 8].includes(parts.length) || parts[0] !== 'api' || parts[1] !== 'extensions' || parts[2] !== 'ui') {
+        return new Response('Not Found', { status: 404 })
+      }
+      const typedResourceRoute = parts[3] === 'frontend' || parts[3] === 'module' || parts[3] === 'override'
+      const legacyRoute = !typedResourceRoute && (parts.length === 6 || parts.length === 7)
+      if (typedResourceRoute && (parts.length !== 7 && parts.length !== 8)) return new Response('Not Found', { status: 404 })
+      const resourceType = legacyRoute ? 'frontend' : parts[3]
+      const extensionId = decodeURIComponent(parts[legacyRoute ? 3 : 4] ?? '')
+      const { getPiExtensionCatalog } = await import('@mortise/shared/config/pi-global-config')
+      const catalog = await getPiExtensionCatalog()
+      const extension = catalog.extensions.find((candidate) => candidate.id === extensionId)
+      const itemId = decodeURIComponent(parts[legacyRoute ? 4 : 5] ?? '')
+      const resourceKind = parts[legacyRoute ? 5 : 6]
+      const styleIndex = resourceKind === 'style' ? Number(parts[legacyRoute ? 6 : 7]) : undefined
+      const frontend = resourceType === 'frontend' && extension?.ui?.schemaVersion === 2
+        ? (extension.ui.frontends ?? []).find((candidate) => candidate.id === itemId)
+        : undefined
+      const module = resourceType === 'module' && extension?.ui?.schemaVersion === 2
+        ? (extension.ui.modules ?? []).find((candidate) => candidate.id === itemId)
+        : undefined
+      const override = resourceType === 'override' && extension?.ui?.schemaVersion === 2
+        ? (extension.ui.overrides ?? []).find((candidate) => candidate.id === itemId)
+        : undefined
+      if (!extension || (!frontend && !module && !override) || !existsSync(extension.resolvedPath)) return new Response('Not Found', { status: 404 })
+      const relativeResource = resourceKind === 'entry'
+        ? (frontend?.entry ?? module?.entry ?? override?.entry)
+        : Number.isInteger(styleIndex) && styleIndex !== undefined
+          ? (frontend?.styles?.[styleIndex] ?? module?.styles?.[styleIndex] ?? override?.styles?.[styleIndex])
+          : undefined
+      if (!relativeResource || !relativeResource.startsWith('./')) return new Response('Not Found', { status: 404 })
+      const root = dirname(extension.resolvedPath)
+      const filePath = resolve(root, relativeResource)
+      const resourceExtension = extname(filePath).toLowerCase()
+      if ((resourceKind === 'entry' && resourceExtension !== '.js' && resourceExtension !== '.mjs')
+        || (resourceKind === 'style' && resourceExtension !== '.css')) {
+        return new Response('Unsupported Media Type', { status: 415 })
+      }
+      const relativePath = relative(root, filePath)
+      if (relativePath.startsWith('..') || relativePath.includes('..\\') || relativePath.includes('../') || !existsSync(filePath)) {
+        return new Response('Not Found', { status: 404 })
+      }
+      try {
+        const realRelativePath = relative(realpathSync(root), realpathSync(filePath))
+        if (!statSync(filePath).isFile() || realRelativePath.startsWith('..') || realRelativePath.includes('..\\') || realRelativePath.includes('../')) {
+          return new Response('Not Found', { status: 404 })
+        }
+      } catch {
+        return new Response('Not Found', { status: 404 })
+      }
+      return new Response(Bun.file(filePath), { headers: { 'Content-Type': getMimeType(filePath), 'Cache-Control': 'no-cache' } })
     }
 
     // ── Serve SPA static files ──

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { resolveImmutableRuntimeLayout } from '@mortise/session-tools-core/runtime'
 import { resolveElectronResourcePaths } from '../electron-resource-paths'
-import { buildWorkspaceServerChildEnv, prepareWorkspaceServerEntry, resolveWorkspaceServerEntry } from '../workspace-server-spawner'
+import { buildWorkspaceServerChildEnv, prepareWorkspaceServerEntry, resolveWorkspaceServerEntry, resolveWorkspaceServerWorkingDirectory } from '../workspace-server-spawner'
 
 const temporaryDirectories: string[] = []
 
@@ -26,7 +26,6 @@ describe('resolveElectronResourcePaths', () => {
 
     expect(paths.bundledPiExtensionsPath).toBe('C:\\Mortise\\resources\\app\\dist\\resources\\pi-extensions')
     expect(paths.browserExtensionPath).toBe('C:\\Mortise\\resources\\app\\dist\\resources\\pi-extensions\\browser.js')
-    expect(paths.permissionsExtensionPath).toBe('C:\\Mortise\\resources\\app\\dist\\resources\\pi-extensions\\permissions.js')
     expect(paths.commandDocsPath).toBe('C:\\Mortise\\resources\\app\\dist\\resources\\docs\\mortise-cli.md')
     expect(paths.messagingWorkerPath).toBe('C:\\Mortise\\resources\\messaging-whatsapp-worker\\worker.cjs')
   })
@@ -127,6 +126,11 @@ describe('resolveElectronResourcePaths', () => {
     expect(env.MORTISE_RUNTIME_ELECTRON_PATH).toBe(immutableRuntime.electronRuntimePath)
     expect(env.MORTISE_RUNTIME_NODE_PATH).toBe(immutableRuntime.nodeRuntimePath)
     expect(env.MORTISE_RUNTIME_IMMUTABLE).toBe('1')
+  })
+
+  it('keeps the workspace-server child on the parent working directory', () => {
+    const parentWorkingDirectory = join('E:\\', 'mortise-source')
+    expect(resolveWorkspaceServerWorkingDirectory(parentWorkingDirectory)).toBe(parentWorkingDirectory)
   })
 
   it('fails closed before workspace-server launch when the immutable layout is incomplete', () => {

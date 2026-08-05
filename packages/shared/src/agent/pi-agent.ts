@@ -562,7 +562,6 @@ export class PiAgent extends BaseAgent {
     return [
       process.env.MORTISE_BROWSER_EXTENSION_PATH,
       process.env.MORTISE_MESSAGING_EXTENSION_PATH,
-      process.env.MORTISE_PERMISSIONS_EXTENSION_PATH,
     ]
       .filter((value): value is string => Boolean(value && existsSync(value)));
   }
@@ -1008,6 +1007,34 @@ export class PiAgent extends BaseAgent {
       return;
     }
 
+    if ((event as unknown as { type?: string }).type === 'extension_frontend_state') {
+      const frontend = event as unknown as {
+        extensionId?: unknown
+        runtimeId?: unknown
+        state?: import('../protocol/extension-frontend-channels.ts').ExtensionFrontendStateV2
+      };
+      if (typeof frontend.extensionId !== 'string' || !frontend.state) return;
+      const route = this.extensionEventRoute(frontend.extensionId, typeof frontend.runtimeId === 'string' ? frontend.runtimeId : undefined);
+      this.config.onExtensionEvent?.({
+        type: 'extension_frontend_state',
+        ...route,
+        state: frontend.state,
+        workspaceId: this.config.workspace.id,
+      });
+      return;
+    }
+
+    if ((event as unknown as { type?: string }).type === 'extension_frontend_reset') {
+      const reset = event as unknown as { extensionId?: unknown; runtimeId?: unknown };
+      if (typeof reset.extensionId !== 'string') return;
+      this.config.onExtensionEvent?.({
+        type: 'extension_contributions_runtime_reset',
+        ...this.extensionEventRoute(reset.extensionId, typeof reset.runtimeId === 'string' ? reset.runtimeId : undefined),
+        workspaceId: this.config.workspace.id,
+      });
+      return;
+    }
+
     if (event.type === 'extension_host_capability_request') {
       void this.handleExtensionHostCapabilityRequest(event);
       return;
@@ -1421,6 +1448,37 @@ export class PiAgent extends BaseAgent {
    * Forward a Pi SDK event through the event adapter.
    */
   private handlePiEvent(event: Record<string, unknown>): void {
+
+    // Frontend channel events are runtime bridge traffic, not conversation
+    // events. Forward them before the compatibility adapter sees them.
+    if (event.type === 'extension_frontend_state') {
+      const frontend = event as {
+        extensionId?: unknown
+        runtimeId?: unknown
+        state?: import('../protocol/extension-frontend-channels.ts').ExtensionFrontendStateV2
+      }
+      if (typeof frontend.extensionId === 'string' && frontend.state) {
+        this.config.onExtensionEvent?.({
+          type: 'extension_frontend_state',
+          ...this.extensionEventRoute(frontend.extensionId, typeof frontend.runtimeId === 'string' ? frontend.runtimeId : undefined),
+          state: frontend.state,
+          workspaceId: this.config.workspace.id,
+        })
+      }
+      return
+    }
+
+    if (event.type === 'extension_frontend_reset') {
+      const reset = event as { extensionId?: unknown; runtimeId?: unknown }
+      if (typeof reset.extensionId === 'string') {
+        this.config.onExtensionEvent?.({
+          type: 'extension_contributions_runtime_reset',
+          ...this.extensionEventRoute(reset.extensionId, typeof reset.runtimeId === 'string' ? reset.runtimeId : undefined),
+          workspaceId: this.config.workspace.id,
+        })
+      }
+      return
+    }
 
     // Detect canonical or persisted legacy session tool completions.
     const eventType = event.type as string;
@@ -3070,6 +3128,12 @@ export class PiAgent extends BaseAgent {
       this.debug(`Pi steer was rejected: ${error instanceof Error ? error.message : String(error)}`);
       return false;
     }
+  }
+
+  async sendExtensionFrontendMessage(extensionId: string, channelId: string, message: unknown): Promise<unknown> {
+    const client = this.rpcClient;
+    if (!client) return undefined;
+    return await client.sendExtensionFrontendMessage(extensionId, channelId, message);
   }
 
   override async followUp(message: string, attachments?: FileAttachment[], options?: ChatOptions): Promise<boolean> {

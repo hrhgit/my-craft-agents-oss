@@ -92,7 +92,7 @@ import { useFocusZone } from "@/hooks/keyboard"
 import { useFocusContext } from "@/context/FocusContext"
 import { getSessionTitle } from "@/utils/session"
 import { useSetAtom } from "jotai"
-import type { Session, FileAttachment, PermissionRequest, DiscoveredSkill, LoadedSkill, AutomationFilter } from "../../../shared/types"
+import type { Session, FileAttachment, DiscoveredSkill, LoadedSkill, AutomationFilter } from "../../../shared/types"
 import { sessionMetaMapAtom, sendToWorkspaceAtom, type SessionMeta } from "@/atoms/sessions"
 import { piProjectionIsProcessingAtomFamily } from "@/atoms/pi-projection"
 import { skillsAtom } from "@/atoms/skills"
@@ -228,7 +228,6 @@ function AppShellContent({
     onOpenStoredUserPreferences,
     onSendMessage,
     openNewChat,
-    pendingPermissions,
   } = contextValue
 
   const { t } = useTranslation()
@@ -757,10 +756,6 @@ function AppShellContent({
   // Use session metadata from Jotai atom (lightweight, no messages)
   // This prevents closures from retaining full message arrays
   const sessionMetaMap = useAtomValue(sessionMetaMapAtom)
-  const hasPendingPrompt = React.useCallback((sessionId: string) => {
-    return (pendingPermissions.get(sessionId)?.length ?? 0) > 0
-  }, [pendingPermissions])
-
   // Workspace-level unread and processing indicators for the desktop tree and compact menu.
   const [workspaceUnreadMap, setWorkspaceUnreadMap] = useState<Record<string, boolean>>({})
   const [workspaceProcessingMap, setWorkspaceProcessingMap] = useState<Record<string, boolean>>({})
@@ -1458,7 +1453,6 @@ function AppShellContent({
       workspaceId={activeWorkspaceId ?? undefined}
       focusedSessionId={panelCount === 0 ? null : panelCount > 1 ? focusedSessionId : undefined}
       onNavigateToSession={navigateToSessionInPanel}
-      hasPendingPrompt={hasPendingPrompt}
       activeChatMatchInfo={chatMatchInfo}
     />
   )

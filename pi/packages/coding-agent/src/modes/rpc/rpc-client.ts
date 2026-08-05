@@ -31,6 +31,8 @@ import type {
 	RpcCommandType,
 	RpcEnvelope,
 	RpcExtensionCommandResult,
+	RpcExtensionFrontendResetEvent,
+	RpcExtensionFrontendStateEvent,
 	RpcExtensionHostCapabilityCancel,
 	RpcExtensionHostCapabilityDeclaration,
 	RpcExtensionHostCapabilityProgress,
@@ -148,6 +150,8 @@ export type RpcClientEvent =
 	| RpcExtensionHostCapabilityCancel
 	| RpcExtensionHostCapabilityRouteRejected
 	| RpcExtensionUIValidationEvent
+	| RpcExtensionFrontendStateEvent
+	| RpcExtensionFrontendResetEvent
 	| RpcExtensionErrorEvent
 	| RpcProcessLifecycleEvent
 	| RpcToolPermissionRequest
@@ -820,6 +824,11 @@ export class RpcClient {
 	 */
 	async invokeExtensionCommand(commandId: string, args?: string, ownerExtensionId?: string): Promise<boolean> {
 		return (await this.invokeExtensionCommandResult(commandId, args, ownerExtensionId)).invoked;
+	}
+
+	async sendExtensionFrontendMessage(extensionId: string, channelId: string, message: unknown): Promise<unknown> {
+		const response = await this.send({ type: "send_extension_frontend_message", extensionId, channelId, message });
+		return this.getData<{ result?: unknown }>(response).result;
 	}
 
 	/**
@@ -1634,6 +1643,15 @@ export class PiRuntimeHandle {
 			args,
 			...(ownerExtensionId !== undefined ? { ownerExtensionId } : {}),
 		});
+	}
+
+	sendExtensionFrontendMessage(extensionId: string, channelId: string, message: unknown): Promise<unknown> {
+		return this.requestData<{ result?: unknown }>({
+			type: "send_extension_frontend_message",
+			extensionId,
+			channelId,
+			message,
+		}).then((result) => result.result);
 	}
 
 	reloadExtensions(): Promise<{ reloaded: boolean; deferred: boolean }> {

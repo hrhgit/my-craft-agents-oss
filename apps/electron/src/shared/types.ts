@@ -179,7 +179,6 @@ import type {
   FileAttachment,
   SendMessageOptions,
   SessionEvent,
-  PermissionResponseOptions,
   SessionCommand,
   ShareResult,
   RefreshTitleResult,
@@ -192,6 +191,7 @@ import type {
   UpdateInfo,
   WorkspaceSettings,
   PermissionModeState,
+  PermissionResponseOptions,
   BrowserInstanceInfo,
   BrowserEmbedBounds,
   FileTextWriteResult,
@@ -229,8 +229,8 @@ export interface ElectronAPI {
   sendMessage(sessionId: string, message: string, attachments?: FileAttachment[], storedAttachments?: StoredAttachmentType[], options?: SendMessageOptions): Promise<void>
   cancelProcessing(sessionId: string, silent?: boolean): Promise<void>
   killShell(sessionId: string, shellId: string): Promise<{ success: boolean; error?: string }>
-  getTaskOutput(taskId: string): Promise<string | null>
   respondToPermission(sessionId: string, requestId: string, allowed: boolean, alwaysAllow: boolean, options?: PermissionResponseOptions): Promise<boolean>
+  getTaskOutput(taskId: string): Promise<string | null>
 
   // Consolidated session command handler
   sessionCommand(sessionId: string, command: SessionCommand): Promise<void | ShareResult | RefreshTitleResult | { count: number }>
@@ -262,8 +262,6 @@ export interface ElectronAPI {
   exportRemoteSessionTransfer(sessionId: string): Promise<RemoteSessionTransferPayload>
   importRemoteSessionTransfer(targetWorkspaceId: string, payload: RemoteSessionTransferPayload): Promise<ImportRemoteSessionTransferResult>
 
-  // Pending plan execution (for reload recovery)
-  getPendingPlanExecution(sessionId: string): Promise<{ planPath?: string; artifactId?: string; draftInputSnapshot?: string; awaitingCompaction: boolean; executionDispatched: boolean } | null>
   // Permission mode reconciliation
   getSessionPermissionModeState(sessionId: string): Promise<PermissionModeState | null>
 
@@ -567,6 +565,7 @@ export interface ElectronAPI {
   getExtensionCommands(sessionId: string): Promise<import('@mortise/shared/agent/backend/types').PiExtensionCommand[]>
   getExtensionFileState(workspaceId: string, extensionId: string): Promise<import('@mortise/shared/protocol').ExtensionFileStateV1>
   setExtensionFileState(workspaceId: string, extensionId: string, state: import('@mortise/shared/protocol').ExtensionFileStateV1): Promise<boolean>
+  sendExtensionFrontendMessage(sessionId: string, request: import('@mortise/shared/protocol').ExtensionFrontendMessageV2): Promise<unknown>
   /** Preload-authenticated, source-build-only capability. Never true in packaged/production builds. */
   uiValidationTestHost?: { readonly schemaVersion: 1; readonly enabled: true }
   // Pi session tree — list child sessions spawned from the given parent session

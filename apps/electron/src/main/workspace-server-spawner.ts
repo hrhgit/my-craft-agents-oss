@@ -9,7 +9,7 @@ import {
   statSync,
   unlinkSync,
 } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
 import type { Readable } from 'node:stream'
 
 import {
@@ -53,6 +53,10 @@ interface LaunchedWorkspaceServer {
   child: ChildProcess
   url: string
   exit: Promise<ProcessExit>
+}
+
+export function resolveWorkspaceServerWorkingDirectory(parentWorkingDirectory = process.cwd()): string {
+  return parentWorkingDirectory
 }
 
 function runtimeLog(level: 'info' | 'warn' | 'error', event: string, meta?: Record<string, unknown>): void {
@@ -237,7 +241,9 @@ async function launchWorkspaceServer(
   if (useNodeRuntime) env.ELECTRON_RUN_AS_NODE = '1'
 
   const child = spawn(runtimeBinary, runtimeArgs, {
-    cwd: useNodeRuntime ? dirname(entry) : process.cwd(),
+    // Session buckets derived from relative Workspace identities must resolve
+    // identically in the Electron main process and its Workspace server.
+    cwd: resolveWorkspaceServerWorkingDirectory(),
     env,
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,

@@ -1,0 +1,105 @@
+.mortise-v2-lab-settings {
+  container-name: mortise-v2-lab;
+  container-type: inline-size;
+  display: grid;
+  gap: 18px;
+  color: var(--foreground);
+  font-size: 13px;
+}
+
+.mortise-v2-lab-header,
+.mortise-v2-lab-panel-header,
+.mortise-v2-lab-footer,
+.mortise-v2-lab-range-row,
+.mortise-v2-lab-check-row {
+  display: flex;
+  align-items: center;
+}
+
+.mortise-v2-lab-header { justify-content: space-between; gap: 16px; }
+.mortise-v2-lab-eyebrow { margin: 0 0 4px; color: var(--muted-foreground); font-size: 11px; font-weight: 650; text-transform: uppercase; }
+.mortise-v2-lab-title { margin: 0; font-size: 20px; font-weight: 650; }
+.mortise-v2-lab-subtitle { margin: 5px 0 0; color: var(--muted-foreground); line-height: 1.5; }
+
+.mortise-v2-lab-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.mortise-v2-lab-stat { display: grid; gap: 4px; min-width: 0; padding: 12px; border: 1px solid var(--border); border-radius: 7px; background: var(--card); }
+.mortise-v2-lab-stat-label,
+.mortise-v2-lab-stat-detail { overflow: hidden; color: var(--muted-foreground); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.mortise-v2-lab-stat-value { font-size: 17px; font-weight: 650; }
+
+.mortise-v2-lab-tabs { display: flex; gap: 2px; width: fit-content; padding: 3px; border: 1px solid var(--border); border-radius: 7px; background: var(--muted); }
+.mortise-v2-lab-tab { min-width: 84px; height: 28px; padding: 0 10px; border: 0; border-radius: 5px; background: transparent; color: var(--muted-foreground); font: inherit; }
+.mortise-v2-lab-tab[aria-selected="true"] { background: var(--background); color: var(--foreground); box-shadow: 0 1px 2px color-mix(in srgb, var(--foreground) 10%, transparent); }
+
+.mortise-v2-lab-content { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(230px, 0.8fr); gap: 10px; align-items: start; }
+.mortise-v2-lab-panel { min-width: 0; border: 1px solid var(--border); border-radius: 7px; background: var(--card); }
+.mortise-v2-lab-panel-header { justify-content: space-between; gap: 10px; padding: 12px; border-bottom: 1px solid var(--border); }
+.mortise-v2-lab-panel-title { margin: 0; font-size: 13px; font-weight: 650; }
+.mortise-v2-lab-search,
+.mortise-v2-lab-input,
+.mortise-v2-lab-select { width: 100%; height: 32px; padding: 0 9px; border: 1px solid var(--border); border-radius: 6px; outline: none; background: var(--background); color: var(--foreground); font: inherit; }
+.mortise-v2-lab-search { max-width: 180px; }
+.mortise-v2-lab-search:focus,
+.mortise-v2-lab-input:focus,
+.mortise-v2-lab-select:focus { border-color: var(--ring, var(--foreground)); box-shadow: 0 0 0 2px color-mix(in srgb, var(--ring, var(--foreground)) 16%, transparent); }
+
+.mortise-v2-lab-list { display: grid; }
+.mortise-v2-lab-list-row { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; gap: 9px; align-items: center; min-height: 51px; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+.mortise-v2-lab-list-row:last-child { border-bottom: 0; }
+.mortise-v2-lab-list-copy { display: grid; gap: 2px; min-width: 0; }
+.mortise-v2-lab-list-copy strong,
+.mortise-v2-lab-list-copy span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mortise-v2-lab-list-copy span { color: var(--muted-foreground); font-size: 11px; }
+.mortise-v2-lab-status { padding: 3px 6px; border-radius: 4px; font-size: 10px; font-weight: 650; }
+.mortise-v2-lab-status-ready { background: hsl(146 46% 42% / 0.13); color: hsl(146 48% 32%); }
+.mortise-v2-lab-status-running { background: hsl(207 82% 50% / 0.13); color: hsl(207 73% 42%); }
+.mortise-v2-lab-status-blocked { background: hsl(4 74% 52% / 0.13); color: hsl(4 65% 44%); }
+.dark .mortise-v2-lab-status-ready { color: hsl(146 57% 65%); }
+.dark .mortise-v2-lab-status-running { color: hsl(207 81% 69%); }
+.dark .mortise-v2-lab-status-blocked { color: hsl(4 79% 72%); }
+.mortise-v2-lab-empty { margin: 0; padding: 24px 12px; color: var(--muted-foreground); text-align: center; }
+
+.mortise-v2-lab-details { display: grid; gap: 12px; padding: 12px; }
+.mortise-v2-lab-field { display: grid; gap: 6px; }
+.mortise-v2-lab-label { color: var(--muted-foreground); font-size: 11px; }
+.mortise-v2-lab-check-row { gap: 8px; }
+.mortise-v2-lab-range-row { gap: 9px; }
+.mortise-v2-lab-range { min-width: 0; flex: 1; accent-color: var(--primary, var(--foreground)); }
+.mortise-v2-lab-range-value { min-width: 42px; color: var(--muted-foreground); font-size: 11px; text-align: right; }
+.mortise-v2-lab-local-state { min-height: 30px; margin: 0; padding-top: 9px; border-top: 1px solid var(--border); color: var(--muted-foreground); font-size: 11px; line-height: 1.4; overflow-wrap: anywhere; }
+
+.mortise-v2-lab-button,
+.mortise-v2-lab-command,
+.mortise-v2-lab-icon-button { display: inline-flex; align-items: center; justify-content: center; min-height: 30px; padding: 0 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--muted); color: var(--foreground); font: inherit; white-space: nowrap; }
+.mortise-v2-lab-button:hover,
+.mortise-v2-lab-command:hover,
+.mortise-v2-lab-icon-button:hover { background: var(--accent); }
+.mortise-v2-lab-button-primary { border-color: var(--primary, var(--foreground)); background: var(--primary, var(--foreground)); color: var(--primary-foreground, var(--background)); }
+.mortise-v2-lab-button-primary:hover { filter: brightness(0.92); }
+
+.mortise-v2-lab-footer { flex-wrap: wrap; gap: 6px 14px; padding-top: 2px; color: var(--muted-foreground); font-size: 10px; }
+.mortise-v2-lab-drawer-layer { position: fixed; inset: 0; display: none; grid-template-columns: 1fr minmax(280px, 360px); width: 100vw; max-width: none; height: 100vh; max-height: none; margin: 0; padding: 0; border: 0; background: transparent; }
+.mortise-v2-lab-drawer-layer[open] { display: grid; }
+.mortise-v2-lab-drawer-layer::backdrop { background: transparent; }
+.mortise-v2-lab-drawer-backdrop { grid-column: 1; width: 100%; border: 0; background: hsl(0 0% 0% / 0.28); }
+.mortise-v2-lab-drawer { grid-column: 2; display: flex; flex-direction: column; gap: 10px; min-width: 0; padding: 22px; border-left: 1px solid var(--border); background: var(--background); color: var(--foreground); box-shadow: -8px 0 28px hsl(0 0% 0% / 0.18); }
+.mortise-v2-lab-drawer-title { margin: 0; font-size: 18px; }
+.mortise-v2-lab-command { justify-content: flex-start; min-height: 38px; background: var(--card); }
+.mortise-v2-lab-icon-button { margin-top: auto; }
+
+@container mortise-v2-lab (max-width: 560px) {
+  .mortise-v2-lab-header { align-items: flex-start; flex-direction: column; }
+  .mortise-v2-lab-stats { grid-template-columns: 1fr; }
+  .mortise-v2-lab-content { grid-template-columns: 1fr; }
+  .mortise-v2-lab-panel-header { align-items: stretch; flex-direction: column; }
+  .mortise-v2-lab-search { max-width: none; }
+  .mortise-v2-lab-list-row { grid-template-columns: 18px minmax(0, 1fr); }
+  .mortise-v2-lab-status { grid-column: 2; width: fit-content; }
+  .mortise-v2-lab-button { width: 100%; white-space: normal; }
+}
+
+@media (max-width: 700px) {
+  .mortise-v2-lab-drawer-layer { grid-template-columns: minmax(0, 1fr); }
+  .mortise-v2-lab-drawer-backdrop { display: none; }
+  .mortise-v2-lab-drawer { grid-column: 1; }
+}

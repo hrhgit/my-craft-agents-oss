@@ -3,7 +3,6 @@ import type { ComponentEntry } from './types'
 import { SquareSlash } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { FreeFormInput } from '@/components/app-shell/input/FreeFormInput'
-import type { PermissionMode } from '@mortise/shared/agent/modes'
 import { ensureMockElectronAPI } from '../mock-utils'
 import {
   SlashCommandMenu,
@@ -19,7 +18,6 @@ function SlashCommandDemo() {
   const [activeCommands, setActiveCommands] = React.useState<SlashCommandId[]>([])
   const [buttonMenuOpen, setButtonMenuOpen] = React.useState(false)
   const [inputValue, setInputValue] = React.useState('')
-  const [permissionMode, setPermissionMode] = React.useState<PermissionMode>('ask')
   const [model, setModel] = React.useState('claude-sonnet-4-20250514')
 
   // FreeFormInput depends on Electron bridge APIs (attachments, clipboard, etc.)
@@ -135,8 +133,6 @@ function SlashCommandDemo() {
           placeholder="Type / to see commands..."
           currentModel={model}
           onModelChange={setModel}
-          permissionMode={permissionMode}
-          onPermissionModeChange={setPermissionMode}
           inputValue={inputValue}
           onInputChange={setInputValue}
           sessionId="playground-session"

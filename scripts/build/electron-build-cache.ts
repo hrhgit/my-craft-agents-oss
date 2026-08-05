@@ -174,6 +174,10 @@ export function captureElectronBuildSource(options: {
   return captureBuildSource({
     repoRoot,
     scratchRoot: join(buildRoot, 'sources'),
+    // Bundled extension packages may ship generated frontend artifacts under
+    // ignored dist/ directories. Freeze the complete package tree so the
+    // immutable Electron capsule serves the same resources as the checkout.
+    extraPaths: ['apps/electron/resources/pi-extensions'],
   })
 }
 

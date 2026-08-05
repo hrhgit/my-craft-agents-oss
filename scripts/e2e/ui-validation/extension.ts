@@ -88,6 +88,7 @@ const manifest = await startMortiseUiRun({
     }],
   },
   extensionPaths: [extensionPackageRoot],
+  extraEnv: { MORTISE_UI_DIRECT_SCENARIO_HOST: '0' },
   waitMs: 600_000,
 })
 

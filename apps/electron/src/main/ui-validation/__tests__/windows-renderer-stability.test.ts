@@ -23,4 +23,14 @@ describe('Windows foreground UI validation host', () => {
       expect(isWindowsForegroundUiValidationHost(options)).toBe(false)
     }
   })
+
+  it('allows real app-shell validation to opt out of the direct playground host', () => {
+    expect(isWindowsForegroundUiValidationHost({
+      platform: 'win32',
+      validationBuild: true,
+      testHostEnabled: true,
+      directScenarioHost: false,
+      windowMode: 'foreground',
+    })).toBe(false)
+  })
 })

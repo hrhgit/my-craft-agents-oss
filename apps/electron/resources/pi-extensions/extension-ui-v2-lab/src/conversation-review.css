@@ -1,0 +1,86 @@
+.mortise-v2-lab-review-root {
+  container-name: mortise-v2-review;
+  container-type: inline-size;
+  display: block;
+  margin: 0 0 10px;
+  color: var(--foreground);
+  font-size: 12px;
+}
+
+.mortise-v2-lab-review {
+  display: grid;
+  grid-template-columns: auto minmax(130px, 1fr) auto 30px 30px;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+  padding: 7px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--card) 94%, transparent);
+  box-shadow: 0 1px 3px color-mix(in srgb, var(--foreground) 8%, transparent);
+}
+
+.mortise-v2-lab-review-summary,
+.mortise-v2-lab-review-search,
+.mortise-v2-lab-review-segments,
+.mortise-v2-lab-review-segments button,
+.mortise-v2-lab-review-icon-button,
+.mortise-v2-lab-review-drawer header,
+.mortise-v2-lab-review-jump,
+.mortise-v2-lab-review-pin {
+  display: flex;
+  align-items: center;
+}
+
+.mortise-v2-lab-review-summary { gap: 6px; white-space: nowrap; }
+.mortise-v2-lab-review-summary span { color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
+.mortise-v2-lab-review-search { gap: 6px; min-width: 0; height: 30px; padding: 0 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--background); }
+.mortise-v2-lab-review-search:focus-within { border-color: var(--ring); box-shadow: 0 0 0 2px color-mix(in srgb, var(--ring) 15%, transparent); }
+.mortise-v2-lab-review-search input { min-width: 0; width: 100%; border: 0; outline: 0; background: transparent; color: var(--foreground); font: inherit; }
+.mortise-v2-lab-review-search input::placeholder { color: var(--muted-foreground); }
+.mortise-v2-lab-review-segments { gap: 2px; height: 30px; padding: 2px; border: 1px solid var(--border); border-radius: 6px; background: var(--muted); }
+.mortise-v2-lab-review-segments button { gap: 4px; height: 24px; padding: 0 7px; border: 0; border-radius: 4px; background: transparent; color: var(--muted-foreground); font: inherit; }
+.mortise-v2-lab-review-segments button[aria-pressed="true"] { background: var(--background); color: var(--foreground); box-shadow: 0 1px 2px color-mix(in srgb, var(--foreground) 10%, transparent); }
+.mortise-v2-lab-review-icon-button { justify-content: center; width: 30px; height: 30px; padding: 0; border: 1px solid var(--border); border-radius: 6px; background: var(--background); color: var(--muted-foreground); }
+.mortise-v2-lab-review-icon-button:hover,
+.mortise-v2-lab-review-icon-button[aria-pressed="true"] { background: var(--accent); color: var(--foreground); }
+
+.mortise-v2-lab-host-turn[data-mortise-v2-lab-highlighted="true"] { outline: 1px solid color-mix(in srgb, var(--ring) 58%, transparent); outline-offset: 3px; }
+.mortise-v2-lab-host-turn[data-mortise-v2-lab-pinned="true"]::after { content: ""; position: absolute; inset: -4px; pointer-events: none; border-left: 3px solid var(--primary); border-radius: 7px; }
+
+.mortise-v2-lab-review-layer { position: fixed; z-index: 2147483000; inset: 0; display: grid; grid-template-columns: 1fr minmax(310px, 390px); color: var(--foreground); font-size: 12px; }
+.mortise-v2-lab-review-backdrop { grid-column: 1; border: 0; background: hsl(0 0% 0% / 0.24); }
+.mortise-v2-lab-review-drawer { grid-column: 2; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; min-width: 0; padding: 16px; border-left: 1px solid var(--border); background: var(--background); box-shadow: -8px 0 28px hsl(0 0% 0% / 0.18); }
+.mortise-v2-lab-review-drawer header { justify-content: space-between; gap: 12px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
+.mortise-v2-lab-review-drawer header p { margin: 0 0 3px; color: var(--muted-foreground); font-size: 10px; text-transform: uppercase; }
+.mortise-v2-lab-review-drawer h3 { margin: 0; font-size: 16px; }
+.mortise-v2-lab-review-drawer header button,
+.mortise-v2-lab-review-pin { justify-content: center; width: 28px; height: 28px; padding: 0; border: 1px solid var(--border); border-radius: 5px; background: var(--card); color: var(--muted-foreground); }
+.mortise-v2-lab-review-list { min-height: 0; overflow: auto; padding: 8px 0; }
+.mortise-v2-lab-review-list article { display: grid; grid-template-columns: minmax(0, 1fr) 28px; gap: 6px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--border); }
+.mortise-v2-lab-review-jump { gap: 8px; min-width: 0; min-height: 34px; padding: 0 8px; border: 0; border-radius: 5px; background: transparent; color: var(--foreground); text-align: left; }
+.mortise-v2-lab-review-jump:hover { background: var(--accent); }
+.mortise-v2-lab-review-jump span { overflow: hidden; min-width: 0; text-overflow: ellipsis; white-space: nowrap; }
+.mortise-v2-lab-review-pin[aria-pressed="true"] { background: var(--primary); color: var(--primary-foreground); }
+.mortise-v2-lab-review-empty { padding: 28px 10px; color: var(--muted-foreground); text-align: center; }
+.mortise-v2-lab-review-drawer footer { padding-top: 10px; border-top: 1px solid var(--border); color: var(--muted-foreground); font-size: 10px; overflow-wrap: anywhere; }
+
+@container mortise-v2-review (max-width: 720px) {
+  .mortise-v2-lab-review { grid-template-columns: minmax(0, 1fr) auto auto; }
+  .mortise-v2-lab-review-summary { grid-column: 1; }
+  .mortise-v2-lab-review-search { grid-column: 1 / -1; grid-row: 2; }
+  .mortise-v2-lab-review-segments { grid-column: 2; grid-row: 1; }
+  .mortise-v2-lab-review-icon-button { grid-row: 1; }
+}
+
+@container mortise-v2-review (max-width: 430px) {
+  .mortise-v2-lab-review { grid-template-columns: minmax(0, 1fr) 30px 30px; }
+  .mortise-v2-lab-review-segments { grid-column: 1 / -1; grid-row: 3; width: 100%; }
+  .mortise-v2-lab-review-segments button { justify-content: center; flex: 1; }
+}
+
+@media (max-width: 620px) {
+  .mortise-v2-lab-review-layer { grid-template-columns: minmax(0, 1fr); }
+  .mortise-v2-lab-review-backdrop { display: none; }
+  .mortise-v2-lab-review-drawer { grid-column: 1; border-left: 0; }
+}

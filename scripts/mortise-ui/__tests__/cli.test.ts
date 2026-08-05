@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'bun:test'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { parseUiDevServers } from '../cli'
 
 const roots: string[] = []
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }) })
@@ -18,7 +19,33 @@ async function runCli(args: string[]): Promise<{ code: number; json: any; stderr
   return { code, json: JSON.parse(stdout.trim()), stderr }
 }
 
+async function runCliText(args: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
+  const child = Bun.spawn([process.execPath, join(import.meta.dir, '..', 'cli.ts'), ...args], {
+    cwd: process.cwd(), stdout: 'pipe', stderr: 'pipe',
+  })
+  const [code, stdout, stderr] = await Promise.all([
+    child.exited,
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+  ])
+  return { code, stdout, stderr }
+}
+
 describe('mortise-ui CLI', () => {
+  it('documents the Electron-only skip-build validation option', async () => {
+    const result = await runCliText(['help'])
+    expect(result.code).toBe(0)
+    expect(result.stdout).toContain('--skip-build')
+    expect(result.stderr).toBe('')
+  })
+
+  it('accepts only loopback V2 frontend dev-server overrides', () => {
+    expect(parseUiDevServers(['extension-ui-v2-lab=http://127.0.0.1:5173/'])).toEqual({
+      'extension-ui-v2-lab': 'http://127.0.0.1:5173/',
+    })
+    expect(() => parseUiDevServers(['extension-ui-v2-lab=https://example.com/'])).toThrow('loopback')
+  })
+
   it('keeps status and stop independent from profile preparation dependencies', async () => {
     const controllerSource = readFileSync(join(import.meta.dir, '..', 'controller.ts'), 'utf8')
     expect(controllerSource).not.toMatch(/\bfrom\s+['"]\.\/profile\.ts['"]/)

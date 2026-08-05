@@ -83,6 +83,7 @@ export const LOCAL_ONLY_CHANNELS = new Set<string>([
   // skills — local filesystem actions (guarded for remote)
   RPC_CHANNELS.skills.DISCOVER,
   RPC_CHANNELS.skills.IMPORT,
+  RPC_CHANNELS.skills.SAVE,
   RPC_CHANNELS.skills.OPEN_EDITOR,
   RPC_CHANNELS.skills.OPEN_FINDER,
 
@@ -448,6 +449,7 @@ export const REMOTE_ELIGIBLE_CHANNELS = new Set<string>([
   RPC_CHANNELS.extensions.GET_COMMANDS,
   RPC_CHANNELS.extensions.GET_FILE_STATE,
   RPC_CHANNELS.extensions.SET_FILE_STATE,
+  RPC_CHANNELS.extensions.FRONTEND_MESSAGE,
 ])
 
 // ---------------------------------------------------------------------------

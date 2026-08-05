@@ -513,29 +513,14 @@ function RealScenarioAppShell({ state }: { state: AppShellScenarioState }) {
     navigate(route)
   }, [needsSession, state.view])
 
-  const pendingPermissions = React.useMemo(() => {
-    const result = new Map<string, PermissionRequest[]>()
-    if (state.view === 'tool-approval' && !state.approval.resolved) {
-      result.set(SCENARIO_SESSION_ID, [{
-        sessionId: SCENARIO_SESSION_ID, requestId: 'scenario-approval', toolName: 'admin_approval', type: 'admin_approval',
-        description: 'Validate the production approval flow', appName: 'Scenario tool',
-        reason: 'Validate the production approval card', command: 'mortise scenario --verify',
-        impact: 'No real command is executed.',
-      }])
-    }
-    return result
-  }, [state.approval.resolved, state.view])
-
   const contextValue = React.useMemo(() => createPlaygroundAppShellContext({
     isCompactMode: false,
-    pendingPermissions,
     getDraft: () => draft,
     onInputChange: (_sessionId, value) => setDraft(value),
     withdrawQueuedMessage: async () => setQueuedMessageWithdrawn(true),
     onCreateSession: async () => session,
-    onRespondToPermission: (_sessionId, _requestId, allowed) => appShellScenarioService.dispatch({ type: 'approval.resolved', result: allowed ? 'approved' : 'cancelled' }),
     onDeleteSession: async () => false,
-  }), [draft, pendingPermissions, session])
+  }), [draft, session])
 
   return (
     <div className="flex h-full min-h-[560px] w-full flex-col bg-background text-foreground" data-testid="scenario.real-app-shell" data-scenario={state.activeScenario ?? 'none'}>

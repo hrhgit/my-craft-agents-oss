@@ -29,7 +29,7 @@ export function ExtensionDetailPanel({ extension, providers, defaultSlots, onPat
   }))), [providers])
   const modelReferenceOptions = useModelReferenceOptions(providers, defaultSlots)
   const values = extension.config ?? {}
-  const fields = extension.ui?.settings?.fields ?? []
+  const fields = extension.ui?.schemaVersion === 1 ? extension.ui.settings?.fields ?? [] : []
   const effectiveValues = Object.assign(Object.fromEntries(fields.filter((field) => field.default !== undefined).map((field) => [field.key, field.default])), values)
   const sections = buildExtensionSettingSections(extension)
 
@@ -212,7 +212,7 @@ export function buildExtensionSettingSections(extension: PiExtensionCatalogEntry
   description?: string
   fields: PiExtensionSettingField[]
 }> {
-  const schema = extension.ui?.settings
+  const schema = extension.ui?.schemaVersion === 1 ? extension.ui.settings : undefined
   const groups = schema?.groups ?? []
   const fields = schema?.fields ?? []
   if (groups.length === 0) {

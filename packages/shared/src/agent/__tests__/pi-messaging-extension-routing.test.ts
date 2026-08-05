@@ -13,7 +13,6 @@ describe('Pi messaging extension routing contract', () => {
   it('passes bundled extensions to each GlobalHost runtime', () => {
     expect(source).toContain('extensionPaths: this.getMortiseExtensionPaths()')
     expect(source).toContain('process.env.MORTISE_BUNDLED_PI_EXTENSIONS_PATH')
-    expect(source).toContain('process.env.MORTISE_PERMISSIONS_EXTENSION_PATH')
   })
 
   it('binds shared runtimes and host reuse to Mortise-owned directories', () => {

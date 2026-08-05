@@ -81,8 +81,6 @@ import { useAnnotationIslandPresentation } from '../annotations/use-annotation-i
 import { useAnnotationIslandEvents } from '../annotations/use-annotation-island-events'
 import { useAnnotationCancelRestore } from '../annotations/use-annotation-cancel-restore'
 import { DocumentFormattedMarkdownOverlay } from '../overlay'
-import { AcceptPlanDropdown } from './AcceptPlanDropdown'
-import { CompactAcceptPlanDrawer } from './CompactAcceptPlanDrawer'
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -367,12 +365,6 @@ export interface TurnCardProps {
   todos?: TodoItem[]
   /** Optional render prop for actions menu (Electron provides dropdown) */
   renderActionsMenu?: () => React.ReactNode
-  /** Callback when user accepts the plan (plan responses only) */
-  onAcceptPlan?: () => void
-  /** Callback when user accepts the plan with compaction (compact conversation first, then execute) */
-  onAcceptPlanWithCompact?: () => void
-  /** Whether this is the last response in the session (shows Accept Plan button only for last response) */
-  isLastResponse?: boolean
   /** Session folder path for stripping from file paths in tool display */
   sessionFolderPath?: string
   /** Display mode: 'detailed' shows all info, 'informative' hides MCP/API names and params */
@@ -380,8 +372,7 @@ export interface TurnCardProps {
   /** Animate response appearance (for playground demos) */
   animateResponse?: boolean
   /** Compact-footer layout. Used by EditPopover (popover embedding) and ChatPage in
-   *  auto-compact / WebUI mobile. Hides Copy / Markdown / Branch actions; keeps the
-   *  Accept Plan dropdown when a plan is the last response. */
+   *  auto-compact / WebUI mobile. Hides Copy / Markdown / Branch actions. */
   compactMode?: boolean
   /** Callback to branch the session from a specific message */
   onBranch?: (messageId: string, options?: { newPanel?: boolean }) => void
@@ -395,8 +386,6 @@ export interface TurnCardProps {
   sendMessageKey?: 'enter' | 'cmd-enter'
   /** Callback when follow-up is saved via "Save & Send" action */
   onSaveAndSendFollowUp?: (target: { messageId: string; annotationId: string; note: string; selectedText: string }) => void
-  /** Whether there are active pending follow-up annotations in the session */
-  hasActiveFollowUpAnnotations?: boolean
   /** External request to open a specific annotation in the follow-up island */
   openAnnotationRequest?: OpenAnnotationRequest | null
   /** Annotation interaction mode (viewer uses tooltip-only to suppress the island) */
@@ -1467,16 +1456,7 @@ export interface ResponseCardProps {
   messageId?: string
   /** Persisted annotations for this response */
   annotations?: AnnotationV1[]
-  /** Callback when user accepts the plan (plan variant only) */
-  onAccept?: () => void
-  /** Callback when user accepts the plan with compaction (compact first, then execute) */
-  onAcceptWithCompact?: () => void
-  /** Whether this is the last response in the session (shows Accept Plan button only for last response) */
-  isLastResponse?: boolean
-  /** Whether to show the Accept Plan button (default: true) */
-  showAcceptPlan?: boolean
-  /** Compact-footer layout. Hides Copy / Markdown / Branch in the response footer;
-   *  keeps the Accept Plan dropdown when a plan is the last response. */
+  /** Compact-footer layout. Hides Copy / Markdown / Branch in the response footer. */
   compactMode?: boolean
   /** Callback to branch the session from this response */
   onBranch?: (options?: { newPanel?: boolean }) => void
@@ -1490,8 +1470,6 @@ export interface ResponseCardProps {
   sendMessageKey?: 'enter' | 'cmd-enter'
   /** Callback when follow-up is saved via "Save & Send" action */
   onSaveAndSendFollowUp?: (target: { messageId: string; annotationId: string; note: string; selectedText: string }) => void
-  /** Whether there are active pending follow-up annotations in the session */
-  hasActiveFollowUpAnnotations?: boolean
   /** External request to open a specific annotation in this response */
   openAnnotationRequest?: OpenAnnotationRequest | null
   /** Annotation interaction mode (viewer uses tooltip-only to suppress the island) */
@@ -1759,10 +1737,6 @@ export function ResponseCard({
   sessionId,
   messageId,
   annotations,
-  onAccept,
-  onAcceptWithCompact,
-  isLastResponse = true,
-  showAcceptPlan = true,
   compactMode = false,
   onBranch,
   onAddAnnotation,
@@ -1770,7 +1744,6 @@ export function ResponseCard({
   onUpdateAnnotation,
   sendMessageKey = 'enter',
   onSaveAndSendFollowUp,
-  hasActiveFollowUpAnnotations = false,
   openAnnotationRequest,
   annotationInteractionMode = 'interactive',
 }: ResponseCardProps) {
@@ -2699,43 +2672,8 @@ export function ResponseCard({
 
               {/* Right side */}
               <div className="flex items-center gap-3">
-                {/* Accept Plan dropdown (plan variant only, last response) */}
-                {isPlan && !artifact && showAcceptPlan && onAccept && onAcceptWithCompact && (
-                  <div
-                    className={cn(
-                      "flex items-center gap-3 transition-all duration-200",
-                      isLastResponse
-                        ? "opacity-100 translate-x-0"
-                        : "opacity-0 translate-x-2 pointer-events-none"
-                    )}
-                  >
-                    <AcceptPlanDropdown
-                      onAccept={onAccept}
-                      onAcceptWithCompact={onAcceptWithCompact}
-                      acceptLabel={hasActiveFollowUpAnnotations ? t('plan.acceptAndSendFollowups') : t('plan.acceptPlan')}
-                      acceptOptionLabel={hasActiveFollowUpAnnotations ? t('plan.acceptAndSendFollowups') : t('plan.accept')}
-                    />
-                  </div>
-                )}
                 {onBranch && <BranchDropdown onBranch={onBranch} />}
               </div>
-            </div>
-          )}
-
-          {/* Compact footer keeps only the last-plan action. */}
-          {compactMode && isPlan && !artifact && showAcceptPlan && isLastResponse && onAccept && onAcceptWithCompact && (
-            <div
-              className={cn(
-                "pl-3 pr-2 py-1.5 border-t border-border/30 flex items-center justify-end gap-2 bg-muted/20",
-                SIZE_CONFIG.fontSize
-              )}
-            >
-              <CompactAcceptPlanDrawer
-                onAccept={onAccept}
-                onAcceptWithCompact={onAcceptWithCompact}
-                acceptLabel={hasActiveFollowUpAnnotations ? t('plan.acceptAndSendFollowups') : t('plan.acceptPlan')}
-                acceptOptionLabel={hasActiveFollowUpAnnotations ? t('plan.acceptAndSendFollowups') : t('plan.accept')}
-              />
             </div>
           )}
 
@@ -2960,9 +2898,6 @@ export const TurnCard = React.memo(function TurnCard({
   hasEditOrWriteActivities,
   todos,
   renderActionsMenu,
-  onAcceptPlan,
-  onAcceptPlanWithCompact,
-  isLastResponse,
   sessionFolderPath,
   displayMode = 'detailed',
   animateResponse = false,
@@ -2973,7 +2908,6 @@ export const TurnCard = React.memo(function TurnCard({
   onUpdateAnnotation,
   sendMessageKey = 'enter',
   onSaveAndSendFollowUp,
-  hasActiveFollowUpAnnotations = false,
   openAnnotationRequest,
   annotationInteractionMode = 'interactive',
 }: TurnCardProps) {
@@ -3447,13 +3381,9 @@ export const TurnCard = React.memo(function TurnCard({
             onRemoveAnnotation={onRemoveAnnotation}
             onUpdateAnnotation={onUpdateAnnotation}
             onSaveAndSendFollowUp={onSaveAndSendFollowUp}
-            onAccept={onAcceptPlan}
-            onAcceptWithCompact={onAcceptPlanWithCompact}
-            isLastResponse={isLastResponse && index === planActivities.length - 1}
             compactMode={compactMode}
             onBranch={onBranch ? (options?: { newPanel?: boolean }) => onBranch(planActivity.messageId ?? planActivity.id, options) : undefined}
             sendMessageKey={sendMessageKey}
-            hasActiveFollowUpAnnotations={hasActiveFollowUpAnnotations}
             openAnnotationRequest={openAnnotationRequest}
             annotationInteractionMode={annotationInteractionMode}
           />)}
@@ -3493,13 +3423,9 @@ export const TurnCard = React.memo(function TurnCard({
                 onRemoveAnnotation={onRemoveAnnotation}
                 onUpdateAnnotation={onUpdateAnnotation}
                 onSaveAndSendFollowUp={onSaveAndSendFollowUp}
-                onAccept={onAcceptPlan}
-                onAcceptWithCompact={onAcceptPlanWithCompact}
-                isLastResponse={isLastResponse}
                 compactMode={compactMode}
                 onBranch={onBranch && response.messageId ? (options?: { newPanel?: boolean }) => onBranch(response.messageId!, options) : undefined}
                 sendMessageKey={sendMessageKey}
-                hasActiveFollowUpAnnotations={hasActiveFollowUpAnnotations}
                 openAnnotationRequest={openAnnotationRequest}
                 annotationInteractionMode={annotationInteractionMode}
               />)}
@@ -3534,13 +3460,9 @@ export const TurnCard = React.memo(function TurnCard({
             onRemoveAnnotation={onRemoveAnnotation}
             onUpdateAnnotation={onUpdateAnnotation}
             onSaveAndSendFollowUp={onSaveAndSendFollowUp}
-            onAccept={onAcceptPlan}
-            onAcceptWithCompact={onAcceptPlanWithCompact}
-            isLastResponse={isLastResponse}
             compactMode={compactMode}
             onBranch={onBranch && response.messageId ? (options?: { newPanel?: boolean }) => onBranch(response.messageId!, options) : undefined}
             sendMessageKey={sendMessageKey}
-            hasActiveFollowUpAnnotations={hasActiveFollowUpAnnotations}
             openAnnotationRequest={openAnnotationRequest}
             annotationInteractionMode={annotationInteractionMode}
           />)}
@@ -3565,8 +3487,6 @@ export const TurnCard = React.memo(function TurnCard({
     || prev.activeSearchTarget?.id !== next.activeSearchTarget?.id) return false
   if (prev.onSearchTargetReady !== next.onSearchTargetReady) return false
 
-  // Re-render if isLastResponse changed (for Accept Plan button visibility)
-  if (prev.isLastResponse !== next.isLastResponse) return false
 
   // Re-render if displayMode changed
   if (prev.displayMode !== next.displayMode) return false
@@ -3590,8 +3510,6 @@ export const TurnCard = React.memo(function TurnCard({
   // Re-render when external annotation-open requests change
   if (prev.openAnnotationRequest !== next.openAnnotationRequest) return false
 
-  // Re-render when active follow-up annotation state changes (plan CTA label)
-  if (prev.hasActiveFollowUpAnnotations !== next.hasActiveFollowUpAnnotations) return false
 
   // For complete, non-streaming turns: skip re-render only when both
   // session and turn identities match. Prevents stale local UI state from

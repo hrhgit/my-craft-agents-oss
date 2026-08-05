@@ -331,6 +331,7 @@ export const RPC_CHANNELS = {
     GET_COMMANDS: 'extensions:getCommands',
     GET_FILE_STATE: 'extensions:getFileState',
     SET_FILE_STATE: 'extensions:setFileState',
+    FRONTEND_MESSAGE: 'extensions:frontendMessage',
   },
   badge: {
     REFRESH: 'badge:refresh',

@@ -28,6 +28,8 @@
     "test:electron:chat-real": "bun run scripts/e2e/electron-chat/run.ts",
     "test:ui-validation:electron": "bun run scripts/e2e/ui-validation/run.ts",
     "test:ui-validation:extension": "bun run scripts/e2e/ui-validation/extension.ts",
+    "test:ui-validation:extension:v2": "bun run scripts/e2e/ui-validation/extension-v2.ts",
+    "test:ui-validation:migrated-extensions": "bun run scripts/e2e/ui-validation/migrated-extensions.ts",
     "test:ui-validation:recovery": "bun run scripts/e2e/ui-validation/recovery.ts",
     "test:ui-validation:raw-host-smoke": "bun run scripts/e2e/ui-validation/raw-host-smoke.ts",
     "test:ui-validation:stability": "bun run scripts/e2e/ui-validation/stability.ts",

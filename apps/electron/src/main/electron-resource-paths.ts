@@ -8,7 +8,6 @@ export interface ElectronResourcePaths {
   bundledPiExtensionsPath: string
   browserExtensionPath: string
   messagingExtensionPath: string
-  permissionsExtensionPath: string
   commandDocsPath: string
   bunBinaryPath?: string
   messagingWorkerPath: string
@@ -58,7 +57,6 @@ export function resolveElectronResourcePaths(
     bundledPiExtensionsPath: join(appResourcesPath, 'pi-extensions'),
     browserExtensionPath: join(appResourcesPath, 'pi-extensions', 'browser.js'),
     messagingExtensionPath: join(appResourcesPath, 'pi-extensions', 'messaging.js'),
-    permissionsExtensionPath: join(appResourcesPath, 'pi-extensions', 'permissions.js'),
     commandDocsPath: join(appResourcesPath, 'docs', 'mortise-cli.md'),
     bunBinaryPath: sourceBunPath ?? firstExisting([
       process.env.MORTISE_BUN ?? '',

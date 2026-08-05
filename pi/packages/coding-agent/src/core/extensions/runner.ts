@@ -28,6 +28,7 @@ import type {
 	ExtensionError,
 	ExtensionEvent,
 	ExtensionRuntime,
+	ExtensionRuntimeState,
 	ExtensionUIContext,
 	InputEvent,
 	InputEventResult,
@@ -163,6 +164,7 @@ const noOpUIContext: ExtensionUIContext = {
 	upsertContribution: () => {},
 	removeContribution: () => {},
 	clearContributions: () => {},
+	publishFrontendState: () => {},
 	interact: async () => ({ schemaVersion: 1, status: "cancelled", reason: "host-disconnected" }),
 	select: async () => undefined,
 	confirm: async () => false,
@@ -325,6 +327,18 @@ export class ExtensionRunner {
 
 	setCapabilitiesContextFactory(factory?: (extensionId: string) => ExtensionCapabilitiesContext): void {
 		this.capabilitiesContextFactory = factory;
+	}
+
+	setFrontendChannelHandlers(
+		register: ExtensionRuntimeState["registerFrontendChannel"],
+		publish: ExtensionRuntimeState["publishFrontendState"],
+	): void {
+		for (const channel of this.runtime.pendingFrontendChannels) {
+			register(channel.extensionId, channel.id, channel.options);
+		}
+		this.runtime.pendingFrontendChannels = [];
+		this.runtime.registerFrontendChannel = register;
+		this.runtime.publishFrontendState = publish;
 	}
 
 	getUIContext(): ExtensionUIContext {

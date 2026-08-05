@@ -66,6 +66,7 @@ export function createHeadlessUIContext(transport: HeadlessUITransport): Extensi
 		upsertContribution(): void {},
 		removeContribution(): void {},
 		clearContributions(): void {},
+		publishFrontendState(): void {},
 		interact: async () => ({ schemaVersion: 1, status: "cancelled", reason: "host-disconnected" }),
 		// ---- Core bridge methods ----
 		notify(message: string, type?: "info" | "warning" | "error"): void {

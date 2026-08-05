@@ -27,7 +27,11 @@ function publish(ui: ExtensionUIContext, count: number): void {
 				gap: "small",
 				children: [
 					{ type: "icon", name: "sparkles", label: "Example extension", semanticId: "status-icon" },
-					{ type: "text", text: `Native Mortise contribution updated ${count} time(s)`, semanticId: "status-text" },
+					{
+						type: "text",
+						text: `Native Mortise contribution updated ${count} time(s)`,
+						semanticId: "status-text",
+					},
 					{
 						type: "button",
 						label: "Update",

@@ -48,7 +48,6 @@ export const playgroundAppShellContext: AppShellContextType = {
   piProviders: [],
   piGlobalSettings: {},
   refreshPiGlobalConfig: async () => {},
-  pendingPermissions: new Map(),
   getDraft: () => '',
   getDraftAttachmentRefs: () => [],
   hydrateDraftAttachments: async () => [],

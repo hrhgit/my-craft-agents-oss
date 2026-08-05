@@ -43,8 +43,7 @@ import {
 } from "@mortise/ui"
 import { useFocusZone } from "@/hooks/keyboard"
 import { useTheme } from "@/hooks/useTheme"
-import type { Session, Message, FileAttachment, StoredAttachment, PermissionRequest, LoadedSkill } from "../../../shared/types"
-import type { PermissionMode } from "@mortise/shared/agent/modes"
+import type { Session, Message, FileAttachment, StoredAttachment, LoadedSkill } from "../../../shared/types"
 import type { ThinkingLevel } from "@mortise/shared/agent/thinking-levels"
 import {
   TurnCard,
@@ -59,8 +58,9 @@ import {
   normalizeFollowUpText,
   type Turn,
 } from "@mortise/ui"
-import { ChatInputZone, type StructuredInputState, type StructuredResponse, type PermissionResponse, type AdminApprovalResponse } from "./input"
+import { ChatInputZone } from "./input"
 import { ExtensionContributionZone, ExtensionReplaceZone } from "@/components/extensions/ExtensionContributionZone"
+import { ExtensionFrontendZone } from '@/components/extensions/ExtensionFrontendZone'
 import { ExtensionArtifactContributionProvider } from "@/components/extensions/ExtensionArtifactContributionProvider"
 import type { RichTextInputHandle } from "@/components/ui/rich-text-input"
 import { useBackgroundTasks } from "@/hooks/useBackgroundTasks"
@@ -73,7 +73,7 @@ import { collectFileChangesFromActivities, getFirstFileChangeIdForActivity } fro
 import { resolveBranchNewPanelOption } from "./branching"
 import { handleErrorMessageAction } from "./error-message-actions"
 import { piProjectionAtomFamily } from "@/atoms/pi-projection"
-import { selectPendingPiPermission, selectPiProcessingStatusMessage, selectPiRuntimeState } from "./pi-timeline-model"
+import { selectPiProcessingStatusMessage, selectPiRuntimeState } from "./pi-timeline-model"
 import { buildPiTurnOverlay, buildPiTurns } from "./pi-turn-model"
 import {
   ChatSearchMatchPager,
@@ -170,27 +170,11 @@ interface ChatDisplayProps {
   textareaRef?: React.RefObject<RichTextInputHandle>
   /** When true, disables input (e.g., when agent needs activation) */
   disabled?: boolean
-  /** Pending permission request for this session */
-  pendingPermission?: PermissionRequest
-  /** Callback to respond to permission request */
-  onRespondToPermission?: (
-    sessionId: string,
-    requestId: string,
-    allowed: boolean,
-    alwaysAllow: boolean,
-    options?: import('../../../shared/types').PermissionResponseOptions
-  ) => void
   // Thinking level (session-level setting)
   /** Current thinking level ('off', 'minimal', 'low', 'medium', 'high', 'xhigh') */
   thinkingLevel?: ThinkingLevel
   /** Callback when thinking level changes */
   onThinkingLevelChange?: (level: ThinkingLevel) => void
-  // Advanced options
-  /** Current permission mode */
-  permissionMode?: PermissionMode
-  onPermissionModeChange?: (mode: PermissionMode) => void
-  /** Enabled permission modes for Shift+Tab cycling */
-  enabledModes?: PermissionMode[]
   // Input value preservation (controlled from parent)
   /** Current input value - preserved across mode switches and conversation changes */
   inputValue?: string
@@ -472,14 +456,9 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
   onProviderChange,
   textareaRef: externalTextareaRef,
   disabled = false,
-  onRespondToPermission,
   // Thinking level
   thinkingLevel = 'medium',
   onThinkingLevelChange,
-  // Advanced options
-  permissionMode = 'ask',
-  onPermissionModeChange,
-  enabledModes,
   // Input value preservation
   inputValue,
   onInputChange,
@@ -517,14 +496,6 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
     () => piProjection.entityIds.map(id => piProjection.entitiesById[id]).filter(Boolean),
     [piProjection.entitiesById, piProjection.entityIds],
   )
-  const projectedPermission = React.useMemo(() => {
-    if (!activeSessionId || piProjection.syncState !== 'synced') return undefined
-    return selectPendingPiPermission(
-      projectionEntities,
-      activeSessionId,
-    )
-  }, [activeSessionId, piProjection.syncState, projectionEntities])
-  const effectivePendingPermission = projectedPermission
   const projectedRuntimeState = React.useMemo(
     () => piProjection.syncState === 'synced' ? selectPiRuntimeState(projectionEntities) : undefined,
     [piProjection.syncState, projectionEntities],
@@ -1549,52 +1520,6 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
     viewport.scrollTop += delta
   }, [])
 
-  // Handle structured input responses (permissions and credentials)
-  const handleStructuredResponse = (response: StructuredResponse) => {
-    if ((response.type === 'permission' || response.type === 'admin_approval') && effectivePendingPermission && onRespondToPermission) {
-      if (response.type === 'permission') {
-        const permResponse = response as PermissionResponse
-        onRespondToPermission(
-          effectivePendingPermission.sessionId,
-          effectivePendingPermission.requestId,
-          permResponse.allowed,
-          permResponse.alwaysAllow
-        )
-        return
-      }
-
-      const adminResponse = response as AdminApprovalResponse
-      onRespondToPermission(
-        effectivePendingPermission.sessionId,
-        effectivePendingPermission.requestId,
-        adminResponse.approved,
-        false,
-        { rememberForMinutes: adminResponse.rememberForMinutes }
-      )
-    }
-  }
-
-  // Build structured input state from pending requests (permissions take priority)
-  const structuredInput: StructuredInputState | undefined = React.useMemo(() => {
-    if (effectivePendingPermission) {
-      if (effectivePendingPermission.type === 'admin_approval') {
-        return {
-          type: 'admin_approval',
-          data: {
-            appName: effectivePendingPermission.appName || effectivePendingPermission.toolName || 'System action',
-            reason: effectivePendingPermission.reason || effectivePendingPermission.description,
-            impact: effectivePendingPermission.impact,
-            command: effectivePendingPermission.command || '',
-            requiresSystemPrompt: effectivePendingPermission.requiresSystemPrompt ?? true,
-            rememberForMinutes: effectivePendingPermission.rememberForMinutes ?? 10,
-          },
-        }
-      }
-      return { type: 'permission', data: effectivePendingPermission }
-    }
-    return undefined
-  }, [effectivePendingPermission])
-
   // Keep ref in sync for scroll handler
   totalTurnCountRef.current = transcriptTurns.length
 
@@ -1697,7 +1622,12 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
     && projectionEntities.length > 0
 
   return (
-    <div ref={zoneRef} className="flex h-full flex-col min-w-0" data-focus-zone="chat">
+    <div
+      ref={zoneRef}
+      className="flex h-full flex-col min-w-0"
+      data-focus-zone="chat"
+      data-mortise-ui-anchor="conversation.root"
+    >
       {session ? (
         <div className="flex flex-1 flex-col min-h-0 min-w-0 relative">
           {/* Content layer */}
@@ -1712,13 +1642,23 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                 WebkitMaskImage: 'linear-gradient(to bottom, transparent 0%, black 32px, black calc(100% - 32px), transparent 100%)'
               }}
             >
-              <ScrollArea className="h-full min-w-0" viewportRef={scrollViewportRef}>
+              <ScrollArea
+                className="h-full min-w-0"
+                viewportRef={scrollViewportRef}
+                data-mortise-ui-anchor="conversation.timeline"
+              >
               <div className={cn(
                 CHAT_LAYOUT.maxWidth,
                 "mx-auto min-w-0",
                 compactMode ? "px-3 py-4 space-y-2" : [CHAT_LAYOUT.containerPadding, CHAT_LAYOUT.messageSpacing]
               )}>
                 <ExtensionContributionZone sessionId={session.id} surface="conversation.timeline.before" />
+                <ExtensionFrontendZone
+                  className="sticky top-8 z-10"
+                  sessionId={session.id}
+                  workspaceId={session.workspaceId}
+                  surface="conversation.timeline.before"
+                />
                 {/* Session-level AnimatePresence: Prevents layout jump when switching sessions */}
                 <AnimatePresence mode={compactMode ? "sync" : "wait"} initial={false}>
                   <motion.div
@@ -1839,6 +1779,8 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                         <div
                           key={turnKey}
                           ref={el => { if (el) turnRefs.current.set(turnKey, el); else turnRefs.current.delete(turnKey) }}
+                          data-mortise-ui-semantic="conversation.message"
+                          data-mortise-ui-entity={turn.message.id}
                           className={cn(
                             compactMode ? "pt-2 pb-1" : CHAT_LAYOUT.userMessagePadding,
                             "rounded-lg transition-all duration-200",
@@ -1867,6 +1809,8 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                         <div
                           key={turnKey}
                           ref={el => { if (el) turnRefs.current.set(turnKey, el); else turnRefs.current.delete(turnKey) }}
+                          data-mortise-ui-semantic="conversation.message"
+                          data-mortise-ui-entity={turn.message.id}
                           className={cn(
                             "rounded-lg transition-all duration-200",
                             isCurrentMatch && "ring-2 ring-info ring-offset-2 ring-offset-background",
@@ -1897,7 +1841,6 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                     }
 
                     // Check if this is the last response (for Accept Plan button visibility)
-                    const isLastResponse = index === turns.length - 1 || !turns.slice(index + 1).some(t => t.type === 'user')
 
                     // Assistant turns - render with TurnCard (buffered streaming)
                     const assistantUiKey = getAssistantTurnUiKey(turn, index)
@@ -1940,6 +1883,8 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                       <div
                         key={turnKey}
                         ref={el => { if (el) turnRefs.current.set(turnKey, el); else turnRefs.current.delete(turnKey) }}
+                        data-mortise-ui-semantic="conversation.turn"
+                        data-mortise-ui-entity={turn.turnId}
                         className={cn(
                           "pt-2",
                           "rounded-lg transition-all duration-200",
@@ -1952,7 +1897,6 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                       <TurnCard
                         sessionId={session.id}
                         sessionFolderPath={session.sessionFolderPath}
-                        hasActiveFollowUpAnnotations={pendingFollowUpAnnotations.length > 0}
                         turnId={turn.turnId}
                         activities={turn.activities}
                         response={turn.response}
@@ -1974,7 +1918,6 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                         todos={turn.todos}
                         onOpenFile={onOpenFile}
                         onOpenUrl={onOpenUrl}
-                        isLastResponse={isLastResponse}
                         compactMode={compactMode}
                         sendMessageKey={sendMessageKey}
                         openAnnotationRequest={openAnnotationRequest}
@@ -2104,7 +2047,11 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                           </div>
                         ) : builtIn}
                         renderMessage={(messageId, builtIn) => (
-                          <div className="min-w-0">
+                          <div
+                            className="min-w-0"
+                            data-mortise-ui-semantic="conversation.message"
+                            data-mortise-ui-entity={messageId}
+                          >
                             <ExtensionContributionZone sessionId={session.id} surface="conversation.message.before" target={{ messageId }} />
                             <ExtensionReplaceZone sessionId={session.id} surface="conversation.message.replace" target={{ messageId }}>
                               {turn.response?.artifact?.artifactId && turn.response.messageId === messageId ? (
@@ -2176,6 +2123,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
 
           <div className={cn(CHAT_LAYOUT.maxWidth, 'mx-auto flex w-full min-w-0 flex-col gap-1 px-3 @xs/panel:px-4')}>
             <ExtensionContributionZone sessionId={session.id} surface="composer.status" />
+            <ExtensionFrontendZone className="contents" sessionId={session.id} workspaceId={session.workspaceId} surface="composer.status" />
             {session.pendingFailure && (
               <div
                 role="alert"
@@ -2234,14 +2182,14 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
               </div>
             )}
             <ExtensionContributionZone sessionId={session.id} surface="composer.above" />
+            <ExtensionFrontendZone sessionId={session.id} workspaceId={session.workspaceId} surface="composer.above" />
           </div>
 
           {/* === INPUT CONTAINER: FreeForm or Structured Input === */}
+          <ExtensionFrontendZone sessionId={session.id} workspaceId={session.workspaceId} surface="composer.replace">
           <ExtensionReplaceZone sessionId={session.id} surface="composer.replace">
           <ChatInputZone
             compactMode={compactMode}
-            permissionMode={permissionMode}
-            onPermissionModeChange={onPermissionModeChange}
             tasks={backgroundTasks}
             sessionId={session.id}
             readOnly={session.readOnly}
@@ -2267,10 +2215,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
               onModelChange,
               thinkingLevel,
               onThinkingLevelChange,
-              enabledModes,
               enableCompactModelPicker,
-              structuredInput,
-              onStructuredResponse: handleStructuredResponse,
               inputValue,
               onInputChange,
               attachmentsValue,
@@ -2294,7 +2239,9 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
             }}
           />
           </ExtensionReplaceZone>
+          </ExtensionFrontendZone>
           <ExtensionContributionZone surface="composer.below" className={cn(CHAT_LAYOUT.maxWidth, 'mx-auto')} sessionId={session.id} />
+          <ExtensionFrontendZone surface="composer.below" className={cn(CHAT_LAYOUT.maxWidth, 'mx-auto')} sessionId={session.id} workspaceId={session.workspaceId} />
           </div>
         </div>
       ) : null}

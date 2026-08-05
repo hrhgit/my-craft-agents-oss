@@ -37,7 +37,8 @@ import type {
 import type {
 	Extension,
 	ExtensionActivation,
-	ExtensionManifestUIV1,
+	ExtensionFrontendDiagnostic,
+	ExtensionManifestUI,
 	ExtensionSettingScalar,
 } from "./extensions/types.ts";
 import { ModelRegistry } from "./model-registry.ts";
@@ -279,7 +280,9 @@ export interface HostExtensionSummary {
 	manifestStatus: ExtensionManifestStatus;
 	manifestDiagnostics: ExtensionManifestDiagnostic[];
 	loadable: boolean;
-	ui?: ExtensionManifestUIV1;
+	ui?: ExtensionManifestUI;
+	frontendLoadable?: boolean;
+	frontendDiagnostics?: ExtensionFrontendDiagnostic[];
 	path: string;
 	resolvedPath: string;
 	activation: ExtensionActivation;
@@ -1321,12 +1324,14 @@ function summarizeExtension(extension: Extension): HostExtensionSummary {
 		title: manifestUI?.title ?? extension.manifest?.name ?? id,
 		description: manifestUI?.description ?? extension.manifest?.description ?? "",
 		category: manifestUI?.category ?? "other",
-		configurable: (manifestUI?.settings?.fields.length ?? 0) > 0,
+		configurable: manifestUI?.schemaVersion === 1 && (manifestUI.settings?.fields.length ?? 0) > 0,
 		manifest: extension.manifest,
 		manifestStatus: extension.manifestStatus ?? "legacy",
 		manifestDiagnostics: extension.manifestDiagnostics ?? [],
 		loadable: true,
 		ui: manifestUI,
+		frontendLoadable: extension.frontendLoadable,
+		frontendDiagnostics: extension.frontendDiagnostics,
 		path: extension.path,
 		resolvedPath: extension.resolvedPath,
 		activation: extension.activation,
@@ -1388,12 +1393,14 @@ export async function getExtensionCatalog(
 						title: manifestUI?.title ?? manifest?.name ?? id,
 						description: manifestUI?.description ?? manifest?.description ?? "",
 						category: manifestUI?.category ?? "other",
-						configurable: (manifestUI?.settings?.fields.length ?? 0) > 0,
+						configurable: manifestUI?.schemaVersion === 1 && (manifestUI.settings?.fields.length ?? 0) > 0,
 						manifest,
 						manifestStatus: resource.metadata.extensionManifestStatus ?? "legacy",
 						manifestDiagnostics: resource.metadata.extensionManifestDiagnostics ?? [],
 						loadable: resource.metadata.extensionLoadable ?? resource.enabled,
 						ui: manifestUI,
+						frontendLoadable: resource.metadata.extensionFrontendLoadable,
+						frontendDiagnostics: resource.metadata.extensionFrontendDiagnostics,
 						path: resource.path,
 						resolvedPath: resource.path,
 						activation: resource.metadata.activation ?? "beforeFirstRequest",

@@ -2,12 +2,14 @@ import { afterEach, describe, expect, it } from 'bun:test'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { startWebuiHttpServer } from '../http-server'
 
 const SECRET = 'test-server-secret'
 const PASSWORD = 'test-password'
 const TEMP_DIRS: string[] = []
 const SERVERS: Array<{ stop: () => void }> = []
+const ORIGINAL_BUNDLED_EXTENSIONS = process.env.MORTISE_BUNDLED_PI_EXTENSIONS_PATH
 
 const logger = {
   info: () => {},
@@ -60,6 +62,8 @@ function extractSessionCookie(res: Response): string {
 }
 
 afterEach(() => {
+  if (ORIGINAL_BUNDLED_EXTENSIONS === undefined) delete process.env.MORTISE_BUNDLED_PI_EXTENSIONS_PATH
+  else process.env.MORTISE_BUNDLED_PI_EXTENSIONS_PATH = ORIGINAL_BUNDLED_EXTENSIONS
   while (SERVERS.length > 0) {
     SERVERS.pop()?.stop()
   }
@@ -206,5 +210,38 @@ describe('startWebuiHttpServer', () => {
     expect(await configRes.json()).toEqual({
       wsUrl: 'wss://mortise.example.com/ws',
     })
+  })
+
+  it('serves authenticated V2 extension modules and styles with browser MIME types', async () => {
+    process.env.MORTISE_BUNDLED_PI_EXTENSIONS_PATH = fileURLToPath(new URL('../../../../../apps/electron/resources/pi-extensions/extension-ui-v2-lab', import.meta.url))
+    const { baseUrl } = await createServer()
+    const unauthenticated = await fetch(`${baseUrl}/api/extensions/ui/extension-ui-v2-lab/toolbar/entry`)
+    expect(unauthenticated.status).toBe(401)
+
+    const auth = await fetch(`${baseUrl}/api/auth`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: PASSWORD }),
+    })
+    const cookie = extractSessionCookie(auth)
+    const entry = await fetch(`${baseUrl}/api/extensions/ui/extension-ui-v2-lab/toolbar/entry`, { headers: { cookie } })
+    expect(entry.status).toBe(200)
+    expect(entry.headers.get('content-type')).toContain('application/javascript')
+    expect((await entry.text()).length).toBeGreaterThan(1000)
+
+    const typedEntry = await fetch(`${baseUrl}/api/extensions/ui/frontend/extension-ui-v2-lab/toolbar/entry`, { headers: { cookie } })
+    expect(typedEntry.status).toBe(200)
+    expect(typedEntry.headers.get('content-type')).toContain('application/javascript')
+
+    const style = await fetch(`${baseUrl}/api/extensions/ui/extension-ui-v2-lab/toolbar/style/0`, { headers: { cookie } })
+    expect(style.status).toBe(200)
+    expect(style.headers.get('content-type')).toContain('text/css')
+
+    const typedStyle = await fetch(`${baseUrl}/api/extensions/ui/frontend/extension-ui-v2-lab/toolbar/style/0`, { headers: { cookie } })
+    expect(typedStyle.status).toBe(200)
+    expect(typedStyle.headers.get('content-type')).toContain('text/css')
+
+    const missing = await fetch(`${baseUrl}/api/extensions/ui/extension-ui-v2-lab/toolbar/style/99`, { headers: { cookie } })
+    expect(missing.status).toBe(404)
   })
 })

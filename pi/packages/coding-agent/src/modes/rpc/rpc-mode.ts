@@ -38,6 +38,7 @@ import type {
 	HostCapabilityInvokeOptions,
 	HostCapabilityResult,
 } from "../../core/extensions/index.ts";
+import { type ExtensionFrontendChannelOptions, isSerializableFrontendValue } from "../../core/extensions/types.ts";
 import { getProcessGlobalBackgroundTaskCoordinator } from "../../core/global-background-tasks.ts";
 import {
 	getPiGlobalHostStatePath,
@@ -463,6 +464,44 @@ export async function runRpcMode(
 	const activeContributions = new Map<string, Map<string, ExtensionUIContribution>>();
 	const validationRevisions = new Map<string, number>();
 	const activeValidationDefinitions = new Map<string, Map<string, ExtensionUIValidationDefinitionV1>>();
+	const frontendChannels = new Map<
+		string,
+		{
+			scope: ExtensionFrontendChannelOptions["scope"];
+			snapshot: unknown;
+			revision: number;
+			onMessage?: ExtensionFrontendChannelOptions["onMessage"];
+			disabled?: boolean;
+		}
+	>();
+	const frontendChannelKey = (binding: RuntimeBinding, extensionId: string, channelId: string) =>
+		`${binding.runtimeId}\0${extensionId}\0${channelId}`;
+	const publishFrontendState = (
+		binding: RuntimeBinding,
+		extensionId: string,
+		channelId: string,
+		state: unknown,
+	): void => {
+		const key = frontendChannelKey(binding, extensionId, channelId);
+		const channel = frontendChannels.get(key);
+		if (!channel) throw new Error(`Unknown frontend channel: ${channelId}`);
+		if (channel.disabled) return;
+		if (!isSerializableFrontendValue(state)) {
+			channel.disabled = true;
+			console.warn(`[extension:${extensionId}] Disabled frontend channel ${channelId}: state is not JSON serializable`);
+			return;
+		}
+		channel.revision += 1;
+		channel.snapshot = state;
+		output(
+			{
+				type: "extension_frontend_state",
+				extensionId,
+				state: { schemaVersion: 2, channelId, scope: channel.scope, revision: channel.revision, state },
+			},
+			binding,
+		);
+	};
 	const nextContributionRevision = (binding: RuntimeBinding, extensionId: string): number => {
 		const key = `${binding.runtimeId}\0${extensionId}`;
 		const revision = (contributionRevisions.get(key) ?? 0) + 1;
@@ -546,6 +585,15 @@ export async function runRpcMode(
 			if (binding.uiCapabilities.validation) emitValidation(binding, extensionId, { operation: "reset" });
 			activeValidationDefinitions.delete(key);
 		}
+		const resetFrontendExtensions = new Set<string>();
+		for (const key of frontendChannels.keys()) {
+			if (!key.startsWith(prefix)) continue;
+			const extensionId = key.slice(prefix.length).split("\0", 1)[0];
+			frontendChannels.delete(key);
+			if (extensionId) resetFrontendExtensions.add(extensionId);
+		}
+		for (const extensionId of resetFrontendExtensions)
+			output({ type: "extension_frontend_reset", extensionId }, binding);
 	};
 	const broadcast = (obj: object): void => {
 		const line = serializeJsonLine(obj);
@@ -1255,6 +1303,10 @@ export async function runRpcMode(
 				activeContributions.delete(`${binding.runtimeId}\0${extensionId}`);
 				emitContributionReset(binding, extensionId);
 			},
+			publishFrontendState(channelId, state): void {
+				if (!binding.uiCapabilities.contributions) return;
+				publishFrontendState(binding, extensionId, channelId, state);
+			},
 			interact,
 			select: (title, options, opts) =>
 				binding.uiCapabilities.dialogs
@@ -1450,6 +1502,29 @@ export async function runRpcMode(
 		await session.bindExtensions({
 			uiContext: createExtensionUIContext(binding, "unknown-extension"),
 			uiContextFactory: (extensionId) => createExtensionUIContext(binding, extensionId),
+			registerFrontendChannel: (extensionId, channelId, options) => {
+				const key = frontendChannelKey(binding, extensionId, channelId);
+				if (!binding.uiCapabilities.contributions) return;
+				if (!channelId || !isSerializableFrontendValue(options.snapshot ?? null)) {
+					console.warn(`[extension:${extensionId}] Disabled frontend channel ${channelId || "<missing>"}: initial state is not JSON serializable`);
+					frontendChannels.set(key, {
+						scope: options.scope,
+						snapshot: null,
+						revision: 0,
+						disabled: true,
+					});
+					return;
+				}
+				frontendChannels.set(key, {
+					scope: options.scope,
+					snapshot: options.snapshot ?? null,
+					revision: 0,
+					onMessage: options.onMessage,
+				});
+				if (options.snapshot !== undefined) publishFrontendState(binding, extensionId, channelId, options.snapshot);
+			},
+			publishFrontendState: (extensionId, channelId, state) =>
+				publishFrontendState(binding, extensionId, channelId, state),
 			capabilitiesContextFactory: (extensionId) => createExtensionCapabilitiesContext(binding, extensionId),
 			toolPermissionHandler: async (request) => {
 				if (!binding.toolPermissionsEnabled) {
@@ -2160,6 +2235,23 @@ export async function runRpcMode(
 						invoked: false,
 						error: commandError instanceof Error ? commandError.message : String(commandError),
 					});
+				}
+			}
+
+			case "send_extension_frontend_message": {
+				const channel = frontendChannels.get(frontendChannelKey(binding, command.extensionId, command.channelId));
+				if (!channel?.onMessage) return success(id, "send_extension_frontend_message", { result: undefined });
+				try {
+					const result = await channel.onMessage(
+						command.message,
+						session.extensionRunner.createCommandContext(command.extensionId),
+					);
+					if (result !== undefined && !isSerializableFrontendValue(result)) {
+						throw new Error("Frontend channel response must be JSON serializable");
+					}
+					return success(id, "send_extension_frontend_message", { result });
+				} catch (messageError: unknown) {
+					return error(id, "send_extension_frontend_message", messageError);
 				}
 			}
 
