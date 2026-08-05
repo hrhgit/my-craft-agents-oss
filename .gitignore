@@ -70,6 +70,10 @@ pnpm-lock.yaml
 # Local agent instructions
 AGENTS.md
 
+# Local browser and UI validation artifacts
+.playwright-cli/
+runs/
+
 # SSH keys and secrets
 *.pem
 *.key
