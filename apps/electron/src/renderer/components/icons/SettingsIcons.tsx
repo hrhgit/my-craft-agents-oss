@@ -7,7 +7,6 @@
  */
 
 import {
-  Building2,
   Bot,
   Keyboard,
   MessageSquare,
@@ -32,7 +31,6 @@ export const ExtensionsSettingsIcon = ({ className }: IconProps) => <Puzzle clas
 export const DeveloperSettingsIcon = ({ className }: IconProps) => <Wrench className={className} />
 export const AppearanceIcon = ({ className }: IconProps) => <Palette className={className} />
 export const InputIcon = ({ className }: IconProps) => <Keyboard className={className} />
-export const WorkspaceIcon = ({ className }: IconProps) => <Building2 className={className} />
 export const PermissionsIcon = ({ className }: IconProps) => <ShieldCheck className={className} />
 export const LabelsIcon = ({ className }: IconProps) => <Tag className={className} />
 export const MessagingSettingsIcon = ({ className }: IconProps) => <MessageSquare className={className} />
@@ -52,7 +50,6 @@ export const SETTINGS_ICONS: Record<BuiltInSettingsSubpage, React.ComponentType<
   developer: DeveloperSettingsIcon,
   appearance: AppearanceIcon,
   input: InputIcon,
-  workspace: WorkspaceIcon,
   messaging: MessagingSettingsIcon,
   server: ServerSettingsIcon,
   shortcuts: ShortcutsIcon,

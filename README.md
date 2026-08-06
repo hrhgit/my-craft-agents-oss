@@ -25,7 +25,7 @@ On Windows, double-click [`Mortise-Desktop-Tool.cmd`](./Mortise-Desktop-Tool.cmd
 
 - **Multi-Session History**: Desktop app with session management, unread tracking, search, and deletion
 - **Claude Code Experience**: Streaming responses, tool visualization, real-time updates
-- **Multiple LLM Connections**: Add multiple AI providers and set per-workspace defaults
+- **Multiple LLM Connections**: Add multiple AI providers with app defaults and per-session overrides
 - **Multi-Provider Support**: Run sessions with Google AI Studio, ChatGPT Plus, GitHub Copilot, or OpenAI API keys alongside Anthropic
 - **MCP Integration**: Connect local and remote Model Context Protocol servers
 - **Permission Modes**: Three-level system (Explore, Ask to Edit, Auto) with customizable rules
@@ -342,22 +342,19 @@ Mortise uses a single agent backend:
 
 ## Configuration
 
-Configuration is stored at `~/.mortise/`:
+Current Mortise state is stored under `~/.mortise/`:
 
 ```
 ~/.mortise/
-├── config.json              # Main config (workspaces, LLM connections)
-├── preferences.json         # User preferences
-├── theme.json               # App-level theme
-└── workspaces/
-    └── {id}/
-        ├── config.json      # Workspace settings
-        ├── theme.json       # Workspace theme override
-        └── statuses/        # Status configuration
+├── state.sqlite             # App configuration, Workspace registry, and drafts
+└── agent/
+    ├── auth.json            # Provider credentials
+    ├── sessions/            # Session JSONL data
+    └── skills/              # Mortise-global skills
 ```
 
-Credentials are stored at `~/.mortise/agent/auth.json`. Session data (JSONL) is stored at `~/.mortise/agent/sessions/`.
 Project skills are stored at `<workspace>/.mortise/skills/`; Mortise global skills are stored at `~/.mortise/agent/skills/`.
+Retired `config.json` Workspace settings files are ignored and left untouched.
 
 Legacy `~/.mortise/credentials.enc` files are not silently imported into `auth.json`; upgrade migration backs up and clears the old path. Re-enter API keys or re-authenticate OAuth connections after upgrading from a pre-unification build.
 

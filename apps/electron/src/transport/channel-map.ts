@@ -202,10 +202,6 @@ export const CHANNEL_MAP = {
   setSessionModel: invoke(RPC_CHANNELS.sessions.SET_MODEL),
   openWorkspaceFolder: invoke(RPC_CHANNELS.workspaces.OPEN_PRIMARY_LOCATION),
 
-  // Workspace Settings
-  getWorkspaceSettings: invoke(RPC_CHANNELS.workspace.SETTINGS_GET),
-  updateWorkspaceSetting: invoke(RPC_CHANNELS.workspace.SETTINGS_UPDATE),
-
   // Folder dialog
   openFolderDialog: invoke(RPC_CHANNELS.dialog.OPEN_FOLDER),
 

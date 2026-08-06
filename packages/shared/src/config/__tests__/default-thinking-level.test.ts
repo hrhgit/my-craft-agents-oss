@@ -63,8 +63,6 @@ function setupWorkspaceConfigDir() {
       },
       workspaceDefaults: {
         thinkingLevel: 'off',
-        permissionMode: 'ask',
-        cyclablePermissionModes: ['safe', 'ask', 'allow-all'],
       },
     }, null, 2),
     'utf-8',

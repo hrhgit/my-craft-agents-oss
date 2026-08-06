@@ -513,6 +513,7 @@ describe('Workspace topology commands and errors', () => {
       },
       { ...base, operation: 'set-primary', locationId: 'docs' },
       { ...base, operation: 'rename', locationId: 'docs', name: 'Reference' },
+      { ...base, operation: 'rename-workspace', name: 'Renamed Workspace' },
     ]
 
     for (const command of commands) {
@@ -585,6 +586,19 @@ describe('Workspace topology commands and errors', () => {
       workspace: info,
     }
     expect(parseWorkspaceTopologyChangedV1(change).revision).toBe(5)
+    expect(parseWorkspaceTopologyChangedV1({
+      ...change,
+      operation: 'rename-workspace',
+      changedLocationIds: [],
+    }).changedLocationIds).toEqual([])
+    expect(() => parseWorkspaceTopologyChangedV1({
+      ...change,
+      operation: 'rename-workspace',
+    })).toThrow('Workspace rename must not report changed locations')
+    expect(() => parseWorkspaceTopologyChangedV1({
+      ...change,
+      changedLocationIds: [],
+    })).toThrow('Location topology changes must report at least one location')
     expect(() => parseWorkspaceTopologyChangedV1({ ...change, revision: 6 })).toThrow()
     expect(() => parseWorkspaceTopologyResultV1({
       schemaVersion: 1,

@@ -53,7 +53,7 @@ Use this to delegate temporary child tasks, inspect their state and output, send
 Call with help=true first to discover available providers and models.
 When spawning, the 'prompt' parameter is required.
 
-Optional overrides: provider, model, permissionMode, and thinkingLevel. Omitted AI fields inherit from the spawning session or the global default; workspace-scoped fields retain their workspace defaults.
+Optional overrides: provider, model, permissionMode, and thinkingLevel. Omitted AI fields inherit from the spawning session or the global default.
 
 thinkingLevel is silently ignored on non-reasoning models (e.g. gpt-4o, gemini-2.5-flash) — the SDK drops the reasoning param rather than erroring.
 

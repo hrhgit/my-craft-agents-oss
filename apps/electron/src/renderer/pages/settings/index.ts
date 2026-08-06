@@ -11,7 +11,6 @@ export { default as AgentSettingsPage, meta as AgentSettingsMeta } from './Agent
 export { default as AppearanceSettingsPage, meta as AppearanceMeta } from './AppearanceSettingsPage'
 export { default as ExtensionsSettingsPage, meta as ExtensionsMeta } from './ExtensionsSettingsPage'
 export { default as InputSettingsPage, meta as InputMeta } from './InputSettingsPage'
-export { default as WorkspaceSettingsPage, meta as WorkspaceSettingsMeta } from './WorkspaceSettingsPage'
 export { default as ShortcutsPage, meta as ShortcutsMeta } from './ShortcutsPage'
 export { default as PreferencesPage, meta as PreferencesMeta } from './PreferencesPage'
 

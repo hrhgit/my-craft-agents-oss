@@ -387,7 +387,6 @@ const SETTINGS_ICONS: Record<BuiltInSettingsSubpage, string> = {
   developer: 'Wrench',
   appearance: 'Palette',
   input: 'Keyboard',
-  workspace: 'Building2',
   messaging: 'MessageSquare',
   server: 'Server',
   shortcuts: 'Keyboard',

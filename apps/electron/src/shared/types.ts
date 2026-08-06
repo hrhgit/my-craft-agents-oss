@@ -189,7 +189,6 @@ import type {
   OAuthResult,
   GitBashStatus,
   UpdateInfo,
-  WorkspaceSettings,
   PermissionModeState,
   PermissionResponseOptions,
   BrowserInstanceInfo,
@@ -456,10 +455,6 @@ export interface ElectronAPI {
   // Session-specific model (overrides global)
   getSessionModel(sessionId: string, workspaceId: string): Promise<string | null>
   setSessionModel(sessionId: string, workspaceId: string, model: string | null, provider?: string): Promise<void>
-
-  // Workspace Settings (per-workspace configuration)
-  getWorkspaceSettings(workspaceId: string): Promise<WorkspaceSettings | null>
-  updateWorkspaceSetting<K extends keyof WorkspaceSettings>(workspaceId: string, key: K, value: WorkspaceSettings[K]): Promise<void>
 
   // Folder dialog
   openFolderDialog(): Promise<string | null>

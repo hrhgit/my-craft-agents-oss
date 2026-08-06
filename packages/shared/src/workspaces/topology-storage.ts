@@ -727,6 +727,8 @@ function applyPreparedCommand(
 ): Workspace {
   let primaryLocationId = current.primaryLocationId
   let locations = [...current.locations]
+  let name = current.name
+  let nameSource = current.nameSource
   switch (command.operation) {
     case 'attach-local':
       assertNewLocation(current, command.locationId, command.name)
@@ -782,13 +784,18 @@ function applyPreparedCommand(
       }
       locations = locations.map(location => location.id === command.locationId ? { ...location, name: command.name } : location)
       break
+    case 'rename-workspace':
+      name = command.name
+      nameSource = 'custom'
+      break
   }
   const primary = locations.find(location => location.id === primaryLocationId)
   if (!primary) throw new Error(`Workspace primary location not found: ${primaryLocationId}`)
   const next = normalizeWorkspace({
     ...current,
     revision: current.revision + 1,
-    name: current.nameSource === 'derived' ? primary.rootName : current.name,
+    name: nameSource === 'derived' ? primary.rootName : name,
+    nameSource,
     primaryLocationId,
     locations: locations as Workspace['locations'],
   })

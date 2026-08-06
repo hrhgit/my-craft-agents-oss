@@ -64,6 +64,8 @@ Feature specialists contribute stable semantics and scenarios; build ownership p
 
 Automation can pass against fixtures while physical rendering fails; stale native references can target the wrong control or process.
 
+Changes to `scripts/mortise-ui` must be checked against `apps/cli` for shared protocol, output-contract, or user-visible command effects. Keep the UI-validation CLI and server CLI independently owned, but synchronize shared contracts, documentation, focused tests, and the versioned Developer Kit whenever the change crosses their boundary. A source change is not shipped to kit users until the kit is rebuilt and its packaged smoke passes.
+
 # Validation
 
-Run CLI, controller, build cache, process identity, semantic, native readiness, scenario, recovery, and surface-parity suites.
+Run CLI, controller, build cache, process identity, semantic, native readiness, scenario, recovery, and surface-parity suites; for cross-CLI changes also run the headless CLI tests and the Developer Kit package/smoke validation.

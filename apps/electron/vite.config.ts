@@ -71,7 +71,9 @@ export default defineConfig(({ command }) => {
       },
       input: {
         main: resolve(__dirname, 'src/renderer/index.html'),
-        playground: resolve(__dirname, 'src/renderer/playground.html'),
+        // The playground is a source-only UI validation surface. Keep it in
+        // validation builds, but never ship its test bridge in production.
+        ...(uiValidationBuild ? { playground: resolve(__dirname, 'src/renderer/playground.html') } : {}),
         'browser-toolbar': resolve(__dirname, 'src/renderer/browser-toolbar.html'),
         'browser-empty-state': resolve(__dirname, 'src/renderer/browser-empty-state.html'),
       }

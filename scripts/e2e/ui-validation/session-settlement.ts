@@ -181,10 +181,10 @@ function buildFixture(timeline: TimelineName): MortiseUiFixtureSpec {
     workspaces: [{
       id: workspaceId,
       name: `OPT-005 ${timeline}`,
-      permissionMode: 'allow-all',
       sessions: [{
         id: sessionId,
         name: `OPT-005 ${timeline} timeline`,
+        permissionMode: 'allow-all',
         messages,
         ...(timeline === 'compaction' ? {
           pendingPlanExecution: {

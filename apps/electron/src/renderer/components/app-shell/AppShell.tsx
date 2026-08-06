@@ -1165,12 +1165,8 @@ function AppShellContent({
   }, [activeWorkspaceId, handleNewChat, workspaceNavigation])
 
   const handleEditWorkspace = useCallback(async (workspaceId: string) => {
-    if (workspaceId !== activeWorkspaceId) {
-      const selected = await workspaceNavigation.selectWorkspace(workspaceId)
-      if (!selected) return
-    }
-    handleSettingsClick('workspace')
-  }, [activeWorkspaceId, handleSettingsClick, workspaceNavigation])
+    await workspaceNavigation.openEdit(workspaceId)
+  }, [workspaceNavigation])
 
   const handleOpenWorkspaceFolder = useCallback(async (workspace: Parameters<typeof getPrimaryWorkspaceRoute>[0]) => {
     try {

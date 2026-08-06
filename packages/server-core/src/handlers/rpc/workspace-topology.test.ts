@@ -257,6 +257,54 @@ describe('Workspace topology RPC', () => {
     }
   })
 
+  it('renames Workspace metadata without interrupting work or reporting a location change', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mortise-topology-rpc-rename-'))
+    try {
+      const candidate: Workspace = {
+        schemaVersion: 2,
+        id: 'workspace-1',
+        revision: 0,
+        name: 'Original',
+        nameSource: 'custom',
+        slug: 'workspace',
+        primaryLocationId: 'primary',
+        locations: [{
+          id: 'primary',
+          name: 'Primary',
+          rootName: 'Workspace',
+          endpoint: { kind: 'local', rootPath: root },
+        }],
+        createdAt: 1,
+      }
+      const harness = createHarness(candidate)
+      const handler = harness.handlers.get(RPC_CHANNELS.workspaces.TOPOLOGY_COMMAND)!
+      const result = await handler({
+        clientId: 'client-1', workspaceId: 'workspace-1', webContentsId: null,
+      }, {
+        schemaVersion: 1,
+        workspaceId: 'workspace-1',
+        operationId: 'rename-workspace',
+        expectedRevision: 0,
+        operation: 'rename-workspace',
+        name: 'Renamed Workspace',
+      })
+
+      expect(result).toMatchObject({
+        status: 'applied',
+        workspace: { name: 'Renamed Workspace', nameSource: 'custom', revision: 1 },
+      })
+      expect(harness.interruptions).toEqual([])
+      expect(harness.lifecycle).toEqual(['apply', 'session-update', 'publish'])
+      expect(harness.pushes[0]!.args[0]).toMatchObject({
+        operation: 'rename-workspace',
+        changedLocationIds: [],
+      })
+      harness.store.close()
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('interrupts the required scope before a destructive mutation and not on replay', async () => {
     const primary = await mkdtemp(join(tmpdir(), 'mortise-topology-rpc-primary-'))
     const attached = await mkdtemp(join(tmpdir(), 'mortise-topology-rpc-attached-'))

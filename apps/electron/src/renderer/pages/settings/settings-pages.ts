@@ -21,7 +21,6 @@ import AppearanceSettingsPage from './AppearanceSettingsPage'
 import ExtensionsSettingsPage from './ExtensionsSettingsPage'
 import DeveloperSettingsPage from './DeveloperSettingsPage'
 import InputSettingsPage from './InputSettingsPage'
-import WorkspaceSettingsPage from './WorkspaceSettingsPage'
 import MessagingSettingsPage from './MessagingSettingsPage'
 import ServerSettingsPage from './ServerSettingsPage'
 import ShortcutsPage from './ShortcutsPage'
@@ -39,7 +38,6 @@ export const SETTINGS_PAGE_COMPONENTS: Record<BuiltInSettingsSubpage, ComponentT
   extensions: ExtensionsSettingsPage,
   developer: DeveloperSettingsPage,
   input: InputSettingsPage,
-  workspace: WorkspaceSettingsPage,
   messaging: MessagingSettingsPage,
   server: ServerSettingsPage,
   shortcuts: ShortcutsPage,

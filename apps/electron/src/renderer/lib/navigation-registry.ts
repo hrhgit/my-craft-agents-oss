@@ -134,7 +134,6 @@ export const NavigationRegistry = {
       extensions: PlaceholderComponent, // ExtensionsSettingsPage
       appearance: PlaceholderComponent, // AppearanceSettingsPage
       input: PlaceholderComponent, // InputSettingsPage
-      workspace: PlaceholderComponent, // WorkspaceSettingsPage
       shortcuts: PlaceholderComponent, // ShortcutsPage
       preferences: PlaceholderComponent, // PreferencesPage
     },

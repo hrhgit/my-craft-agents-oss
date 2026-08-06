@@ -230,10 +230,6 @@ const NewConversationPage = React.memo(function NewConversationPage({ draftId }:
     () => getNewConversationOptionsStorageScope(workspaceId, draftId),
     [draftId, workspaceId],
   )
-  const hadStoredOptions = React.useMemo(
-    () => storage.getRaw(storage.KEYS.newConversationOptions, optionsScope) !== null,
-    [optionsScope],
-  )
   const defaultOptions = React.useMemo<NewConversationDraftOptions>(() => ({
     provider: piGlobalSettings.defaultProvider,
     model: piGlobalSettings.defaultModel,
@@ -270,19 +266,6 @@ const NewConversationPage = React.memo(function NewConversationPage({ draftId }:
     }
     storage.set(storage.KEYS.newConversationOptions, options, optionsScope)
   }, [options, optionsScope])
-
-  React.useEffect(() => {
-    if (!workspaceId || hadStoredOptions) return
-    let cancelled = false
-    void window.electronAPI.getWorkspaceSettings(workspaceId).then(settings => {
-      if (cancelled || !settings) return
-      setOptions(current => ({
-        ...current,
-        permissionMode: settings.permissionMode ?? current.permissionMode,
-      }))
-    })
-    return () => { cancelled = true }
-  }, [hadStoredOptions, workspaceId])
 
   const handleInputChange = React.useCallback((value: string) => {
     if (submitInFlight.current && value === '') return

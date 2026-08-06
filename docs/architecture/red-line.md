@@ -42,7 +42,7 @@ add, change, and extend them without touching Pi.
 
 - UI rendering (React, shadcn, Tailwind, the GUI OKLCH theme — distinct from
   Pi's TUI theme).
-- Workspace registry, switching, and per-workspace configuration UI.
+- Workspace registry, switching, and bounded create/edit dialogs.
 - Multi-session history, unread tracking, session naming.
 - Automations engine (SchedulerTick, PreToolUse triggers, etc.) —
   Mortise listens to its own events and drives Pi via `RpcClient`.

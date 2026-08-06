@@ -43,7 +43,7 @@ import {
   type WorkspaceInfo,
 } from '@mortise/shared/config'
 import type { ActiveSessionInfo, SessionProcessingStatus } from '@mortise/core/types'
-import { getDefaultWorkspaceTopologyStore, loadWorkspaceConfig } from '@mortise/shared/workspaces'
+import { getDefaultWorkspaceTopologyStore } from '@mortise/shared/workspaces'
 import {
   // Session persistence functions
   listSessions as listStoredSessions,
@@ -3021,13 +3021,10 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
       throw new Error(`Workspace ${workspaceId} not found`)
     }
 
-    // Explicit and legacy workspace values remain available to extensions and
-    // compatibility flows; Mortise core no longer seeds a permission default.
+    // Permission mode belongs to the session/Extension boundary, not Workspace
+    // defaults. Explicit session values are still honored.
     const workspaceRootPath = requirePrimaryLocalWorkspaceRoot(workspace)
-    const wsConfig = loadWorkspaceConfig(workspaceRootPath)
-    // Permission defaults are extension-owned. Keep explicit and legacy
-    // workspace values as compatibility inputs for session restoration.
-    const defaultPermissionMode = options?.permissionMode ?? wsConfig?.defaults?.permissionMode
+    const defaultPermissionMode = options?.permissionMode
 
     // AI defaults are global. An explicit Session value must already be part of
     // the current contract; retired values never silently fall back to default.

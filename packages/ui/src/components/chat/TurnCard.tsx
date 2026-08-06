@@ -1518,8 +1518,6 @@ function BranchDropdown({ onBranch }: BranchDropdownProps) {
   )
 }
 
-const MAX_HEIGHT = 540
-
 function clearAnnotationMarks(root: HTMLElement): void {
   const annotatedInlineCodeNodes = root.querySelectorAll<HTMLElement>('code[data-ca-annotation-inline-code="true"]')
   annotatedInlineCodeNodes.forEach((codeNode) => {
@@ -1761,9 +1759,6 @@ export function ResponseCard({
   const [copied, setCopied] = useState(false)
   // Fullscreen state
   const [isFullscreen, setIsFullscreen] = useState(false)
-  // Dark mode detection - scroll fade only shown in dark mode
-  const [isDarkMode, setIsDarkMode] = useState(false)
-
   useEffect(() => {
     setArtifactPane('primary')
   }, [artifact?.artifactId])
@@ -1806,19 +1801,6 @@ export function ResponseCard({
     isStreaming,
   })
   const allowAnnotationIsland = annotationInteractionMode === 'interactive'
-
-  // Detect dark mode from document class and listen for changes
-  useEffect(() => {
-    const checkDarkMode = () => {
-      setIsDarkMode(document.documentElement.classList.contains('dark'))
-    }
-    checkDarkMode()
-
-    // Observe class changes on documentElement for theme switches
-    const observer = new MutationObserver(checkDarkMode)
-    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] })
-    return () => observer.disconnect()
-  }, [])
 
   const closeSelectionMenu = useCallback(() => {
     closeAll()
@@ -2536,14 +2518,7 @@ export function ResponseCard({
         data-search-root="response"
         onMouseDown={handleSelectionPointerDown}
         onMouseUp={handleTextSelection}
-        className="overflow-y-auto py-3 pl-[22px] pr-[16px] text-sm scrollbar-hover"
-        style={{
-          maxHeight: MAX_HEIGHT,
-          ...(isDarkMode && {
-            maskImage: 'linear-gradient(to bottom, transparent 0%, black 16px, black calc(100% - 16px), transparent 100%)',
-            WebkitMaskImage: 'linear-gradient(to bottom, transparent 0%, black 16px, black calc(100% - 16px), transparent 100%)',
-          }),
-        }}
+        className="py-3 pl-[22px] pr-[16px] text-sm"
       >
         <div ref={contentLayerRef} className="relative">
           <Markdown mode="minimal" onUrlClick={onOpenUrl} onFileClick={onOpenFile}>
@@ -2618,7 +2593,7 @@ export function ResponseCard({
                   <div className="hidden h-9 items-center border-b border-border/30 bg-muted/15 px-4 text-xs font-medium text-muted-foreground @2xl/plan-artifact:flex">
                     {artifactPresentation?.asideTitle ?? 'Review'}
                   </div>
-                  <div className="max-h-[280px] overflow-y-auto px-4 py-3 text-sm scrollbar-hover">
+                  <div className="px-4 py-3 text-sm">
                     {artifactPresentation?.aside}
                   </div>
                 </aside>
@@ -2740,15 +2715,7 @@ export function ResponseCard({
           data-search-root="response"
           onMouseDown={handleSelectionPointerDown}
           onMouseUp={handleTextSelection}
-          className="pl-[22px] pr-4 py-3 text-sm overflow-y-auto scrollbar-hover"
-          style={{
-            maxHeight: MAX_HEIGHT,
-            // Subtle fade at top and bottom edges (16px) - only in dark mode for better contrast
-            ...(isDarkMode && {
-              maskImage: 'linear-gradient(to bottom, transparent 0%, black 16px, black calc(100% - 16px), transparent 100%)',
-              WebkitMaskImage: 'linear-gradient(to bottom, transparent 0%, black 16px, black calc(100% - 16px), transparent 100%)',
-            }),
-          }}
+          className="pl-[22px] pr-4 py-3 text-sm"
         >
           <div ref={contentLayerRef} className="relative">
             <Markdown

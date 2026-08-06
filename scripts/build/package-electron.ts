@@ -18,6 +18,14 @@ import { getProcessStartTime, matchesProcessIdentity } from './process-identity.
 export type PackageTarget = 'default' | 'win' | 'mac' | 'linux'
 type ResolvedPackageTarget = Exclude<PackageTarget, 'default'>
 
+const PACKAGE_USAGE = `Usage: bun run scripts/build/package-electron.ts --target <default|win|mac|linux> [options]
+
+Options:
+  --development              Package the development Electron build.
+  --expected-build-id <sha>  Package an existing immutable build by its SHA-256 id.
+  --build-source-root <path> Capture source from a checkout other than the current repository.
+  --help, -h                 Show this help message.`
+
 export function resolvePackageTarget(
   requested: PackageTarget,
   platform: NodeJS.Platform = process.platform,
@@ -46,6 +54,10 @@ export function resolveExpectedPackageBuildId(args: string[]): string | undefine
 }
 
 export function packageElectron(args = process.argv.slice(2)): void {
+  if (args.includes('--help') || args.includes('-h')) {
+    console.log(PACKAGE_USAGE)
+    return
+  }
   const requestedTarget = optionValue(args, '--target') as PackageTarget | undefined
   if (!requestedTarget || !['default', 'win', 'mac', 'linux'].includes(requestedTarget)) {
     throw new Error('package-electron requires --target default|win|mac|linux')

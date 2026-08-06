@@ -463,7 +463,9 @@ function convertParsedRouteToNavigationState(parsed: ParsedRoute): NavigationSta
     case 'settings':
       return { navigator: 'settings', subpage: 'app' }
     case 'workspace':
-      return { navigator: 'settings', subpage: 'workspace' }
+      // Workspace editing is a modal action now. Keep old deep links useful by
+      // opening the general settings surface instead of a removed page.
+      return { navigator: 'settings', subpage: 'app' }
     case 'labels':
       return { navigator: 'sessions', filter: { kind: 'allSessions' }, details: null }
     case 'shortcuts':

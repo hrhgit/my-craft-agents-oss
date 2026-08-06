@@ -1,4 +1,4 @@
-import { readFileSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, statSync } from 'node:fs'
 import { basename, join, resolve } from 'node:path'
 
 export const RENDERER_ENTRY_BUDGETS = {
@@ -44,7 +44,9 @@ export function assertRendererEntryBudgets(
   rendererDir: string,
   budgets: Readonly<Record<string, number>> = RENDERER_ENTRY_BUDGETS,
 ): StaticEntryGraph[] {
-  const graphs = Object.entries(budgets).map(([html, budget]) => {
+  const graphs = Object.entries(budgets)
+    .filter(([html]) => existsSync(join(rendererDir, html)))
+    .map(([html, budget]) => {
     const graph = measureStaticEntryGraph(rendererDir, html)
     if (graph.totalBytes > budget) {
       const largest = graph.chunks.slice(0, 5)

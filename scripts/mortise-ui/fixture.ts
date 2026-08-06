@@ -64,7 +64,6 @@ export interface MortiseUiFixtureWorkspace {
   id: string
   name: string
   slug?: string
-  permissionMode?: 'ask' | 'allow-all'
   files?: MortiseUiFixtureFile[]
   sessions?: MortiseUiFixtureSession[]
 }
@@ -118,7 +117,6 @@ export const MORTISE_UI_FIXTURE_SCHEMA = {
           id: { type: 'string', pattern: IDENTIFIER_PATTERN },
           name: { type: 'string', minLength: 1, maxLength: 120 },
           slug: { type: 'string', pattern: IDENTIFIER_PATTERN },
-          permissionMode: { enum: [...PERMISSION_MODES] },
           files: { type: 'array', maxItems: LIMITS.files, items: fileSchema },
           sessions: {
             type: 'array', maxItems: LIMITS.sessionsPerWorkspace,
@@ -173,7 +171,7 @@ export const MORTISE_UI_FIXTURE_SCHEMA = {
     version: 1,
     active: { workspaceId: 'docs', sessionId: 'review-readme' },
     workspaces: [{
-      id: 'docs', name: 'Documentation', permissionMode: 'ask',
+      id: 'docs', name: 'Documentation',
       files: [{ path: 'README.md', content: '# Documentation\n' }],
       sessions: [{
         id: 'review-readme', name: 'Review README', hasUnread: true,
@@ -195,7 +193,7 @@ export const DEFAULT_MORTISE_UI_FIXTURE: MortiseUiFixtureSpec = {
   active: { workspaceId: 'product-launch', sessionId: 'release-readiness' },
   workspaces: [
     {
-      id: 'product-launch', name: 'Mercury Launch', permissionMode: 'ask',
+      id: 'product-launch', name: 'Mercury Launch',
       files: [
         { path: 'README.md', content: '# Mercury Launch\n\nRelease workspace for the Mercury desktop update.\n' },
         { path: 'package.json', content: '{\n  "name": "mercury-desktop",\n  "version": "2.4.0",\n  "private": true\n}\n' },
@@ -243,7 +241,7 @@ export const DEFAULT_MORTISE_UI_FIXTURE: MortiseUiFixtureSpec = {
       ],
     },
     {
-      id: 'customer-research', name: 'Customer Research', permissionMode: 'ask',
+      id: 'customer-research', name: 'Customer Research',
       files: [
         { path: 'README.md', content: '# Customer Research\n\nInterview synthesis and market comparison workspace.\n' },
         { path: 'research/interview-notes.md', content: '# Interview notes\n\nUsers value fast workspace switching and predictable local file access.\n' },
@@ -271,7 +269,7 @@ export const DEFAULT_MORTISE_UI_FIXTURE: MortiseUiFixtureSpec = {
       ],
     },
     {
-      id: 'support-operations', name: 'Support Operations', permissionMode: 'ask',
+      id: 'support-operations', name: 'Support Operations',
       files: [
         { path: 'README.md', content: '# Support Operations\n\nRunbooks, incidents, and weekly support triage.\n' },
         { path: 'runbooks/login-loop.md', content: '# Login loop\n\n1. Confirm system clock.\n2. Clear the expired local callback.\n3. Retry authentication once.\n' },
@@ -325,7 +323,7 @@ export function validateMortiseUiFixtureSpec(value: unknown): MortiseUiFixtureSp
   const workspaces = rawWorkspaces.map((raw, workspaceIndex): MortiseUiFixtureWorkspace => {
     const path = `fixture.workspaces[${workspaceIndex}]`
     const item = record(raw, path)
-    exactKeys(item, ['id', 'name', 'slug', 'permissionMode', 'files', 'sessions'], path)
+    exactKeys(item, ['id', 'name', 'slug', 'files', 'sessions'], path)
     const id = identifier(item.id, `${path}.id`)
     if (workspaceIds.has(id)) fail(`${path}.id`, `duplicates workspace ${id}`)
     workspaceIds.add(id)
@@ -370,7 +368,6 @@ export function validateMortiseUiFixtureSpec(value: unknown): MortiseUiFixtureSp
       id,
       name: text(item.name, `${path}.name`, 120),
       slug,
-      permissionMode: optionalPermissionMode(item.permissionMode, `${path}.permissionMode`),
       files: workspaceFiles.length ? workspaceFiles : undefined,
       sessions: sessions.length ? sessions : undefined,
     })
@@ -520,10 +517,10 @@ function optionalBoolean(value: unknown, path: string): boolean | undefined {
   return value
 }
 
-function optionalPermissionMode(value: unknown, path: string): MortiseUiFixtureWorkspace['permissionMode'] {
+function optionalPermissionMode(value: unknown, path: string): MortiseUiFixtureSession['permissionMode'] {
   if (value === undefined) return undefined
   if (typeof value !== 'string' || !PERMISSION_MODES.has(value)) fail(path, 'must be ask or allow-all')
-  return value as MortiseUiFixtureWorkspace['permissionMode']
+  return value as MortiseUiFixtureSession['permissionMode']
 }
 
 function validatePendingPlanExecution(

@@ -8,8 +8,6 @@
  * folders contain user-owned project data, not a mirrored configuration file.
  */
 
-import type { PermissionMode } from '../agent/mode-manager.ts';
-
 /**
  * Workspace configuration (stored in state.sqlite)
  */
@@ -19,11 +17,9 @@ export interface WorkspaceConfig {
   slug: string; // Folder name (URL-safe)
 
   /**
-   * Default settings for new sessions in this workspace
+   * Workspace-specific presentation settings.
    */
   defaults?: {
-    permissionMode?: PermissionMode; // Default permission mode ('safe', 'ask', 'allow-all')
-    cyclablePermissionModes?: PermissionMode[]; // Which modes can be cycled with SHIFT+TAB (min 2, default: all 3)
     colorTheme?: string; // Color theme override for this workspace (preset ID). Undefined = inherit from app default.
   };
 

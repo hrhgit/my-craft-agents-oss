@@ -22,6 +22,17 @@ bin\mortise-ui.exe stop
 bin\mortise-logs.exe recent
 ```
 
+For repeatable validation, use the workflow contract to validate, run, inspect,
+and resume a JSON-defined sequence without losing step-level evidence:
+
+```powershell
+bin\mortise-ui.exe workflow validate --file C:\path\to\workflow.json
+bin\mortise-ui.exe workflow run --file C:\path\to\workflow.json
+```
+
+The full workflow contract, loopback UI development-server overrides, and the
+Electron-only `--skip-build` option are documented in `docs\ui-validation.md`.
+
 To load an extension directly from its development directory without copying its source or using the global Mortise profile:
 
 ```powershell

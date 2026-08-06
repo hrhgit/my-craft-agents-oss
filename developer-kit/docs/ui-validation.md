@@ -69,6 +69,40 @@ Actions automatically observe the settled UI and return a compact receipt,
 change counts, and the post-action briefing; node-level changes remain behind
 the same `--full-observation` boundary.
 
+## Repeatable Workflows
+
+For a flow that should be replayed or resumed by another agent, describe the
+steps in a JSON file. Validate the contract without starting a host, then run
+it from the kit root:
+
+```powershell
+bin\mortise-ui.exe workflow schema
+bin\mortise-ui.exe workflow validate --file C:\path\to\workflow.json
+bin\mortise-ui.exe workflow run --file C:\path\to\workflow.json
+bin\mortise-ui.exe workflow inspect --execution <execution-id>
+bin\mortise-ui.exe workflow resume --execution <execution-id>
+```
+
+Each workflow records its source hash, step attempts, request IDs, response
+sequence, revision, verification level, and failure state under the run root.
+Keep the workflow file unchanged when resuming; a changed hash requires a new
+execution. Set `run.cleanup` to `always`, `on-success` (the default), or
+`never` according to whether the host should remain available for inspection.
+
+When an extension is running its own local UI development server, pass a
+loopback-only override for each extension. The mapping is forwarded to the
+isolated Developer Host:
+
+```powershell
+bin\mortise-ui.exe start --label ui-dev --surface electron --profile fixture `
+  --extension C:\path\to\my-extension `
+  --ui-dev-server my-extension=http://127.0.0.1:5173/ --json
+```
+
+Use `--skip-build` only with an Electron run when the matching Developer Host
+has already been built and you need to validate its current renderer state.
+The option is rejected for WebUI runs.
+
 `start`, `status`, and `stop` follow the same rule: normal output contains the
 outcome and continuation state, while `runs inspect` or the lifecycle `--full`
 flag exposes manifest and host internals for diagnostics.

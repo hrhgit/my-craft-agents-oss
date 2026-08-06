@@ -227,10 +227,6 @@ async function seedFixtureProfile(root: string, mortiseConfigDir: string, mortis
         id: workspace.id,
         name: workspace.name,
         slug: workspace.slug,
-        defaults: {
-          permissionMode: workspace.permissionMode === 'safe' ? 'ask' : workspace.permissionMode ?? 'ask',
-          cyclablePermissionModes: ['ask', 'allow-all'],
-        },
         createdAt: FIXTURE_CREATED_AT,
         updatedAt: FIXTURE_CREATED_AT,
       })
@@ -316,9 +312,7 @@ async function seedFixtureProfile(root: string, mortiseConfigDir: string, mortis
           lastUsedAt: session.lastUsedAt ?? messages.at(-1)?.timestamp ?? createdAt,
           lastMessageAt: messages.at(-1)?.timestamp,
           sdkCwd: workspace.rootPath,
-          permissionMode: session.permissionMode === 'safe' || workspace.permissionMode === 'safe'
-            ? 'ask'
-            : session.permissionMode ?? workspace.permissionMode ?? 'ask',
+          permissionMode: session.permissionMode ?? 'ask',
           hasUnread: session.hasUnread,
           hidden: session.hidden,
           pendingPlanExecution: session.pendingPlanExecution,

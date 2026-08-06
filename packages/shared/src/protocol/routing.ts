@@ -374,8 +374,6 @@ export const REMOTE_ELIGIBLE_CHANNELS = new Set<string>([
   // workspace — workspace config + images (sharp on headless)
   RPC_CHANNELS.workspace.READ_IMAGE,
   RPC_CHANNELS.workspace.WRITE_IMAGE,
-  RPC_CHANNELS.workspace.SETTINGS_GET,
-  RPC_CHANNELS.workspace.SETTINGS_UPDATE,
 
   // skills — skill content per-workspace (not openEditor/openFinder which are local OS)
   RPC_CHANNELS.skills.GET,

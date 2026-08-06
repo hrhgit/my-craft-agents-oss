@@ -738,8 +738,8 @@ export function clearGitBashPath(): void {
 // Note: getDefaultWorkingDirectory/setDefaultWorkingDirectory removed.
 // Workspace root is the only cwd; the retired defaults.workingDirectory field
 // is unsupported and does not participate in storage or execution routing.
-// Note: getDefaultPermissionMode/getEnabledPermissionModes removed
-// Permission settings are stored in each workspace's canonical SQLite record.
+// Note: getDefaultPermissionMode/getEnabledPermissionModes removed.
+// Permission mode is owned by Session state and its Extension surface.
 
 /**
  * Clear all configuration and credentials (for logout).
@@ -1010,8 +1010,8 @@ export async function removeWorkspace(workspaceId: string): Promise<boolean> {
   return true;
 }
 
-// Note: renameWorkspace() was removed - workspace names are now stored only in folder config
-// Use updateWorkspaceSetting('name', ...) to rename workspaces via the folder config
+// Workspace display names are owned by the canonical topology record and are
+// changed through the Workspace topology command contract.
 
 // ============================================
 // Workspace Conversation Persistence

@@ -1,7 +1,6 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { dirname } from 'path'
 import { RPC_CHANNELS } from '@mortise/shared/protocol'
-import { requirePrimaryLocalWorkspaceRoot } from '@mortise/core/types'
 import {
   getPreferencesPath,
   getSessionDraft,
@@ -21,15 +20,13 @@ import { normalizeThinkingLevel, THINKING_LEVEL_IDS } from '@mortise/shared/agen
 import * as configStorage from '@mortise/shared/config/storage'
 
 const VALID_THINKING_LEVELS_LIST = THINKING_LEVEL_IDS.map(id => `'${id}'`).join(', ')
-import { getWorkspaceOrNull, getWorkspaceOrThrow, resolveWorkspaceId } from '@mortise/server-core/handlers'
+import { resolveWorkspaceId } from '@mortise/server-core/handlers'
 import type { RpcServer } from '@mortise/server-core/transport'
 import type { HandlerDeps } from '../handler-deps'
 import { requestClientOpenFileDialog } from '@mortise/server-core/transport'
 import { applyExtensionConfigPatch } from './extension-config-patch'
 
 export const HANDLED_CHANNELS = [
-  RPC_CHANNELS.workspace.SETTINGS_GET,
-  RPC_CHANNELS.workspace.SETTINGS_UPDATE,
   RPC_CHANNELS.preferences.READ,
   RPC_CHANNELS.preferences.WRITE,
   RPC_CHANNELS.drafts.GET,
@@ -173,61 +170,6 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
     })
     if (multiple) return result.canceled ? [] : result.filePaths
     return result.canceled ? null : result.filePaths[0]
-  })
-
-  // ============================================================
-  // Workspace Settings (per-workspace configuration)
-  // ============================================================
-
-  // Get settings that are genuinely scoped to a workspace.
-  server.handle(RPC_CHANNELS.workspace.SETTINGS_GET, async (ctx, workspaceId: string) => {
-    const wid = resolveWorkspaceId(ctx.workspaceId, workspaceId)
-    if (!wid) return null
-    const workspace = getWorkspaceOrNull(wid, deps.platform.logger, 'WORKSPACE_SETTINGS_GET')
-    if (!workspace) return null
-
-    // Load workspace config
-    const { loadWorkspaceConfig } = await import('@mortise/shared/workspaces')
-    const config = loadWorkspaceConfig(requirePrimaryLocalWorkspaceRoot(workspace))
-
-    return {
-      name: config?.name,
-      permissionMode: config?.defaults?.permissionMode,
-      cyclablePermissionModes: config?.defaults?.cyclablePermissionModes,
-    }
-  })
-
-  // Update a workspace setting
-  server.handle(RPC_CHANNELS.workspace.SETTINGS_UPDATE, async (ctx, workspaceId: string, key: string, value: unknown) => {
-    const wid = resolveWorkspaceId(ctx.workspaceId, workspaceId)!
-    const workspace = getWorkspaceOrThrow(wid)
-    const normalizedValue = value
-
-    // Validate key is a known workspace setting
-    const validKeys = ['name', 'permissionMode', 'cyclablePermissionModes']
-    if (!validKeys.includes(key)) {
-      throw new Error(`Invalid workspace setting key: ${key}. Valid keys: ${validKeys.join(', ')}`)
-    }
-
-    const { loadWorkspaceConfig, saveWorkspaceConfig } = await import('@mortise/shared/workspaces')
-    const workspaceRoot = requirePrimaryLocalWorkspaceRoot(workspace)
-    const config = loadWorkspaceConfig(workspaceRoot)
-    if (!config) {
-      throw new Error(`Failed to load workspace config: ${wid}`)
-    }
-
-    // Handle 'name' specially - it's a top-level config property, not in defaults
-    if (key === 'name') {
-      config.name = String(normalizedValue).trim()
-    } else {
-      // Update the setting in defaults
-      config.defaults = config.defaults || {}
-      ;(config.defaults as Record<string, unknown>)[key] = normalizedValue
-    }
-
-    // Save the config
-    saveWorkspaceConfig(workspaceRoot, config)
-    deps.platform.logger.info(`Workspace setting updated: ${key} = ${JSON.stringify(normalizedValue)}`)
   })
 
   // ============================================================

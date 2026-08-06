@@ -267,8 +267,6 @@ export const RPC_CHANNELS = {
   workspace: {
     READ_IMAGE: 'workspace:readImage',
     WRITE_IMAGE: 'workspace:writeImage',
-    SETTINGS_GET: 'workspaceSettings:get',
-    SETTINGS_UPDATE: 'workspaceSettings:update',
   },
   skills: {
     GET: 'skills:get',

@@ -23,8 +23,6 @@ function setupConfigDir(): string {
     },
     workspaceDefaults: {
       thinkingLevel: 'medium',
-      permissionMode: 'ask',
-      cyclablePermissionModes: ['safe', 'ask', 'allow-all'],
     },
   }, null, 2))
   return configDir

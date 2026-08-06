@@ -11,6 +11,6 @@
 | `workspace.switch` | 选择另一个 Workspace 或其 Session | 活动布局、导航和作用域数据一致切换 | `workspace.switch` |
 | `workspace.location.manage` | 添加、解除或切换位置 | 权限和运行中任务按产品合同处理 | `workspace.locations` |
 
-创建属于有边界的短任务，可以使用模态界面；长期 Workspace 管理使用固定设置页。
+创建与编辑属于有边界的短任务，使用同类模态界面承载名称与位置关系；侧栏编辑不跳转到通用设置页。
 
 当前批量 flow：`workspace.creation-entry`。

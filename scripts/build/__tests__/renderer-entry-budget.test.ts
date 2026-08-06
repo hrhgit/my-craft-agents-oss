@@ -40,4 +40,13 @@ describe('renderer entry budgets', () => {
     expect(() => assertRendererEntryBudgets(renderer, { 'index.html': 20 }))
       .toThrow('Largest chunks: main.js=46, shared.js=23')
   })
+
+  it('skips optional entries omitted from production builds', () => {
+    const renderer = createRenderer()
+
+    expect(assertRendererEntryBudgets(renderer, {
+      'index.html': 100,
+      'playground.html': 1,
+    })).toHaveLength(1)
+  })
 })

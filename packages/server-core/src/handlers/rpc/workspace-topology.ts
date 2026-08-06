@@ -137,7 +137,7 @@ export function registerWorkspaceTopologyHandlers(
           operation: command.operation,
           previousRevision: result.previousRevision,
           revision: result.workspace.revision,
-          changedLocationIds: [command.locationId],
+          changedLocationIds: command.operation === 'rename-workspace' ? [] : [command.locationId],
           workspace: result.workspace,
         }
         pushTyped(server, RPC_CHANNELS.workspaces.TOPOLOGY_CHANGED, { to: 'all', exclude: ctx.clientId }, change)

@@ -317,6 +317,27 @@ describe('WorkspaceTopologyStore', () => {
     expect(changed.workspace.nameSource).toBe('custom')
   })
 
+  it('renames the canonical Workspace without changing its locations', () => {
+    const { root, store } = harness()
+    const primaryRoot = join(root, 'primary')
+    mkdirSync(primaryRoot)
+    const created = store.create(localWorkspace(primaryRoot))
+
+    const changed = store.apply(command({
+      operation: 'rename-workspace', name: 'Renamed Workspace',
+    }, { operationId: 'rename-workspace', expectedRevision: created.revision }))
+
+    expect(changed.workspace).toMatchObject({
+      name: 'Renamed Workspace',
+      nameSource: 'custom',
+      revision: created.revision + 1,
+      primaryLocationId: created.primaryLocationId,
+    })
+    expect(changed.workspace.locations.map(({ id, name, rootName }) => ({ id, name, rootName }))).toEqual(
+      created.locations.map(({ id, name, rootName }) => ({ id, name, rootName })),
+    )
+  })
+
   it('projects observed local marker state and fails closed when membership disappears', () => {
     const { root, store } = harness()
     const workspaceRoot = join(root, 'project')

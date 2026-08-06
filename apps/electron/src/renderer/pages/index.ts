@@ -13,7 +13,6 @@ export {
   AiSettingsPage,
   AppearanceSettingsPage,
   InputSettingsPage,
-  WorkspaceSettingsPage,
   ShortcutsPage,
   PreferencesPage,
 } from './settings'

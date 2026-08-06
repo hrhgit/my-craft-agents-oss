@@ -481,16 +481,6 @@ export interface UpdateInfo {
 }
 
 // ---------------------------------------------------------------------------
-// Workspace types
-// ---------------------------------------------------------------------------
-
-export interface WorkspaceSettings {
-  name?: string
-  permissionMode?: PermissionMode
-  cyclablePermissionModes?: PermissionMode[]
-}
-
-// ---------------------------------------------------------------------------
 // Window types
 // ---------------------------------------------------------------------------
 

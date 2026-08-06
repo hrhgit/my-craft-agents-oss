@@ -173,6 +173,10 @@ export type WorkspaceTopologyCommandV1 =
       locationId: string
       name: string
     })
+  | (WorkspaceTopologyCommandBaseV1 & {
+      operation: 'rename-workspace'
+      name: string
+    })
 
 export type WorkspaceTopologyOperationV1 = WorkspaceTopologyCommandV1['operation']
 export type WorkspaceLocationRole = 'primary' | 'attached'
@@ -611,6 +615,9 @@ const WorkspaceTopologyCommandV1Schema = z.discriminatedUnion('operation', [
     locationId: BoundedIdSchema,
     name: LocationNameSchema,
   }),
+  topologyCommandBase('rename-workspace').extend({
+    name: WorkspaceNameSchema,
+  }),
 ])
 
 const WorkspaceTopologyResultV1Schema = z.object({
@@ -624,10 +631,10 @@ const WorkspaceTopologyChangedV1Schema = z.object({
   schemaVersion: z.literal(WORKSPACE_TOPOLOGY_CHANGE_SCHEMA_VERSION),
   workspaceId: BoundedIdSchema,
   operationId: OperationIdSchema,
-  operation: z.enum(['attach-local', 'attach-remote', 'detach', 'replace-endpoint', 'set-primary', 'rename']),
+  operation: z.enum(['attach-local', 'attach-remote', 'detach', 'replace-endpoint', 'set-primary', 'rename', 'rename-workspace']),
   previousRevision: RevisionSchema,
   revision: RevisionSchema,
-  changedLocationIds: z.array(BoundedIdSchema).min(1).refine(
+  changedLocationIds: z.array(BoundedIdSchema).refine(
     values => new Set(values).size === values.length,
     'changedLocationIds must be unique',
   ),
@@ -641,6 +648,12 @@ const WorkspaceTopologyChangedV1Schema = z.object({
   }
   if (change.workspace.revision !== change.revision) {
     context.addIssue({ code: 'custom', path: ['workspace', 'revision'], message: 'Changed Workspace revision must match the event' })
+  }
+  if (change.operation === 'rename-workspace' && change.changedLocationIds.length !== 0) {
+    context.addIssue({ code: 'custom', path: ['changedLocationIds'], message: 'Workspace rename must not report changed locations' })
+  }
+  if (change.operation !== 'rename-workspace' && change.changedLocationIds.length === 0) {
+    context.addIssue({ code: 'custom', path: ['changedLocationIds'], message: 'Location topology changes must report at least one location' })
   }
 })
 

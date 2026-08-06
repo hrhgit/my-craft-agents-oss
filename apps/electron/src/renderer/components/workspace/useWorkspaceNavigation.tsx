@@ -6,6 +6,7 @@ import { useTransportConnectionState } from '@/hooks/useTransportConnectionState
 import { waitForTransportConnected } from '@/lib/transport-wait'
 import type { WorkspaceInfo } from '../../../shared/types'
 import { WorkspaceCreationDialog } from './WorkspaceCreationScreen'
+import { WorkspaceEditDialog } from './WorkspaceEditDialog'
 import type { WorkspaceSwitchDestination } from '@/contexts/navigation-history'
 import {
   getPrimaryRemoteLocation,
@@ -41,6 +42,7 @@ export interface WorkspaceNavigationModel {
   openWorkspaceInNewWindow: (workspaceId: string) => Promise<void>
   removeWorkspace: (workspace: WorkspaceInfo) => Promise<void>
   openCreation: () => void
+  openEdit: (workspaceId: string) => Promise<boolean>
   refreshRemoteHealth: () => void
   overlay: React.ReactNode
 }
@@ -67,6 +69,7 @@ export function useWorkspaceNavigation({
   const workspaceIconMap = useWorkspaceInfoIcons(workspaces)
   const [showCreationDialog, setShowCreationDialog] = React.useState(false)
   const [reconnectTarget, setReconnectTarget] = React.useState<WorkspaceInfo | null>(null)
+  const [editTarget, setEditTarget] = React.useState<WorkspaceInfo | null>(null)
 
   const refreshRemoteHealth = React.useCallback(() => {
     // Inactive remote availability is host-owned and cannot be inferred without
@@ -76,6 +79,10 @@ export function useWorkspaceNavigation({
   const closeCreation = React.useCallback(() => {
     setShowCreationDialog(false)
     setReconnectTarget(null)
+  }, [])
+
+  const closeEdit = React.useCallback(() => {
+    setEditTarget(null)
   }, [])
 
   const openCreation = React.useCallback(() => {
@@ -112,6 +119,17 @@ export function useWorkspaceNavigation({
     await Promise.resolve(onSelectWorkspace(workspaceId, false, 'newConversation'))
     return true
   }, [isDisconnected, onSelectWorkspace, workspaces])
+
+  const openEdit = React.useCallback(async (workspaceId: string) => {
+    const workspace = workspaces.find(item => item.id === workspaceId)
+    if (!workspace) return false
+    if (workspaceId !== activeWorkspaceId) {
+      const selected = await selectWorkspace(workspaceId)
+      if (!selected) return false
+    }
+    setEditTarget(workspace)
+    return true
+  }, [activeWorkspaceId, selectWorkspace, workspaces])
 
   const selectSession = React.useCallback(async (workspaceId: string, sessionId: string) => {
     const workspace = workspaces.find(item => item.id === workspaceId)
@@ -193,6 +211,12 @@ export function useWorkspaceNavigation({
       reconnectWorkspace={reconnectTarget ?? undefined}
       onWorkspaceReconnected={handleWorkspaceReconnected}
     />
+  ) : editTarget ? (
+    <WorkspaceEditDialog
+      workspace={editTarget}
+      onClose={closeEdit}
+      onWorkspaceChanged={onRefreshWorkspaces}
+    />
   ) : null
 
   return {
@@ -203,6 +227,7 @@ export function useWorkspaceNavigation({
     openWorkspaceInNewWindow,
     removeWorkspace,
     openCreation,
+    openEdit,
     refreshRemoteHealth,
     overlay,
   }

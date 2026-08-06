@@ -95,7 +95,7 @@ describe('mortise-ui profiles', () => {
         version: 1,
         active: { workspaceId: 'workspace-a', sessionId: 'session-a' },
         workspaces: [{
-          id: 'workspace-a', name: 'Workspace A', permissionMode: 'ask',
+          id: 'workspace-a', name: 'Workspace A',
           files: [{ path: 'src/index.ts', content: 'export const answer = 42\n' }],
           sessions: [{
             id: 'session-a', name: 'Inspect source', hasUnread: true,

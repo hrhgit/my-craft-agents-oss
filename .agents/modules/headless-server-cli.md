@@ -58,6 +58,8 @@ Feature handlers remain reviewed with their domain owners; WebUI consumes the sa
 
 Client/server version skew affects capabilities; stale endpoint discovery can connect a client to the wrong backend.
 
+CLI changes must check the sibling `scripts/mortise-ui` CLI and the Developer Kit for shared protocol, output-contract, or user-visible command changes. Keep the server CLI's remote-service responsibility independent, but update shared contracts, compatibility tests, documentation, and the versioned kit when the change crosses that boundary.
+
 # Validation
 
-Run server-core, server smoke, CLI command, streaming, spawner, and transport tests.
+Run server-core, server smoke, CLI command, streaming, spawner, and transport tests; when the change affects a shared CLI contract, also run the Mortise UI CLI tests and the Developer Kit smoke/build validation.

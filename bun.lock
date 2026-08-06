@@ -136,6 +136,7 @@
         "@dnd-kit/sortable": "^10.0.0",
         "@dnd-kit/utilities": "^3.2.2",
         "@mortise/core": "workspace:*",
+        "@mortise/extension-ui": "workspace:*",
         "@mortise/messaging-gateway": "workspace:*",
         "@mortise/server-core": "workspace:*",
         "@mortise/session-tools-core": "workspace:*",

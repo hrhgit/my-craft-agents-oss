@@ -78,13 +78,42 @@ try {
   try {
     $helpOutput = & $cliPath --help 2>&1
     if ($LASTEXITCODE -ne 0) { throw "Packaged mortise-ui --help failed with exit code $LASTEXITCODE" }
-    if (($helpOutput -join "`n") -notmatch 'mortise-ui') { throw "Packaged mortise-ui --help returned unexpected output" }
+    $helpText = $helpOutput -join "`n"
+    if ($helpText -notmatch 'mortise-ui') { throw "Packaged mortise-ui --help returned unexpected output" }
+    foreach ($expectedHelp in @('workflow schema', '--ui-dev-server', '--skip-build')) {
+      if ($helpText -notmatch [regex]::Escape($expectedHelp)) {
+        throw "Packaged mortise-ui --help is missing expected option or command: $expectedHelp"
+      }
+    }
 
     $schemaOutput = & $cliPath fixture schema --json 2>&1
     if ($LASTEXITCODE -ne 0) { throw "Packaged mortise-ui fixture schema failed with exit code $LASTEXITCODE" }
     $schemaEnvelope = ($schemaOutput | Select-Object -Last 1) | ConvertFrom-Json
     if ($schemaEnvelope.ok -ne $true -or $null -eq $schemaEnvelope.result.schema) {
       throw "Packaged mortise-ui fixture schema returned an invalid response envelope"
+    }
+
+    $workflowSchemaOutput = & $cliPath workflow schema 2>&1
+    if ($LASTEXITCODE -ne 0) { throw "Packaged mortise-ui workflow schema failed with exit code $LASTEXITCODE" }
+    $workflowSchemaEnvelope = ($workflowSchemaOutput | Select-Object -Last 1) | ConvertFrom-Json
+    if ($workflowSchemaEnvelope.ok -ne $true -or $workflowSchemaEnvelope.result.schema.schemaVersion -ne 1) {
+      throw "Packaged mortise-ui workflow schema returned an invalid response envelope"
+    }
+
+    $workflowPath = Join-Path $smokeRoot "workflow.json"
+    @{
+      schemaVersion = 1
+      name = "packaged smoke"
+      run = @{ surface = "electron"; profile = "fixture"; cleanup = "never" }
+      steps = @(
+        @{ id = "snapshot"; type = "snapshot"; params = @{} }
+      )
+    } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $workflowPath -Encoding utf8
+    $workflowValidateOutput = & $cliPath workflow validate --file $workflowPath 2>&1
+    if ($LASTEXITCODE -ne 0) { throw "Packaged mortise-ui workflow validate failed with exit code $LASTEXITCODE" }
+    $workflowValidateEnvelope = ($workflowValidateOutput | Select-Object -Last 1) | ConvertFrom-Json
+    if ($workflowValidateEnvelope.ok -ne $true -or $workflowValidateEnvelope.result.valid -ne $true -or $workflowValidateEnvelope.result.stepCount -ne 1) {
+      throw "Packaged mortise-ui workflow validate returned an invalid response envelope"
     }
 
     $recentEnvelope = (& $logsCliPath recent | Select-Object -Last 1) | ConvertFrom-Json

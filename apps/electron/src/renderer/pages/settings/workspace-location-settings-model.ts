@@ -102,6 +102,7 @@ export function hasProjectedRemoteWorkspaceLocation(
 }
 
 type CommandInput =
+  | { operation: 'rename-workspace'; name: string }
   | { operation: 'attach-local'; locationId: string; name: string; rootPath: string }
   | { operation: 'attach-remote'; locationId: string; name: string; url: string; remoteWorkspaceId: string; credentialRef: string; allowInsecureTls?: boolean }
   | { operation: 'detach'; locationId: string }

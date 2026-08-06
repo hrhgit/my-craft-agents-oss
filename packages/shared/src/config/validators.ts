@@ -65,8 +65,8 @@ export const StoredConfigSchema = z.object({
   // Legacy connection fields are intentionally not part of the validated shape.
   midStreamBehavior: z.enum(['steer', 'queue']).optional(),
   defaultThinkingLevel: z.enum(THINKING_LEVEL_IDS).optional(),
-  // Note: tokenDisplay, showCost, cumulativeUsage, defaultPermissionMode removed
-  // Permission mode and cyclable modes live in canonical workspace SQLite records.
+  // Note: tokenDisplay, showCost, cumulativeUsage, defaultPermissionMode removed.
+  // Permission mode is Session state; retired default and cycle fields are not global config.
 });
 
 // --- preferences.json ---

@@ -115,4 +115,22 @@ describe('TurnCard search targets', () => {
     )
     expect(expandedMarkup).toContain('data-mortise-search-target-id="collapsed-tool"')
   })
+
+  it('lets response cards grow without internal vertical scrolling', () => {
+    const markup = renderToStaticMarkup(
+      <TurnCard
+        turnId="flowing-card-turn"
+        activities={[]}
+        response={{ text: 'A long response body', isStreaming: false }}
+        isStreaming={false}
+        isComplete
+        isExpanded={false}
+        expandedActivityGroups={new Set()}
+      />,
+    )
+
+    expect(markup).not.toContain('overflow-y-auto')
+    expect(markup).not.toContain('scrollbar-hover')
+    expect(markup).not.toContain('max-height:')
+  })
 })

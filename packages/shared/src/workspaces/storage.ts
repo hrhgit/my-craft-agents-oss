@@ -23,7 +23,6 @@ import {
   encodePiSessionCwd,
 } from '../config/paths.ts';
 import { MultiWriterStore, type JsonValue } from '../storage/index.ts';
-import { PERMISSION_MODE_ORDER, type PermissionMode } from '../agent/mode-types.ts';
 import type {
   WorkspaceConfig,
   CreateWorkspaceInput,
@@ -52,17 +51,9 @@ interface WorkspaceSnapshot {
 
 type WorkspaceWithSnapshot = WorkspaceConfig & { [WORKSPACE_SNAPSHOT]?: WorkspaceSnapshot };
 
-const CURRENT_PERMISSION_MODES = new Set<PermissionMode>(PERMISSION_MODE_ORDER);
 const CURRENT_WORKSPACE_KEYS = new Set(['id', 'name', 'slug', 'defaults', 'createdAt', 'updatedAt']);
-const CURRENT_WORKSPACE_DEFAULT_KEYS = new Set([
-  'permissionMode',
-  'cyclablePermissionModes',
-  'colorTheme',
-]);
-
-function isCurrentPermissionMode(value: unknown): value is PermissionMode {
-  return typeof value === 'string' && CURRENT_PERMISSION_MODES.has(value as PermissionMode);
-}
+const CURRENT_WORKSPACE_DEFAULT_KEYS = new Set(['colorTheme']);
+const RETIRED_WORKSPACE_DEFAULT_KEYS = new Set(['permissionMode', 'cyclablePermissionModes']);
 
 function parseCurrentWorkspaceConfig(value: unknown): WorkspaceConfig | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -86,21 +77,10 @@ function parseCurrentWorkspaceConfig(value: unknown): WorkspaceConfig | null {
   if (record.defaults !== undefined) {
     if (!record.defaults || typeof record.defaults !== 'object' || Array.isArray(record.defaults)) return null;
     const rawDefaults = record.defaults as Record<string, unknown>;
-    if (Object.keys(rawDefaults).some(key => !CURRENT_WORKSPACE_DEFAULT_KEYS.has(key))) return null;
+    if (Object.keys(rawDefaults).some(key => (
+      !CURRENT_WORKSPACE_DEFAULT_KEYS.has(key) && !RETIRED_WORKSPACE_DEFAULT_KEYS.has(key)
+    ))) return null;
     const defaults: NonNullable<WorkspaceConfig['defaults']> = {};
-    if (rawDefaults.permissionMode !== undefined) {
-      if (!isCurrentPermissionMode(rawDefaults.permissionMode)) return null;
-      defaults.permissionMode = rawDefaults.permissionMode;
-    }
-    if (rawDefaults.cyclablePermissionModes !== undefined) {
-      if (
-        !Array.isArray(rawDefaults.cyclablePermissionModes)
-        || rawDefaults.cyclablePermissionModes.length < 2
-        || !rawDefaults.cyclablePermissionModes.every(isCurrentPermissionMode)
-        || new Set(rawDefaults.cyclablePermissionModes).size !== rawDefaults.cyclablePermissionModes.length
-      ) return null;
-      defaults.cyclablePermissionModes = rawDefaults.cyclablePermissionModes;
-    }
     if (rawDefaults.colorTheme !== undefined) {
       if (typeof rawDefaults.colorTheme !== 'string') return null;
       defaults.colorTheme = rawDefaults.colorTheme;
@@ -108,10 +88,6 @@ function parseCurrentWorkspaceConfig(value: unknown): WorkspaceConfig | null {
     projected.defaults = defaults;
   }
   return projected;
-}
-
-function assertCurrentWorkspaceConfig(config: WorkspaceConfig): void {
-  if (!parseCurrentWorkspaceConfig(config)) throw new Error('Invalid current workspace configuration');
 }
 
 function getWorkspaceStore(): MultiWriterStore {
@@ -252,14 +228,15 @@ export function loadWorkspaceConfig(rootPath: string): WorkspaceConfig | null {
  * @param rootPath - Absolute path to workspace root folder
  */
 export function saveWorkspaceConfig(rootPath: string, config: WorkspaceConfig): void {
-  assertCurrentWorkspaceConfig(config);
+  const canonicalConfig = parseCurrentWorkspaceConfig(config);
+  if (!canonicalConfig) throw new Error('Invalid current workspace configuration');
   if (!existsSync(rootPath)) {
     mkdirSync(rootPath, { recursive: true });
   }
 
   const storageConfig: WorkspaceConfig = {
-    ...config,
-    ...(config.defaults ? { defaults: { ...config.defaults } } : {}),
+    ...canonicalConfig,
+    ...(canonicalConfig.defaults ? { defaults: { ...canonicalConfig.defaults } } : {}),
     updatedAt: Date.now(),
   };
 
@@ -384,13 +361,12 @@ export function createWorkspaceAtPath(
   const now = Date.now();
   const slug = generateSlug(name);
 
-  // Only explicitly supplied workspace defaults are persisted. Permission
-  // defaults are extension-owned and are no longer seeded by Mortise core.
+  // Only explicitly supplied workspace presentation defaults are persisted.
   const workspaceDefaults: WorkspaceConfig['defaults'] = {
     ...defaults, // User-provided defaults override global defaults
   };
 
-  const config: WorkspaceConfig = {
+  const candidate: WorkspaceConfig = {
     id: `ws_${randomUUID().slice(0, 8)}`,
     name,
     slug,
@@ -398,6 +374,7 @@ export function createWorkspaceAtPath(
     createdAt: now,
     updatedAt: now,
   };
+  const config = parseCurrentWorkspaceConfig(candidate)!;
 
   // Create workspace directory structure.
   // No `sessions/` subdirectory is created — sessions are

@@ -17,7 +17,6 @@ import {
   type WindowLayoutMode,
 } from './window-renderer-query'
 import { isKeyboardCloseShortcut } from './keyboard-close-shortcut'
-import { isWindowsForegroundUiValidationHost } from './ui-validation/windows-renderer-stability'
 
 // Vite dev server URL for hot reload
 const VITE_DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL
@@ -472,15 +471,14 @@ export class WindowManager {
       layoutWindowId: resolvedLayoutWindowId,
       ...runtimeQueryOptions,
     })
-    const directValidationScenarioHost = isWindowsForegroundUiValidationHost({
-      platform: process.platform,
-      validationBuild: __MORTISE_UI_VALIDATION_BUILD__,
-      testHostEnabled: process.env.MORTISE_UI_TEST_HOST === '1',
-      directScenarioHost: process.env.MORTISE_UI_DIRECT_SCENARIO_HOST !== '0',
-      windowMode: process.env.MORTISE_UI_WINDOW_MODE,
-    })
+    const directValidationScenarioHost = process.platform === 'win32'
+      && __MORTISE_UI_VALIDATION_BUILD__
+      && process.env.MORTISE_UI_TEST_HOST === '1'
+      && process.env.MORTISE_UI_DIRECT_SCENARIO_HOST !== '0'
+      && process.env.MORTISE_UI_WINDOW_MODE === 'foreground'
+    const directValidationScenarioRoute = ['app-shell', 'scenario-host'].join('-')
     let rendererQuery = directValidationScenarioHost
-      ? { scenario: 'app-shell-scenario-host' }
+      ? { scenario: directValidationScenarioRoute }
       : defaultRendererQuery
 
     // Apply window-title policy now that the map size reflects this window —

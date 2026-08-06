@@ -16,6 +16,8 @@ describe('workspace sidebar actions', () => {
     expect(menuSource).toContain("t('workspace.editWorkspace')")
     expect(menuSource).toContain("t('workspace.openInFileManager')")
     expect(menuSource).toContain("t('workspace.removeWorkspace')")
+    expect(appShellSource).toContain('workspaceNavigation.openEdit(workspaceId)')
+    expect(appShellSource).not.toContain("handleSettingsClick('workspace')")
   })
 
   it('opens the folder through the trusted Workspace route', () => {

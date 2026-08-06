@@ -95,7 +95,7 @@ describe('workspace storage: SQLite authority', () => {
     expect(readFileSync(legacySyncPath, 'utf8')).toBe(legacySync);
   });
 
-  it('rejects retired permission aliases without rewriting their SQLite record', () => {
+  it('loads retired permission aliases and drops them on the next save', () => {
     const root = mkdtempSync(join(tmpdir(), 'mortise-workspace-retired-mode-'));
     const configDir = join(root, 'config');
     const workspaceRoot = join(root, 'workspace');
@@ -124,7 +124,7 @@ describe('workspace storage: SQLite authority', () => {
       seedStore.close();
       const loaded = storage.loadWorkspaceConfig(${JSON.stringify(workspaceRoot)});
       let saveError = null;
-      try { storage.saveWorkspaceConfig(${JSON.stringify(workspaceRoot)}, retired); }
+      try { storage.saveWorkspaceConfig(${JSON.stringify(workspaceRoot)}, loaded); }
       catch (error) { saveError = error instanceof Error ? error.message : String(error); }
       const verifyStore = MultiWriterStore.openSync({
         databasePath, writerId: 'retired-mode-verify', writerVersion: 1,
@@ -137,15 +137,49 @@ describe('workspace storage: SQLite authority', () => {
         saveError,
         persisted,
       };
-    `) as { loaded: unknown; valid: boolean; saveError: string; persisted: { defaults: object } };
+    `) as { loaded: unknown; valid: boolean; saveError: string | null; persisted: { defaults: object } };
 
-    expect(result.loaded).toBeNull();
-    expect(result.valid).toBe(false);
-    expect(result.saveError).toBe('Invalid current workspace configuration');
-    expect(result.persisted.defaults).toEqual({
-      permissionMode: 'explore',
-      cyclablePermissionModes: ['explore', 'ask', 'execute'],
-    });
+    expect(result.loaded).toMatchObject({ name: 'Retired Mode', defaults: {} });
+    expect(result.valid).toBe(true);
+    expect(result.saveError).toBeNull();
+    expect(result.persisted.defaults).toEqual({});
+  });
+
+  it('never writes retired permission defaults from current callers', () => {
+    const root = mkdtempSync(join(tmpdir(), 'mortise-workspace-current-write-'));
+    const configDir = join(root, 'config');
+    const createdRoot = join(root, 'created');
+    const savedRoot = join(root, 'saved');
+    const result = runEval(configDir, `
+      const created = storage.createWorkspaceAtPath(${JSON.stringify(createdRoot)}, 'Created', {
+        colorTheme: 'graphite',
+        permissionMode: 'allow-all',
+        cyclablePermissionModes: ['ask', 'allow-all'],
+      });
+      const now = Date.now();
+      storage.saveWorkspaceConfig(${JSON.stringify(savedRoot)}, {
+        id: 'ws_saved', name: 'Saved', slug: 'saved',
+        defaults: {
+          colorTheme: 'paper',
+          permissionMode: 'ask',
+          cyclablePermissionModes: ['ask', 'allow-all'],
+        },
+        createdAt: now, updatedAt: now,
+      });
+      return {
+        created,
+        createdLoaded: storage.loadWorkspaceConfig(${JSON.stringify(createdRoot)}),
+        savedLoaded: storage.loadWorkspaceConfig(${JSON.stringify(savedRoot)}),
+      };
+    `) as {
+      created: { defaults: object };
+      createdLoaded: { defaults: object };
+      savedLoaded: { defaults: object };
+    };
+
+    expect(result.created.defaults).toEqual({ colorTheme: 'graphite' });
+    expect(result.createdLoaded.defaults).toEqual({ colorTheme: 'graphite' });
+    expect(result.savedLoaded.defaults).toEqual({ colorTheme: 'paper' });
   });
 
   it('preserves optimistic concurrency for workspace writes', () => {
