@@ -16,7 +16,6 @@
  */
 
 import type { SettingsSubpage } from './settings-registry'
-import type { PermissionMode } from '@mortise/shared/agent/mode-types'
 
 // Helper to build query strings from params
 function toQueryString(params?: Record<string, string | undefined>): string {
@@ -53,12 +52,6 @@ export const routes = {
     /** Delete a session (with confirmation) */
     deleteSession: (sessionId: string) =>
       `action/delete-session/${sessionId}` as const,
-
-    /** Set permission mode for a session */
-    setPermissionMode: (
-      sessionId: string,
-      mode: PermissionMode
-    ) => `action/set-mode/${sessionId}?mode=${mode}` as const,
 
     /** Copy text to clipboard */
     copyToClipboard: (text: string) =>

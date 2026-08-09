@@ -5,7 +5,6 @@
  * These modules are provider-agnostic and can be composed into any agent implementation.
  *
  * Modules:
- * - PermissionManager: Tool permission evaluation and mode management
  * - PromptBuilder: System prompt and context building
  * - PathProcessor: Path expansion and normalization
  * - ConfigValidator: Pre-write configuration validation
@@ -18,22 +17,12 @@
 export type {
   // Core types
   RecoveryMessage,
-  PermissionManagerConfig,
-  ToolPermissionResult,
   PromptBuilderConfig,
   ContextBlockOptions,
   PathProcessorConfig,
   ConfigValidatorConfig,
   ConfigValidationResult,
   ConfigFileType,
-  // Re-exported from mode-types
-  PermissionMode,
-  ModeConfig,
-  CompiledBashPattern,
-  MismatchAnalysis,
-  PermissionPaths,
-  // Re-exported from mode-manager
-  ToolCheckResult,
 } from './types.ts';
 
 // Config Watcher Manager types
@@ -55,16 +44,6 @@ export type {
   UsageUpdate,
   UsageTrackerConfig,
 } from './usage-tracker.ts';
-
-// Constants
-export {
-  PERMISSION_MODE_ORDER,
-  PERMISSION_MODE_CONFIG,
-  SAFE_MODE_CONFIG,
-} from './types.ts';
-
-// Permission Manager
-export { PermissionManager } from './permission-manager.ts';
 
 // Prompt Builder
 export { PromptBuilder } from './prompt-builder.ts';
@@ -103,7 +82,6 @@ export {
   // Centralized pipeline types
   type PreToolUseCheckResult,
   type PreToolUseInput,
-  type PermissionManagerLike,
   type PrerequisiteManagerLike,
   // Constants
   BUILT_IN_TOOLS,
@@ -116,7 +94,6 @@ export {
   validateConfigWrite,
   // Centralized pipeline
   runPreToolUseChecks,
-  shouldPromptInAskMode,
 } from './pre-tool-use.ts';
 
 // Prerequisite Manager

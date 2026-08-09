@@ -31,7 +31,7 @@ export { expandPath, normalizePath, pathStartsWith, toPortablePath };
  */
 const CONFIG_FILE_PATTERNS = [
   // Mortise Agent configs
-  /\.mortise\/.*\/(config|permissions|theme|guide)\.json$/,
+  /\.mortise\/.*\/(config|theme|guide)\.json$/,
   /\.mortise\/config\.json$/,
   /\.mortise\/preferences\.json$/,
   /\.mortise\/.*\/SKILL\.md$/,

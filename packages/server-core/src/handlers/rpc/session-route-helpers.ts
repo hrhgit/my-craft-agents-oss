@@ -21,21 +21,21 @@ export function serializeExtensionCommandArgs(
 }
 
 /**
- * Collect session search root directories for the workspace root bucket.
+ * Collect session search root directories for the stable Workspace bucket.
  *
  * Uses tryGetSessionFilePath (no mkdir side effect) so that listing/searching
  * sessions does not create empty bucket directories under
- * ~/.mortise/agent/sessions/{encoded-cwd}/ for sessions whose Pi file does not yet
- * exist. Storage helpers route only by workspaceRootPath.
+ * ~/.mortise/agent/sessions/{workspace-bucket}/ for sessions whose Pi file does not yet
+ * exist. Storage helpers route only by workspaceId.
  */
 export function collectSessionSearchRoots(
-  workspaceRootPath: string,
+  workspaceId: string,
   sessions: SessionSearchRootInput[],
 ): string[] {
   const roots = new Set<string>();
 
   for (const session of sessions) {
-    const sessionFile = tryGetSessionFilePath(workspaceRootPath, session.id);
+    const sessionFile = tryGetSessionFilePath(workspaceId, session.id);
     if (!sessionFile) continue;
     const root = dirname(sessionFile);
     if (existsSync(root)) {

@@ -44,7 +44,6 @@ function createTestSession(): Session {
     workspaceRootPath: '/test/workspace',
     createdAt: Date.now(),
     lastUsedAt: Date.now(),
-    permissionMode: 'ask',
   };
 }
 

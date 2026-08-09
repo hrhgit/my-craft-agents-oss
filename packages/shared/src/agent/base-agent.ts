@@ -4,7 +4,6 @@
  * Shared base class for AI agent backends.
  * Extracts common functionality including:
  * - Model/thinking configuration
- * - Permission mode management (via PermissionManager)
  * - Planning heuristics (via PlanningAdvisor)
  * - Config watching (via ConfigWatcherManager)
  * - Usage tracking (via UsageTracker)
@@ -20,7 +19,6 @@ import type { FileAttachment } from '../utils/files.ts';
 import { buildTransferredSessionContext } from './conversation-summary.ts';
 import type { ThinkingLevel } from './thinking-levels.ts';
 import { DEFAULT_THINKING_LEVEL, normalizeThinkingLevel } from './thinking-levels.ts';
-import type { PermissionMode } from './mode-manager.ts';
 import { type LLMQueryRequest, type LLMQueryResult } from './llm-tool.ts';
 import { readPiGlobalProviders, readPiGlobalSettings } from '../config/pi-global-config.ts';
 import { listSubagentTemplates } from '../config/agent-settings.ts';
@@ -28,7 +26,6 @@ import { listSubagentTemplates } from '../config/agent-settings.ts';
 import type {
   AgentBackend,
   ChatOptions,
-  PermissionCallback,
   PlanCallback,
   BackendConfig,
   PostInitResult,
@@ -38,7 +35,6 @@ import { AbortReason } from './backend/types.ts';
 import type { Workspace } from '../config/storage.ts';
 
 // Core modules
-import { PermissionManager } from './core/permission-manager.ts';
 import { PromptBuilder } from './core/prompt-builder.ts';
 import { PathProcessor } from './core/path-processor.ts';
 import { ConfigWatcherManager, type ConfigWatcherManagerCallbacks } from './core/config-watcher-manager.ts';
@@ -46,7 +42,7 @@ import { UsageTracker, type UsageUpdate } from './core/usage-tracker.ts';
 import { PrerequisiteManager } from './core/prerequisite-manager.ts';
 
 import type { AutomationAgentEvent, AgentAutomationInput } from './backend/types.ts';
-import { getSessionPlansPath, getSessionDataPath, getSessionPath } from '../sessions/storage.ts';
+import { getSessionPath } from '../sessions/storage.ts';
 import { getMiniAgentSystemPrompt } from '../prompts/system.ts';
 import { buildTitlePrompt, buildRegenerateTitlePrompt, validateTitle } from '../utils/title-generator.ts';
 
@@ -86,7 +82,6 @@ export interface SpawnSessionRequest {
   name?: string;
   provider?: string;
   model?: string;
-  permissionMode?: PermissionMode;
   thinkingLevel?: ThinkingLevel;
   attachments?: Array<{ path: string; name?: string }>;
 }
@@ -120,7 +115,6 @@ export interface SpawnSessionHelpResult {
   }>;
   defaults: {
     defaultProvider: string | null;
-    permissionMode: string;
   };
   templates: Array<{ id: string; name: string; description: string; model?: string }>;
 }
@@ -140,7 +134,7 @@ export const MINI_AGENT_MCP_KEYS = ['session'] as const;
  *
  * Provides:
  * - Common state management (model, thinking, workspace, session)
- * - Core module delegation (PermissionManager, PromptBuilder, etc.)
+ * - Core module delegation (PromptBuilder, prerequisite checks, etc.)
  * - Callback declarations for UI integration
  *
  * Subclasses must implement:
@@ -148,7 +142,6 @@ export const MINI_AGENT_MCP_KEYS = ['session'] as const;
  * - chat(): Provider-specific agentic loop
  * - abort(): Provider-specific abort handling
  * - capabilities(): Provider-specific capabilities
- * - respondToPermission(): Provider-specific permission resolution
  * - destroy(): Provider-specific cleanup
  * - runMiniCompletion(): Simple text completion using backend's auth
  */
@@ -178,7 +171,6 @@ export abstract class BaseAgent implements AgentBackend {
   // ============================================================
   // Core Modules (protected for subclass access)
   // ============================================================
-  protected permissionManager: PermissionManager;
   protected promptBuilder: PromptBuilder;
   protected pathProcessor: PathProcessor;
   protected configWatcherManager: ConfigWatcherManager | null = null;
@@ -194,7 +186,6 @@ export abstract class BaseAgent implements AgentBackend {
   // ============================================================
   // Callbacks (public for facade wiring)
   // ============================================================
-  onPermissionRequest: PermissionCallback | null = null;
   onBeforeToolExecution: ((request: {
     toolCallId: string;
     toolName: string;
@@ -202,7 +193,6 @@ export abstract class BaseAgent implements AgentBackend {
   }) => Promise<{ allowed: true } | { allowed: false; reason: string }>) | null = null;
   onPlanSubmitted: PlanCallback | null = null;
   onConfigValidationError: ((file: string, errors: string[]) => void) | null = null;
-  onPermissionModeChange: ((mode: PermissionMode) => void) | null = null;
   onDebug: ((message: string) => void) | null = null;
   onUsageUpdate: ((update: UsageUpdate) => void) | null = null;
   onBackendAuthRequired: ((reason: string) => void) | null = null;
@@ -220,15 +210,6 @@ export abstract class BaseAgent implements AgentBackend {
     this._thinkingLevel = normalizeThinkingLevel(config.thinkingLevel) ?? DEFAULT_THINKING_LEVEL;
 
     // Initialize core modules
-    // PermissionManager: handles permission evaluation, mode management, and command whitelisting
-    this.permissionManager = new PermissionManager({
-      workspaceId: config.workspace.id,
-      sessionId: this._sessionId,
-      workspaceRootPath: this.workspaceRoot,
-      plansFolderPath: getSessionPlansPath(config.workspace.id, this._sessionId),
-      dataFolderPath: getSessionDataPath(config.workspace.id, this._sessionId),
-    });
-
     // PromptBuilder: builds context blocks for user messages
     this.promptBuilder = new PromptBuilder({
       workspace: config.workspace,
@@ -283,6 +264,7 @@ export abstract class BaseAgent implements AgentBackend {
 
     this.configWatcherManager = new ConfigWatcherManager(
       {
+        workspaceId: this.config.workspace.id,
         workspaceRootPath: this.workspaceRoot,
         isHeadless: this.config.isHeadless,
         onDebug: (msg) => this.debug(msg),
@@ -353,32 +335,6 @@ export abstract class BaseAgent implements AgentBackend {
   }
 
   // ============================================================
-  // Permission Mode (delegated to PermissionManager)
-  // ============================================================
-
-  getPermissionMode(): PermissionMode {
-    return this.permissionManager.getPermissionMode();
-  }
-
-  setPermissionMode(mode: PermissionMode): void {
-    this.permissionManager.setPermissionMode(mode);
-    this.onPermissionModeChange?.(mode);
-  }
-
-  cyclePermissionMode(): PermissionMode {
-    const newMode = this.permissionManager.cyclePermissionMode();
-    this.onPermissionModeChange?.(newMode);
-    return newMode;
-  }
-
-  /**
-   * Check if currently in safe mode (read-only exploration).
-   */
-  isInSafeMode(): boolean {
-    return this.permissionManager.getPermissionMode() === 'safe';
-  }
-
-  // ============================================================
   // Workspace & Session (AgentBackend interface)
   // ============================================================
 
@@ -446,13 +402,6 @@ export abstract class BaseAgent implements AgentBackend {
   // ============================================================
   // Manager Accessors (for advanced queries)
   // ============================================================
-
-  /**
-   * Get PermissionManager for advanced permission queries.
-   */
-  getPermissionManager(): PermissionManager {
-    return this.permissionManager;
-  }
 
   /**
    * Get PromptBuilder for context building.
@@ -650,7 +599,6 @@ ${formattedMessages}
    */
   destroy(): void {
     this.stopConfigWatcher();
-    this.permissionManager.clearWhitelists();
     this.usageTracker.reset();
 
     this.debug('Base agent destroyed');
@@ -848,11 +796,6 @@ ${formattedMessages}
   abstract isProcessing(): boolean;
 
   /**
-   * Respond to a pending permission request.
-   */
-  abstract respondToPermission(requestId: string, allowed: boolean, alwaysAllow?: boolean): void;
-
-  /**
    * Run a simple text completion using the agent's auth infrastructure.
    * No tools, no system prompt - just text in → text out.
    * Each backend implements using its own provider runtime.
@@ -916,7 +859,6 @@ ${formattedMessages}
       name: input.name as string | undefined,
       provider: input.provider as string | undefined,
       model: input.model as string | undefined,
-      permissionMode: input.permissionMode as SpawnSessionRequest['permissionMode'],
       thinkingLevel: input.thinkingLevel as SpawnSessionRequest['thinkingLevel'],
       attachments: input.attachments as SpawnSessionRequest['attachments'],
     };
@@ -940,7 +882,6 @@ ${formattedMessages}
       })),
       defaults: {
         defaultProvider: settings.defaultProvider ?? null,
-        permissionMode: this.permissionManager.getPermissionMode(),
       },
       templates: (await listSubagentTemplates({ cwd: this.workspaceRoot })).map(({ id, name, description, model }) => ({
         id,

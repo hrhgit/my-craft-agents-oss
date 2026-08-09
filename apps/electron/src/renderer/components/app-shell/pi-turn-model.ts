@@ -1,5 +1,6 @@
 import { isPlanArtifactV1, type PlanArtifactV1 } from '@mortise/core'
 import type { PiProjectionEntityV1 } from '@mortise/shared/protocol'
+import { compareActivitiesByOrder } from '@mortise/ui/chat/turn-utils'
 import type { ActivityItem, AssistantTurn, Turn } from '@mortise/ui'
 import type { Message, StoredAttachment } from '../../../shared/types'
 
@@ -165,7 +166,7 @@ function contentMessageId(entity: PiProjectionEntityV1, payload: Record<string, 
   if (entity.entityId.startsWith('content:user:')) {
     return entity.entityId.slice('content:user:'.length)
   }
-  for (const prefix of ['content:text:', 'content:thinking:']) {
+  for (const prefix of ['content:text:', 'content:thinking:', 'content:webSearch:']) {
     if (!entity.entityId.startsWith(prefix)) continue
     const identity = entity.entityId.slice(prefix.length)
     const contentIndexSeparator = identity.lastIndexOf(':')
@@ -374,12 +375,12 @@ function buildAssistantTurn(
       && !(activity.__contentKind === 'thinking' && !activity.content?.trim())
     )
     .map(({
-      __seq: _seq,
+      __seq,
       __contentKind: _contentKind,
       __disposition: _disposition,
       __stopReason: _stopReason,
       ...activity
-    }) => activity)
+    }) => ({ ...activity, order: activity.order ?? __seq }))
   for (const message of messages) {
     if (message === responseMessage) continue
     const blocks = [...message.blocks].sort((a, b) => a.contentIndex - b.contentIndex || a.seq - b.seq)
@@ -392,10 +393,11 @@ function buildAssistantTurn(
       content,
       messageId: message.messageId,
       annotations: overlay.get(message.messageId)?.annotations,
-      timestamp: blocks[0]?.seq ?? message.seq,
+      order: blocks[0]?.seq ?? message.seq,
+      timestamp: blocks[0]?.timestamp ?? blocks[0]?.seq ?? message.seq,
     })
   }
-  activities.sort((a, b) => a.timestamp - b.timestamp)
+  activities.sort(compareActivitiesByOrder)
   calculateDepths(activities)
 
   let response: AssistantTurn['response']
@@ -633,6 +635,36 @@ export function buildPiTurns(
 
     if (entity.entityType === 'content_block' && payload.role === 'assistant') {
       const messageId = contentMessageId(entity, payload)
+      if (payload.contentKind === 'webSearch') {
+        const turnId = entity.turnId ?? `message:${messageId}`
+        const assistant = getAssistantRecord(assistants, turnId, entity.createdSeq)
+        const sources = Array.isArray(payload.sources) ? payload.sources : []
+        assistant.activities.push({
+          __seq: entity.createdSeq,
+          id: entity.entityId,
+          type: 'tool',
+          status: activityStatus(payload),
+          toolName: 'WebSearch',
+          displayName: stringValue(payload.query) ? `搜索：${stringValue(payload.query)}` : '网页搜索',
+          intent: payload.source === 'extension' ? '后备网页搜索' : '模型原生网页搜索',
+          toolInput: {
+            query: stringValue(payload.query) ?? '',
+            source: payload.source === 'extension' ? 'extension' : 'native',
+            provider: stringValue(payload.provider),
+          },
+          content: formatValue({
+            sources,
+            durationMs: numberValue(payload.durationMs),
+            error: record(payload.error),
+          }),
+          error: payload.status === 'failed'
+            ? stringValue(record(payload.error)?.message) ?? 'Web search failed'
+            : undefined,
+          order: entity.createdSeq,
+          timestamp: wallClockTimestamp(payload.timestamp) ?? entity.createdSeq,
+        })
+        continue
+      }
       const contentKind = payload.contentKind === 'thinking' || entity.kind.startsWith('thinking') ? 'thinking' : 'text'
       const turnId = entity.turnId ?? `message:${messageId}`
       const assistant = getAssistantRecord(assistants, turnId, entity.createdSeq)
@@ -650,7 +682,10 @@ export function buildPiTurns(
           content: typeof payload.text === 'string' ? payload.text : '',
           messageId,
           annotations: overlay.get(messageId)?.annotations,
-          timestamp: numberValue(payload.timestamp) ?? entity.createdSeq,
+          order: entity.createdSeq,
+          timestamp: wallClockTimestamp(payload.timestamp)
+            ?? wallClockTimestamp(entity.createdAt)
+            ?? entity.createdSeq,
         })
         continue
       }
@@ -702,6 +737,13 @@ export function buildPiTurns(
       const input = record(payload.input)
       const status = activityStatus(payload)
       const result = payload.result
+      const startedAt = wallClockTimestamp(payload.startedAt)
+        ?? wallClockTimestamp(payload.timestamp)
+        ?? wallClockTimestamp(entity.createdAt)
+      const completedAt = wallClockTimestamp(payload.completedAt)
+        ?? (status === 'running' || status === 'pending'
+          ? undefined
+          : wallClockTimestamp(entity.updatedAt))
       assistant.activities.push({
         __seq: entity.createdSeq,
         id: entity.entityId,
@@ -715,7 +757,10 @@ export function buildPiTurns(
         intent: stringValue(payload.intent),
         displayName: stringValue(payload.displayName),
         parentId: stringValue(payload.parentToolUseId),
-        timestamp: numberValue(payload.timestamp) ?? entity.createdSeq,
+        order: entity.createdSeq,
+        timestamp: startedAt ?? entity.createdSeq,
+        startedAt,
+        completedAt,
       })
       continue
     }

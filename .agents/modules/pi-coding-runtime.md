@@ -48,9 +48,13 @@ Own the Mortise-only coding runtime, including Session behavior, tools, compacti
 
 `pi/packages/coding-agent` contains the embedded core, tools, sessions, compaction, extension APIs, and the dedicated Mortise headless/RPC entrypoint. `pi/packages/agent` remains the UI-neutral Agent Loop authority. The compiled headless entrypoint is the only staged runtime; terminal presentation, interactive/standalone launchers, and JavaScript runtime fallbacks are absent from the supported source and production graphs.
 
+The shared GlobalHost keeps compiled Extension module and resource-resolution caches warm across isolated Session runtimes for an attached Workspace. Deferred request preparation is single-flight per runtime and converts optional resource, Extension, network, model-selection, or prompt-rebuild failures into runtime diagnostics instead of disabling input.
+
 # Invariants
 
 The UI-neutral Agent Loop, Session, tool execution, compaction, extension lifecycle, and RPC semantics are canonical and must not change during headless separation. RPC events and the single host-neutral Extension contract remain versioned for supported Mortise hosts; target and engine selectors are invalid. Cleanup, abort, retry, settlement, and replacement paths complete in canonical order; tool results remain serializable. Production headless code must not import TUI or terminal component/render types, and Mortise extension GUI must flow only through versioned host/RPC contribution APIs. No interactive, standalone, or external-Pi compatibility fallback may remain reachable from production entrypoints.
+
+The tool execution contract is policy-neutral: Pi runs Extension `tool_call` handlers first, then asks the host only for generic allow, block, or input-modification coordination. Permission modes, approval queues, remembered decisions, and approval presentation must not be implemented in the coding runtime or RPC host.
 
 # Change Impact
 

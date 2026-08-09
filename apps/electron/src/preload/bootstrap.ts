@@ -58,6 +58,7 @@ import {
   type WorkspaceTransferResultV1,
 } from '@mortise/shared/protocol'
 import type { ElectronAPI } from '../shared/types'
+import { parseAutomationInitializationWarnings } from '../shared/system-warnings'
 import type { ResolvedWorkspaceRoute, WorkspaceRoute } from '../shared/app-layout'
 import { PRELOAD_LOCAL_CHANNELS } from '../shared/ipc-channels'
 import { publishElectronPlatformCapabilities } from '../shared/platform-capabilities'
@@ -880,6 +881,9 @@ client.onConnectionStateChanged((state) => {
   downloadUrl: process.env.MORTISE_VCREDIST_URL,
   workspaceRuntimeDegraded: process.env.MORTISE_WORKSPACE_RUNTIME_DEGRADED === '1',
   workspaceRuntimeDegradedReason: process.env.MORTISE_WORKSPACE_RUNTIME_DEGRADED_REASON,
+  automationInitializationFailures: parseAutomationInitializationWarnings(
+    process.env.MORTISE_AUTOMATION_INITIALIZATION_FAILURES,
+  ),
 })
 
 // This flag is the only renderer-side source of Test Host authority. The main

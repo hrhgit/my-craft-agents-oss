@@ -13,6 +13,7 @@ import {
 } from 'lucide-react'
 import { InputContainer } from '@/components/app-shell/input/InputContainer'
 import { PanelHeader } from '@/components/app-shell/PanelHeader'
+import { getExtensionSessionBootstrap } from '@/components/extensions/extension-frontend-channel-store'
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -34,9 +35,12 @@ import {
 import { cn } from '@/lib/utils'
 import { isPrimaryWorkspaceRemote } from '@/lib/workspace-info'
 import { DEFAULT_THINKING_LEVEL, normalizeThinkingLevel } from '@mortise/shared/agent/thinking-levels'
-import { parsePermissionMode } from '@mortise/shared/agent/mode-types'
 import type { FileAttachment } from '../../shared/types'
-import type { CreateAndSendFirstTurnResult } from '@mortise/shared/protocol'
+import type {
+  CreateAndSendFirstTurnResult,
+  CreateSessionOptions,
+  ExtensionSessionBootstrapV1,
+} from '@mortise/shared/protocol'
 
 export interface NewConversationPageProps {
   draftId: string
@@ -53,7 +57,7 @@ export interface UnpublishedPublicationFailure {
   retryable: boolean
   terminal: true
   outcome: 'unpublished'
-  stage?: 'metadata' | 'projection'
+  stage?: 'runtime' | 'metadata' | 'projection'
 }
 
 interface FirstTurnPublicationFailure extends UnpublishedPublicationFailure {
@@ -74,6 +78,16 @@ export function snapshotFirstTurnPublicationAttempt(
   }
 }
 
+export function createFirstTurnSessionOptions(
+  options: NewConversationDraftOptions,
+  extensionBootstrap?: ExtensionSessionBootstrapV1,
+): CreateSessionOptions {
+  return {
+    ...options,
+    ...(extensionBootstrap ? { extensionBootstrap } : {}),
+  }
+}
+
 export function parseUnpublishedPublicationFailure(error: unknown): UnpublishedPublicationFailure | null {
   if (!error || typeof error !== 'object') return null
   const candidate = error as { code?: unknown; data?: unknown }
@@ -89,7 +103,7 @@ export function parseUnpublishedPublicationFailure(error: unknown): UnpublishedP
     typeof data.retryable !== 'boolean'
     || data.terminal !== true
     || data.outcome !== 'unpublished'
-    || (data.stage !== undefined && data.stage !== 'metadata' && data.stage !== 'projection')
+    || (data.stage !== undefined && data.stage !== 'runtime' && data.stage !== 'metadata' && data.stage !== 'projection')
   ) {
     return null
   }
@@ -128,9 +142,6 @@ function normalizeDraftOptions(
     provider: typeof candidate.provider === 'string' ? candidate.provider : defaults.provider,
     model: typeof candidate.model === 'string' ? candidate.model : defaults.model,
     thinkingLevel: normalizeThinkingLevel(candidate.thinkingLevel) ?? defaults.thinkingLevel,
-    permissionMode: typeof candidate.permissionMode === 'string'
-      ? parsePermissionMode(candidate.permissionMode) ?? defaults.permissionMode
-      : defaults.permissionMode,
   }
 }
 
@@ -234,7 +245,6 @@ const NewConversationPage = React.memo(function NewConversationPage({ draftId }:
     provider: piGlobalSettings.defaultProvider,
     model: piGlobalSettings.defaultModel,
     thinkingLevel: normalizeThinkingLevel(piGlobalSettings.defaultThinkingLevel) ?? DEFAULT_THINKING_LEVEL,
-    permissionMode: 'allow-all',
   }), [piGlobalSettings.defaultModel, piGlobalSettings.defaultProvider, piGlobalSettings.defaultThinkingLevel])
   const [options, setOptions] = React.useState<NewConversationDraftOptions>(() => normalizeDraftOptions(
     storage.get(storage.KEYS.newConversationOptions, defaultOptions, optionsScope),
@@ -290,12 +300,13 @@ const NewConversationPage = React.memo(function NewConversationPage({ draftId }:
     setComposerRevision(current => current + 1)
     void (async () => {
       try {
+        const extensionBootstrap = getExtensionSessionBootstrap(workspaceId)
         await runFirstTurnDraftSubmission(
           () => onCreateAndSendFirstTurn({
             workspaceId,
             message: attempt.message,
             attachments: attempt.attachments.length > 0 ? attempt.attachments : undefined,
-            createOptions: attempt.options,
+            createOptions: createFirstTurnSessionOptions(attempt.options, extensionBootstrap),
             sendOptions: attempt.skillSlugs?.length ? { skillSlugs: attempt.skillSlugs } : undefined,
           }),
           async ({ session }) => {

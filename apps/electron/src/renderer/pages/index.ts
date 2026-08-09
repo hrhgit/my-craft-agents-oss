@@ -12,7 +12,6 @@ export {
   AppSettingsPage,
   AiSettingsPage,
   AppearanceSettingsPage,
-  InputSettingsPage,
   ShortcutsPage,
   PreferencesPage,
 } from './settings'

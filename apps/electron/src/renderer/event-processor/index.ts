@@ -19,7 +19,6 @@ export type {
   ToolResultEvent,
   CompleteEvent,
   ErrorEvent,
-  PermissionRequestEvent,
   PlanSubmittedEvent,
   PlanArtifactChangedEvent,
   PlanModeStateChangedEvent,

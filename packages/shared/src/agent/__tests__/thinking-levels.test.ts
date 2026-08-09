@@ -36,10 +36,8 @@ describe('normalizeThinkingLevel', () => {
     expect(normalizeThinkingLevel('think')).not.toBe(DEFAULT_THINKING_LEVEL)
   })
 
-  it('does not migrate the retired "max" value to "xhigh"', () => {
-    // Mutation guard: if the max -> xhigh alias is reintroduced, this fails.
-    expect(normalizeThinkingLevel('max')).toBeUndefined()
-    expect(normalizeThinkingLevel('max')).not.toBe('xhigh')
+  it('accepts the current "max" value unchanged', () => {
+    expect(normalizeThinkingLevel('max')).toBe('max')
   })
 
   it('does not case-fold input', () => {
@@ -57,9 +55,12 @@ describe('isValidThinkingLevel', () => {
     }
   })
 
-  it('rejects the retired "think" and "max" values', () => {
+  it('rejects the retired "think" value', () => {
     expect(isValidThinkingLevel('think')).toBe(false)
-    expect(isValidThinkingLevel('max')).toBe(false)
+  })
+
+  it('accepts the current "max" value', () => {
+    expect(isValidThinkingLevel('max')).toBe(true)
   })
 
   it('rejects unknown and non-string values', () => {

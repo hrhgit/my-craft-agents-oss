@@ -9,7 +9,6 @@ const DOC_BASE_URL = `${MORTISE_REPOSITORY_URL}/blob/main`
 
 export type DocFeature =
   | 'skills'
-  | 'permissions'
   | 'workspaces'
   | 'themes'
   | 'app-settings'
@@ -32,12 +31,6 @@ export const DOCS: Record<DocFeature, DocInfo> = {
     title: 'Skills',
     summary:
       'Reusable instruction sets that teach your agent specialized behaviors. Create a SKILL.md file and invoke it with @mention in your messages.',
-  },
-  permissions: {
-    path: '/apps/electron/resources/docs/permissions.md',
-    title: 'Permissions',
-    summary:
-      'Control how much autonomy your agent has. Explore mode is read-only, Ask to Edit prompts before changes, and Execute mode runs without prompts.',
   },
   workspaces: {
     path: '/README.md',

@@ -356,7 +356,6 @@ interface PromptActionV3 {
         provider?: string
         model?: string
         thinkingLevel?: string
-        permissionMode?: 'safe' | 'ask' | 'allow-all'
         telegramTopic?: string
       }
     | {
@@ -695,7 +694,7 @@ authorize Mortise runtime to inspect `.pi`.
 - The event-map key becomes an event trigger `eventType` and trusted source.
 - `SchedulerTick` plus `cron` becomes a time/cron trigger. `SchedulerTick` is
   not retained as a public event.
-- Matcher, conditions, permission mode, provider, model, thinking level,
+- Matcher, conditions, provider, model, thinking level,
   Telegram topic, and actions are preserved in their version 3 locations.
 - Literal webhook credentials are moved atomically into the host secret store
   and replaced by `SecretReferenceV1`; a credential that cannot be secured

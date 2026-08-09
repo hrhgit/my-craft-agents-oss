@@ -38,6 +38,22 @@ export type PiProjectionContentPayloadV1 =
       timestamp?: number
     }
   | {
+      role: 'assistant'
+      messageId: string
+      contentKind: 'webSearch'
+      searchId: string
+      query: string
+      status: 'running' | 'completed' | 'failed' | 'cancelled'
+      sources: Array<{ title?: string; url: string; domain?: string; snippet?: string; citationId?: string }>
+      provider?: string
+      source: 'native' | 'extension'
+      durationMs?: number
+      error?: { kind?: string; message?: string }
+      raw?: unknown
+      contentIndex: number
+      timestamp?: number
+    }
+  | {
       role: 'info'
       messageId: string
       content: string

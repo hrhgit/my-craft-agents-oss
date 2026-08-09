@@ -65,21 +65,15 @@ function optionalString(value: unknown, field: string, maxLength: number): strin
 function parseTransferPayload(input: unknown): RemoteSessionTransferPayload {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('input must be a transfer summary object')
   const value = input as Record<string, unknown>
-  const allowed = new Set(['sourceSessionId', 'name', 'permissionMode', 'summary'])
+  const allowed = new Set(['sourceSessionId', 'name', 'summary'])
   if (Object.keys(value).some(key => !allowed.has(key))) throw new Error('input contains unsupported transfer fields')
   const sourceSessionId = optionalString(value.sourceSessionId, 'sourceSessionId', 200)
   const summary = optionalString(value.summary, 'summary', TRANSFER_SUMMARY_MAX_LENGTH)
   if (!sourceSessionId || !summary) throw new Error('sourceSessionId and summary are required')
-  if (value.permissionMode !== undefined && !['safe', 'ask', 'allow-all'].includes(String(value.permissionMode))) {
-    throw new Error('permissionMode is invalid')
-  }
   return {
     sourceSessionId,
     summary,
     ...(optionalString(value.name, 'name', TRANSFER_NAME_MAX_LENGTH) ? { name: value.name as string } : {}),
-    ...(value.permissionMode ? {
-      permissionMode: (value.permissionMode === 'safe' ? 'ask' : value.permissionMode) as RemoteSessionTransferPayload['permissionMode'],
-    } : {}),
   }
 }
 

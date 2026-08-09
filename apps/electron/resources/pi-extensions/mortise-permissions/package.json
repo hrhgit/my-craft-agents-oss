@@ -1,0 +1,41 @@
+{
+  "name": "mortise-permissions",
+  "private": true,
+  "type": "module",
+  "pi": {
+    "extensions": [{
+      "id": "mortise-permissions",
+      "path": "./index.js",
+      "activation": "startup",
+      "manifest": {
+        "schemaVersion": 1,
+        "name": "Mortise Permissions",
+        "version": "1.0.0",
+        "author": { "name": "Mortise" },
+        "description": "Owns tool approval policy and its session controls.",
+        "capabilities": ["ui.frontends"],
+        "permissions": []
+      },
+      "ui": {
+        "schemaVersion": 2,
+        "title": "Permissions",
+        "description": "",
+        "category": "agent",
+        "compatibility": { "uiApi": "^2.0.0", "mortise": ">=0.1.0 <0.2.0" },
+        "frontends": [
+          { "id": "toolbar", "entry": "./dist/ui/toolbar.js", "styles": ["./dist/ui/styles.css"], "surface": "composer.toolbar", "mode": "append", "scope": "session" },
+          { "id": "approval", "entry": "./dist/ui/approval.js", "styles": ["./dist/ui/styles.css"], "surface": "composer.above", "mode": "append", "scope": "session" }
+        ]
+      }
+    }]
+  },
+  "scripts": {
+    "build": "esbuild src/toolbar.ts src/approval.ts --bundle --format=esm --platform=browser --outdir=dist/ui && node build-styles.mjs"
+  },
+  "dependencies": {
+    "@mortise/extension-ui": "workspace:*"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0"
+  }
+}

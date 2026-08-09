@@ -36,7 +36,6 @@ export interface CliArgs {
   command: string
   rest: string[]
   // run-specific flags
-  mode: string
   outputFormat: string
   noCleanup: boolean
   noSpinner: boolean
@@ -63,7 +62,6 @@ export function parseArgs(argv: string[]): CliArgs {
   let sendTimeout = 300_000 // 5 min
   const rest: string[] = []
   let command = ''
-  let mode = ''
   let outputFormat = 'text'
   let noCleanup = false
   let noSpinner = false
@@ -99,9 +97,6 @@ export function parseArgs(argv: string[]): CliArgs {
         break
       case '--send-timeout':
         sendTimeout = parseInt(args[++i] ?? '300000', 10)
-        break
-      case '--mode':
-        mode = args[++i] ?? ''
         break
       case '--output-format':
         outputFormat = args[++i] ?? 'text'
@@ -166,7 +161,7 @@ export function parseArgs(argv: string[]): CliArgs {
   if (!apiKey) apiKey = process.env.LLM_API_KEY ?? ''
   if (!baseUrl) baseUrl = process.env.LLM_BASE_URL ?? ''
 
-  return { url, token, workspace, timeout, json, tlsCa, sendTimeout, command, rest, mode, outputFormat, noCleanup, noSpinner, verbose, serverEntry, workspaceDir, provider, model, apiKey, baseUrl, interactive }
+  return { url, token, workspace, timeout, json, tlsCa, sendTimeout, command, rest, outputFormat, noCleanup, noSpinner, verbose, serverEntry, workspaceDir, provider, model, apiKey, baseUrl, interactive }
 }
 
 // ---------------------------------------------------------------------------
@@ -343,7 +338,6 @@ async function cmdSessionCreate(client: CliRpcClient, args: CliArgs): Promise<vo
   const promptParts: string[] = []
   const opts: Record<string, unknown> = {}
   if (name) opts.name = name
-  if (args.mode) opts.permissionMode = args.mode
 
   for (let i = 0; i < args.rest.length; i++) {
     if (args.rest[i] === '--name') {
@@ -974,7 +968,6 @@ async function cmdRun(args: CliArgs): Promise<void> {
       workspaceId,
       message,
       createOptions: {
-        permissionMode: args.mode || 'allow-all',
         ...(args.model ? { model: args.model } : {}),
         ...(selectedProvider ? { provider: selectedProvider } : {}),
       },
@@ -1277,7 +1270,7 @@ export function getValidateSteps(): ValidateStep[] {
         const r = (await client.invoke('sessions:createAndSendFirstTurn', {
           workspaceId: ctx.workspaceId,
           message: 'Reply with exactly: SESSION_CREATED',
-          createOptions: { name, permissionMode: 'allow-all' },
+          createOptions: { name },
         })) as any
         ctx.createdSessionId = r?.session?.id
         return ctx.createdSessionId ?? 'created'
@@ -1336,7 +1329,6 @@ export function getValidateSteps(): ValidateStep[] {
         if (!firstAssistant?.id) throw new Error('No assistant message found to branch from')
         const branch = (await client.invoke('sessions:create', ctx.workspaceId, {
           name: `__cli-validate-branch-${Date.now()}`,
-          permissionMode: 'allow-all',
           branchFromSessionId: ctx.createdSessionId,
           branchFromMessageId: firstAssistant.id,
         })) as any
@@ -1665,7 +1657,6 @@ LLM Configuration (for 'run' command):
 Commands:
   run <message>          Spawn server, send message, stream response, exit
                          --workspace-dir <path>  Use directory as workspace (creates if needed)
-                         --mode <mode>       Permission mode (default: allow-all)
                          --output-format     text or stream-json (default: text)
                          --no-cleanup        Keep session after completion
                          --server-entry      Path to server/index.ts
@@ -1678,7 +1669,7 @@ Commands:
   workspaces             List workspaces
   sessions               List sessions in workspace
   providers              List AI providers
-  session create <prompt>  Start and send the first turn (--name, --mode)
+  session create <prompt>  Start and send the first turn (--name)
   session messages <id>  Print session message history
   session delete <id>    Delete a session
   send <id> <message>    Send message and stream AI response

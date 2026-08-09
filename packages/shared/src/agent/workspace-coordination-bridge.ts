@@ -5,12 +5,10 @@ import {
   WorkspaceCoordinationStore,
   type CoordinationActor,
 } from '../coordination/index.ts'
-import { isReadOnlyBashCommandWithConfig } from './mode-manager.ts'
-import { permissionsConfigCache } from './permissions-config.ts'
 
 const TOOL_ACTIVITY_LEASE_MS = 30 * 60 * 1000
 
-export type CoordinationPermissionDecision =
+export type CoordinationToolDecision =
   | { action: 'allow' }
   | { action: 'block'; reason?: string }
   | { action: 'modify'; input: Record<string, unknown> }
@@ -42,7 +40,6 @@ export interface WorkspaceCoordinationBridgeOptions {
   sessionId: string
   writerId?: string
   configDir?: string
-  isReadOnlyShellCommand?: (command: string) => boolean
 }
 
 function filePathFromInput(input: Record<string, unknown>): string | null {
@@ -94,10 +91,10 @@ export class WorkspaceCoordinationBridge {
     })
   }
 
-  async afterPermission(
+  async beforeTool(
     request: CoordinationToolRequest,
-    decision: CoordinationPermissionDecision,
-  ): Promise<CoordinationPermissionDecision> {
+    decision: CoordinationToolDecision,
+  ): Promise<CoordinationToolDecision> {
     if (this.closed || decision.action === 'block') return decision
 
     const toolName = request.toolName.toLocaleLowerCase('en-US')
@@ -117,13 +114,7 @@ export class WorkspaceCoordinationBridge {
       enforcement = 'blocking'
     } else if (toolName === 'bash') {
       const command = typeof effectiveInput.command === 'string' ? effectiveInput.command : ''
-      const permissions = permissionsConfigCache.getMergedConfig({
-        workspaceRootPath: this.options.workspaceRoot,
-      })
-      const isReadOnly = this.options.isReadOnlyShellCommand
-        ? this.options.isReadOnlyShellCommand(command)
-        : isReadOnlyBashCommandWithConfig(command, permissions)
-      if (!command || isReadOnly) return decision
+      if (!command.trim()) return decision
       resource = { kind: 'logical', name: 'workspace/fs' }
       enforcement = 'advisory'
     } else {

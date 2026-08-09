@@ -173,13 +173,16 @@ export const LOCAL_ONLY_CHANNELS = new Set<string>([
   // tools — local tool settings
   RPC_CHANNELS.tools.GET_BROWSER_TOOL_ENABLED,
   RPC_CHANNELS.tools.SET_BROWSER_TOOL_ENABLED,
+  RPC_CHANNELS.tools.GET_MESSAGING_TOOL_ENABLED,
+  RPC_CHANNELS.tools.SET_MESSAGING_TOOL_ENABLED,
+  RPC_CHANNELS.tools.GET_WEB_SEARCH_MODE,
+  RPC_CHANNELS.tools.SET_WEB_SEARCH_MODE,
 
   RPC_CHANNELS.piExtensions.GET_SETTINGS,
   RPC_CHANNELS.piExtensions.SET_SETTINGS,
   RPC_CHANNELS.piExtensions.UPDATE_SETTINGS,
   RPC_CHANNELS.piExtensions.GET_CATALOG,
   RPC_CHANNELS.piExtensions.PATCH_EXTENSION_CONFIG,
-  RPC_CHANNELS.piExtensions.RELOAD,
   RPC_CHANNELS.piExtensions.IMPORT,
   RPC_CHANNELS.piExtensions.UNINSTALL,
   RPC_CHANNELS.piExtensions.GET_EXTENSION_STATES,
@@ -259,10 +262,8 @@ export const REMOTE_ELIGIBLE_CHANNELS = new Set<string>([
   RPC_CHANNELS.sessions.SEND_MESSAGE,
   RPC_CHANNELS.sessions.CANCEL,
   RPC_CHANNELS.sessions.KILL_SHELL,
-  RPC_CHANNELS.sessions.RESPOND_TO_PERMISSION,
   RPC_CHANNELS.sessions.COMMAND,
   RPC_CHANNELS.sessions.GET_PENDING_PLAN_EXECUTION,
-  RPC_CHANNELS.sessions.GET_PERMISSION_MODE_STATE,
   RPC_CHANNELS.sessions.EVENT,
   RPC_CHANNELS.sessions.PI_PROJECTION_EVENT,
   RPC_CHANNELS.sessions.GET_MODEL,
@@ -337,6 +338,11 @@ export const REMOTE_ELIGIBLE_CHANNELS = new Set<string>([
   RPC_CHANNELS.settings.SET_DEFAULT_THINKING_LEVEL,
   RPC_CHANNELS.settings.GET_MID_STREAM_BEHAVIOR,
   RPC_CHANNELS.settings.SET_MID_STREAM_BEHAVIOR,
+
+  // Extension application state belongs to the Workspace runtime. Catalog,
+  // installation, and desired settings remain local application concerns.
+  RPC_CHANNELS.piExtensions.GET_RUNTIME_STATE,
+  RPC_CHANNELS.piExtensions.RELOAD,
 
   // agent settings — global Pi/Mortise agent configuration
   RPC_CHANNELS.agentSettings.GET,
@@ -445,6 +451,7 @@ export const REMOTE_ELIGIBLE_CHANNELS = new Set<string>([
   RPC_CHANNELS.extensions.INTERACTION_RESPONSE,
   RPC_CHANNELS.extensions.COMMAND_INVOKE,
   RPC_CHANNELS.extensions.GET_COMMANDS,
+  RPC_CHANNELS.extensions.GET_FRONTEND_STATES,
   RPC_CHANNELS.extensions.GET_FILE_STATE,
   RPC_CHANNELS.extensions.SET_FILE_STATE,
   RPC_CHANNELS.extensions.FRONTEND_MESSAGE,

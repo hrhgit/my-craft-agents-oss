@@ -27,7 +27,7 @@ import {
   prepareFrozenRootDependencies,
   type CapturedBuildSource,
 } from '../build-source-snapshot.ts'
-import { getPlatformKey, publishVerifiedUvToolchain, UV_VERSION, type Arch, type Platform } from './common.ts'
+import { getPlatformKey, publishVerifiedUvToolchain, resolveCachedUvToolchain, UV_VERSION, type Arch, type Platform } from './common.ts'
 import { withFileLock } from './file-lock.ts'
 import { writeJsonAtomic } from './files.ts'
 import { getProcessStartTime, matchesProcessIdentity } from './process-identity.ts'
@@ -370,6 +370,7 @@ function leaseElectronBuild(args: {
   pid: number
 }): MortiseUiBuildLease {
   return withFileLock(args.coordinatorPath, () => {
+    const cleanupStartedAt = Date.now()
     cleanupElectronBuildCacheLocked({
       buildRoot: args.buildRoot,
       retainCount: args.retainCount,
@@ -391,13 +392,7 @@ function leaseElectronBuild(args: {
       manifest: args.manifest,
     }
     writeJsonAtomic(leasePath(args.buildRoot, args.options.runId), leaseFile(lease), 0o600)
-    cleanupElectronBuildCacheLocked({
-      buildRoot: args.buildRoot,
-      retainCount: args.retainCount,
-      maxBytes: args.maxBytes,
-      protectBuildIds: [args.buildId],
-      now: args.now,
-    })
+    process.stdout.write(`[electron-build] Build cache checked in ${Date.now() - cleanupStartedAt}ms.\n`)
     return lease
   }, { timeoutMs: args.options.lockTimeoutMs ?? UI_VALIDATION_MAX_WAIT_MS, staleMs: BUILD_LOCK_STALE_MS })
 }
@@ -563,12 +558,12 @@ function cleanupElectronBuildCacheLocked(options: CleanupElectronBuildOptions & 
     reapStaleSourceDirectories(buildRoot, now().getTime())
   }
   const protectedIds = new Set([...active, ...building, ...(options.protectBuildIds ?? [])])
-  const invalid = removeInvalidBuildDirectories(buildRoot, protectedIds)
-  const builds = listBuilds(buildRoot)
+  const inspected = inspectBuildDirectories(buildRoot, protectedIds)
+  const builds = inspected.builds
   const newestFirst = [...builds].sort((a, b) => b.createdAt.localeCompare(a.createdAt))
   const retainedUnreferenced = new Set(newestFirst.filter(build => !protectedIds.has(build.buildId)).slice(0, retainCount).map(build => build.buildId))
-  const removedBuildIds: string[] = [...invalid.removed]
-  const failedBuildIds: string[] = [...invalid.failed]
+  const removedBuildIds: string[] = [...inspected.removed]
+  const failedBuildIds: string[] = [...inspected.failed]
   let totalBytes = builds.reduce((sum, build) => sum + build.sizeBytes, 0)
 
   for (const build of [...builds].sort((a, b) => a.createdAt.localeCompare(b.createdAt))) {
@@ -596,14 +591,23 @@ function cleanupElectronBuildCacheLocked(options: CleanupElectronBuildOptions & 
   }
 }
 
-function removeInvalidBuildDirectories(buildRoot: string, protectedIds: Set<string>): { removed: string[]; failed: string[] } {
+function inspectBuildDirectories(
+  buildRoot: string,
+  protectedIds: Set<string>,
+): { builds: MortiseUiBuildManifest[]; removed: string[]; failed: string[] } {
   const buildsDir = join(buildRoot, 'builds')
+  const builds: MortiseUiBuildManifest[] = []
   const removed: string[] = []
   const failed: string[] = []
   for (const entry of readdirSync(buildsDir, { withFileTypes: true })) {
-    if (!entry.isDirectory() || entry.name.startsWith('.staging-') || protectedIds.has(entry.name)) continue
+    if (!entry.isDirectory() || entry.name.startsWith('.staging-')) continue
     const path = join(buildsDir, entry.name)
-    if (readValidBuildManifest(path, entry.name, buildRoot)) continue
+    const manifest = readValidBuildManifest(path, entry.name, buildRoot)
+    if (manifest) {
+      builds.push(manifest)
+      continue
+    }
+    if (protectedIds.has(entry.name)) continue
     try {
       removeDirectory(path)
       removed.push(entry.name)
@@ -611,7 +615,7 @@ function removeInvalidBuildDirectories(buildRoot: string, protectedIds: Set<stri
       failed.push(entry.name)
     }
   }
-  return { removed, failed }
+  return { builds, removed, failed }
 }
 
 function assertSourceBuildOutputs(sourceAppDir: string): void {
@@ -1071,17 +1075,44 @@ export function seedUvToolchainCacheFromCompletedBuild(buildRootValue: string): 
   const platform = process.platform as Platform
   const arch = process.arch as Arch
   const relativeUv = `dist/resources/bin/${getPlatformKey(platform, arch)}/${platform === 'win32' ? 'uv.exe' : 'uv'}`
-  const candidates = listBuilds(buildRoot)
-    .filter(build => build.platform === platform && build.arch === arch)
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-  for (const build of candidates) {
-    const artifact = build.artifacts.find(item => item.path === relativeUv)
-    if (!artifact) continue
-    const sourceBinary = join(build.appDir, ...relativeUv.split('/'))
-    if (!existsSync(sourceBinary)) continue
-    publishVerifiedUvToolchain(join(buildRoot, 'toolchains'), { platform, arch }, sourceBinary, artifact.sha256)
-    process.stdout.write(`[electron-build] Seeded uv ${UV_VERSION} toolchain cache from build ${shortBuildId(build.buildId)}.\n`)
-    return true
+  const toolchainRoot = join(buildRoot, 'toolchains')
+  if (resolveCachedUvToolchain(toolchainRoot, { platform, arch })) return true
+
+  process.stdout.write('[electron-build] Searching completed builds for a verified uv toolchain...\n')
+  const buildsDir = join(buildRoot, 'builds')
+  if (!existsSync(buildsDir)) return false
+  const candidates: Array<{ buildId: string; createdAt: string; sourceBinary: string; sha256: string }> = []
+  for (const entry of readdirSync(buildsDir, { withFileTypes: true })) {
+    if (!entry.isDirectory() || entry.name.startsWith('.staging-')) continue
+    try {
+      const parsed = JSON.parse(readFileSync(join(buildsDir, entry.name, 'build.json'), 'utf8')) as Partial<MortiseUiBuildManifest>
+      if (
+        parsed.schemaVersion !== ELECTRON_BUILD_SCHEMA_VERSION
+        || parsed.producerVersion !== ELECTRON_BUILD_PRODUCER_VERSION
+        || parsed.buildId !== entry.name
+        || parsed.platform !== platform
+        || parsed.arch !== arch
+        || typeof parsed.createdAt !== 'string'
+        || !Array.isArray(parsed.artifacts)
+      ) continue
+      const artifact = parsed.artifacts.find(item => item && typeof item === 'object' && item.path === relativeUv)
+      if (!artifact || typeof artifact.sha256 !== 'string') continue
+      candidates.push({
+        buildId: entry.name,
+        createdAt: parsed.createdAt,
+        sourceBinary: join(buildsDir, entry.name, 'app', ...relativeUv.split('/')),
+        sha256: artifact.sha256,
+      })
+    } catch { /* Ignore incomplete build directories. */ }
+  }
+  candidates.sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+  for (const candidate of candidates) {
+    if (!existsSync(candidate.sourceBinary)) continue
+    try {
+      publishVerifiedUvToolchain(toolchainRoot, { platform, arch }, candidate.sourceBinary, candidate.sha256)
+      process.stdout.write(`[electron-build] Seeded uv ${UV_VERSION} toolchain cache from build ${shortBuildId(candidate.buildId)}.\n`)
+      return true
+    } catch { /* Try the next candidate if its declared uv asset is stale. */ }
   }
   return false
 }

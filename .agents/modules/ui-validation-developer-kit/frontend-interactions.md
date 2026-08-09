@@ -9,6 +9,7 @@
 | `validation.flow.batch` | 在一个宿主中依次运行多个 flow | 场景之间重置，宿主只启动一次 | `validation.flow-runner` |
 | `validation.scenario.apply` | 应用注册场景 | 返回场景身份、种子和验证等级 | `validation.runtime-contract` |
 | `validation.semantic.action` | 对语义目标执行动作 | 返回稳定回执并观察结算后的界面 | `validation.surface-parity` |
+| `validation.physical.press` | 对渲染器目标发送物理按键 | 可打印键按 `keyDown → char → keyUp` 提交字符；快捷键、功能键和组合输入保持各自独立语义 | `validation.surface-parity` |
 | `validation.evidence.capture` | 捕获验收证据 | 证据绑定源码、运行和验证等级 | `validation.evidence` |
 | `validation.host.shutdown` | 停止专用验收宿主 | 验收桥被释放，窗口完成关闭握手且不留下进程 | `validation.host-lifecycle` |
 

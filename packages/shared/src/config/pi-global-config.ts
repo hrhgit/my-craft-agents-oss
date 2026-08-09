@@ -29,6 +29,7 @@ import {
   readGlobalProviders as readPiHostGlobalProviders,
   readGlobalProvidersForDisplay as readPiHostGlobalProvidersForDisplay,
   readGlobalSettings as readPiHostGlobalSettings,
+  readGlobalWebSearchMode as readPiHostGlobalWebSearchMode,
   readGlobalModelDefaultSlots as readPiHostGlobalModelDefaultSlots,
   removeGlobalModelDefaultSlot as removePiHostGlobalModelDefaultSlot,
   readShellGuiEntry as readPiHostShellGuiEntry,
@@ -39,6 +40,7 @@ import {
   setGlobalApiKey as setPiHostGlobalApiKey,
   setGlobalDefault as setPiHostGlobalDefault,
   setGlobalModelDefaultSlot as setPiHostGlobalModelDefaultSlot,
+  setGlobalWebSearchMode as setPiHostGlobalWebSearchMode,
   setShellGuiEntry as setPiHostShellGuiEntry,
   subscribeGlobalConfig as subscribePiHostGlobalConfig,
   writeMortiseSettingsBulk as writePiHostMortiseSettingsBulk,
@@ -60,6 +62,16 @@ export type { PiCustomApi, PiGlobalModel, PiGlobalProvider } from './pi-provider
 /** Resolve the Pi-owned Agent root through its typed host facade. */
 export function getPiAgentDir(): string {
   return getPiHostAgentDir();
+}
+
+export type WebSearchMode = 'auto' | 'native' | 'extension' | 'disabled';
+
+export function readPiWebSearchMode(): WebSearchMode {
+  return readPiHostGlobalWebSearchMode();
+}
+
+export async function writePiWebSearchMode(mode: WebSearchMode): Promise<void> {
+  await setPiHostGlobalWebSearchMode(mode);
 }
 
 const MANAGED_EXTENSION_SUBDIR = join('extensions', 'imported');
@@ -880,16 +892,20 @@ export async function getPiExtensionCatalog(options: { cwd?: string; agentDir?: 
       projectConfigDir: MORTISE_PROJECT_DIR,
       settingsManager,
     });
-    const result = await resourceResolver.resolve();
+    const result = await resourceResolver.resolveRaw();
     const bundledExtensionPaths = options.bundledExtensionPaths
       ?? [process.env.MORTISE_BUNDLED_PI_EXTENSIONS_PATH].filter(
         (value): value is string => Boolean(value && existsSync(value)),
       );
     const bundled = bundledExtensionPaths.length > 0
-      ? await resourceResolver.resolveExtensionSources(bundledExtensionPaths)
+      ? await resourceResolver.resolveExtensionSources(bundledExtensionPaths, { resolveGraph: false })
       : { extensions: [] };
+    const mergedExtensions = resourceResolver.resolveExtensionManifestGraph([
+      ...bundled.extensions,
+      ...result.extensions,
+    ]);
     const seenExtensionIds = new Set<string>();
-    const extensions = [...bundled.extensions, ...result.extensions].filter((resource) => {
+    const extensions = mergedExtensions.filter((resource) => {
       const id = resource.metadata.extensionId;
       if (!id || seenExtensionIds.has(id)) return false;
       seenExtensionIds.add(id);

@@ -8,6 +8,7 @@
  */
 
 import { realpathSync } from 'fs';
+import { createHash } from 'crypto';
 import { homedir } from 'os';
 import { join, resolve } from 'path';
 import { expandPath } from '../utils/paths.ts';
@@ -39,6 +40,27 @@ export const MORTISE_PROJECT_EXTENSIONS_DIR = `${MORTISE_PROJECT_DIR}/extensions
 
 /** Mortise session directory. Historical ~/.pi/agent sessions are not imported. */
 export const MORTISE_SESSIONS_DIR = join(MORTISE_AGENT_DIR, 'sessions');
+
+/**
+ * Encode a stable Workspace identity into a Mortise-owned session bucket name.
+ *
+ * The readable prefix is only for diagnostics. The digest preserves the exact
+ * Workspace identity and prevents sanitized names from colliding. Unlike the
+ * historical cwd encoder below, this function never consults process.cwd().
+ */
+export function encodeWorkspaceSessionBucket(workspaceId: string): string {
+  const id = workspaceId.trim();
+  if (!id) throw new TypeError('workspaceId must not be empty');
+
+  const readable = id
+    .toLocaleLowerCase('en-US')
+    .replace(/[^a-z0-9_-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 64) || 'workspace';
+  const digest = createHash('sha256').update(id, 'utf8').digest('hex').slice(0, 16);
+  return `--workspace-${readable}-${digest}--`;
+}
 
 /**
  * Encode a cwd into the Pi sessions directory name.

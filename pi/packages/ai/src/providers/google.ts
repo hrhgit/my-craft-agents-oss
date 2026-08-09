@@ -20,6 +20,7 @@ import type {
 	ThinkingContent,
 	ThinkingLevel,
 	ToolCall,
+	WebSearchContent,
 } from "../types.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
@@ -27,6 +28,7 @@ import type { GoogleThinkingLevel } from "./google-shared.ts";
 import {
 	convertMessages,
 	convertTools,
+	extractGoogleWebSearch,
 	isThinkingPart,
 	mapStopReason,
 	mapToolChoice,
@@ -84,6 +86,7 @@ export const streamGoogle: StreamFunction<"google-generative-ai", GoogleOptions>
 
 			stream.push({ type: "start", partial: output });
 			let currentBlock: TextContent | ThinkingContent | null = null;
+			let webSearchBlock: WebSearchContent | null = null;
 			const blocks = output.content;
 			const blockIndex = () => blocks.length - 1;
 			for await (const chunk of googleStream) {
@@ -91,6 +94,47 @@ export const streamGoogle: StreamFunction<"google-generative-ai", GoogleOptions>
 				// used to identify each response. Keep the first non-empty one from the stream.
 				output.responseId ||= chunk.responseId;
 				const candidate = chunk.candidates?.[0];
+				const search = options?.webSearch ? extractGoogleWebSearch(candidate) : undefined;
+				if (search && !webSearchBlock) {
+					webSearchBlock = {
+						type: "webSearch",
+						searchId: `google-search-${output.content.length}`,
+						query: search.query,
+						status: "completed",
+						sources: search.sources,
+						provider: model.provider,
+						source: "native",
+						raw: search.raw,
+					};
+					output.content.push(webSearchBlock);
+					const searchIndex = output.content.length - 1;
+					stream.push({
+						type: "websearch_start",
+						contentIndex: searchIndex,
+						searchId: webSearchBlock.searchId,
+						query: search.query,
+						source: "native",
+						provider: model.provider,
+						partial: output,
+					});
+					stream.push({
+						type: "websearch_update",
+						contentIndex: searchIndex,
+						searchId: webSearchBlock.searchId,
+						sources: search.sources,
+						raw: search.raw,
+						partial: output,
+					});
+					stream.push({
+						type: "websearch_end",
+						contentIndex: searchIndex,
+						searchId: webSearchBlock.searchId,
+						status: "completed",
+						sources: search.sources,
+						raw: search.raw,
+						partial: output,
+					});
+				}
 				if (candidate?.content?.parts) {
 					for (const part of candidate.content.parts) {
 						if (part.text !== undefined) {
@@ -420,7 +464,7 @@ function buildParams(
 	return params;
 }
 
-type ClampedThinkingLevel = Exclude<ThinkingLevel, "xhigh">;
+type ClampedThinkingLevel = Exclude<ThinkingLevel, "xhigh" | "max">;
 
 function isGemma4Model(model: Model<"google-generative-ai">): boolean {
 	return /gemma-?4/.test(model.id.toLowerCase());

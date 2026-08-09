@@ -15,7 +15,7 @@ import { cn } from '../../lib/utils'
  * CompactAcceptPlanDrawer — drawer-based Accept-Plan picker for compact /
  * mobile contexts.
  *
- * Same UX shape as `CompactPermissionModeSelector` / `CompactModelSelector` in
+ * Same UX shape as the compact model selector in
  * apps/electron: a slim trigger button opens a bottom-sheet (`vaul` drawer)
  * with the two acceptance options as full-width tap targets. Used by
  * `TurnCard`'s compact footer (WebUI mobile / auto-compact / EditPopover).

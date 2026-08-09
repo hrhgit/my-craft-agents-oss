@@ -306,7 +306,7 @@ export type SystemPromptPreset = 'default' | 'mini';
  */
 export function getMiniAgentSystemPrompt(workspaceRootPath?: string): string {
   const workspaceContext = workspaceRootPath
-    ? `\n## Workspace\nConfig files are in: \`${workspaceRootPath}\`\n- Permissions: \`permissions.json\`\n`
+    ? `\n## Workspace\nConfig files are in: \`${workspaceRootPath}\`\n`
     : '';
 
   return `You are a focused assistant for quick configuration edits in Mortise Agent.

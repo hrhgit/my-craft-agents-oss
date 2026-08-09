@@ -1,10 +1,17 @@
 import { describe, expect, it, mock } from 'bun:test'
 import { SessionManager, createManagedSession } from './SessionManager'
 
-function createManager(): SessionManager {
+function createManager(extensionIds: string[] = []): SessionManager {
   return new SessionManager({
     extensionRuntime: {
       clear: () => undefined,
+      getWorkspaceSnapshot: (workspaceId: string) => workspaceId === 'workspace-1' ? ({
+        workspaceId,
+        workspaceRoot: process.cwd(),
+        loadedAt: 1,
+        extensions: extensionIds.map(id => ({ id, path: `${id}.ts`, resolvedPath: `${process.cwd()}/${id}.ts` })),
+        failures: [],
+      }) : null,
       openWorkspace: async () => ({
         workspaceId: 'workspace-1',
         workspaceRoot: process.cwd(),
@@ -45,6 +52,16 @@ function addSession(manager: SessionManager, id: string, isProcessing: boolean) 
 }
 
 describe('SessionManager extension reload', () => {
+  it('reports the extension IDs from the applied Workspace runtime snapshot', () => {
+    const manager = createManager(['mortise-permissions', 'sample-extension'])
+
+    expect(manager.getExtensionRuntimeState('workspace-1')).toEqual({
+      loaded: true,
+      extensionIds: ['mortise-permissions', 'sample-extension'],
+    })
+    expect(manager.getExtensionRuntimeState('missing')).toEqual({ loaded: false, extensionIds: [] })
+  })
+
   it('reloads every open idle Pi runtime', async () => {
     const manager = createManager()
     const session = addSession(manager, 'idle', false)

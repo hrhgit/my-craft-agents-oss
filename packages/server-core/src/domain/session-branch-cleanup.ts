@@ -4,10 +4,10 @@ export interface BranchRollbackManagedSession {
 
 interface RollbackParams {
   managed: BranchRollbackManagedSession
-  workspaceRootPath: string
+  workspaceId: string
   sessionId: string
   deleteFromRuntimeSessions: (sessionId: string) => void
-  deleteStoredSession: (workspaceRootPath: string, sessionId: string) => void | boolean | Promise<void | boolean>
+  deleteStoredSession: (workspaceId: string, sessionId: string) => void | boolean | Promise<void | boolean>
 }
 
 /**
@@ -15,7 +15,7 @@ interface RollbackParams {
  * Ensures no orphan child session remains in memory or persistent storage.
  */
 export async function rollbackFailedBranchCreation(params: RollbackParams): Promise<void> {
-  const { managed, workspaceRootPath, sessionId, deleteFromRuntimeSessions, deleteStoredSession } = params
+  const { managed, workspaceId, sessionId, deleteFromRuntimeSessions, deleteStoredSession } = params
 
   try {
     managed.agent?.destroy?.()
@@ -27,7 +27,7 @@ export async function rollbackFailedBranchCreation(params: RollbackParams): Prom
   deleteFromRuntimeSessions(sessionId)
 
   try {
-    await deleteStoredSession(workspaceRootPath, sessionId)
+    await deleteStoredSession(workspaceId, sessionId)
   } catch {
     // Best-effort rollback: runtime cleanup is the critical path.
   }

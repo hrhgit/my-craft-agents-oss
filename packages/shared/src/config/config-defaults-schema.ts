@@ -34,7 +34,7 @@ export interface ConfigDefaults {
     /**
      * Pi 壳模式开关。
      * - fullPassthrough: 完全 Pi 透传——使用 Pi 原生 system prompt，移除 Mortise 身份覆盖。
-     *   默认 true。为 false 时回退到 Mortise 独立身份模式。
+     *   默认 true。保存 Mortise 自定义 system prompt 后，运行时会自动使用该覆盖内容。
      */
     piShell: {
       fullPassthrough: boolean;

@@ -19,8 +19,6 @@ const IDENTIFIER_PATTERN = '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$'
 const IDENTIFIER_RE = new RegExp(IDENTIFIER_PATTERN)
 const SESSION_FILE_ROOTS = new Set(['attachments', 'data', 'downloads', 'long_responses', 'plans'])
 const MESSAGE_ROLES = new Set(['user', 'assistant', 'tool', 'error', 'info', 'plan'])
-const PERMISSION_MODES = new Set(['ask', 'allow-all'])
-
 export interface MortiseUiFixtureFile {
   path: string
   content: string
@@ -45,7 +43,6 @@ export interface MortiseUiFixtureSession {
   name?: string
   createdAt?: number
   lastUsedAt?: number
-  permissionMode?: 'ask' | 'allow-all'
   hasUnread?: boolean
   hidden?: boolean
   pendingPlanExecution?: {
@@ -128,7 +125,6 @@ export const MORTISE_UI_FIXTURE_SCHEMA = {
                 name: { type: 'string', minLength: 1, maxLength: 160 },
                 createdAt: { type: 'number', minimum: 0 },
                 lastUsedAt: { type: 'number', minimum: 0 },
-                permissionMode: { enum: [...PERMISSION_MODES] },
                 hasUnread: { type: 'boolean' },
                 hidden: { type: 'boolean' },
                 pendingPlanExecution: {
@@ -337,7 +333,7 @@ export function validateMortiseUiFixtureSpec(value: unknown): MortiseUiFixtureSp
     const sessions = rawSessions.map((rawSession, sessionIndex): MortiseUiFixtureSession => {
       const sessionPath = `${path}.sessions[${sessionIndex}]`
       const session = record(rawSession, sessionPath)
-      exactKeys(session, ['id', 'parentSessionId', 'name', 'createdAt', 'lastUsedAt', 'permissionMode', 'hasUnread', 'hidden', 'pendingPlanExecution', 'messages', 'files'], sessionPath)
+      exactKeys(session, ['id', 'parentSessionId', 'name', 'createdAt', 'lastUsedAt', 'hasUnread', 'hidden', 'pendingPlanExecution', 'messages', 'files'], sessionPath)
       const sessionId = identifier(session.id, `${sessionPath}.id`)
       if (sessionOwners.has(sessionId)) fail(`${sessionPath}.id`, `duplicates session ${sessionId}`)
       sessionOwners.set(sessionId, id)
@@ -356,7 +352,6 @@ export function validateMortiseUiFixtureSpec(value: unknown): MortiseUiFixtureSp
         name: optionalText(session.name, `${sessionPath}.name`, 160),
         createdAt: optionalNumber(session.createdAt, `${sessionPath}.createdAt`),
         lastUsedAt: optionalNumber(session.lastUsedAt, `${sessionPath}.lastUsedAt`),
-        permissionMode: optionalPermissionMode(session.permissionMode, `${sessionPath}.permissionMode`),
         hasUnread: optionalBoolean(session.hasUnread, `${sessionPath}.hasUnread`),
         hidden: optionalBoolean(session.hidden, `${sessionPath}.hidden`),
         pendingPlanExecution: validatePendingPlanExecution(session.pendingPlanExecution, `${sessionPath}.pendingPlanExecution`),
@@ -515,12 +510,6 @@ function optionalBoolean(value: unknown, path: string): boolean | undefined {
   if (value === undefined) return undefined
   if (typeof value !== 'boolean') fail(path, 'must be a boolean')
   return value
-}
-
-function optionalPermissionMode(value: unknown, path: string): MortiseUiFixtureSession['permissionMode'] {
-  if (value === undefined) return undefined
-  if (typeof value !== 'string' || !PERMISSION_MODES.has(value)) fail(path, 'must be ask or allow-all')
-  return value as MortiseUiFixtureSession['permissionMode']
 }
 
 function validatePendingPlanExecution(

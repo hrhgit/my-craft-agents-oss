@@ -41,7 +41,7 @@ describe('PiAgent child session listing', () => {
       })),
       setModel: mock(async () => {}),
       setThinkingLevel: mock(async () => {}),
-      setToolPermissionHandler: mock(async () => {}),
+      setToolExecutionHandler: mock(async () => {}),
       setToolResultHandler: mock(async () => {}),
       registerTools: mock(async () => []),
       setActiveTools: mock(async () => {}),

@@ -4,7 +4,7 @@
  * Public exports for workspace-scoped session management.
  *
  * Sessions are stored in Pi tree JSONL v3 format at
- * ~/.mortise/agent/sessions/{encoded-cwd}/{timestamp}_{sessionId}.jsonl.
+ * ~/.mortise/agent/sessions/{workspace-bucket}/{timestamp}_{sessionId}.jsonl.
  */
 
 // Types
@@ -41,6 +41,7 @@ export {
   getPiNativeSessionFilePath,
   ensureSharedPiTreeSessionFileAsync,
   adoptLegacyWorkspaceSessionBucket,
+  migrateLegacyWorkspaceSessionBuckets,
   ensureAttachmentsDir,
   // ID generation
   generateSessionId,
@@ -92,6 +93,9 @@ export {
   appendStoredMessagesViaPiSessionManager,
 } from './tree-jsonl.ts';
 export type { PiBranchMessageEntryInput } from './tree-jsonl.ts';
+export { putMessageOutbox, updateMessageOutbox, listPendingMessageOutbox, getMessageOutbox, removeMessageOutbox } from './message-outbox.ts';
+export { durableMessageOutbox } from './message-outbox.ts';
+export type { MessageOutboxRecord, MessageOutboxStatus, MessageOutboxStore } from './message-outbox.ts';
 export {
   applyPlanCustomMessageToRuntime,
   applyPlanCustomMessageToStored,

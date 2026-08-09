@@ -59,7 +59,7 @@ export type KnownImagesProvider = "openrouter";
 
 export type ImagesProvider = KnownImagesProvider | string;
 
-export type ThinkingLevel = "minimal" | "low" | "medium" | "high" | "xhigh";
+export type ThinkingLevel = "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 export type ModelThinkingLevel = "off" | ThinkingLevel;
 export type ThinkingLevelMap = Partial<Record<ModelThinkingLevel, string | null>>;
 
@@ -69,6 +69,8 @@ export interface ThinkingBudgets {
 	low?: number;
 	medium?: number;
 	high?: number;
+	xhigh?: number;
+	max?: number;
 }
 
 // Base options all providers share
@@ -256,6 +258,40 @@ export interface ThinkingContent {
 	redacted?: boolean;
 }
 
+export type WebSearchSource = {
+	title?: string;
+	url: string;
+	domain?: string;
+	snippet?: string;
+	citationId?: string;
+};
+
+export type WebSearchErrorKind =
+	| "unsupported"
+	| "authentication"
+	| "rate_limit"
+	| "timeout"
+	| "network"
+	| "provider"
+	| "configuration"
+	| "cancelled";
+
+export interface WebSearchError {
+	kind: WebSearchErrorKind;
+	message: string;
+}
+
+export interface WebSearchContent {
+	type: "webSearch";
+	searchId: string;
+	query: string;
+	status: "running" | "completed" | "failed" | "cancelled";
+	sources: WebSearchSource[];
+	provider: string;
+	source: "native" | "extension";
+	raw?: unknown;
+}
+
 export interface ImageContent {
 	type: "image";
 	data: string; // base64 encoded image data
@@ -307,7 +343,7 @@ export interface UserMessage {
 
 export interface AssistantMessage {
 	role: "assistant";
-	content: (TextContent | ThinkingContent | ToolCall)[];
+	content: (TextContent | ThinkingContent | WebSearchContent | ToolCall)[];
 	api: Api;
 	provider: Provider;
 	model: string;
@@ -383,6 +419,34 @@ export type AssistantMessageEvent =
 	| { type: "thinking_start"; contentIndex: number; partial: AssistantMessage }
 	| { type: "thinking_delta"; contentIndex: number; delta: string; partial: AssistantMessage }
 	| { type: "thinking_end"; contentIndex: number; content: string; partial: AssistantMessage }
+	| {
+			type: "websearch_start";
+			contentIndex: number;
+			searchId: string;
+			query: string;
+			source: "native" | "extension";
+			provider: string;
+			partial: AssistantMessage;
+	  }
+	| {
+			type: "websearch_update";
+			contentIndex: number;
+			searchId: string;
+			sources: WebSearchSource[];
+			raw?: unknown;
+			partial: AssistantMessage;
+	  }
+	| {
+			type: "websearch_end";
+			contentIndex: number;
+			searchId: string;
+			status: "completed" | "failed" | "cancelled";
+			sources: WebSearchSource[];
+			error?: WebSearchError;
+			raw?: unknown;
+			durationMs?: number;
+			partial: AssistantMessage;
+	  }
 	| { type: "toolcall_start"; contentIndex: number; partial: AssistantMessage }
 	| { type: "toolcall_delta"; contentIndex: number; delta: string; partial: AssistantMessage }
 	| { type: "toolcall_end"; contentIndex: number; toolCall: ToolCall; partial: AssistantMessage }

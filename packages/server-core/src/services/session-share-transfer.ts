@@ -3,7 +3,6 @@ import type {
   RemoteSessionTransferPayload,
   ShareResult,
 } from '@mortise/shared/protocol'
-import type { PermissionMode } from '@mortise/shared/agent/mode-types'
 import type { Logger } from '../runtime/platform'
 
 export interface ShareTransferSessionRecord {
@@ -14,7 +13,6 @@ export interface ShareTransferSessionRecord {
   sharedId?: string
   sharedUrl?: string
   name?: string
-  permissionMode?: PermissionMode
 }
 
 export interface SessionShareTransferStore {
@@ -123,8 +121,7 @@ export class SessionShareTransferService {
     const summary = await this.options.store.summarize(sessionId)
     if (!summary) return null
     return {
-      sourceSessionId: session.id, name: session.name,
-      permissionMode: session.permissionMode, summary,
+      sourceSessionId: session.id, name: session.name, summary,
     }
   }
 

@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'bun:test';
 import { SpawnSessionSchema, getToolDefsAsJsonSchema } from './tool-defs.ts';
 
-const CURRENT_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'] as const;
-const RETIRED_LEVELS = ['think', 'max'] as const;
+const CURRENT_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
+const RETIRED_LEVELS = ['think'] as const;
 
 function getExportedThinkingLevels(): unknown {
   const spawnSession = getToolDefsAsJsonSchema().find(def => def.name === 'spawn_session');

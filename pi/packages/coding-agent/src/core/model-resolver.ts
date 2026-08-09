@@ -10,7 +10,7 @@ import { minimatch } from "minimatch";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
 import type { ModelRegistry } from "./model-registry.ts";
 
-const THINKING_LEVELS = new Set<ThinkingLevel>(["off", "minimal", "low", "medium", "high", "xhigh"]);
+const THINKING_LEVELS = new Set<ThinkingLevel>(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
 
 function isValidThinkingLevel(value: string): value is ThinkingLevel {
 	return THINKING_LEVELS.has(value as ThinkingLevel);

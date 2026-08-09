@@ -117,15 +117,15 @@ export function clearPlanFileState(sessionId: string): void {
 /**
  * Get the plans directory for a session
  */
-export function getSessionPlansDir(workspacePath: string, sessionId: string): string {
-  return getSessionPlansPath(workspacePath, sessionId);
+export function getSessionPlansDir(workspaceId: string, sessionId: string): string {
+  return getSessionPlansPath(workspaceId, sessionId);
 }
 
 /**
  * Check if a path is within a session's plans directory
  */
-export function isPathInPlansDir(path: string, workspacePath: string, sessionId: string): boolean {
-  const plansDir = getSessionPlansDir(workspacePath, sessionId);
+export function isPathInPlansDir(path: string, workspaceId: string, sessionId: string): boolean {
+  const plansDir = getSessionPlansDir(workspaceId, sessionId);
   return path.startsWith(plansDir);
 }
 
@@ -206,15 +206,17 @@ function getToolDescriptions(): Record<string, string> {
  */
 export function getSessionScopedTools(
   sessionId: string,
+  workspaceId: string,
   workspaceRootPath: string,
 ): InProcessMcpServer {
-  const cacheKey = `${sessionId}::${workspaceRootPath}`;
+  const cacheKey = `${workspaceId}::${sessionId}::${workspaceRootPath}`;
 
   // Return cached tools if available, but always create a fresh MCP server wrapper
   let tools: InProcessMcpTool[] | undefined = sessionToolsCache.get(cacheKey);
   if (!tools) {
     const ctx = createSessionToolContext({
       sessionId,
+      workspaceId,
       workspacePath: workspaceRootPath,
       onPlanSubmitted: (planPath: string) => {
         setLastPlanFilePath(sessionId, planPath);

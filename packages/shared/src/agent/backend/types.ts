@@ -21,7 +21,6 @@ import type { ExtensionUIValidationDeltaV1 } from '../../protocol/extension-ui-v
 import type { ExtensionFrontendStateV2 } from '../../protocol/extension-frontend-channels.ts';
 import type { FileAttachment } from '../../utils/files.ts';
 import type { ThinkingLevel } from '../thinking-levels.ts';
-import type { PermissionMode } from '../mode-manager.ts';
 import type { Workspace } from '../../config/storage.ts';
 import type { SessionHeader as Session } from '../../sessions/types.ts';
 import type { AgentRuntimeProfile } from '../../config/agent-settings.ts';
@@ -145,30 +144,6 @@ export interface PiExtensionCommand {
   source: string;
   path?: string;
 }
-
-/**
- * Permission prompt types for different tool categories.
- */
-export type PermissionRequestType = 'bash' | 'file_write' | 'tool_mutation' | 'mcp_mutation' | 'admin_approval';
-
-/**
- * Permission request callback signature.
- * Called when a tool requires user permission before execution.
- */
-export type PermissionCallback = (request: {
-  requestId: string;
-  toolName: string;
-  command?: string;
-  description: string;
-  type?: PermissionRequestType;
-  appName?: string;
-  reason?: string;
-  impact?: string;
-  requiresSystemPrompt?: boolean;
-  rememberForMinutes?: number;
-  commandHash?: string;
-  approvalTtlSeconds?: number;
-}) => void;
 
 /**
  * Plan submission callback signature.
@@ -377,7 +352,7 @@ export interface AgentBackend {
 
   /**
    * Send a message and stream back events.
-   * This is the core agentic loop - handles tool execution, permission checks, etc.
+   * This is the core agentic loop and tool execution stream.
    *
    * @param message - User message text
    * @param attachments - Optional file attachments
@@ -466,6 +441,13 @@ export interface AgentBackend {
   postInit(): Promise<PostInitResult>;
 
   /**
+   * Start and prepare the provider runtime without entering an Agent turn.
+   * Hosts use this for Workspace-level warmup so the first user message does
+   * not pay extension/resource initialization latency.
+   */
+  prepareRuntime?(): Promise<void>;
+
+  /**
    * Ensure branch sessions are backend-ready before first user message.
    * Called at branch creation time to avoid creating "fake branches" that have
    * copied transcript history but no actual backend branch context.
@@ -507,19 +489,6 @@ export interface AgentBackend {
 
   /** Set thinking level */
   setThinkingLevel(level: ThinkingLevel): void;
-
-  // ============================================================
-  // Permission Mode
-  // ============================================================
-
-  /** Get current permission mode */
-  getPermissionMode(): PermissionMode;
-
-  /** Set permission mode */
-  setPermissionMode(mode: PermissionMode): void;
-
-  /** Cycle to next permission mode */
-  cyclePermissionMode(): PermissionMode;
 
   // ============================================================
   // State
@@ -596,19 +565,6 @@ export interface AgentBackend {
   /** Regenerate a session title from recent conversation */
   regenerateTitle(recentUserMessages: string[], lastAssistantResponse: string, options?: { language?: string }): Promise<string | null>;
 
-  // ============================================================
-  // Permission Resolution
-  // ============================================================
-
-  /**
-   * Respond to a pending permission request.
-   *
-   * @param requestId - Permission request ID
-   * @param allowed - Whether permission was granted
-   * @param alwaysAllow - Whether to remember this permission for session
-   */
-  respondToPermission(requestId: string, allowed: boolean, alwaysAllow?: boolean): void;
-
   /** Respond to a current versioned extension interaction. */
   respondToExtensionInteraction?(requestId: string, response: ExtensionInteractionResponseV1): boolean;
 
@@ -642,9 +598,6 @@ export interface AgentBackend {
   // Callbacks (set by facade after construction)
   // ============================================================
 
-  /** Called when a tool requires permission */
-  onPermissionRequest: PermissionCallback | null;
-
   /** Backend-owned fence invoked before the Agent Loop may execute a tool. */
   onBeforeToolExecution?: ((request: {
     toolCallId: string;
@@ -654,9 +607,6 @@ export interface AgentBackend {
 
   /** Called when agent submits a plan */
   onPlanSubmitted: PlanCallback | null;
-
-  /** Called when permission mode changes */
-  onPermissionModeChange: ((mode: PermissionMode) => void) | null;
 
   /** Called with debug messages */
   onDebug: ((message: string) => void) | null;

@@ -33,9 +33,6 @@ const MORTISE_AGENT_CONFIG_PATTERNS = [
   /\.mortise\/config\.json$/,
   // Preferences
   /\.mortise\/preferences\.json$/,
-  // Permissions
-  /\.mortise\/workspaces\/[^/]+\/permissions\.json$/,
-  /\.mortise\/permissions\/[^/]+\.json$/,
   // Theme
   /\.mortise\/workspaces\/[^/]+\/theme\.json$/,
   // Tool icons

@@ -115,6 +115,24 @@ describe('ExtensionFrontendHost', () => {
     expect(document.head.querySelectorAll('link[data-mortise-extension-style]').length).toBe(0)
   })
 
+  it('hides empty frontend roots and restores them when content appears', async () => {
+    const parent = document.createElement('section')
+    document.body.append(parent)
+    const host = new ExtensionFrontendHost()
+    await host.mount(descriptor(fixture('empty.js')), parent, runtime)
+    const root = parent.querySelector<HTMLElement>('[data-mortise-extension-frontend="toolbar"]')!
+
+    expect(root.hidden).toBe(true)
+    root.append(document.createElement('span'))
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(root.hidden).toBe(false)
+    root.replaceChildren()
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(root.hidden).toBe(true)
+
+    await host.dispose()
+  })
+
   it('drops a failed mount and does not leave a root or style behind', async () => {
     const entry = fixture('fail.js')
     const parent = document.createElement('section')

@@ -647,6 +647,9 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
             onRetrySettlement={() => electronApi
               .sessionCommand(sessionId, { type: 'retrySettlement' })
               .then(() => undefined)}
+            onRetryAcceptedMessage={() => electronApi
+              .sessionCommand(sessionId, { type: 'retryAcceptedMessage' })
+              .then(() => undefined)}
             onOpenFile={handleOpenFile}
             onOpenUrl={handleOpenUrl}
             currentModel={effectiveModel}

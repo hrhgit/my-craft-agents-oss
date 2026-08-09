@@ -6,6 +6,8 @@ import { pathToFileURL } from 'node:url';
 
 const STORAGE_MODULE_PATH = pathToFileURL(join(import.meta.dir, '..', 'storage.ts')).href;
 const CONFIG_STORAGE_MODULE_PATH = pathToFileURL(join(import.meta.dir, '..', '..', 'config', 'storage.ts')).href;
+const TOPOLOGY_MODULE_PATH = pathToFileURL(join(import.meta.dir, '..', 'topology-storage.ts')).href;
+const INITIALIZATION_MODULE_PATH = pathToFileURL(join(import.meta.dir, '..', 'initialization.ts')).href;
 
 function runEval(configDir: string, code: string): unknown {
   const run = Bun.spawnSync([process.execPath, '--eval', `
@@ -25,6 +27,91 @@ function runEval(configDir: string, code: string): unknown {
 }
 
 describe('workspace storage: SQLite authority', () => {
+  it('uses one idempotent initializer for topology, marker, config, and plugin metadata', () => {
+    const configDir = mkdtempSync(join(tmpdir(), 'mortise-workspace-initialization-'));
+    const workspaceRoot = join(configDir, 'workspace-root');
+    const result = runEval(configDir, `
+      const { existsSync, readFileSync, unlinkSync } = await import('node:fs');
+      const { join } = await import('node:path');
+      const { getDefaultWorkspaceTopologyStore } = await import(${JSON.stringify(TOPOLOGY_MODULE_PATH)});
+      const { initializeWorkspace } = await import(${JSON.stringify(INITIALIZATION_MODULE_PATH)});
+      const { loadWorkspaceConfig } = await import(${JSON.stringify(STORAGE_MODULE_PATH)});
+      const root = ${JSON.stringify(workspaceRoot)};
+      const workspace = {
+        schemaVersion: 2, id: 'canonical-id', revision: 0, name: 'Unified', nameSource: 'custom',
+        slug: 'unified', primaryLocationId: 'primary',
+        locations: [{ id: 'primary', name: 'Primary', rootName: 'workspace-root', endpoint: { kind: 'local', rootPath: root } }],
+        createdAt: 1,
+      };
+      const store = getDefaultWorkspaceTopologyStore();
+      const first = initializeWorkspace(workspace);
+      unlinkSync(join(root, '.mortise', 'workspace.json'));
+      const second = initializeWorkspace(workspace);
+      const config = loadWorkspaceConfig(root);
+      return {
+        same: first.id === second.id && first.revision === second.revision,
+        topologyId: store.get('canonical-id')?.id,
+        configId: config?.id,
+        marker: existsSync(join(root, '.mortise', 'workspace.json')),
+        plugin: existsSync(join(root, '.claude-plugin', 'plugin.json')),
+        markerWorkspaceId: JSON.parse(readFileSync(join(root, '.mortise', 'workspace.json'), 'utf8')).workspaceId,
+      };
+    `);
+
+    expect(result).toEqual({
+      same: true,
+      topologyId: 'canonical-id',
+      configId: 'canonical-id',
+      marker: true,
+      plugin: true,
+      markerWorkspaceId: 'canonical-id',
+    });
+  }, 30_000);
+
+  it('removes an orphan marker when topology persistence fails so creation can be retried', () => {
+    const configDir = mkdtempSync(join(tmpdir(), 'mortise-workspace-initialization-retry-'));
+    const workspaceRoot = join(configDir, 'workspace-root');
+    const result = runEval(configDir, `
+      const { existsSync } = await import('node:fs');
+      const { join } = await import('node:path');
+      const { getDefaultWorkspaceTopologyStore } = await import(${JSON.stringify(TOPOLOGY_MODULE_PATH)});
+      const { initializeWorkspace } = await import(${JSON.stringify(INITIALIZATION_MODULE_PATH)});
+      const { loadWorkspaceConfig } = await import(${JSON.stringify(STORAGE_MODULE_PATH)});
+      const root = ${JSON.stringify(workspaceRoot)};
+      const workspace = id => ({
+        schemaVersion: 2, id, revision: 0, name: 'Retry', nameSource: 'custom',
+        slug: 'retry', primaryLocationId: 'primary',
+        locations: [{ id: 'primary', name: 'Primary', rootName: 'workspace-root', endpoint: { kind: 'local', rootPath: root } }],
+        createdAt: 1,
+      });
+      let failed = false;
+      try {
+        initializeWorkspace(workspace('failed-id'), {
+          topologyStore: { get: () => null, create: () => { throw new Error('forced topology failure'); } },
+        });
+      } catch { failed = true; }
+      const markerAfterFailure = existsSync(join(root, '.mortise', 'workspace.json'));
+      const recovered = initializeWorkspace(workspace('recovered-id'), {
+        topologyStore: getDefaultWorkspaceTopologyStore(),
+      });
+      return {
+        failed,
+        markerAfterFailure,
+        recoveredId: recovered.id,
+        configId: loadWorkspaceConfig(root)?.id,
+        markerAfterRecovery: existsSync(join(root, '.mortise', 'workspace.json')),
+      };
+    `);
+
+    expect(result).toEqual({
+      failed: true,
+      markerAfterFailure: false,
+      recoveredId: 'recovered-id',
+      configId: 'recovered-id',
+      markerAfterRecovery: true,
+    });
+  }, 30_000);
+
   it('exposes the side-effect-free current record identity contract', () => {
     const configDir = mkdtempSync(join(tmpdir(), 'mortise-workspace-identity-'));
     const result = runEval(configDir, `

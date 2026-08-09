@@ -13,6 +13,7 @@ import {
   getDefaultWorkspaceTopologyStore,
   removeWorkspaceMarker,
   WorkspaceTopologyError,
+  initializeWorkspace,
   type LegacyWorkspaceV1,
 } from '@mortise/shared/workspaces'
 import {
@@ -129,7 +130,14 @@ export function registerWorkspaceTopologyHandlers(
       if (result.status === 'applied') {
         const persisted = store.get(command.workspaceId)
         if (!persisted) throw new Error(`Workspace topology not found after mutation: ${command.workspaceId}`)
-        deps.sessionManager.updateWorkspaceTopology(persisted)
+        // Topology mutations can introduce a new local root. Re-run the same
+        // initializer used by creation/startup before publishing the change,
+        // so marker, SQLite config, plugin metadata, and runtime all observe a
+        // complete Workspace rather than a partially attached location.
+        const initialized = initializeWorkspace(persisted, { topologyStore: store })
+        const initializedInfo = store.getInfo(initialized.id)
+        if (!initializedInfo) throw new Error(`Workspace topology projection missing after initialization: ${initialized.id}`)
+        deps.sessionManager.updateWorkspaceTopology(initialized)
         const change: WorkspaceTopologyChangedV1 = {
           schemaVersion: WORKSPACE_TOPOLOGY_CHANGE_SCHEMA_VERSION,
           workspaceId: command.workspaceId,
@@ -138,7 +146,7 @@ export function registerWorkspaceTopologyHandlers(
           previousRevision: result.previousRevision,
           revision: result.workspace.revision,
           changedLocationIds: command.operation === 'rename-workspace' ? [] : [command.locationId],
-          workspace: result.workspace,
+          workspace: initializedInfo,
         }
         pushTyped(server, RPC_CHANNELS.workspaces.TOPOLOGY_CHANGED, { to: 'all', exclude: ctx.clientId }, change)
       }
@@ -171,13 +179,16 @@ export function ensureWorkspaceTopology(
   candidate: Workspace | LegacyWorkspaceV1,
 ) {
   const current = store.get(candidate.id)
-  if (current) return store.getInfo(candidate.id)!
+  if (current) {
+    initializeWorkspace(current, { topologyStore: store })
+    return store.getInfo(candidate.id)!
+  }
   let workspace: Workspace | null = null
   try {
     workspace = parseWorkspaceV2(candidate)
   } catch { /* legacy single-root candidate */ }
   const persisted = workspace
-    ? store.create(workspace)
+    ? initializeWorkspace(workspace, { topologyStore: store })
     : store.migrateLegacy(candidate as LegacyWorkspaceV1)
   return store.getInfo(persisted.id)!
 }

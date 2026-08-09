@@ -71,7 +71,6 @@ export interface FileSystemInterface {
 export interface ValidatorInterface {
   validateConfig(): import('./types.js').ValidationResult;
   validatePreferences(): import('./types.js').ValidationResult;
-  validatePermissions(workspaceRootPath: string): import('./types.js').ValidationResult;
   validateToolIcons(): import('./types.js').ValidationResult;
   validateAll(workspaceRootPath: string): import('./types.js').ValidationResult;
   validateSkill(workspaceRootPath: string, skillSlug: string): import('./types.js').ValidationResult;
@@ -204,7 +203,6 @@ export interface SessionToolContext {
 export interface SessionInfo {
   id: string;
   name: string;
-  permissionMode: string;
   createdAt: number;
   updatedAt?: number;
   provider?: string;

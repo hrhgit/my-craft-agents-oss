@@ -98,6 +98,29 @@ describe('session settlement RPC contract', () => {
     expect(retryPendingSettlement).not.toHaveBeenCalled()
   })
 
+  it('routes retryAcceptedMessage with the requesting client identity', async () => {
+    const retryAcceptedMessage = mock(async (_sessionId: string, _clientId: string) => undefined)
+    const { handlers, session } = createHarness({ retryAcceptedMessage })
+    const command = handlers.get(RPC_CHANNELS.sessions.COMMAND)!
+
+    await command(ctx, session.id, { type: 'retryAcceptedMessage' })
+
+    expect(retryAcceptedMessage).toHaveBeenCalledTimes(1)
+    expect(retryAcceptedMessage).toHaveBeenCalledWith(session.id, ctx.clientId)
+  })
+
+  it('rejects retryAcceptedMessage commands carrying a replacement payload', async () => {
+    const retryAcceptedMessage = mock(async (_sessionId: string, _clientId: string) => undefined)
+    const { handlers, session } = createHarness({ retryAcceptedMessage })
+    const command = handlers.get(RPC_CHANNELS.sessions.COMMAND)!
+
+    await expect(command(ctx, session.id, {
+      type: 'retryAcceptedMessage',
+      message: 'do not submit a second mutation',
+    })).rejects.toThrow('does not accept a message or any other payload')
+    expect(retryAcceptedMessage).not.toHaveBeenCalled()
+  })
+
   it('emits exact session_failure after ACK and never downgrades it to ordinary error', async () => {
     const sendMessage = mock(async (
       _sessionId: string,
@@ -107,9 +130,13 @@ describe('session settlement RPC contract', () => {
       _options: unknown,
       _existingMessageId: unknown,
       _isAuthRetry: unknown,
-      onAck?: (messageId: string) => void,
+      _onAck: unknown,
+      _rpcContext: unknown,
+      _isQueuedReplay: unknown,
+      _isAutomaticResume: unknown,
+      onAccepted?: (messageId: string) => void,
     ) => {
-      onAck?.('accepted-message')
+      onAccepted?.('accepted-message')
       throw settlementFailure
     })
     const { handlers, pushes, session } = createHarness({ sendMessage })

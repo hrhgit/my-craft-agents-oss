@@ -17,7 +17,7 @@ import {
 } from '../validation.ts';
 
 export interface ConfigValidateArgs {
-  target: 'config' | 'preferences' | 'permissions' | 'tool-icons' | 'all';
+  target: 'config' | 'preferences' | 'tool-icons' | 'all';
 }
 
 /**
@@ -44,9 +44,6 @@ export async function handleConfigValidate(
           break;
         case 'preferences':
           result = ctx.validators.validatePreferences();
-          break;
-        case 'permissions':
-          result = ctx.validators.validatePermissions(ctx.workspacePath);
           break;
         case 'tool-icons':
           result = ctx.validators.validateToolIcons();
@@ -80,16 +77,6 @@ export async function handleConfigValidate(
       return successResponse(formatValidationResult(result));
     }
 
-    case 'permissions': {
-      // Check workspace-level permissions.json
-      const workspacePermsPath = join(ctx.workspacePath, 'permissions.json');
-      if (!ctx.fs.exists(workspacePermsPath)) {
-        return successResponse('✓ No workspace permissions.json (using defaults)');
-      }
-      const result = validateJsonFileHasFields(workspacePermsPath, []);
-      return successResponse(formatValidationResult(result));
-    }
-
     case 'tool-icons': {
       const result = validateJsonFileHasFields(
         join(mortiseAgentRoot, 'tool-icons', 'tool-icons.json'),
@@ -100,7 +87,7 @@ export async function handleConfigValidate(
 
     default:
       return errorResponse(
-        `Unknown validation target: ${target}. Valid targets: config, preferences, permissions, tool-icons, all`
+        `Unknown validation target: ${target}. Valid targets: config, preferences, tool-icons, all`
       );
   }
 }

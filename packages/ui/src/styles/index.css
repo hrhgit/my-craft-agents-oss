@@ -20,7 +20,7 @@
  *
  * Variants:
  * - /50 = 50% alpha (transparency) - for borders, hovers, overlays
- * - -50 = 50% mix toward background (solid) - for Explore mode
+ * - -50 = 50% mix toward background (solid)
  */
 
 @import "./foundations.css";

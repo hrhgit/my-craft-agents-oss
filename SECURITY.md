@@ -50,7 +50,7 @@ When using Mortise:
 
 1. **Keep credentials secure**: Never commit `.env` files or credentials
 2. **Use environment variables**: Store secrets in environment variables
-3. **Review permissions**: Be cautious with "Execute" permission mode
+3. **Review approvals**: Inspect tool approval requests before accepting them
 4. **Update regularly**: Keep the application updated
 
 ## Acknowledgments

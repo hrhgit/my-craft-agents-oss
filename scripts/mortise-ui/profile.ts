@@ -312,7 +312,6 @@ async function seedFixtureProfile(root: string, mortiseConfigDir: string, mortis
           lastUsedAt: session.lastUsedAt ?? messages.at(-1)?.timestamp ?? createdAt,
           lastMessageAt: messages.at(-1)?.timestamp,
           sdkCwd: workspace.rootPath,
-          permissionMode: session.permissionMode ?? 'ask',
           hasUnread: session.hasUnread,
           hidden: session.hidden,
           pendingPlanExecution: session.pendingPlanExecution,

@@ -105,6 +105,136 @@ describe('Pi projection persistence', () => {
     await restartedHostInternals.piProjectionWrites.get(restartedSession.id)
   })
 
+  it('closes a crashed running projection at the last complete persisted message', async () => {
+    const workspace = createTestWorkspace(workspaceRoot)
+    const firstSession = createManagedSession({ mortiseId: 'session-1' }, workspace)
+    const firstHost = new SessionManager()
+    const firstInternals = firstHost as unknown as {
+      sessions: Map<string, typeof firstSession>
+      piProjectionWrites: Map<string, Promise<void>>
+    }
+    firstInternals.sessions.set(firstSession.id, firstSession)
+
+    const startedAt = 1_783_861_200_000
+    const lastCompleteAt = startedAt + 20_000
+    const incompleteAt = startedAt + 45_000
+    const events: PiProjectionEventV1[] = [
+      projectionEvent(1, {
+        entityId: 'lifecycle:agent_start:1', entityType: 'conversation', turnId: undefined,
+        kind: 'agent_start', payload: { status: 'running' }, occurredAt: startedAt,
+      }),
+      projectionEvent(2, {
+        entityId: 'content:user:user-1', kind: 'user_text',
+        payload: {
+          role: 'user', messageId: 'user-1', text: 'inspect this', streaming: false,
+          queueStatus: 'accepted', timestamp: startedAt,
+        },
+        occurredAt: startedAt,
+      }),
+      projectionEvent(3, {
+        entityId: 'content:text:assistant-complete:0', kind: 'assistant_text',
+        payload: {
+          role: 'assistant', messageId: 'assistant-complete', contentKind: 'text',
+          contentIndex: 0, text: 'Starting the inspection.', streaming: false,
+          stopReason: 'toolUse', isIntermediate: true, isFinal: false,
+          timestamp: lastCompleteAt,
+        },
+        occurredAt: lastCompleteAt,
+      }),
+      projectionEvent(4, {
+        entityId: 'turn:turn-2', entityType: 'turn', turnId: 'turn-2',
+        kind: 'turn_start', payload: { status: 'running' }, occurredAt: lastCompleteAt + 1,
+      }),
+      projectionEvent(5, {
+        entityId: 'content:thinking:assistant-incomplete:0', kind: 'thinking_end', turnId: 'turn-2',
+        payload: {
+          role: 'assistant', messageId: 'assistant-incomplete', contentKind: 'thinking',
+          contentIndex: 0, text: 'Partial reasoning', streaming: false, timestamp: incompleteAt,
+        },
+        occurredAt: incompleteAt,
+      }),
+      projectionEvent(6, {
+        entityId: 'content:text:assistant-incomplete:1', kind: 'assistant_text_delta', turnId: 'turn-2',
+        payload: {
+          role: 'assistant', messageId: 'assistant-incomplete', contentKind: 'text',
+          contentIndex: 1, text: 'unfinished', streaming: true, timestamp: incompleteAt,
+        },
+        occurredAt: incompleteAt,
+      }),
+    ]
+    for (const event of events) expect(firstHost.applyPiProjectionEvent(event).status).toBe('applied')
+    await firstInternals.piProjectionWrites.get(firstSession.id)
+
+    const restartedSession = createManagedSession({ mortiseId: 'session-1' }, workspace)
+    const restartedHost = new SessionManager()
+    const restartedInternals = restartedHost as unknown as {
+      sessions: Map<string, typeof restartedSession>
+      piProjectionWrites: Map<string, Promise<void>>
+    }
+    restartedInternals.sessions.set(restartedSession.id, restartedSession)
+
+    const restored = await restartedHost.getPiProjectionSnapshot(restartedSession.id)
+    expect(restored?.lastSeq).toBe(8)
+    expect(restored?.entities.slice(-2)).toEqual([
+      expect.objectContaining({
+        kind: 'agent_end', updatedAt: lastCompleteAt,
+        payload: expect.objectContaining({ status: 'interrupted', reason: 'host_restart' }),
+      }),
+      expect.objectContaining({
+        kind: 'agent_settled', updatedAt: lastCompleteAt,
+        payload: expect.objectContaining({ status: 'interrupted', reason: 'host_restart' }),
+      }),
+    ])
+    await restartedInternals.piProjectionWrites.get(restartedSession.id)
+    const persisted = JSON.parse(readFileSync(
+      join(getSessionPath(WORKSPACE_ID, restartedSession.id), 'pi-projection-v1.json'),
+      'utf8',
+    ))
+    expect(persisted.entities.at(-1)).toMatchObject({ kind: 'agent_settled', updatedAt: lastCompleteAt })
+  })
+
+  it('does not use restart time when a crashed projection has no complete message', async () => {
+    const workspace = createTestWorkspace(workspaceRoot)
+    const firstSession = createManagedSession({ mortiseId: 'session-1' }, workspace)
+    const firstHost = new SessionManager()
+    const firstInternals = firstHost as unknown as {
+      sessions: Map<string, typeof firstSession>
+      piProjectionWrites: Map<string, Promise<void>>
+    }
+    firstInternals.sessions.set(firstSession.id, firstSession)
+
+    const startedAt = 1_783_861_200_000
+    const lastPersistedAt = startedAt + 12_000
+    expect(firstHost.applyPiProjectionEvent(projectionEvent(1, {
+      entityId: 'lifecycle:agent_start:1', entityType: 'conversation', turnId: undefined,
+      kind: 'agent_start', payload: { status: 'running' }, occurredAt: startedAt,
+    })).status).toBe('applied')
+    expect(firstHost.applyPiProjectionEvent(projectionEvent(2, {
+      entityId: 'content:thinking:assistant-incomplete:0', kind: 'thinking_delta',
+      payload: {
+        role: 'assistant', messageId: 'assistant-incomplete', contentKind: 'thinking',
+        contentIndex: 0, text: 'partial', streaming: true, timestamp: lastPersistedAt,
+      },
+      occurredAt: lastPersistedAt,
+    })).status).toBe('applied')
+    await firstInternals.piProjectionWrites.get(firstSession.id)
+
+    const restartedSession = createManagedSession({ mortiseId: 'session-1' }, workspace)
+    const restartedHost = new SessionManager()
+    const restartedInternals = restartedHost as unknown as {
+      sessions: Map<string, typeof restartedSession>
+      piProjectionWrites: Map<string, Promise<void>>
+    }
+    restartedInternals.sessions.set(restartedSession.id, restartedSession)
+
+    const restored = await restartedHost.getPiProjectionSnapshot(restartedSession.id)
+    expect(restored?.entities.slice(-2)).toEqual([
+      expect.objectContaining({ kind: 'agent_end', updatedAt: lastPersistedAt }),
+      expect.objectContaining({ kind: 'agent_settled', updatedAt: lastPersistedAt }),
+    ])
+    await restartedInternals.piProjectionWrites.get(restartedSession.id)
+  })
+
   it('coalesces streaming updates and persists the latest contiguous snapshot', async () => {
     const workspace = createTestWorkspace(workspaceRoot)
     const session = createManagedSession({ mortiseId: 'session-1' }, workspace)

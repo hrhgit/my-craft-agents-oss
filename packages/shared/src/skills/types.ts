@@ -15,8 +15,6 @@ export interface SkillMetadata {
   description: string;
   /** Optional file patterns that trigger this skill */
   globs?: string[];
-  /** Optional tools to always allow when skill is active */
-  alwaysAllow?: string[];
   /**
    * Optional icon - emoji or URL only.
    * - Emoji: rendered directly in UI (e.g., "🔧")

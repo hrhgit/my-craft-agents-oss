@@ -34,7 +34,7 @@ import { handleListMessagingChannels, handleUnbindMessagingChannel } from './han
 // ============================================================
 
 export const ConfigValidateSchema = z.object({
-  target: z.enum(['config', 'preferences', 'permissions', 'tool-icons', 'all'])
+  target: z.enum(['config', 'preferences', 'tool-icons', 'all'])
     .describe('Which config file(s) to validate'),
 });
 
@@ -94,8 +94,7 @@ export const SpawnSessionSchema = z.object({
   name: z.string().optional().describe('Session name'),
   provider: z.string().optional().describe('Pi provider key (e.g., "anthropic", "openai")'),
   model: z.string().optional().describe('Model ID override'),
-  permissionMode: z.enum(['safe', 'ask', 'allow-all']).optional().describe('Permission mode for the new session'),
-  thinkingLevel: z.enum(['off', 'minimal', 'low', 'medium', 'high', 'xhigh']).optional()
+  thinkingLevel: z.enum(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']).optional()
     .describe('Reasoning level for the new session. Silently ignored on non-reasoning models (e.g. gpt-4o, gemini-2.5-flash). Omit to inherit the global default.'),
   attachments: z.array(z.object({
     path: z.string().describe('Absolute file path on disk'),
@@ -145,7 +144,6 @@ Returns structured validation results with errors, warnings, and suggestions.
 **Targets:**
 - \`config\`: Validates the canonical SQLite configuration record when the host provides that capability
 - \`preferences\`: Validates preferences.json
-- \`permissions\`: Validates permissions.json files
 - \`tool-icons\`: Validates tool-icons.json
 - \`all\`: Validates the canonical SQLite configuration record and all file-backed configuration`,
 
@@ -188,7 +186,7 @@ Use this tool when you need to transform large datasets (20+ rows) into structur
 
   script_sandbox: `Run quick inline diagnostics in a sandboxed subprocess with network isolation.
 
-Use this for short Python/Node/Bun snippets when strict Explore-mode Bash parsing blocks inline diagnostics.
+Use this for short Python/Node/Bun snippets that need a tightly isolated runtime.
 
 **Behavior:**
 - Executes script source from \`script\` in a temporary file
@@ -201,7 +199,7 @@ Use this for short Python/Node/Bun snippets when strict Explore-mode Bash parsin
 - Input files are restricted to the current session directory
 - Filesystem writes are restricted to the current session directory
 - Timeout is capped (default 5000ms, max 15000ms)
-- Network/filesystem isolation is required in all permission modes; if unavailable, execution is blocked`,
+- Network/filesystem isolation is always required; if unavailable, execution is blocked`,
 
   browser_tool: `Run browser actions using a CLI-like command (string or array input).
 
@@ -255,7 +253,7 @@ Use this to delegate tasks to parallel sessions — research, analysis, drafts, 
 Call with help=true first to discover available providers and models.
 When spawning, the 'prompt' parameter is required.
 
-Optional overrides: \`provider\`, \`model\`, \`permissionMode\`, and \`thinkingLevel\`. Omitted AI fields inherit from the spawning session or the global default; workspace-scoped fields retain their workspace defaults. Create or switch workspace to run from another folder.
+Optional overrides: \`provider\`, \`model\`, and \`thinkingLevel\`. Omitted AI fields inherit from the spawning session or the global default; workspace-scoped fields retain their workspace defaults. Create or switch workspace to run from another folder.
 
 \`thinkingLevel\` is silently ignored on non-reasoning models (e.g. gpt-4o, gemini-2.5-flash) — the SDK drops the reasoning param rather than erroring. Use it when you want to force deeper reasoning on a supported model, or set it to \`off\` when spawning a session that doesn't need to think.
 
@@ -268,7 +266,7 @@ Use this to share anything that would help improve the product — issues you hi
 
   get_session_info: `Get metadata about the current session or a specific session by ID.
 
-Returns name, permission mode, and other details.
+Returns the name and other runtime metadata.
 Call with no arguments to introspect your own session state.`,
 
   list_sessions: `List sessions in the workspace. Returns total count + paginated results.
@@ -300,15 +298,10 @@ export type SessionToolHandler = (ctx: SessionToolContext, args: any) => Promise
 /** Where a session tool is executed. */
 export type SessionToolExecutionMode = 'registry' | 'backend';
 
-/** Safe/Explore mode behavior for a session tool. */
-export type SessionToolSafeMode = 'allow' | 'block';
-
 interface SessionToolDefBase {
   name: string;
   description: string;
   inputSchema: z.ZodObject<z.ZodRawShape>;
-  /** Whether this tool is allowed in Explore/Safe mode. */
-  safeMode: SessionToolSafeMode;
   /** Whether this tool only reads data (no side effects). Enables parallel execution in backends that support it. */
   readOnly?: boolean;
 }
@@ -333,25 +326,25 @@ export type SessionToolDef = RegistrySessionToolDef | BackendSessionToolDef;
 // ============================================================
 
 export const SESSION_TOOL_DEFS: SessionToolDef[] = [
-  { name: 'config_validate', description: TOOL_DESCRIPTIONS.config_validate, inputSchema: ConfigValidateSchema, executionMode: 'registry', safeMode: 'allow', readOnly: true, handler: handleConfigValidate },
-  { name: 'skill_validate', description: TOOL_DESCRIPTIONS.skill_validate, inputSchema: SkillValidateSchema, executionMode: 'registry', safeMode: 'allow', readOnly: true, handler: handleSkillValidate },
-  { name: 'mermaid_validate', description: TOOL_DESCRIPTIONS.mermaid_validate, inputSchema: MermaidValidateSchema, executionMode: 'registry', safeMode: 'allow', readOnly: true, handler: handleMermaidValidate },
-  { name: 'update_user_preferences', description: TOOL_DESCRIPTIONS.update_user_preferences, inputSchema: UpdatePreferencesSchema, executionMode: 'registry', safeMode: 'block', handler: handleUpdatePreferences },
-  { name: 'transform_data', description: TOOL_DESCRIPTIONS.transform_data, inputSchema: TransformDataSchema, executionMode: 'registry', safeMode: 'allow', handler: handleTransformData },
-  { name: 'script_sandbox', description: TOOL_DESCRIPTIONS.script_sandbox, inputSchema: ScriptSandboxSchema, executionMode: 'registry', safeMode: 'allow', handler: handleScriptSandbox },
-  { name: 'send_developer_feedback', description: TOOL_DESCRIPTIONS.send_developer_feedback, inputSchema: SendDeveloperFeedbackSchema, executionMode: 'registry', safeMode: 'allow', handler: handleSendDeveloperFeedback },
-  { name: 'spawn_session', description: TOOL_DESCRIPTIONS.spawn_session, inputSchema: SpawnSessionSchema, executionMode: 'backend', safeMode: 'block', handler: null },
+  { name: 'config_validate', description: TOOL_DESCRIPTIONS.config_validate, inputSchema: ConfigValidateSchema, executionMode: 'registry', readOnly: true, handler: handleConfigValidate },
+  { name: 'skill_validate', description: TOOL_DESCRIPTIONS.skill_validate, inputSchema: SkillValidateSchema, executionMode: 'registry', readOnly: true, handler: handleSkillValidate },
+  { name: 'mermaid_validate', description: TOOL_DESCRIPTIONS.mermaid_validate, inputSchema: MermaidValidateSchema, executionMode: 'registry', readOnly: true, handler: handleMermaidValidate },
+  { name: 'update_user_preferences', description: TOOL_DESCRIPTIONS.update_user_preferences, inputSchema: UpdatePreferencesSchema, executionMode: 'registry', handler: handleUpdatePreferences },
+  { name: 'transform_data', description: TOOL_DESCRIPTIONS.transform_data, inputSchema: TransformDataSchema, executionMode: 'registry', handler: handleTransformData },
+  { name: 'script_sandbox', description: TOOL_DESCRIPTIONS.script_sandbox, inputSchema: ScriptSandboxSchema, executionMode: 'registry', handler: handleScriptSandbox },
+  { name: 'send_developer_feedback', description: TOOL_DESCRIPTIONS.send_developer_feedback, inputSchema: SendDeveloperFeedbackSchema, executionMode: 'registry', handler: handleSendDeveloperFeedback },
+  { name: 'spawn_session', description: TOOL_DESCRIPTIONS.spawn_session, inputSchema: SpawnSessionSchema, executionMode: 'backend', handler: null },
   // Browser tool (backend-specific — requires BrowserPaneManager in Electron)
   // Single CLI-like tool that handles all browser actions via command string.
-  { name: 'browser_tool', description: TOOL_DESCRIPTIONS.browser_tool, inputSchema: BrowserToolSchema, executionMode: 'backend', safeMode: 'allow', handler: null },
+  { name: 'browser_tool', description: TOOL_DESCRIPTIONS.browser_tool, inputSchema: BrowserToolSchema, executionMode: 'backend', handler: null },
   // Session query tools (registry — use context callbacks to reach SessionManager)
-  { name: 'get_session_info', description: TOOL_DESCRIPTIONS.get_session_info, inputSchema: GetSessionInfoSchema, executionMode: 'registry', safeMode: 'allow', readOnly: true, handler: handleGetSessionInfo },
-  { name: 'list_sessions', description: TOOL_DESCRIPTIONS.list_sessions, inputSchema: ListSessionsSchema, executionMode: 'registry', safeMode: 'allow', readOnly: true, handler: handleListSessions },
+  { name: 'get_session_info', description: TOOL_DESCRIPTIONS.get_session_info, inputSchema: GetSessionInfoSchema, executionMode: 'registry', readOnly: true, handler: handleGetSessionInfo },
+  { name: 'list_sessions', description: TOOL_DESCRIPTIONS.list_sessions, inputSchema: ListSessionsSchema, executionMode: 'registry', readOnly: true, handler: handleListSessions },
   // Inter-session messaging
-  { name: 'send_agent_message', description: TOOL_DESCRIPTIONS.send_agent_message, inputSchema: SendAgentMessageSchema, executionMode: 'registry', safeMode: 'block', handler: handleSendAgentMessage },
+  { name: 'send_agent_message', description: TOOL_DESCRIPTIONS.send_agent_message, inputSchema: SendAgentMessageSchema, executionMode: 'registry', handler: handleSendAgentMessage },
   // Messaging gateway tools
-  { name: 'list_messaging_channels', description: TOOL_DESCRIPTIONS.list_messaging_channels, inputSchema: ListMessagingChannelsSchema, executionMode: 'registry', safeMode: 'allow', readOnly: true, handler: handleListMessagingChannels },
-  { name: 'unbind_messaging_channel', description: TOOL_DESCRIPTIONS.unbind_messaging_channel, inputSchema: UnbindMessagingChannelSchema, executionMode: 'registry', safeMode: 'block', handler: handleUnbindMessagingChannel },
+  { name: 'list_messaging_channels', description: TOOL_DESCRIPTIONS.list_messaging_channels, inputSchema: ListMessagingChannelsSchema, executionMode: 'registry', readOnly: true, handler: handleListMessagingChannels },
+  { name: 'unbind_messaging_channel', description: TOOL_DESCRIPTIONS.unbind_messaging_channel, inputSchema: UnbindMessagingChannelSchema, executionMode: 'registry', handler: handleUnbindMessagingChannel },
 ];
 
 export interface SessionToolFilterOptions {
@@ -397,28 +390,6 @@ export function getSessionBackendToolNames(options?: SessionToolFilterOptions): 
   return new Set(getSessionToolDefs(options).filter(d => d.executionMode === 'backend').map(d => d.name));
 }
 
-/**
- * Return session tool names that are allowed in Explore/Safe mode.
- */
-export function getSessionSafeAllowedToolNames(options?: SessionToolFilterOptions): Set<string> {
-  return new Set(
-    getSessionToolDefs(options)
-      .filter(def => def.safeMode === 'allow')
-      .map(def => def.name)
-  );
-}
-
-/**
- * Return session tool names that are blocked in Explore/Safe mode.
- */
-export function getSessionSafeBlockedToolNames(options?: SessionToolFilterOptions): Set<string> {
-  return new Set(
-    getSessionToolDefs(options)
-      .filter(def => def.safeMode === 'block')
-      .map(def => def.name)
-  );
-}
-
 // ============================================================
 // Derived Lookups
 // ============================================================
@@ -447,16 +418,6 @@ export const SESSION_BACKEND_TOOL_NAMES = new Set(
 /** Session tool names that are always executable from the canonical registry. */
 export const SESSION_REGISTRY_TOOL_NAMES = new Set(
   SESSION_TOOL_DEFS.filter(d => d.executionMode === 'registry').map(d => d.name)
-);
-
-/** Session tool names allowed in Explore/Safe mode (unfiltered canonical set). */
-export const SESSION_SAFE_ALLOWED_TOOL_NAMES = new Set(
-  SESSION_TOOL_DEFS.filter(d => d.safeMode === 'allow').map(d => d.name)
-);
-
-/** Session tool names blocked in Explore/Safe mode (unfiltered canonical set). */
-export const SESSION_SAFE_BLOCKED_TOOL_NAMES = new Set(
-  SESSION_TOOL_DEFS.filter(d => d.safeMode === 'block').map(d => d.name)
 );
 
 /** Map from tool name → definition for O(1) lookup. */

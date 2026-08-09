@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import {
   getConnectionModelContextWindow,
   getContextUsagePercent,
+  isContextWarning,
 } from '../context-usage'
 
 describe('context usage', () => {
@@ -27,5 +28,18 @@ describe('context usage', () => {
       { inputTokens: 100_000 },
       'claude-sonnet-4-6',
     )).toEqual({ inputTokens: 100_000, contextWindow: 200_000, percent: 50 })
+  })
+})
+
+describe('context warning', () => {
+  test('flags usage at or above the pre-compaction threshold', () => {
+    expect(isContextWarning({ percent: 62 })).toBe(true)
+    expect(isContextWarning({ percent: 61 })).toBe(false)
+    expect(isContextWarning({ percent: null })).toBe(false)
+  })
+
+  test('suppresses the warning while compacting', () => {
+    expect(isContextWarning({ percent: 80 }, true)).toBe(false)
+    expect(isContextWarning({ percent: 80 }, false)).toBe(true)
   })
 })

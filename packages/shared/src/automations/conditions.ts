@@ -17,14 +17,7 @@ import { MAX_CONDITION_DEPTH_EXCLUSIVE } from './conditions-constants.ts';
 // Constants
 // ============================================================================
 
-/**
- * Maps user-facing field names to internal payload field pairs for transition events.
- * When a user writes `field: "permissionMode"` with `from`/`to`, we resolve to the
- * actual payload keys (e.g. `oldMode`/`newMode`).
- */
-const TRANSITION_FIELDS: Record<string, { to: string; from: string }> = {
-  permissionMode: { to: 'newMode', from: 'oldMode' },
-};
+const TRANSITION_FIELDS: Record<string, { to: string; from: string }> = {};
 
 /** Map 3-letter weekday names to JS Date.getDay() / Intl weekday numbers (1=Mon..7=Sun) */
 const WEEKDAY_MAP: Record<string, number> = {

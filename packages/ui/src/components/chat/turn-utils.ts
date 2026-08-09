@@ -20,6 +20,14 @@ export type { ActivityItem }
 // ============================================================================
 
 /**
+ * Sort activities by their stable projection order when available.
+ * Legacy activities without an order keep their existing timestamp ordering.
+ */
+export function compareActivitiesByOrder(a: ActivityItem, b: ActivityItem): number {
+  return (a.order ?? a.timestamp) - (b.order ?? b.timestamp)
+}
+
+/**
  * Strip error wrapper tags and prefixes from tool error messages.
  * Some provider runtimes wrap errors in tags like <error><tool_use_error>...</tool_use_error></error>
  * which aren't user-friendly. Additionally, errorResponse() and blockWithReason() prefix
@@ -370,10 +378,9 @@ export function groupMessagesByTurn(messages: Message[], options: GroupTurnsOpti
 
   const flushCurrentTurn = (interrupted = false) => {
     if (currentTurn) {
-      // Sort activities by timestamp to ensure correct chronological order
-      // This is necessary because buffering can delay when messages are added
-      // to the array, causing commentary to appear after tools that started later
-      currentTurn.activities.sort((a, b) => a.timestamp - b.timestamp)
+      // Stable projection order wins over wall-clock timestamps. Buffering can delay
+      // insertion, while timestamps are retained only for display and duration math.
+      currentTurn.activities.sort(compareActivitiesByOrder)
 
       // Calculate nesting depths for parent-child tool relationships
       calculateActivityDepths(currentTurn.activities)
@@ -1064,7 +1071,7 @@ function extractTaskOutputData(activity: ActivityItem): TaskOutputData | undefin
  * - Maintains chronological order within each group
  * - TaskOutput activities are hidden but their data enriches the parent Task
  *
- * @param activities - Flat list of activities sorted by timestamp
+ * @param activities - Flat list of activities sorted by stable projection order
  * @returns Mixed array of standalone activities and activity groups
  */
 export function groupActivitiesByParent(
@@ -1161,7 +1168,7 @@ export function groupActivitiesByParent(
       result.push({
         type: 'group',
         parent: activity,
-        children: children.sort((a, b) => a.timestamp - b.timestamp),
+        children: children.sort(compareActivitiesByOrder),
         taskOutputData,
       })
     } else {

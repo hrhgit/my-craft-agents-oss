@@ -386,7 +386,6 @@ const SETTINGS_ICONS: Record<BuiltInSettingsSubpage, string> = {
   extensions: 'Puzzle',
   developer: 'Wrench',
   appearance: 'Palette',
-  input: 'Keyboard',
   messaging: 'MessageSquare',
   server: 'Server',
   shortcuts: 'Keyboard',

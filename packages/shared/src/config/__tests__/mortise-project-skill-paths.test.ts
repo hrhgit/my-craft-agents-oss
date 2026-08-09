@@ -34,7 +34,7 @@ describe('Mortise project skill paths', () => {
     expect(MORTISE_PROJECT_SKILLS_DIR).toBe('.mortise/skills');
     expect(MORTISE_PROJECT_EXTENSIONS_DIR).toBe('.mortise/extensions');
     expect(getWorkspaceSkillsPath(root)).toBe(join(root, '.mortise', 'skills'));
-    expect(getWorkspaceSessionsDir(root).startsWith(MORTISE_SESSIONS_DIR)).toBe(true);
+    expect(getWorkspaceSessionsDir('workspace-test').startsWith(MORTISE_SESSIONS_DIR)).toBe(true);
   });
 
   it('detects only .mortise/skills as the active project skill config path', () => {

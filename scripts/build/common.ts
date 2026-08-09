@@ -576,6 +576,15 @@ function ensureCachedUv(config: BuildConfig, cacheRoot: string): string {
   }, { timeoutMs: 600_000, staleMs: 600_000 });
 }
 
+/** Return the verified cached uv binary without downloading or scanning builds. */
+export function resolveCachedUvToolchain(
+  cacheRoot: string,
+  config: Pick<BuildConfig, 'platform' | 'arch'>,
+): string | undefined {
+  const cache = uvCachePaths(cacheRoot, config.platform, config.arch)
+  return readValidCachedUv(cache.binary, cache.manifest, config.platform, config.arch)
+}
+
 function uvCachePaths(cacheRoot: string, platform: Platform, arch: Arch) {
   const binaryName = platform === 'win32' ? 'uv.exe' : 'uv';
   const directory = join(resolve(cacheRoot), 'uv', UV_VERSION, getPlatformKey(platform, arch));

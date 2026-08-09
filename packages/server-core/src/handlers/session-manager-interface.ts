@@ -8,15 +8,12 @@
 
 import type { Workspace, WorkspaceInfo, ActiveSessionInfo } from '@mortise/core/types'
 import type { StoredAttachment, AnnotationV1 } from '@mortise/core/types'
-import type { PermissionMode } from '@mortise/shared/agent/mode-types'
 import type { ThinkingLevel } from '@mortise/shared/agent/thinking-levels'
 import type {
   Session,
   CreateSessionOptions,
   FileAttachment,
   SendMessageOptions,
-  PermissionResponseOptions,
-  PermissionModeState,
   UnreadSummary,
   PiProjectionEventV1,
   PiProjectionSnapshotV1,
@@ -40,6 +37,8 @@ export interface ISessionManager extends WorkspaceTopologySessionCoordinator {
   setEventSink(sink: EventSink): void
   flushAllSessions(): Promise<void>
   openWorkspaceExtensions?(workspace: Workspace | WorkspaceInfo): Promise<import('@mortise/shared/agent/backend').BackendExtensionWorkspaceSnapshot>
+  /** Ensure watcher, workspace-scoped databases, and extensions are ready. */
+  initializeWorkspace?(workspace: Workspace): Promise<void>
 
   // ---------------------------------------------------------------------------
   // Session CRUD
@@ -50,7 +49,7 @@ export interface ISessionManager extends WorkspaceTopologySessionCoordinator {
   getPiProjectionSnapshot(sessionId: string): Promise<PiProjectionSnapshotV1 | null>
   applyPiProjectionEvent(event: PiProjectionEventV1): ProjectionApplyResult
   createSession(workspaceId: string, options?: CreateSessionOptions): Promise<Session>
-  createAndSendFirstTurn(input: CreateAndSendFirstTurnInput): Promise<{ session: Session; messageId: string }>
+  createAndSendFirstTurn(input: CreateAndSendFirstTurnInput): Promise<import('@mortise/shared/protocol').CreateAndSendFirstTurnResult>
   discardFirstTurnAttachmentStaging(workspaceId: string, stagingId: string): Promise<void>
   deleteSession(sessionId: string): Promise<void>
 
@@ -69,7 +68,6 @@ export interface ISessionManager extends WorkspaceTopologySessionCoordinator {
   // Session configuration
   // ---------------------------------------------------------------------------
 
-  setSessionPermissionMode(sessionId: string, mode: PermissionMode): void
   setSessionThinkingLevel(sessionId: string, level: ThinkingLevel): void
   setSessionProvider(sessionId: string, provider: string): Promise<void>
   clearDeletedProviderReferences(provider: string): Promise<void>
@@ -89,9 +87,14 @@ export interface ISessionManager extends WorkspaceTopologySessionCoordinator {
     _isAuthRetry?: boolean,
     onAck?: (messageId: string) => void,
     rpcContext?: { callerClientId?: string },
+    isQueuedReplay?: boolean,
+    isAutomaticResume?: boolean,
+    onAccepted?: (messageId: string) => void,
   ): Promise<void>
   /** Retry only the host-owned durability boundary for an already accepted turn. */
   retryPendingSettlement(sessionId: string): Promise<void>
+  /** Replay an accepted but unpublished first turn with its original mutation id. */
+  retryAcceptedMessage(sessionId: string, callerClientId?: string): Promise<void>
   /** Withdraw one queued follow-up while leaving the active turn running. */
   withdrawQueuedMessage(sessionId: string, messageId: string): Promise<void>
   cancelProcessing(sessionId: string, silent?: boolean): Promise<void>
@@ -107,19 +110,8 @@ export interface ISessionManager extends WorkspaceTopologySessionCoordinator {
   ): void
 
   // ---------------------------------------------------------------------------
-  // Permissions & credentials
+  // Extension interactions & credentials
   // ---------------------------------------------------------------------------
-
-  /** Legacy transport bridge for non-renderer clients; V2 UI uses extension channels. */
-  respondToPermission(
-    sessionId: string,
-    requestId: string,
-    allowed: boolean,
-    alwaysAllow: boolean,
-    options?: PermissionResponseOptions,
-  ): boolean
-
-  getSessionPermissionModeState(sessionId: string): PermissionModeState | null
 
   respondToExtensionInteraction(
     sessionId: string,
@@ -142,11 +134,15 @@ export interface ISessionManager extends WorkspaceTopologySessionCoordinator {
   /** Reload extensions in all open Pi runtimes; running turns require confirmation. */
   requestExtensionReload(interruptRunning: boolean): Promise<import('@mortise/shared/config').PiExtensionReloadResult>
 
+  /** Read the extension IDs applied to a loaded Workspace runtime snapshot. */
+  getExtensionRuntimeState(workspaceId?: string): import('@mortise/shared/config').PiExtensionRuntimeState
+
   /**
    * 查询当前会话已注册的 Pi 扩展 slash commands。
    * 非 Pi 后端或会话未就绪时返回空数组。
    */
   listExtensionCommands(sessionId: string): Promise<import('@mortise/shared/agent').PiExtensionCommand[]>
+  getExtensionFrontendStates(sessionId: string, workspaceId?: string | null): Array<Extract<import('@mortise/shared/agent/backend/types').ExtensionBridgeEvent, { type: 'extension_frontend_state' }>>
   sendExtensionFrontendMessage(sessionId: string, extensionId: string, channelId: string, message: unknown, workspaceId?: string | null): Promise<unknown>
 
   getExtensionFileState(workspaceId: string, extensionId: string): import('@mortise/shared/protocol').ExtensionFileStateV1
@@ -240,6 +236,8 @@ export interface ISessionManager extends WorkspaceTopologySessionCoordinator {
   /** Automation summary for a workspace (count of configured automations + scheduler state). */
   getWorkspaceAutomationSummary(workspaceId: string): { automationCount: number; schedulerRunning: boolean }
   getAutomationHost(workspaceId: string): import('@mortise/shared/automations').AutomationWorkspaceHostV3 | null
+  getAutomationHostInitializationError(workspaceId: string): string | null
+  getAutomationHostInitializationFailures(): Array<{ workspaceId: string; message: string }>
   /** Active sessions across all workspaces (sessions with running backend processes). */
   getActiveSessionsInfo(): ActiveSessionInfo[]
 

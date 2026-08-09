@@ -39,9 +39,9 @@ describe('AppShellScenarioService', () => {
       'extension.reload',
       'session.empty',
       'session.queued',
+      'session.reasoning-result',
       'session.streaming',
       'settings.app',
-      'tool.approval',
       'transport.error',
       'transport.reconnect',
     ])
@@ -50,6 +50,34 @@ describe('AppShellScenarioService', () => {
   it('renders queued sessions through the real AppShell host', async () => {
     const { appShellScenarioService, ScenarioAppShellHost } = await import('../app-shell-scenario-service')
     await appShellScenarioService.apply({ name: 'session.queued' })
+    try {
+      expect(renderToStaticMarkup(createElement(ScenarioAppShellHost))).toContain('data-testid="scenario.real-app-shell"')
+    } finally {
+      await appShellScenarioService.reset()
+    }
+  })
+
+  it('provides process text and exactly one final result through Pi projection', async () => {
+    const { appShellScenarioService, createReasoningResultProjection, ScenarioAppShellHost } = await import('../app-shell-scenario-service')
+    const projection = createReasoningResultProjection()
+    const payload = (entity: (typeof projection.entities)[number]) => entity.payload as Record<string, unknown>
+    expect(projection.entities.filter(entity => entity.kind === 'thinking_end' || payload(entity).isIntermediate === true)).toHaveLength(2)
+    expect(projection.entities
+      .filter(entity => entity.kind === 'thinking_end' || entity.entityType === 'tool_run')
+      .map(entity => [entity.createdSeq, entity.kind])).toEqual([
+        [2, 'thinking_end'],
+        [3, 'tool_execution_end'],
+        [4, 'thinking_end'],
+        [5, 'tool_execution_end'],
+      ])
+    expect(projection.entities.filter(entity => entity.entityType === 'tool_run').map(payload)).toEqual([
+      expect.objectContaining({ timestamp: expect.any(Number), startedAt: expect.any(Number), completedAt: expect.any(Number) }),
+      expect.objectContaining({ timestamp: expect.any(Number), startedAt: expect.any(Number), completedAt: expect.any(Number) }),
+    ])
+    expect(projection.entities.filter(entity => payload(entity).isFinal === true)).toMatchObject([
+      { kind: 'assistant_text', payload: { text: '这是唯一渲染为卡片的最终结果。' } },
+    ])
+    await appShellScenarioService.apply({ name: 'session.reasoning-result' })
     try {
       expect(renderToStaticMarkup(createElement(ScenarioAppShellHost))).toContain('data-testid="scenario.real-app-shell"')
     } finally {
@@ -109,8 +137,8 @@ describe('AppShellScenarioService', () => {
       'route.settings',
       'session.empty',
       'session.queued',
+      'session.reasoning-result',
       'session.streaming',
-      'tool.approval',
       'transport.state',
     ])
     expect(service.services.list()).toEqual(['extension.reload', 'session.stream', 'transport.connect'])

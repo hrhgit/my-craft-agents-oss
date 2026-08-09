@@ -456,66 +456,10 @@ describe('Renderer — streaming mode', () => {
 })
 
 // ---------------------------------------------------------------------------
-// Permissions and errors (mode-agnostic)
+// Errors (mode-agnostic)
 // ---------------------------------------------------------------------------
 
-describe('Renderer — permissions and errors', () => {
-  it('permission_request sends buttons in chat channel', async () => {
-    const renderer = new Renderer()
-    const adapter = makeAdapter()
-    const binding = makeBinding({ approvalChannel: 'chat' })
-    await renderer.handle(
-      {
-        type: 'permission_request',
-        sessionId: 's',
-        request: {
-          requestId: 'r1',
-          toolName: 'bash',
-          description: 'run tests',
-        },
-      } as SessionEvent,
-      binding,
-      adapter,
-    )
-    const buttons = adapter.calls.filter((c) => c.kind === 'sendButtons')
-    expect(buttons.length).toBe(1)
-  })
-
-  it('permission_request fires recordPermissionMessage with the rendering binding, requestId, messageId', async () => {
-    const recorded: Array<{ bindingId: string; sessionId: string; requestId: string; messageId: string }> = []
-    const renderer = new Renderer({
-      recordPermissionMessage: (b, requestId, messageId) => {
-        recorded.push({
-          bindingId: b.id,
-          sessionId: b.sessionId,
-          requestId,
-          messageId,
-        })
-      },
-    })
-    const adapter = makeAdapter()
-    const binding = makeBinding({ approvalChannel: 'chat' })
-    await renderer.handle(
-      {
-        type: 'permission_request',
-        sessionId: 's',
-        request: {
-          requestId: 'r1',
-          toolName: 'bash',
-          description: 'run tests',
-        },
-      } as SessionEvent,
-      binding,
-      adapter,
-    )
-
-    expect(recorded).toHaveLength(1)
-    expect(recorded[0]?.bindingId).toBe(binding.id)
-    expect(recorded[0]?.sessionId).toBe(binding.sessionId)
-    expect(recorded[0]?.requestId).toBe('r1')
-    expect(recorded[0]?.messageId).toBeTruthy()
-  })
-
+describe('Renderer — errors', () => {
   it('error event emits ❌ message and resets state', async () => {
     const renderer = new Renderer()
     const adapter = makeAdapter()
@@ -535,36 +479,6 @@ describe('Renderer — permissions and errors', () => {
 
 
 describe('Renderer — WhatsApp desktop-only approvals', () => {
-  it('permission_request on WhatsApp sends an informational desktop-only message', async () => {
-    const renderer = new Renderer()
-    const adapter = makeAdapter({ inlineButtons: false, messageEditing: false, markdown: 'whatsapp' })
-    ;(adapter as any).platform = 'whatsapp'
-    const binding = {
-      ...makeBinding({ approvalChannel: 'chat' }),
-      platform: 'whatsapp' as const,
-      channelId: 'wa-1',
-    }
-
-    await renderer.handle(
-      {
-        type: 'permission_request',
-        sessionId: 's',
-        request: {
-          requestId: 'r1',
-          toolName: 'bash',
-          description: 'run tests',
-        },
-      } as SessionEvent,
-      binding,
-      adapter,
-    )
-
-    expect(adapter.calls.filter((c) => c.kind === 'sendButtons')).toHaveLength(0)
-    const sends = adapter.calls.filter((c) => c.kind === 'sendText')
-    expect(sends).toHaveLength(1)
-    expect(sends[0]!.text).toContain('desktop app')
-  })
-
   it('plan_submitted on WhatsApp sends an informational desktop-only message', async () => {
     const renderer = new Renderer()
     const adapter = makeAdapter({ inlineButtons: false, messageEditing: false, markdown: 'whatsapp' })

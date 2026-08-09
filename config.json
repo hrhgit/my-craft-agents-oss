@@ -1,12 +1,7 @@
 {
   "createdAt": 1783415164451,
   "defaults": {
-    "cyclablePermissionModes": [
-      "safe",
-      "allow-all"
-    ],
-    "enabledSourceSlugs": [],
-    "permissionMode": "allow-all"
+    "enabledSourceSlugs": []
   },
   "id": "ws_ba8f0450",
   "localMcpServers": {

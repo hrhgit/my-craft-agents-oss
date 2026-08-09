@@ -50,14 +50,12 @@ export const CHANNEL_MAP = {
   sendMessage: invoke(RPC_CHANNELS.sessions.SEND_MESSAGE, undefined, 2, SEND_MESSAGE_RPC_TIMEOUT_MS, 0),
   cancelProcessing: invoke(RPC_CHANNELS.sessions.CANCEL),
   killShell: invoke(RPC_CHANNELS.sessions.KILL_SHELL),
-  respondToPermission: invoke(RPC_CHANNELS.sessions.RESPOND_TO_PERMISSION),
   getTaskOutput: invoke(RPC_CHANNELS.tasks.GET_OUTPUT),
   sessionCommand: invoke(RPC_CHANNELS.sessions.COMMAND),
   exportSession: invoke(RPC_CHANNELS.sessions.EXPORT),
   importSession: invoke(RPC_CHANNELS.sessions.IMPORT, undefined, 1),
   exportRemoteSessionTransfer: invoke(RPC_CHANNELS.sessions.EXPORT_REMOTE_TRANSFER),
   importRemoteSessionTransfer: invoke(RPC_CHANNELS.sessions.IMPORT_REMOTE_TRANSFER, undefined, 1),
-  getSessionPermissionModeState: invoke(RPC_CHANNELS.sessions.GET_PERMISSION_MODE_STATE),
 
   // Event listeners
   onSessionEvent: listener(RPC_CHANNELS.sessions.EVENT),
@@ -307,12 +305,17 @@ export const CHANNEL_MAP = {
   // Tools settings
   getBrowserToolEnabled: invoke(RPC_CHANNELS.tools.GET_BROWSER_TOOL_ENABLED),
   setBrowserToolEnabled: invoke(RPC_CHANNELS.tools.SET_BROWSER_TOOL_ENABLED),
+  getMessagingToolEnabled: invoke(RPC_CHANNELS.tools.GET_MESSAGING_TOOL_ENABLED),
+  setMessagingToolEnabled: invoke(RPC_CHANNELS.tools.SET_MESSAGING_TOOL_ENABLED),
+  getWebSearchMode: invoke(RPC_CHANNELS.tools.GET_WEB_SEARCH_MODE),
+  setWebSearchMode: invoke(RPC_CHANNELS.tools.SET_WEB_SEARCH_MODE),
 
   // Mortise 扩展集成开关（控制 Mortise Agent 扩展加载与 automation 委托）
   getPiExtensionSettings: invoke(RPC_CHANNELS.piExtensions.GET_SETTINGS),
   setPiExtensionSettings: invoke(RPC_CHANNELS.piExtensions.SET_SETTINGS),
   updatePiExtensionSettings: invoke(RPC_CHANNELS.piExtensions.UPDATE_SETTINGS),
   getPiExtensionCatalog: invoke(RPC_CHANNELS.piExtensions.GET_CATALOG),
+  getPiExtensionRuntimeState: invoke(RPC_CHANNELS.piExtensions.GET_RUNTIME_STATE),
   patchPiExtensionConfig: invoke(RPC_CHANNELS.piExtensions.PATCH_EXTENSION_CONFIG),
   reloadPiExtensions: invoke(RPC_CHANNELS.piExtensions.RELOAD),
   importPiExtension: invoke(RPC_CHANNELS.piExtensions.IMPORT),
@@ -325,6 +328,7 @@ export const CHANNEL_MAP = {
   respondToExtensionInteraction: invoke(RPC_CHANNELS.extensions.INTERACTION_RESPONSE),
   invokeExtensionCommand: invoke(RPC_CHANNELS.extensions.COMMAND_INVOKE),
   getExtensionCommands: invoke(RPC_CHANNELS.extensions.GET_COMMANDS),
+  getExtensionFrontendStates: invoke(RPC_CHANNELS.extensions.GET_FRONTEND_STATES),
   getExtensionFileState: invoke(RPC_CHANNELS.extensions.GET_FILE_STATE),
   setExtensionFileState: invoke(RPC_CHANNELS.extensions.SET_FILE_STATE),
   sendExtensionFrontendMessage: invoke(RPC_CHANNELS.extensions.FRONTEND_MESSAGE),

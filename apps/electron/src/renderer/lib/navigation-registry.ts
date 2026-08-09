@@ -133,7 +133,6 @@ export const NavigationRegistry = {
       ai: PlaceholderComponent, // AiSettingsPage
       extensions: PlaceholderComponent, // ExtensionsSettingsPage
       appearance: PlaceholderComponent, // AppearanceSettingsPage
-      input: PlaceholderComponent, // InputSettingsPage
       shortcuts: PlaceholderComponent, // ShortcutsPage
       preferences: PlaceholderComponent, // PreferencesPage
     },

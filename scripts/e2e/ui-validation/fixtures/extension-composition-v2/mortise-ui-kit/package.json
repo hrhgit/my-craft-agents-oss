@@ -1,0 +1,12 @@
+{
+  "name": "mortise-ui-kit",
+  "private": true,
+  "type": "module",
+  "pi": { "extensions": [{
+    "id": "mortise-ui-kit",
+    "path": "./index.js",
+    "activation": "startup",
+    "manifest": { "schemaVersion": 1, "name": "Mortise UI Kit", "version": "1.0.0", "author": { "name": "Mortise" }, "description": "Test-only component module.", "permissions": [] },
+    "ui": { "schemaVersion": 2, "title": "Mortise UI Kit", "category": "ui", "compatibility": { "uiApi": "^2.0.0", "mortise": ">=0.1.0 <0.2.0" }, "modules": [{ "id": "components", "entry": "./components.js", "styles": ["./components.css"], "apiVersion": "1.0.0" }] }
+  }] }
+}

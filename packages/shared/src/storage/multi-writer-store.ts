@@ -491,6 +491,19 @@ export class MultiWriterStore {
     return this.transaction(() => this.mutateRecordInTransaction(mutation))
   }
 
+  /** Remove a record after its durable acknowledgement has been observed. */
+  deleteRecord(namespace: string, key: string): boolean {
+    assertIdentifier(namespace, 'namespace')
+    assertIdentifier(key, 'key')
+    return this.transaction(() => {
+      this.assertWritable('records')
+      const result = this.database.prepare(`
+        DELETE FROM mortise_records WHERE namespace = ? AND record_key = ?
+      `).run(namespace, key)
+      return result.changes > 0
+    })
+  }
+
   private mutateRecordInTransaction<T extends JsonValue>(mutation: RecordMutation<T>): RecordMutationResult<T> {
     const capability = mutation.capability ?? 'records'
     assertIdentifier(capability, 'capability')

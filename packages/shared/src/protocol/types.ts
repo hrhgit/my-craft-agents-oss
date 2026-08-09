@@ -169,6 +169,26 @@ export interface SessionSettlementFailure extends WireError {
   data: SessionSettlementFailureData
 }
 
+export interface SessionPublicationFailureData {
+  sessionId: string
+  stage: 'runtime' | 'metadata' | 'projection'
+  retryable: boolean
+  terminal: true
+  outcome: 'unpublished'
+}
+
+/**
+ * Mortise accepted the first turn, but the provisional Session could not be
+ * published. The original outbox mutation remains retryable and must not be
+ * submitted with a new client mutation id.
+ */
+export interface SessionPublicationFailure extends WireError {
+  code: 'SESSION_PUBLICATION_DURABILITY_FAILED'
+  data: SessionPublicationFailureData
+}
+
+export type SessionFailure = SessionSettlementFailure | SessionPublicationFailure
+
 export function isSessionSettlementFailure(value: unknown): value is SessionSettlementFailure {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false
   const failure = value as { code?: unknown; message?: unknown; data?: unknown }
@@ -189,6 +209,26 @@ export function isSessionSettlementFailure(value: unknown): value is SessionSett
     && data.retryable === true
     && data.terminal === false
     && data.outcome === 'accepted-pending-settlement'
+}
+
+export function isSessionPublicationFailure(value: unknown): value is SessionPublicationFailure {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const failure = value as { code?: unknown; message?: unknown; data?: unknown }
+  if (
+    failure.code !== 'SESSION_PUBLICATION_DURABILITY_FAILED'
+    || typeof failure.message !== 'string'
+    || !failure.data
+    || typeof failure.data !== 'object'
+    || Array.isArray(failure.data)
+  ) return false
+
+  const data = failure.data as Record<string, unknown>
+  return typeof data.sessionId === 'string'
+    && data.sessionId.length > 0
+    && (data.stage === 'runtime' || data.stage === 'metadata' || data.stage === 'projection')
+    && typeof data.retryable === 'boolean'
+    && data.terminal === true
+    && data.outcome === 'unpublished'
 }
 
 /**

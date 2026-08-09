@@ -27,7 +27,6 @@ function makeSession(overrides: Partial<Session> = {}): Session {
     id: overrides.id ?? 'session-1',
     workspaceId: overrides.workspaceId ?? 'workspace-1',
     messages: overrides.messages ?? [],
-    permissionMode: overrides.permissionMode ?? 'ask',
     supportsBranching: overrides.supportsBranching ?? true,
     ...overrides,
   } as Session

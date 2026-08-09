@@ -1,3 +1,4 @@
+import type { WebSearchMode } from "@mortise/pi-ai";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import lockfile from "proper-lockfile";
@@ -62,7 +63,7 @@ export interface ExtensionNamespaceSettings {
 }
 
 export type HostModelDefaultSlot = number;
-export type ModelDefaultThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+export type ModelDefaultThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 export interface ModelDefaultConfig {
 	provider: string;
 	model: string;
@@ -94,6 +95,7 @@ export interface Settings {
 	/** Slots 2+ extend the legacy top-level default (slot 1). */
 	modelDefaultSlots?: Record<string, ModelDefaultConfig>;
 	webSearch?: boolean;
+	webSearchMode?: WebSearchMode;
 	steeringMode?: "all" | "one-at-a-time";
 	followUpMode?: "all" | "one-at-a-time";
 	compaction?: CompactionSettings;
@@ -747,22 +749,38 @@ export class SettingsManager {
 		this.save();
 	}
 
-	getDefaultThinkingLevel(): "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | undefined {
+	getDefaultThinkingLevel(): "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | undefined {
 		return this.settings.defaultThinkingLevel;
 	}
 
-	setDefaultThinkingLevel(level: "off" | "minimal" | "low" | "medium" | "high" | "xhigh"): void {
+	setDefaultThinkingLevel(level: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"): void {
 		this.globalSettings.defaultThinkingLevel = level;
 		this.markModified("defaultThinkingLevel");
 		this.save();
 	}
 
 	getWebSearch(): boolean {
-		return this.settings.webSearch ?? true;
+		return this.getWebSearchMode() !== "disabled";
 	}
 
 	setWebSearch(enabled: boolean): void {
 		this.globalSettings.webSearch = enabled;
+		this.globalSettings.webSearchMode = enabled ? "auto" : "disabled";
+		this.markModified("webSearch");
+		this.markModified("webSearchMode");
+		this.save();
+	}
+
+	getWebSearchMode(): WebSearchMode {
+		const mode = this.settings.webSearchMode;
+		if (mode === "auto" || mode === "native" || mode === "extension" || mode === "disabled") return mode;
+		return this.settings.webSearch === false ? "disabled" : "auto";
+	}
+
+	setWebSearchMode(mode: WebSearchMode): void {
+		this.globalSettings.webSearchMode = mode;
+		this.globalSettings.webSearch = mode !== "disabled";
+		this.markModified("webSearchMode");
 		this.markModified("webSearch");
 		this.save();
 	}

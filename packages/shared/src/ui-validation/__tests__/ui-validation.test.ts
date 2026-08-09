@@ -114,11 +114,16 @@ describe('UI validation V1 protocol', () => {
   it('provides bounded list and describe discovery without exposing driver internals', () => {
     const listed = queryUiValidationCapabilities('webui', { operation: 'list', kind: 'scenario' })
     expect(listed.items.map(item => item.id)).toContain('session.streaming')
+    expect(listed.items.map(item => item.id)).toContain('session.reasoning-result')
     expect(listed.items.every(item => item.kind === 'scenario' && item.surfaces.includes('webui'))).toBe(true)
     expect(listed.runtimeDiscovery).toMatchObject({ extensionDefinitions: { method: 'ui.snapshot' } })
 
     const fill = queryUiValidationCapabilities('webui', { operation: 'describe', kind: 'action', id: 'fill' }).items[0]!
     expect(fill.inputSchema).toMatchObject({ required: expect.arrayContaining(['target', 'action', 'value']) })
+
+    const press = queryUiValidationCapabilities('electron', { operation: 'describe', kind: 'action', id: 'press' }).items[0]!
+    expect(press.description).toContain('keyDown, char, and keyUp')
+    expect(press.inputSchema).toMatchObject({ required: expect.arrayContaining(['target', 'action', 'key']) })
 
     const described = queryUiValidationCapabilities('electron', { operation: 'describe', kind: 'action', id: 'native.close' })
     expect(described.items).toHaveLength(1)

@@ -88,6 +88,7 @@ import {
   preserveChatSearchMatchIndex,
 } from "./chat-search-model"
 import { useWorkspaceElectronApi } from "@/context/WorkspaceElectronApiContext"
+import { useConversationScrollController } from "@/hooks/useConversationScrollController"
 import { appendRestoredInput } from '@/lib/input-text'
 import {
   parseUnacceptedSessionFailure,
@@ -146,18 +147,18 @@ function getTurnKey(turn: Turn): string {
   return getChatSearchTurnId(turn)
 }
 
-function scrollSearchTargetIntoView(element: HTMLElement): void {
+function isScrollTargetOutsideViewport(element: HTMLElement, viewport: HTMLElement): boolean {
   const rect = element.getBoundingClientRect()
+  const viewportRect = viewport.getBoundingClientRect()
   const buffer = 128
-  if (rect.top < buffer || rect.bottom > window.innerHeight - buffer) {
-    element.scrollIntoView({ behavior: 'instant', block: 'center' })
-  }
+  return rect.top < viewportRect.top + buffer || rect.bottom > viewportRect.bottom - buffer
 }
 
 interface ChatDisplayProps {
   session: Session | null
   onSendMessage: (attempt: ComposerSubmissionAttempt) => Promise<boolean>
   onRetrySettlement?: () => Promise<void>
+  onRetryAcceptedMessage?: () => Promise<void>
   onOpenFile: (path: string) => void
   onOpenUrl: (url: string) => void
   // Model selection
@@ -171,7 +172,7 @@ interface ChatDisplayProps {
   /** When true, disables input (e.g., when agent needs activation) */
   disabled?: boolean
   // Thinking level (session-level setting)
-  /** Current thinking level ('off', 'minimal', 'low', 'medium', 'high', 'xhigh') */
+  /** Current thinking level ('off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max') */
   thinkingLevel?: ThinkingLevel
   /** Callback when thinking level changes */
   onThinkingLevelChange?: (level: ThinkingLevel) => void
@@ -217,13 +218,13 @@ interface ChatDisplayProps {
   compactMode?: boolean
   /**
    * When compactMode is true, enable the compact (drawer-based) model selector
-   * next to the permission-mode pill. Defaults to false so EditPopover keeps
+   * alongside other compact composer controls. Defaults to false so EditPopover keeps
    * its current behavior; ChatPage opts in when in auto-compact / mobile.
    */
   enableCompactModelPicker?: boolean
   /** Custom placeholder for input (used in compact mode for edit context) */
   placeholder?: string | string[]
-  /** Label shown as empty state in compact mode (e.g., "Permission Settings") */
+  /** Label shown as empty state in compact mode. */
   emptyStateLabel?: string
   /** When true, the session's selected connection has been removed - disables send and shows unavailable state */
   providerUnavailable?: boolean
@@ -418,20 +419,11 @@ function ProcessingIndicator({ startTime, statusMessage }: ProcessingIndicatorPr
  * Scrolls to target element on mount, before browser paint.
  * Uses useLayoutEffect to ensure scroll happens before content is visible.
  */
-function ScrollOnMount({
-  targetRef,
-  onScroll,
-  skip = false
-}: {
-  targetRef: React.RefObject<HTMLDivElement | null>
-  onScroll?: () => void
-  skip?: boolean
-}) {
+function ScrollOnMount({ onScroll, skip = false }: { onScroll?: () => void; skip?: boolean }) {
   React.useLayoutEffect(() => {
     if (skip) return
-    targetRef.current?.scrollIntoView({ behavior: 'instant' })
     onScroll?.()
-  }, [skip])
+  }, [onScroll, skip])
   return null
 }
 
@@ -449,6 +441,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
   session,
   onSendMessage,
   onRetrySettlement,
+  onRetryAcceptedMessage,
   onOpenFile,
   onOpenUrl,
   currentModel,
@@ -531,19 +524,32 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
   // Input is only disabled when explicitly disabled (e.g., agent needs activation)
   // User can type during streaming - submitting will stop the stream and send
   const isInputDisabled = disabled
-  const messagesEndRef = React.useRef<HTMLDivElement>(null)
-  const scrollViewportRef = React.useRef<HTMLDivElement>(null)
-  const prevSessionIdRef = React.useRef<string | null>(null)
   // Reverse pagination: show last N turns initially, load more on scroll up
   const TURNS_PER_PAGE = 20
   const [visibleTurnCount, setVisibleTurnCount] = React.useState(TURNS_PER_PAGE)
-  // Sticky-bottom: When true, auto-scroll on content changes. Toggled by user scroll behavior.
-  const isStickToBottomRef = React.useRef(true)
-  // Mirror isFocusedPanel into a ref so the ResizeObserver closure reads the latest value
+  const nearTopHandlerRef = React.useRef<() => void>(() => {})
+  const {
+    viewportRef,
+    contentRef,
+    isFollowing,
+    hasNewContent,
+    distanceFromBottom,
+    capturePrependPosition,
+    restorePrependPosition,
+    scrollTargetIntoView,
+    scrollToLatest,
+    resetForSession,
+    compensateViewportHeight,
+  } = useConversationScrollController({
+    sessionId: session?.id,
+    onNearTop: () => nearTopHandlerRef.current(),
+  })
+  React.useEffect(() => {
+    setVisibleTurnCount(TURNS_PER_PAGE)
+  }, [session?.id])
+  // Mirror isFocusedPanel into a ref so focus-zone callbacks read the latest value
   const isFocusedPanelRef = React.useRef(isFocusedPanel)
   isFocusedPanelRef.current = isFocusedPanel
-  // Skip smooth scroll briefly after session switch (instant scroll already happened)
-  const skipSmoothScrollUntilRef = React.useRef(0)
   // Track message commit boundaries so we can auto-scroll when a new user message
   // actually lands in state (important when attachments delay optimistic insertion).
   const prevLastMessageIdRef = React.useRef<string | null>(null)
@@ -775,9 +781,12 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
     }
     activeSearchTargetElementRef.current = element
     if (!element || !shouldScrollToMatchRef.current) return
-    scrollSearchTargetIntoView(element)
+    const viewport = viewportRef.current
+    if (viewport && isScrollTargetOutsideViewport(element, viewport)) {
+      scrollTargetIntoView(element, { behavior: 'instant', block: 'center' })
+    }
     shouldScrollToMatchRef.current = false
-  }, [])
+  }, [scrollTargetIntoView, viewportRef])
 
   useEffect(() => {
     setCurrentMatchIndex(previous => Math.min(previous, Math.max(0, validMatches.length - 1)))
@@ -805,21 +814,25 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
       const targetElement = activeSearchTargetElementRef.current
 
       if (targetElement) {
-        scrollSearchTargetIntoView(targetElement)
+        const viewport = viewportRef.current
+        if (viewport && isScrollTargetOutsideViewport(targetElement, viewport)) {
+          scrollTargetIntoView(targetElement, { behavior: 'instant', block: 'center' })
+        }
         shouldScrollToMatchRef.current = false
         return
       }
 
       // Scroll the turn into view
       const turnEl = turnRefs.current.get(turnId)
-      if (turnEl) {
-        scrollSearchTargetIntoView(turnEl)
+      const viewport = viewportRef.current
+      if (turnEl && viewport && isScrollTargetOutsideViewport(turnEl, viewport)) {
+        scrollTargetIntoView(turnEl, { behavior: 'instant', block: 'center' })
       }
       // TurnCard may still be expanding a tool group. Its ready callback owns
       // final exact-target scrolling; other Turn kinds settle at the wrapper.
       if (!expectsTurnCardTarget) shouldScrollToMatchRef.current = false
     }
-  }, [transcriptTurns, validMatches, currentMatchIndex, session?.id])
+  }, [currentMatchIndex, scrollTargetIntoView, session?.id, transcriptTurns, validMatches, viewportRef])
 
   // Highlight only the active turn. Search windowing keeps this DOM walk bounded,
   // while the logical index remains authoritative for navigation and match counts.
@@ -1116,97 +1129,15 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
     }))
   }, [pendingFollowUpAnnotations])
 
-  // Track scroll position to toggle sticky-bottom behavior
-  // - User scrolls up → unstick (stop auto-scrolling)
-  // - User scrolls back to bottom → re-stick (resume auto-scrolling)
-  // Also handles loading more turns when scrolling near top
-  const lastScrollTopRef = React.useRef(0)
-  const handleScroll = React.useCallback(() => {
-    const viewport = scrollViewportRef.current
-    if (!viewport) return
-    const { scrollTop, scrollHeight, clientHeight } = viewport
-    const distanceFromBottom = scrollHeight - scrollTop - clientHeight
-    const isScrollingUp = scrollTop < lastScrollTopRef.current - 1
-    lastScrollTopRef.current = scrollTop
-    // Any deliberate upward movement pauses following immediately. Scrolling
-    // back to the bottom resumes it without requiring another control.
-    isStickToBottomRef.current = !isScrollingUp && distanceFromBottom < 20
+  const handleLoadMoreAtTop = useCallback(() => {
+    const currentStartIndex = Math.max(0, totalTurnCountRef.current - visibleTurnCount)
+    if (currentStartIndex <= 0) return
 
-    // Load more turns when scrolling near top (within 100px)
-    if (scrollTop < 100) {
-      setVisibleTurnCount(prev => {
-        // Check if there are more turns to load
-        const currentStartIndex = Math.max(0, totalTurnCountRef.current - prev)
-        if (currentStartIndex <= 0) return prev // Already showing all
-
-        // Remember scroll height before adding more items
-        const prevScrollHeight = viewport.scrollHeight
-
-        // Schedule scroll position adjustment after render
-        requestAnimationFrame(() => {
-          const newScrollHeight = viewport.scrollHeight
-          viewport.scrollTop = newScrollHeight - prevScrollHeight + scrollTop
-        })
-
-        return prev + TURNS_PER_PAGE
-      })
-    }
-  }, [])
-
-  // Set up scroll event listener
-  React.useEffect(() => {
-    const viewport = scrollViewportRef.current
-    if (!viewport) return
-    viewport.addEventListener('scroll', handleScroll)
-    return () => viewport.removeEventListener('scroll', handleScroll)
-  }, [handleScroll])
-
-  // Auto-scroll using ResizeObserver for streaming content
-  // Initial scroll is handled by ScrollOnMount (useLayoutEffect, before paint)
-  React.useEffect(() => {
-    const viewport = scrollViewportRef.current
-    if (!viewport) return
-
-    const isSessionSwitch = prevSessionIdRef.current !== session?.id
-    prevSessionIdRef.current = session?.id ?? null
-
-    // On session switch: reset UI state (scroll handled by ScrollOnMount)
-    if (isSessionSwitch) {
-      isStickToBottomRef.current = true
-      lastScrollTopRef.current = viewport.scrollTop
-      setVisibleTurnCount(TURNS_PER_PAGE)
-    }
-
-    // Debounced scroll for streaming - waits for layout to settle
-    let debounceTimer: ReturnType<typeof setTimeout> | null = null
-
-    const resizeObserver = new ResizeObserver(() => {
-      if (!isStickToBottomRef.current) return
-
-      // Clear pending scroll and wait for layout to settle
-      if (debounceTimer) clearTimeout(debounceTimer)
-      debounceTimer = setTimeout(() => {
-        // The user may have scrolled up while this delayed follow was queued.
-        if (!isStickToBottomRef.current) return
-        // Skip smooth scroll if we just did an instant scroll (session switch/lazy load)
-        if (Date.now() < skipSmoothScrollUntilRef.current) return
-        messagesEndRef.current?.scrollIntoView({
-          behavior: isFocusedPanelRef.current ? 'smooth' : 'instant',
-        })
-      }, 200)
-    })
-
-    // Observe the scroll content container (first child of viewport)
-    const content = viewport.firstElementChild
-    if (content) {
-      resizeObserver.observe(content)
-    }
-
-    return () => {
-      resizeObserver.disconnect()
-      if (debounceTimer) clearTimeout(debounceTimer)
-    }
-  }, [session?.id])
+    const snapshot = capturePrependPosition()
+    setVisibleTurnCount(previous => Math.min(totalTurnCountRef.current, previous + TURNS_PER_PAGE))
+    restorePrependPosition(snapshot)
+  }, [capturePrependPosition, restorePrependPosition, visibleTurnCount])
+  nearTopHandlerRef.current = handleLoadMoreAtTop
 
   // Commit-time auto-scroll for new user messages.
   // This complements submit-time scrolling and covers cases where attachments delay
@@ -1214,7 +1145,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
   React.useEffect(() => {
     const currentSessionId = session?.id ?? null
 
-    // Reset baseline on session switch; defer to ScrollOnMount/session-switch logic.
+    // Reset baseline on session switch; defer to the controller's mount logic.
     if (prevSessionIdForCommitScrollRef.current !== currentSessionId) {
       prevSessionIdForCommitScrollRef.current = currentSessionId
       prevLastMessageIdRef.current = lastMessageId ?? null
@@ -1234,15 +1165,10 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
     if (!messageActuallyChanged || !countIncreased) return
     if (lastMessageRole !== 'user') return
 
-    // Sending a message should always re-stick to bottom.
-    isStickToBottomRef.current = true
-
-    requestAnimationFrame(() => {
-      messagesEndRef.current?.scrollIntoView({
-        behavior: isFocusedPanelRef.current ? 'smooth' : 'instant',
-      })
-    })
-  }, [session?.id, messageCount, lastMessageId, lastMessageRole])
+    // Sending a message explicitly resumes following and uses the controller's
+    // current viewport, avoiding stale smooth-scroll targets during streaming.
+    scrollToLatest('instant')
+  }, [messageCount, lastMessageId, lastMessageRole, scrollToLatest, session?.id])
 
   // Handle message submission from InputContainer
   // Backend handles interruption and queueing if currently processing
@@ -1318,15 +1244,11 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
       meta: followUp.meta ? { ...followUp.meta } : undefined,
     }))
 
-    // Force stick-to-bottom when user sends a message
-    isStickToBottomRef.current = true
     const completion = deliverSubmission(outboundAttempt, followUps)
 
-    // Immediately scroll to bottom after sending - use requestAnimationFrame
-    // to ensure the DOM has updated with the new message
-    requestAnimationFrame(() => {
-      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-    })
+    // Sending is an explicit resume action. The controller reads the current
+    // viewport rather than animating toward a stale anchor.
+    scrollToLatest('instant')
     return completion
   }
 
@@ -1510,15 +1432,11 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
     textareaRef,
   ])
 
-  // Per-frame scroll compensation during input height animation
-  // Only compensate when user is "stuck to bottom" - otherwise let them control their scroll position
+  // Keep the viewport anchored during input height animation only while the
+  // user is following the latest content.
   const handleAnimatedHeightChange = React.useCallback((delta: number) => {
-    if (!isStickToBottomRef.current) return
-    const viewport = scrollViewportRef.current
-    if (!viewport) return
-    // Adjust scroll to maintain position relative to content
-    viewport.scrollTop += delta
-  }, [])
+    compensateViewportHeight(delta)
+  }, [compensateViewportHeight])
 
   // Keep ref in sync for scroll handler
   totalTurnCountRef.current = transcriptTurns.length
@@ -1558,7 +1476,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
       const turnContainer = turnRefs.current.get(turnKey)
       if (!turnContainer) return false
 
-      turnContainer.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      scrollTargetIntoView(turnContainer, { behavior: 'smooth', block: 'center' })
       return true
     }
 
@@ -1581,7 +1499,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
         void scrollToTurn()
       })
     }
-  }, [assistantTurnIndexByMessageId, transcriptTurns, visibleTurnCount])
+  }, [assistantTurnIndexByMessageId, scrollTargetIntoView, transcriptTurns, visibleTurnCount])
 
   const handleFollowUpChipClick = useCallback((item: {
     messageId: string
@@ -1644,14 +1562,14 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
             >
               <ScrollArea
                 className="h-full min-w-0"
-                viewportRef={scrollViewportRef}
+                viewportRef={viewportRef}
                 data-mortise-ui-anchor="conversation.timeline"
               >
               <div className={cn(
                 CHAT_LAYOUT.maxWidth,
                 "mx-auto min-w-0",
                 compactMode ? "px-3 py-4 space-y-2" : [CHAT_LAYOUT.containerPadding, CHAT_LAYOUT.messageSpacing]
-              )}>
+              )} ref={contentRef}>
                 <ExtensionContributionZone sessionId={session.id} surface="conversation.timeline.before" />
                 <ExtensionFrontendZone
                   className="sticky top-8 z-10"
@@ -1726,11 +1644,8 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                   {/* Scroll to bottom before paint - fires via useLayoutEffect */}
                   {/* Skip when search is active on session switch - scroll to first match instead */}
                   <ScrollOnMount
-                    targetRef={messagesEndRef}
                     skip={skipScrollToBottom}
-                    onScroll={() => {
-                      skipSmoothScrollUntilRef.current = Date.now() + 500
-                    }}
+                    onScroll={resetForSession}
                   />
                   {/* Empty state for compact mode - inviting conversational prompt, centered in full popover */}
                   {compactMode && turns.length === 0 && (
@@ -1933,7 +1848,6 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                                 // Keep branch on the same backend/provider by inheriting parent session settings.
                                 provider: session.provider,
                                 model: session.model,
-                                permissionMode: session.permissionMode,
                               }
                             )
                             navigate(routes.view.allSessions(child.id), { newPanel: resolveBranchNewPanelOption(options) })
@@ -2106,11 +2020,22 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                 })()}
                 <ExtensionContributionZone sessionId={session.id} surface="conversation.inline" />
                 <ExtensionContributionZone sessionId={session.id} surface="conversation.timeline.after" />
-                {/* Scroll Anchor: For auto-scroll to bottom */}
-                <div ref={messagesEndRef} />
               </div>
               </ScrollArea>
             </div>
+            {!isFollowing && (hasNewContent || distanceFromBottom > 24) && (
+              <button
+                type="button"
+                data-mortise-ui-anchor="conversation.scroll-to-latest"
+                data-mortise-semantic-id={`conversation.${session.id}.scroll-to-latest`}
+                aria-label={t('chat.scrollToLatest', 'Scroll to latest')}
+                className="pointer-events-auto absolute bottom-3 left-1/2 z-20 inline-flex -translate-x-1/2 items-center gap-1 rounded-[6px] border border-border/70 bg-background/95 px-2.5 py-1.5 text-xs font-medium text-foreground shadow-xs backdrop-blur-sm transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                onClick={() => scrollToLatest('instant')}
+              >
+                <ChevronDown className="size-3.5" aria-hidden="true" />
+                {t('chat.scrollToLatest', 'Scroll to latest')}
+              </button>
+            )}
           </div>
 
           <div className="pointer-events-none absolute inset-x-0 top-2 z-20 mx-auto flex max-h-[45%] w-full max-w-3xl flex-col items-end gap-2 overflow-auto px-4">
@@ -2124,27 +2049,32 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
           <div className={cn(CHAT_LAYOUT.maxWidth, 'mx-auto flex w-full min-w-0 flex-col gap-1 px-3 @xs/panel:px-4')}>
             <ExtensionContributionZone sessionId={session.id} surface="composer.status" />
             <ExtensionFrontendZone className="contents" sessionId={session.id} workspaceId={session.workspaceId} surface="composer.status" />
-            {session.pendingFailure && (
-              <div
+            {session.pendingFailure && (() => {
+              const isUnpublished = session.pendingFailure.data.outcome === 'unpublished'
+              const retryHandler = isUnpublished ? onRetryAcceptedMessage : onRetrySettlement
+              const retryable = session.pendingFailure.data.retryable
+              return <div
                 role="alert"
-                data-mortise-semantic-id={`conversation.${session.id}.settlement-failed`}
+                data-mortise-semantic-id={`conversation.${session.id}.${isUnpublished ? 'publication' : 'settlement'}-failed`}
                 data-mortise-settlement-outcome={session.pendingFailure.data.outcome}
                 className="flex min-w-0 items-center gap-2 border-l-2 border-amber-500 px-2 py-1.5 text-xs text-foreground"
               >
                 <CircleAlert className="size-3.5 shrink-0 text-amber-600" aria-hidden="true" />
                 <span className="min-w-0 flex-1 truncate">
-                  {t('chat.sessionSettlementFailed', 'The response was received, but final session saving is still pending.')}
+                  {isUnpublished
+                    ? t('chat.sessionPublicationPending', 'The message was accepted, but the Session is not published yet.')
+                    : t('chat.sessionSettlementFailed', 'The response was received, but final session saving is still pending.')}
                 </span>
                 <button
                   type="button"
-                  disabled={settlementRetrying || !onRetrySettlement}
-                  data-mortise-semantic-id={`conversation.${session.id}.settlement-failed.retry`}
+                  disabled={settlementRetrying || !retryable || !retryHandler}
+                  data-mortise-semantic-id={`conversation.${session.id}.${isUnpublished ? 'publication' : 'settlement'}-failed.retry`}
                   className="inline-flex shrink-0 items-center gap-1 rounded-[6px] px-2 py-1 font-medium text-foreground hover:bg-foreground/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
                   onClick={() => {
-                    if (!onRetrySettlement || settlementRetrying) return
+                    if (!retryHandler || settlementRetrying) return
                     setSettlementRetrying(true)
-                    void onRetrySettlement()
-                      .catch((error: unknown) => console.error('[ChatDisplay] Failed to retry Session settlement:', error))
+                    void retryHandler()
+                      .catch((error: unknown) => console.error('[ChatDisplay] Failed to retry accepted message:', error))
                       .finally(() => setSettlementRetrying(false))
                   }}
                 >
@@ -2152,7 +2082,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                   {t('common.retry')}
                 </button>
               </div>
-            )}
+            })()}
             {submissionFailure && (
               <div
                 role="alert"

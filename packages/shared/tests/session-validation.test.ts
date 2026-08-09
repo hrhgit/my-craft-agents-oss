@@ -22,11 +22,11 @@ import {
   getSessionDownloadsPath,
   setSharedPiSessionsDirForTests,
 } from '../src/sessions/storage.ts';
-import { encodePiSessionCwd } from '../src/config/paths.ts';
+import { encodeWorkspaceSessionBucket } from '../src/config/paths.ts';
 
 const workspaceRoot = '/Users/test/.mortise/workspaces/test-workspace';
 const piSessionsRoot = mkdtempSync(join(tmpdir(), 'mortise-session-validation-'));
-const expectedSidecarRoot = join(piSessionsRoot, encodePiSessionCwd(workspaceRoot), '.mortise');
+const expectedSidecarRoot = join(piSessionsRoot, encodeWorkspaceSessionBucket(workspaceRoot), '.mortise');
 
 beforeAll(() => {
   setSharedPiSessionsDirForTests(piSessionsRoot);

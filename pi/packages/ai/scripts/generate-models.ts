@@ -130,6 +130,7 @@ const DEEPSEEK_V4_THINKING_LEVEL_MAP = {
 	medium: null,
 	high: "high",
 	xhigh: "max",
+	max: "max",
 } as const;
 
 const OPENAI_RESPONSES_NONE_REASONING_MODELS = new Set([
@@ -231,7 +232,7 @@ function applyThinkingLevelMetadata(model: Model<any>): void {
 		mergeThinkingLevelMap(model, { off: null, minimal: null, low: null });
 	}
 	if (model.id.includes("opus-4-6") || model.id.includes("opus-4.6")) {
-		mergeThinkingLevelMap(model, { xhigh: "max" });
+		mergeThinkingLevelMap(model, { xhigh: "max", max: "max" });
 	}
 	if (
 		model.id.includes("opus-4-7") ||
@@ -248,7 +249,7 @@ function applyThinkingLevelMetadata(model: Model<any>): void {
 		mergeThinkingLevelMap(
 			model,
 			model.provider === "openrouter"
-				? { ...DEEPSEEK_V4_THINKING_LEVEL_MAP, xhigh: "xhigh" }
+				? { ...DEEPSEEK_V4_THINKING_LEVEL_MAP, xhigh: "xhigh", max: null }
 				: DEEPSEEK_V4_THINKING_LEVEL_MAP,
 		);
 	}

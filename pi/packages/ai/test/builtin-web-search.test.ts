@@ -5,7 +5,12 @@ import { streamAzureOpenAIResponses } from "../src/providers/azure-openai-respon
 import { convertTools } from "../src/providers/google-shared.ts";
 import { streamOpenAIResponses } from "../src/providers/openai-responses.ts";
 import type { Context, Model, Tool } from "../src/types.ts";
-import { supportsBuiltinWebSearchApi } from "../src/web-search.ts";
+import {
+	classifyWebSearchError,
+	resolveWebSearchCapability,
+	resolveWebSearchMode,
+	supportsBuiltinWebSearchApi,
+} from "../src/web-search.ts";
 
 const stop = new Error("stop");
 
@@ -157,5 +162,29 @@ describe("builtin web search", () => {
 		expect(supportsBuiltinWebSearchApi("google-generative-ai")).toBe(true);
 		expect(supportsBuiltinWebSearchApi("openai-completions")).toBe(false);
 		expect(supportsBuiltinWebSearchApi("mistral-conversations")).toBe(false);
+	});
+
+	it("requires official endpoints before enabling native search", () => {
+		expect(resolveWebSearchCapability(openAIResponsesModel).mode).toBe("native");
+		expect(resolveWebSearchCapability({ ...openAIResponsesModel, baseUrl: "https://proxy.example/v1" }).mode).toBe(
+			"unknown",
+		);
+	});
+
+	it("uses the fallback extension only for explicit unsupported capability", () => {
+		expect(resolveWebSearchMode("auto", openAIResponsesModel)).toMatchObject({ native: true, extension: false });
+		expect(resolveWebSearchMode("auto", { ...openAIResponsesModel, api: "mistral-conversations" })).toMatchObject({
+			native: false,
+			extension: true,
+		});
+		expect(
+			resolveWebSearchMode("auto", { ...openAIResponsesModel, baseUrl: "https://proxy.example/v1" }),
+		).toMatchObject({ native: false, extension: false });
+		expect(resolveWebSearchMode("disabled", openAIResponsesModel)).toEqual({ native: false, extension: false });
+	});
+
+	it("classifies cancellation and configuration failures without allowing fallback", () => {
+		expect(classifyWebSearchError(new Error("request aborted by user"))).toBe("cancelled");
+		expect(classifyWebSearchError(new Error("search model not configured"))).toBe("configuration");
 	});
 });

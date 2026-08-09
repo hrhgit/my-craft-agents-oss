@@ -1,6 +1,6 @@
 import { MORTISE_PROJECT_SKILLS_DIR } from './paths.ts'
 
-export type CliDomainNamespace = 'skill' | 'automation' | 'permission' | 'theme'
+export type CliDomainNamespace = 'skill' | 'automation' | 'theme'
 
 export interface CliDomainPolicy {
   namespace: CliDomainNamespace
@@ -37,19 +37,6 @@ const POLICIES: Record<CliDomainNamespace, CliDomainPolicy> = {
       'mortise automation history <id> --limit 20',
       'mortise automation validate',
     ],
-  },
-  permission: {
-    namespace: 'permission',
-    helpCommand: 'mortise permission --help',
-    workspacePathScopes: ['permissions.json'],
-    readActions: ['list', 'get', 'validate'],
-    quickExamples: [
-      'mortise permission list',
-      'mortise permission get',
-      'mortise permission add-mcp-pattern "list" --comment "All list ops"',
-      'mortise permission validate',
-    ],
-    bashGuardPaths: ['permissions.json'],
   },
   theme: {
     namespace: 'theme',
@@ -112,7 +99,7 @@ export interface BashPatternRule {
 
 /**
  * Derive the canonical Explore-mode read-only mortise bash patterns from
- * CLI domain policies. Keeps permissions regexes aligned with command metadata.
+ * CLI domain metadata used for deterministic read-only command classification.
  */
 export function getMortiseReadOnlyBashPatterns(): BashPatternRule[] {
   const namespaces = Object.keys(POLICIES) as CliDomainNamespace[]

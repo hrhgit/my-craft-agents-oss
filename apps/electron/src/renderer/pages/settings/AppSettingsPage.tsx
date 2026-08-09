@@ -5,6 +5,9 @@
  *
  * Settings:
  * - Notifications
+ * - Power (keep screen awake)
+ * - Tools
+ * - Sending (send message key, follow-up behavior)
  * - Network (proxy)
  * - About (version, updates)
  *
@@ -14,14 +17,17 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 import { PanelHeader } from '@/components/app-shell/PanelHeader'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Button } from '@/components/ui/button'
 import { HeaderMenu } from '@/components/ui/HeaderMenu'
 import { routes } from '@/lib/navigate'
 import { Spinner } from '@mortise/ui'
+import { isMac } from '@/lib/platform'
 import type { DetailsPageMeta } from '@/lib/navigation-registry'
 import type { NetworkProxySettings } from '../../../shared/types'
+import type { MidStreamBehavior } from '@mortise/shared/config/midstream-behavior'
 
 import {
   SettingsSection,
@@ -30,6 +36,8 @@ import {
   SettingsRow,
   SettingsToggle,
   SettingsInput,
+  SettingsMenuSelectRow,
+  SettingsSegmentedControl,
 } from '@/components/settings'
 import { useUpdateChecker } from '@/hooks/useUpdateChecker'
 import { hasPlatformCapability } from '@/lib/platform-capabilities'
@@ -104,12 +112,22 @@ export default function AppSettingsPage() {
 
   // Tools state
   const [browserToolEnabled, setBrowserToolEnabled] = useState(true)
+  const [messagingToolEnabled, setMessagingToolEnabled] = useState(true)
+  const [webSearchMode, setWebSearchModeState] = useState<'auto' | 'native' | 'extension' | 'disabled'>('auto')
 
   // Proxy state
   const [proxyForm, setProxyForm] = useState<ProxyFormState>(EMPTY_PROXY_FORM)
   const [savedProxyForm, setSavedProxyForm] = useState<ProxyFormState>(EMPTY_PROXY_FORM)
   const [proxyError, setProxyError] = useState<string | undefined>()
   const [isSavingProxy, setIsSavingProxy] = useState(false)
+
+  // Sending state
+  const [sendMessageKey, setSendMessageKey] = useState<'enter' | 'cmd-enter'>('enter')
+
+  // Follow-up behavior while a response is streaming
+  const [midStreamBehavior, setMidStreamBehaviorState] = useState<MidStreamBehavior>('queue')
+  const [isLoadingMidStreamBehavior, setIsLoadingMidStreamBehavior] = useState(true)
+  const alternateSendKey = isMac ? '⌘+Enter' : 'Ctrl+Enter'
 
   // Auto-update state (Check Now / Update Ready only shown in Electron, not WebUI)
   const autoUpdateAvailable = hasPlatformCapability('autoUpdate')
@@ -130,20 +148,30 @@ export default function AppSettingsPage() {
   const loadSettings = useCallback(async () => {
     if (!window.electronAPI) return
     try {
-      const [notificationsOn, keepAwakeOn, browserToolOn, proxySettings] = await Promise.all([
+      const [notificationsOn, keepAwakeOn, browserToolOn, messagingToolOn, searchMode, sendKey, followUpBehavior, proxySettings] = await Promise.all([
         window.electronAPI.getNotificationsEnabled(),
         powerSaveBlockerAvailable ? window.electronAPI.getKeepAwakeWhileRunning() : Promise.resolve(false),
         window.electronAPI.getBrowserToolEnabled(),
+        window.electronAPI.getMessagingToolEnabled(),
+        window.electronAPI.getWebSearchMode(),
+        window.electronAPI.getSendMessageKey(),
+        window.electronAPI.getMidStreamBehavior(),
         window.electronAPI.getNetworkProxySettings(),
       ])
       setNotificationsEnabled(notificationsOn)
       setKeepAwakeEnabled(keepAwakeOn)
       setBrowserToolEnabled(browserToolOn)
+      setMessagingToolEnabled(messagingToolOn)
+      setWebSearchModeState(searchMode)
+      setSendMessageKey(sendKey)
+      setMidStreamBehaviorState(followUpBehavior)
       const form = toProxyFormState(proxySettings)
       setProxyForm(form)
       setSavedProxyForm(form)
     } catch (error) {
       console.error('Failed to load settings:', error)
+    } finally {
+      setIsLoadingMidStreamBehavior(false)
     }
   }, [powerSaveBlockerAvailable])
 
@@ -165,6 +193,45 @@ export default function AppSettingsPage() {
     setBrowserToolEnabled(enabled)
     await window.electronAPI.setBrowserToolEnabled(enabled)
   }, [])
+
+  const handleMessagingToolEnabledChange = useCallback(async (enabled: boolean) => {
+    setMessagingToolEnabled(enabled)
+    await window.electronAPI.setMessagingToolEnabled(enabled)
+  }, [])
+
+  const handleWebSearchModeChange = useCallback(async (mode: 'auto' | 'native' | 'extension' | 'disabled') => {
+    const previous = webSearchMode
+    setWebSearchModeState(mode)
+    try {
+      await window.electronAPI.setWebSearchMode(mode)
+    } catch (error) {
+      setWebSearchModeState(previous)
+      console.error('Failed to update web search mode:', error)
+      toast.error(t('settings.tools.webSearchUpdateFailed'))
+    }
+  }, [t, webSearchMode])
+
+  const handleSendMessageKeyChange = useCallback((value: string) => {
+    const key = value as 'enter' | 'cmd-enter'
+    setSendMessageKey(key)
+    window.electronAPI.setSendMessageKey(key)
+  }, [])
+
+  const handleMidStreamBehaviorChange = useCallback(async (value: MidStreamBehavior) => {
+    const previous = midStreamBehavior
+    setMidStreamBehaviorState(value)
+    try {
+      const result = await window.electronAPI.setMidStreamBehavior(value)
+      if (!result.success) {
+        setMidStreamBehaviorState(previous)
+        toast.error(t('settings.app.sending.midStream.updateFailed'), { description: result.error })
+      }
+    } catch (error) {
+      setMidStreamBehaviorState(previous)
+      console.error('Failed to update mid-stream behavior:', error)
+      toast.error(t('settings.app.sending.midStream.updateFailed'))
+    }
+  }, [midStreamBehavior, t])
 
   // Proxy handlers
   const isProxyDirty = useMemo(() => {
@@ -243,6 +310,62 @@ export default function AppSettingsPage() {
                     checked={browserToolEnabled}
                     onCheckedChange={handleBrowserToolEnabledChange}
                   />
+                  <SettingsToggle
+                    label={t("settings.tools.messaging")}
+                    description={t("settings.tools.messagingDesc")}
+                    checked={messagingToolEnabled}
+                    onCheckedChange={handleMessagingToolEnabledChange}
+                  />
+                  <SettingsRow
+                    label={t('settings.tools.webSearch')}
+                    description={t('settings.tools.webSearchDesc')}
+                  >
+                    <SettingsSegmentedControl
+                      value={webSearchMode}
+                      onValueChange={(value) => void handleWebSearchModeChange(value as typeof webSearchMode)}
+                      variant="pill"
+                      size="md"
+                      options={[
+                        { value: 'auto', label: t('settings.tools.webSearchAuto') },
+                        { value: 'native', label: t('settings.tools.webSearchNative') },
+                        { value: 'extension', label: t('settings.tools.webSearchExtension') },
+                        { value: 'disabled', label: t('settings.tools.webSearchDisabled') },
+                      ]}
+                    />
+                  </SettingsRow>
+                </SettingsCard>
+              </SettingsSection>
+
+              {/* Sending */}
+              <SettingsSection title={t("settings.app.sending.title")} description={t("settings.app.sending.description")}>
+                <SettingsCard>
+                  <SettingsMenuSelectRow
+                    label={t("settings.app.sending.sendMessageWith")}
+                    description={t("settings.app.sending.sendMessageWithDesc")}
+                    value={sendMessageKey}
+                    onValueChange={handleSendMessageKeyChange}
+                    options={[
+                      { value: 'enter', label: t("settings.app.sending.enterKey"), description: t("settings.app.sending.enterKeyDesc") },
+                      { value: 'cmd-enter', label: isMac ? t("settings.app.sending.cmdEnterKey") : t("settings.app.sending.ctrlEnterKey"), description: t("settings.app.sending.cmdEnterKeyDesc") },
+                    ]}
+                  />
+                  <SettingsRow
+                    label={t('settings.app.sending.midStream.title')}
+                    description={t('settings.app.sending.midStream.description', { alternateKey: alternateSendKey })}
+                    descriptionClassName="whitespace-normal overflow-visible text-clip"
+                  >
+                    <SettingsSegmentedControl
+                      value={midStreamBehavior}
+                      onValueChange={handleMidStreamBehaviorChange}
+                      disabled={isLoadingMidStreamBehavior}
+                      variant="pill"
+                      size="md"
+                      options={[
+                        { value: 'queue', label: t('settings.app.sending.midStream.queue') },
+                        { value: 'steer', label: t('settings.app.sending.midStream.steer') },
+                      ]}
+                    />
+                  </SettingsRow>
                 </SettingsCard>
               </SettingsSection>
 

@@ -40,9 +40,13 @@ describe('createManagedSession', () => {
 
   it('rejects retired explicit creation input instead of silently using the default', () => {
     expect(() => resolveSessionThinkingLevel('think', 'medium')).toThrow(InvalidSessionThinkingLevelError)
-    expect(() => resolveSessionThinkingLevel('max', 'medium')).toThrow(InvalidSessionThinkingLevelError)
+    expect(() => resolveSessionThinkingLevel('ultra', 'medium')).toThrow(InvalidSessionThinkingLevelError)
     expect(resolveSessionThinkingLevel(undefined, 'medium')).toBe('medium')
     expect(resolveSessionThinkingLevel('minimal', 'medium')).toBe('minimal')
+  })
+
+  it('accepts the current max thinking level', () => {
+    expect(resolveSessionThinkingLevel('max', 'medium')).toBe('max')
   })
 
   it('rejects retired thinking input through the Session creation boundary', async () => {

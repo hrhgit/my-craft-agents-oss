@@ -35,14 +35,17 @@ export interface SettingsPageDefinition {
  * time via t(). Do NOT call i18n.t() here — this module loads before i18n init.
  */
 export const SETTINGS_PAGES = [
-  { id: 'app' as const, labelKey: 'settings.app.title', descriptionKey: 'settings.app.description' },
+  // AI core configuration - most frequently visited
   { id: 'ai' as const, labelKey: 'settings.ai.title', descriptionKey: 'settings.ai.description' },
   { id: 'agents' as const, labelKey: 'settings.agents.title', descriptionKey: 'settings.agents.description' },
   { id: 'extensions' as const, labelKey: 'settings.extensions.title', descriptionKey: 'settings.extensions.description' },
-  { id: 'developer' as const, labelKey: 'settings.developer.title', descriptionKey: 'settings.developer.description' },
+  // Personalization & integrations
   { id: 'appearance' as const, labelKey: 'settings.appearance.title', descriptionKey: 'settings.appearance.description' },
-  { id: 'input' as const, labelKey: 'settings.input.title', descriptionKey: 'settings.input.description' },
   { id: 'messaging' as const, labelKey: 'settings.messaging.title', descriptionKey: 'settings.messaging.description' },
+  // General app-level settings
+  { id: 'app' as const, labelKey: 'settings.app.title', descriptionKey: 'settings.app.description' },
+  // Advanced / infrequently changed
+  { id: 'developer' as const, labelKey: 'settings.developer.title', descriptionKey: 'settings.developer.description' },
   { id: 'server' as const, labelKey: 'settings.server.title', descriptionKey: 'settings.server.description' },
   { id: 'shortcuts' as const, labelKey: 'settings.shortcuts.title', descriptionKey: 'settings.shortcuts.description' },
   { id: 'preferences' as const, labelKey: 'settings.preferences.title', descriptionKey: 'settings.preferences.description' },

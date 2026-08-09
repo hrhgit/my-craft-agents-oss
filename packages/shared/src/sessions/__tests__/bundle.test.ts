@@ -200,7 +200,7 @@ describe('serializeSession', () => {
 
   it('preserves session metadata in header', async () => {
     const session = makeStoredSession({
-      permissionMode: 'ask' as any,
+      thinkingLevel: 'high',
     })
     await setupSessionDir(tmpDir, session)
 

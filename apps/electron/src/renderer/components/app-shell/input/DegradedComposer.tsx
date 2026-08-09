@@ -39,25 +39,43 @@ export const BasicComposerTextarea = React.forwardRef<RichTextInputHandle, Basic
   }, forwardedRef) {
     const { t } = useTranslation()
     const textareaRef = React.useRef<HTMLTextAreaElement>(null)
+    const [internalValue, setInternalValue] = React.useState(value)
+
+    React.useEffect(() => {
+      setInternalValue(value)
+    }, [value])
 
     React.useImperativeHandle(forwardedRef, () => ({
       focus: () => textareaRef.current?.focus(),
       blur: () => textareaRef.current?.blur(),
-      get value() { return textareaRef.current?.value ?? value },
-      get selectionStart() { return textareaRef.current?.selectionStart ?? value.length },
-      setValue: nextValue => onValueChange(nextValue),
+      get value() { return textareaRef.current?.value ?? internalValue },
+      get isEmpty() { return (textareaRef.current?.value ?? internalValue).trim().length === 0 },
+      get selectionStart() { return textareaRef.current?.selectionStart ?? internalValue.length },
+      setValue: nextValue => {
+        setInternalValue(nextValue)
+        onValueChange(nextValue)
+      },
+      replaceTextRange: (start, end, text) => {
+        const nextValue = internalValue.slice(0, start) + text + internalValue.slice(end)
+        setInternalValue(nextValue)
+        onValueChange(nextValue)
+      },
       setSelectionRange: (start, end) => textareaRef.current?.setSelectionRange(start, end),
       getBoundingClientRect: () => textareaRef.current?.getBoundingClientRect() ?? new DOMRect(),
       getCaretRect: () => null,
       element: null,
-    }), [onValueChange, value])
+    }), [internalValue, onValueChange])
 
     return (
       <div className="relative">
         <textarea
           ref={textareaRef}
-          value={value}
-          onChange={event => onValueChange(event.currentTarget.value)}
+          value={internalValue}
+          onChange={event => {
+            const nextValue = event.currentTarget.value
+            setInternalValue(nextValue)
+            onValueChange(nextValue)
+          }}
           onKeyDown={event => {
             if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return
             event.preventDefault()
@@ -70,7 +88,7 @@ export const BasicComposerTextarea = React.forwardRef<RichTextInputHandle, Basic
           disabled={disabled}
           rows={3}
           className={cn(
-            'block min-h-[88px] w-full resize-none bg-transparent pl-5 pr-12 pt-4 pb-3 text-sm text-foreground outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50',
+            'block min-h-[72px] w-full resize-none bg-transparent pb-2 pl-5 pr-12 pt-3 text-sm text-foreground outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50',
             className,
           )}
           style={maxHeight ? { maxHeight, overflowY: 'auto' } : undefined}
@@ -203,7 +221,7 @@ export function DegradedComposer({ sessionId, inputProps, onRetry }: DegradedCom
         disabled={disabled}
         onRetry={onRetry}
       />
-      <div className="flex min-h-12 items-center gap-2 border-t border-border/50 px-2 py-1.5">
+      <div className="flex min-h-12 items-center gap-2 px-2 py-1.5">
         {attachments.length > 0 && (
           <>
             <div className="inline-flex items-center gap-1.5 px-2 text-xs text-muted-foreground">

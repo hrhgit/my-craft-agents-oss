@@ -76,7 +76,7 @@
 
    Variants:
    - /50 = 50% alpha (transparency) - for borders, hovers, overlays
-   - -50 = 50% mix toward background (solid) - for Explore mode
+   - -50 = 50% mix toward background (solid)
 
    Example: bg-foreground/10, text-accent, bg-foreground-60
 ============================================================================= */
@@ -129,7 +129,7 @@
     rgba(0, 0, 0, calc(var(--shadow-blur-opacity) * 0.33)) 0px 24px 24px 0px;
 
   /* === MIX VARIANTS (solid interpolation toward background) === */
-  /* Use -2, -3, -5, -10, -20, ..., -90, -95 for solid colors (e.g., separators, Explore mode) */
+  /* Use -2, -3, -5, -10, -20, ..., -90, -95 for solid colors such as separators. */
   --foreground-1\.5: color-mix(in srgb, var(--foreground) 1.5%, var(--background));
   --foreground-2: color-mix(in srgb, var(--foreground) 2%, var(--background));
   --foreground-3: color-mix(in srgb, var(--foreground) 3%, var(--background));

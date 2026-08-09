@@ -424,6 +424,8 @@ export type ExtensionFrontendChannelScope = "session" | "workspace" | "global";
 export interface ExtensionFrontendChannelOptions {
 	scope: ExtensionFrontendChannelScope;
 	snapshot?: unknown;
+	/** Carry the latest snapshot into a newly created Session without feature-specific host code. */
+	sessionBootstrap?: boolean;
 	onMessage?: (message: unknown, ctx: ExtensionContext) => unknown | Promise<unknown>;
 }
 

@@ -31,9 +31,7 @@ import type { ToolResult } from '@mortise/session-tools-core';
  * skill_validate, browser_tool,
  * spawn_session, etc.).
  *
- * See also: blockWithReason() in packages/shared/src/agent/mode-manager.ts
- * which applies the same prefix for permission-mode blocks, and
- * stripErrorTags() in packages/ui/src/components/chat/turn-utils.ts which
+ * stripErrorTags() in packages/ui/src/components/chat/turn-utils.ts
  * removes the prefix for clean UI display.
  */
 /**

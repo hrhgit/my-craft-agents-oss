@@ -191,8 +191,6 @@ export interface EditPopoverProps {
   example?: string
   /** Context passed to the new chat session */
   context: EditContext
-  /** Permission mode for the new session (default: 'allow-all' / canonical: execute for fast execution) */
-  permissionMode?: CreateSessionOptions['permissionMode']
   /** Model tier hint: 'fast' uses the connection's mini model, 'default' uses the primary model */
   model?: 'fast' | 'default'
   /** System prompt preset for mini agent (e.g., 'mini' for focused edits) */
@@ -297,7 +295,6 @@ export function EditPopover({
   trigger,
   example,
   context,
-  permissionMode = 'allow-all',
   model,
   systemPromptPreset,
   width = 400, // Default 400px for compact chat embedding
@@ -542,7 +539,6 @@ export function EditPopover({
       const createOptions: CreateSessionOptions = {
         model: model || 'fast',
         systemPromptPreset: systemPromptPreset || 'mini',
-        permissionMode,
         hidden: true, // Hidden sessions use same App code path but don't appear in list
       }
       const newSession = await onCreateSession(workspace.id, createOptions)
@@ -563,7 +559,7 @@ export function EditPopover({
       )
     }
     return false
-  }, [context, displayLabel, inlineSessionId, workspace?.id, model, systemPromptPreset, permissionMode, onCreateSession, onSendMessage])
+  }, [context, displayLabel, inlineSessionId, workspace?.id, model, systemPromptPreset, onCreateSession, onSendMessage])
 
   // Legacy mode: navigates to chat in the same window
   const handleLegacySendMessage = useCallback(async (attempt: ComposerSubmissionAttempt) => {
@@ -574,12 +570,12 @@ export function EditPopover({
     const modelParam = model ? `&model=${encodeURIComponent(model)}` : ''
     const systemPromptParam = systemPromptPreset ? `&systemPrompt=${encodeURIComponent(systemPromptPreset)}` : ''
     // Navigate in same window by omitting window=focused parameter
-    const url = `mortise://action/new-session?input=${encodedInput}&send=true&mode=${permissionMode}&badges=${encodedBadges}${modelParam}${systemPromptParam}`
+    const url = `mortise://action/new-session?input=${encodedInput}&send=true&badges=${encodedBadges}${modelParam}${systemPromptParam}`
 
     window.electronAPI.openUrl(url)
     setOpen(false)
     return true
-  }, [context, displayLabel, model, systemPromptPreset, permissionMode, setOpen])
+  }, [context, displayLabel, model, systemPromptPreset, setOpen])
 
   return (
     <>

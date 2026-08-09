@@ -148,7 +148,7 @@ export const MODELS = {
 			provider: "amazon-bedrock",
 			baseUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
 			reasoning: true,
-			thinkingLevelMap: {"xhigh":"max"},
+			thinkingLevelMap: {"xhigh":"max","max":"max"},
 			input: ["text", "image"],
 			cost: {
 				input: 5,
@@ -270,7 +270,7 @@ export const MODELS = {
 			provider: "amazon-bedrock",
 			baseUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
 			reasoning: true,
-			thinkingLevelMap: {"xhigh":"max"},
+			thinkingLevelMap: {"xhigh":"max","max":"max"},
 			input: ["text", "image"],
 			cost: {
 				input: 16.5,
@@ -459,7 +459,7 @@ export const MODELS = {
 			provider: "amazon-bedrock",
 			baseUrl: "https://bedrock-runtime.eu-central-1.amazonaws.com",
 			reasoning: true,
-			thinkingLevelMap: {"xhigh":"max"},
+			thinkingLevelMap: {"xhigh":"max","max":"max"},
 			input: ["text", "image"],
 			cost: {
 				input: 5.5,
@@ -615,7 +615,7 @@ export const MODELS = {
 			provider: "amazon-bedrock",
 			baseUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
 			reasoning: true,
-			thinkingLevelMap: {"xhigh":"max"},
+			thinkingLevelMap: {"xhigh":"max","max":"max"},
 			input: ["text", "image"],
 			cost: {
 				input: 5,
@@ -1625,7 +1625,7 @@ export const MODELS = {
 			provider: "amazon-bedrock",
 			baseUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
 			reasoning: true,
-			thinkingLevelMap: {"xhigh":"max"},
+			thinkingLevelMap: {"xhigh":"max","max":"max"},
 			input: ["text", "image"],
 			cost: {
 				input: 5,
@@ -2005,7 +2005,7 @@ export const MODELS = {
 			baseUrl: "https://api.anthropic.com",
 			compat: {"forceAdaptiveThinking":true},
 			reasoning: true,
-			thinkingLevelMap: {"xhigh":"max"},
+			thinkingLevelMap: {"xhigh":"max","max":"max"},
 			input: ["text", "image"],
 			cost: {
 				input: 5,
@@ -3202,7 +3202,7 @@ export const MODELS = {
 			baseUrl: "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/anthropic",
 			compat: {"forceAdaptiveThinking":true},
 			reasoning: true,
-			thinkingLevelMap: {"xhigh":"max"},
+			thinkingLevelMap: {"xhigh":"max","max":"max"},
 			input: ["text", "image"],
 			cost: {
 				input: 5,
@@ -3989,7 +3989,7 @@ export const MODELS = {
 			baseUrl: "https://api.deepseek.com",
 			compat: {"requiresReasoningContentOnAssistantMessages":true,"thinkingFormat":"deepseek"},
 			reasoning: true,
-			thinkingLevelMap: {"minimal":null,"low":null,"medium":null,"high":"high","xhigh":"max"},
+			thinkingLevelMap: {"minimal":null,"low":null,"medium":null,"high":"high","xhigh":"max","max":"max"},
 			input: ["text"],
 			cost: {
 				input: 0.14,
@@ -4008,7 +4008,7 @@ export const MODELS = {
 			baseUrl: "https://api.deepseek.com",
 			compat: {"requiresReasoningContentOnAssistantMessages":true,"thinkingFormat":"deepseek"},
 			reasoning: true,
-			thinkingLevelMap: {"minimal":null,"low":null,"medium":null,"high":"high","xhigh":"max"},
+			thinkingLevelMap: {"minimal":null,"low":null,"medium":null,"high":"high","xhigh":"max","max":"max"},
 			input: ["text"],
 			cost: {
 				input: 0.435,
@@ -4376,7 +4376,7 @@ export const MODELS = {
 			headers: {"User-Agent":"GitHubCopilotChat/0.35.0","Editor-Version":"vscode/1.107.0","Editor-Plugin-Version":"copilot-chat/0.35.0","Copilot-Integration-Id":"vscode-chat"},
 			compat: {"forceAdaptiveThinking":true},
 			reasoning: true,
-			thinkingLevelMap: {"xhigh":"max"},
+			thinkingLevelMap: {"xhigh":"max","max":"max"},
 			input: ["text", "image"],
 			cost: {
 				input: 5,
@@ -8399,7 +8399,7 @@ export const MODELS = {
 			baseUrl: "https://opencode.ai/zen",
 			compat: {"forceAdaptiveThinking":true},
 			reasoning: true,
-			thinkingLevelMap: {"xhigh":"max"},
+			thinkingLevelMap: {"xhigh":"max","max":"max"},
 			input: ["text", "image"],
 			cost: {
 				input: 5,
@@ -8525,7 +8525,7 @@ export const MODELS = {
 			baseUrl: "https://opencode.ai/zen/v1",
 			compat: {"requiresReasoningContentOnAssistantMessages":true,"thinkingFormat":"deepseek"},
 			reasoning: true,
-			thinkingLevelMap: {"minimal":null,"low":null,"medium":null,"high":"high","xhigh":"max"},
+			thinkingLevelMap: {"minimal":null,"low":null,"medium":null,"high":"high","xhigh":"max","max":"max"},
 			input: ["text"],
 			cost: {
 				input: 0.14,
@@ -8544,7 +8544,7 @@ export const MODELS = {
 			baseUrl: "https://opencode.ai/zen/v1",
 			compat: {"requiresReasoningContentOnAssistantMessages":true,"thinkingFormat":"deepseek"},
 			reasoning: true,
-			thinkingLevelMap: {"minimal":null,"low":null,"medium":null,"high":"high","xhigh":"max"},
+			thinkingLevelMap: {"minimal":null,"low":null,"medium":null,"high":"high","xhigh":"max","max":"max"},
 			input: ["text"],
 			cost: {
 				input: 0,
@@ -8563,7 +8563,7 @@ export const MODELS = {
 			baseUrl: "https://opencode.ai/zen/v1",
 			compat: {"requiresReasoningContentOnAssistantMessages":true,"thinkingFormat":"deepseek"},
 			reasoning: true,
-			thinkingLevelMap: {"minimal":null,"low":null,"medium":null,"high":"high","xhigh":"max"},
+			thinkingLevelMap: {"minimal":null,"low":null,"medium":null,"high":"high","xhigh":"max","max":"max"},
 			input: ["text"],
 			cost: {
 				input: 1.74,
@@ -9272,7 +9272,7 @@ export const MODELS = {
 			baseUrl: "https://opencode.ai/zen/go/v1",
 			compat: {"requiresReasoningContentOnAssistantMessages":true,"thinkingFormat":"deepseek"},
 			reasoning: true,
-			thinkingLevelMap: {"minimal":null,"low":null,"medium":null,"high":"high","xhigh":"max"},
+			thinkingLevelMap: {"minimal":null,"low":null,"medium":null,"high":"high","xhigh":"max","max":"max"},
 			input: ["text"],
 			cost: {
 				input: 0.14,
@@ -9291,7 +9291,7 @@ export const MODELS = {
 			baseUrl: "https://opencode.ai/zen/go/v1",
 			compat: {"requiresReasoningContentOnAssistantMessages":true,"thinkingFormat":"deepseek"},
 			reasoning: true,
-			thinkingLevelMap: {"minimal":null,"low":null,"medium":null,"high":"high","xhigh":"max"},
+			thinkingLevelMap: {"minimal":null,"low":null,"medium":null,"high":"high","xhigh":"max","max":"max"},
 			input: ["text"],
 			cost: {
 				input: 0.435,
@@ -9790,7 +9790,7 @@ export const MODELS = {
 			provider: "openrouter",
 			baseUrl: "https://openrouter.ai/api/v1",
 			reasoning: true,
-			thinkingLevelMap: {"xhigh":"max"},
+			thinkingLevelMap: {"xhigh":"max","max":"max"},
 			input: ["text", "image"],
 			cost: {
 				input: 5,
@@ -10255,7 +10255,7 @@ export const MODELS = {
 			baseUrl: "https://openrouter.ai/api/v1",
 			compat: {"requiresReasoningContentOnAssistantMessages":true},
 			reasoning: true,
-			thinkingLevelMap: {"minimal":null,"low":null,"medium":null,"high":"high","xhigh":"xhigh"},
+			thinkingLevelMap: {"minimal":null,"low":null,"medium":null,"high":"high","xhigh":"xhigh","max":null},
 			input: ["text"],
 			cost: {
 				input: 0.098,
@@ -10274,7 +10274,7 @@ export const MODELS = {
 			baseUrl: "https://openrouter.ai/api/v1",
 			compat: {"requiresReasoningContentOnAssistantMessages":true},
 			reasoning: true,
-			thinkingLevelMap: {"minimal":null,"low":null,"medium":null,"high":"high","xhigh":"xhigh"},
+			thinkingLevelMap: {"minimal":null,"low":null,"medium":null,"high":"high","xhigh":"xhigh","max":null},
 			input: ["text"],
 			cost: {
 				input: 0.435,
@@ -15015,7 +15015,7 @@ export const MODELS = {
 			baseUrl: "https://ai-gateway.vercel.sh",
 			compat: {"forceAdaptiveThinking":true},
 			reasoning: true,
-			thinkingLevelMap: {"xhigh":"max"},
+			thinkingLevelMap: {"xhigh":"max","max":"max"},
 			input: ["text", "image"],
 			cost: {
 				input: 5,

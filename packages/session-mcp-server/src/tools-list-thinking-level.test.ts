@@ -5,7 +5,7 @@ import { dirname, resolve } from 'node:path'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 
-const CURRENT_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh']
+const CURRENT_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
 
 function inheritedEnvironment(overrides: Record<string, string>): Record<string, string> {
   return {
@@ -40,7 +40,6 @@ describe('session MCP tools/list schema', () => {
 
       expect(thinkingLevel?.enum).toEqual(CURRENT_LEVELS)
       expect(thinkingLevel?.enum).not.toContain('think')
-      expect(thinkingLevel?.enum).not.toContain('max')
     } finally {
       await client.close().catch(() => undefined)
       rmSync(root, { recursive: true, force: true })

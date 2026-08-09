@@ -26,6 +26,8 @@ import type {
 	Tool,
 	ToolCall,
 	Usage,
+	WebSearchContent,
+	WebSearchSource,
 } from "../types.ts";
 import type { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { shortHash } from "../utils/hash.ts";
@@ -306,10 +308,40 @@ export async function processResponsesStream<TApi extends Api>(
 	model: Model<TApi>,
 	options?: OpenAIResponsesStreamOptions,
 ): Promise<void> {
-	let currentItem: ResponseReasoningItem | ResponseOutputMessage | ResponseFunctionToolCall | null = null;
-	let currentBlock: ThinkingContent | TextContent | (ToolCall & { partialJson: string }) | null = null;
+	let currentItem:
+		| ResponseReasoningItem
+		| ResponseOutputMessage
+		| ResponseFunctionToolCall
+		| OpenAI.Responses.ResponseFunctionWebSearch
+		| null = null;
+	let currentBlock: ThinkingContent | TextContent | WebSearchContent | (ToolCall & { partialJson: string }) | null =
+		null;
 	const blocks = output.content;
 	const blockIndex = () => blocks.length - 1;
+	const searchBlocks = new Map<string, { block: WebSearchContent; index: number; startedAt: number }>();
+	const normalizeSources = (value: unknown): WebSearchSource[] => {
+		if (!Array.isArray(value)) return [];
+		return value.flatMap((source) => {
+			if (!source || typeof source !== "object") return [];
+			const item = source as Record<string, unknown>;
+			if (typeof item.url !== "string" || !item.url) return [];
+			let domain: string | undefined;
+			try {
+				domain = new URL(item.url).hostname;
+			} catch {
+				/* URL may be provider-relative */
+			}
+			return [
+				{
+					url: item.url,
+					title: typeof item.title === "string" ? item.title : undefined,
+					domain,
+					snippet: typeof item.snippet === "string" ? item.snippet : undefined,
+					citationId: typeof item.id === "string" ? item.id : undefined,
+				},
+			];
+		});
+	};
 
 	for await (const event of openaiStream) {
 		if (event.type === "response.created") {
@@ -337,6 +369,56 @@ export async function processResponsesStream<TApi extends Api>(
 				};
 				output.content.push(currentBlock);
 				stream.push({ type: "toolcall_start", contentIndex: blockIndex(), partial: output });
+			} else if (item.type === "web_search_call") {
+				const action = item.action as { query?: string; queries?: string[] } | undefined;
+				const block: WebSearchContent = {
+					type: "webSearch",
+					searchId: item.id,
+					query: action?.queries?.[0] ?? action?.query ?? "",
+					status: "running",
+					sources: [],
+					provider: model.provider,
+					source: "native",
+					raw: item,
+				};
+				output.content.push(block);
+				searchBlocks.set(item.id, { block, index: blockIndex(), startedAt: Date.now() });
+				stream.push({
+					type: "websearch_start",
+					contentIndex: blockIndex(),
+					searchId: item.id,
+					query: block.query,
+					source: "native",
+					provider: model.provider,
+					partial: output,
+				});
+			}
+		} else if (
+			event.type === "response.web_search_call.in_progress" ||
+			event.type === "response.web_search_call.searching"
+		) {
+			const state = searchBlocks.get(event.item_id);
+			if (state) {
+				stream.push({
+					type: "websearch_update",
+					contentIndex: state.index,
+					searchId: event.item_id,
+					sources: state.block.sources,
+					raw: state.block.raw,
+					partial: output,
+				});
+			}
+		} else if (event.type === "response.web_search_call.completed") {
+			const state = searchBlocks.get(event.item_id);
+			if (state) {
+				stream.push({
+					type: "websearch_update",
+					contentIndex: state.index,
+					searchId: event.item_id,
+					sources: state.block.sources,
+					raw: state.block.raw,
+					partial: output,
+				});
 			}
 		} else if (event.type === "response.reasoning_summary_part.added") {
 			if (currentItem && currentItem.type === "reasoning") {
@@ -503,6 +585,34 @@ export async function processResponsesStream<TApi extends Api>(
 
 				currentBlock = null;
 				stream.push({ type: "toolcall_end", contentIndex: blockIndex(), toolCall, partial: output });
+			} else if (item.type === "web_search_call") {
+				const state = searchBlocks.get(item.id);
+				if (state) {
+					const action = item.action as { sources?: unknown[]; queries?: string[]; query?: string } | undefined;
+					state.block.sources = normalizeSources(action?.sources);
+					state.block.query = action?.queries?.[0] ?? action?.query ?? state.block.query;
+					state.block.status = item.status === "failed" ? "failed" : "completed";
+					state.block.raw = item;
+					stream.push({
+						type: "websearch_update",
+						contentIndex: state.index,
+						searchId: item.id,
+						sources: state.block.sources,
+						raw: item,
+						partial: output,
+					});
+					stream.push({
+						type: "websearch_end",
+						contentIndex: state.index,
+						searchId: item.id,
+						status: state.block.status,
+						sources: state.block.sources,
+						raw: item,
+						durationMs: Math.max(0, Date.now() - state.startedAt),
+						partial: output,
+					});
+					searchBlocks.delete(item.id);
+				}
 			}
 		} else if (event.type === "response.completed") {
 			const response = event.response;

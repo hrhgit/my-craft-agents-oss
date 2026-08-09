@@ -49,3 +49,20 @@ export function getContextUsagePercent(
     contextWindow,
   }
 }
+
+/**
+ * Auto-compaction triggers at ~77.5% of the context window; the UI warns at 80%
+ * of that threshold (~62% of the full window) so the user is warned before the
+ * SDK auto-compacts. The usage ring turns red once usage crosses this point.
+ */
+export const CONTEXT_WARNING_THRESHOLD_PERCENT = Math.round(0.775 * 0.8 * 100) // ~62
+
+/** Whether context usage has crossed the pre-compaction warning threshold. */
+export function isContextWarning(
+  usage: { percent: number | null },
+  isCompacting?: boolean,
+): boolean {
+  return usage.percent !== null
+    && usage.percent >= CONTEXT_WARNING_THRESHOLD_PERCENT
+    && !isCompacting
+}

@@ -103,14 +103,11 @@ export {
   SESSION_TOOL_NAMES,
   SESSION_BACKEND_TOOL_NAMES,
   SESSION_REGISTRY_TOOL_NAMES,
-  SESSION_SAFE_ALLOWED_TOOL_NAMES,
-  SESSION_SAFE_BLOCKED_TOOL_NAMES,
   SESSION_TOOL_REGISTRY,
   // Filtered helper views
   getSessionToolDefs,
   getSessionBackendToolNames,
   getSessionToolRegistry,
-  getSessionSafeAllowedToolNames,
   normalizeSessionToolName,
   isSessionToolName,
   // JSON Schema converter

@@ -4,6 +4,10 @@ node_modules
 # output
 out
 dist
+!apps/electron/resources/pi-extensions/mortise-permissions/dist/
+!apps/electron/resources/pi-extensions/mortise-permissions/dist/ui/
+!apps/electron/resources/pi-extensions/mortise-permissions/dist/ui/*.js
+!apps/electron/resources/pi-extensions/mortise-permissions/dist/ui/*.css
 *.tgz
 .build
 apps/electron/release

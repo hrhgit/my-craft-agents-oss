@@ -7,9 +7,9 @@ import { createExtensionEventForwarder } from '../handlers/pi-extension-bridge'
 import { createScopedLogger, CONSOLE_LOGGER, type PlatformServices, type Logger } from '@mortise/server-core/runtime'
 import { basename, dirname, isAbsolute, join, relative } from 'path'
 import { existsSync } from 'fs'
-import { readFile, writeFile, mkdir, rename, rm, lstat, open } from 'fs/promises'
+import { readFile, writeFile, mkdir, rename, rm, readdir, rmdir, lstat, open } from 'fs/promises'
 import { randomUUID } from 'node:crypto'
-import { setPermissionMode, hydratePreviousPermissionMode, getPermissionModeDiagnostics, parsePermissionMode, type PermissionMode, unregisterSessionScopedToolCallbacks, mergeSessionScopedToolCallbacks, AbortReason, type BrowserPaneFns, generateConversationSummary } from '@mortise/shared/agent'
+import { unregisterSessionScopedToolCallbacks, mergeSessionScopedToolCallbacks, AbortReason, type BrowserPaneFns, generateConversationSummary } from '@mortise/shared/agent'
 import { requirePrimaryLocalWorkspaceRoot, type AgentEvent, type PlanArtifactV1, type PlanModeStateV1 } from '@mortise/core/types'
 import {
   resolveSessionProvider,
@@ -29,6 +29,7 @@ import {
   BackendExtensionRuntimeRegistry,
   backendTypeFromProcess,
   type BackendExtensionWorkspaceSnapshot,
+  type ExtensionBridgeEvent,
 } from '@mortise/shared/agent/backend'
 import { alternateMidStreamBehavior, readPiGlobalProviders, readPiGlobalSettings, getDefaultThinkingLevel, getMidStreamBehavior, resetManagedAnthropicAuthEnvVars, getPersistedUiLanguage, resolveTitleLanguageName, listSubagentTemplates, type PiExtensionReloadActiveSession, type PiExtensionReloadResult } from '@mortise/shared/config'
 import { SessionShareTransferService } from '@mortise/server-core/services'
@@ -43,7 +44,7 @@ import {
   type WorkspaceInfo,
 } from '@mortise/shared/config'
 import type { ActiveSessionInfo, SessionProcessingStatus } from '@mortise/core/types'
-import { getDefaultWorkspaceTopologyStore } from '@mortise/shared/workspaces'
+import { getDefaultWorkspaceTopologyStore, initializeWorkspace as initializeWorkspaceRegistration } from '@mortise/shared/workspaces'
 import {
   // Session persistence functions
   listSessions as listStoredSessions,
@@ -65,6 +66,7 @@ import {
   generateSessionId,
   sessionPersistenceQueue,
   getHeaderMetadataSignature,
+  durableMessageOutbox,
   findPiSessionProjectionById,
   appendPiBranchMessagesViaSessionManager,
   appendStoredMessagesViaPiSessionManager,
@@ -78,14 +80,17 @@ import {
   type StoredSession,
   type StoredMessage,
   type SessionHeader,
+  type MessageOutboxRecord,
+  type MessageOutboxStore,
   pickMortiseSessionMetadata,
   parsePlanCustomMessage,
   RemovedSessionFieldError,
 } from '@mortise/shared/sessions'
+import type { JsonValue } from '@mortise/shared/storage'
 import { ConfigWatcher, type ConfigWatcherCallbacks } from '@mortise/shared/config'
 import { getLastApiError } from '@mortise/shared/interceptor'
 import { restoreFiles } from '@mortise/shared/utils/bundle-files'
-import { CodedError, type Session, type SessionEvent, type FileAttachment, type SendMessageOptions, type UnreadSummary, type PiProjectionEventV1, type PiProjectionSnapshotV1, type ExtensionInteractionResponseV1, type ExtensionFileStateV1, validateExtensionFileStateV1, RPC_CHANNELS, SESSION_SETTLEMENT_ERROR_CODE, generateMessageId } from '@mortise/shared/protocol'
+import { CodedError, type Session, type SessionEvent, type FileAttachment, type SendMessageOptions, type UnreadSummary, type PiProjectionEventV1, type PiProjectionSnapshotV1, type ExtensionInteractionResponseV1, type ExtensionFileStateV1, validateExtensionFileStateV1, RPC_CHANNELS, SESSION_SETTLEMENT_ERROR_CODE, generateMessageId, type SessionPublicationFailure } from '@mortise/shared/protocol'
 import {
   ConversationProjector,
   resolvePiBranchTarget,
@@ -117,11 +122,51 @@ import {
   type SessionTurnControlHandle,
   type ToolSideEffectRecorder,
 } from '../session-control'
+import { ExtensionFrontendStateCache, type ExtensionFrontendStateEvent } from './extension-frontend-state-cache'
 
 // Import from server-core domain utilities
 import { sanitizeForTitle, shouldActivateBrowserOverlay, normalizeBrowserToolName, rollbackFailedBranchCreation, releaseBrowserOwnershipOnForcedStop } from '@mortise/server-core/domain'
 import { resizeImageForAPI, resizeIconBuffer } from '@mortise/server-core/services'
 export { sanitizeForTitle }
+
+function serializeOutboxAttachments(attachments: FileAttachment[] | undefined): JsonValue | undefined {
+  if (!attachments?.length) return undefined
+  return attachments.map(({ type, path, name, mimeType, size, storedPath, markdownPath }) => ({
+    type, path, name, mimeType, size,
+    ...(storedPath ? { storedPath } : {}),
+    ...(markdownPath ? { markdownPath } : {}),
+  })) as unknown as JsonValue
+}
+
+function serializeStoredAttachmentRefs(attachments: StoredAttachment[] | undefined): JsonValue | undefined {
+  if (!attachments?.length) return undefined
+  return attachments.map(({ id, type, name, mimeType, size, originalSize, storedPath, thumbnailPath, markdownPath, wasResized }) => ({
+    id,
+    type,
+    name,
+    mimeType,
+    size,
+    ...(originalSize !== undefined ? { originalSize } : {}),
+    ...(storedPath ? { storedPath } : {}),
+    ...(thumbnailPath ? { thumbnailPath } : {}),
+    ...(markdownPath ? { markdownPath } : {}),
+    ...(wasResized !== undefined ? { wasResized } : {}),
+  })) as unknown as JsonValue
+}
+
+function serializeSessionRecoveryOptions(session: {
+  name?: string
+  thinkingLevel?: string
+  model?: string
+  provider?: string
+}): JsonValue {
+  return {
+    ...(session.name ? { name: session.name } : {}),
+    ...(session.thinkingLevel ? { thinkingLevel: session.thinkingLevel } : {}),
+    ...(session.model ? { model: session.model } : {}),
+    ...(session.provider ? { provider: session.provider } : {}),
+  }
+}
 
 // Module-level platform ref — set once during init via setSessionPlatform()
 let _platform: PlatformServices | null = null
@@ -254,17 +299,17 @@ export class SessionPublicationDurabilityError extends Error {
   readonly terminal = true
   readonly outcome = 'unpublished' as const
   readonly sessionId: string
-  readonly stage: 'metadata' | 'projection'
+  readonly stage: 'runtime' | 'metadata' | 'projection'
   readonly cause: unknown
   readonly data: {
     sessionId: string
-    stage: 'metadata' | 'projection'
+    stage: 'runtime' | 'metadata' | 'projection'
     retryable: boolean
     terminal: true
     outcome: 'unpublished'
   }
 
-  constructor(sessionId: string, stage: 'metadata' | 'projection', cause: unknown) {
+  constructor(sessionId: string, stage: 'runtime' | 'metadata' | 'projection', cause: unknown) {
     super(`Failed to publish Session ${sessionId} during ${stage} durability: ${cause instanceof Error ? cause.message : String(cause)}`)
     this.name = 'SessionPublicationDurabilityError'
     this.retryable = (cause as { retryable?: unknown } | null)?.retryable !== false
@@ -720,12 +765,32 @@ export type SessionBackendFactory = (
   },
 ) => AgentBackend
 
+export type WorkspaceRuntimeBackendFactory = (args: {
+  workspace: Workspace
+  context: Parameters<typeof createBackendFromResolvedContext>[0]['context']
+  coreConfig: CoreBackendConfig
+}) => AgentBackend
+
 export interface SessionManagerOptions {
   resolveWorkspaceByNameOrId?: (nameOrId: string) => Workspace | null
   createSessionBackend?: SessionBackendFactory
   sessionTurnControl?: SessionTurnControl
   toolSideEffectRecorderFactory?: (workspaceId: string, sessionId: string) => ToolSideEffectRecorder
   extensionRuntime?: BackendExtensionRuntimeRegistry
+  /** Durable outbox boundary; injectable for isolated recovery/durability tests. */
+  messageOutbox?: MessageOutboxStore
+  /** Optional Workspace warmup backend used by focused runtime tests. */
+  createWorkspaceRuntimeBackend?: WorkspaceRuntimeBackendFactory
+}
+
+interface WorkspaceRuntimeWarmup {
+  workspaceId: string
+  status: 'warming' | 'ready' | 'degraded'
+  startedAt: number
+  completedAt?: number
+  error?: string
+  agent?: AgentBackend
+  ready: Promise<void>
 }
 
 export class SessionFollowUpQueueFullError extends Error {
@@ -782,10 +847,8 @@ interface ManagedSession {
   // See: packages/shared/src/agent/tool-matching.ts
   // Session name (user-defined or AI-generated)
   name?: string
-  /** Permission mode for this session ('safe', 'ask', 'allow-all') */
-  permissionMode?: PermissionMode
-  /** Previous permission mode (preserved across restarts for session_state modeTransition context) */
-  previousPermissionMode?: PermissionMode
+  /** Opaque Extension-owned state captured before the Session existed. */
+  extensionBootstrap?: import('@mortise/shared/protocol').ExtensionSessionBootstrapV1
   /** Session-authoritative state published by the Pi Plan Mode extension. */
   planModeState?: PlanModeStateV1
   /** Durable Accept & Compact handoff state. */
@@ -861,6 +924,7 @@ interface ManagedSession {
     messageId?: string  // Pre-generated ID for matching with UI
     optimisticMessageId?: string  // Frontend's ID for reliable event matching
     onAck?: (messageId: string) => void
+    onAccepted?: (messageId: string) => void
     onReject?: (error: unknown) => void
     // A queued follow-up that lost the next-turn control race remains visible
     // in the backend-local pending area, but must not be replayed implicitly.
@@ -903,11 +967,13 @@ interface ManagedSession {
   // Whether this session is hidden from session list (e.g., mini edit sessions)
   hidden?: boolean
   // Ordinary new conversations remain internal until Pi atomically persists
-  // the first assistant message. Runtime-only; never serialized.
+  // the first user message. Runtime-only; never serialized.
   publicationState?: 'provisional' | 'publishing' | 'abandoning'
+  pendingPublicationFailure?: SessionPublicationFailure
   publicationPromise?: Promise<boolean>
   beforePublish?: (session: Session) => Promise<void> | void
   abandonPromise?: Promise<void>
+  pendingTitleUserMessage?: string
   branchFromMessageId?: string
   // Branch context strategy:
   // - sdk-fork: provider-level fork from parent SDK session
@@ -968,7 +1034,7 @@ export function createManagedSession(
   ) as Partial<ManagedSession>
 
   const managed = {
-    // Spread all session-like fields from source (name, permissionMode, model, etc.)
+    // Spread all session-like fields from source (name, model, etc.)
     // This ensures new persistent fields automatically flow through without manual copying.
     ...sourceFields,
     // Map mortiseId → id (ManagedSession 内部用 id 字段，值等于 SessionHeader.mortiseId)
@@ -988,7 +1054,7 @@ export function createManagedSession(
     backgroundShellCommands: new Map(),
     backgroundTaskOutputs: new Map(),
     messagesLoaded: false,
-    // Caller overrides (permissionMode defaults, thinkingLevel, messagesLoaded, etc.)
+    // Caller overrides (thinkingLevel, messagesLoaded, etc.)
     ...overrides,
   } as ManagedSession
 
@@ -1196,6 +1262,71 @@ function needsPiProjectionWallClockBackfill(snapshot: PiProjectionSnapshotV1): b
   })
 }
 
+function isPiProjectionSnapshotProcessing(snapshot: PiProjectionSnapshotV1): boolean {
+  const lifecycle = snapshot.entities
+    .filter(entity => entity.kind === 'agent_start' || entity.kind === 'agent_end'
+      || entity.kind === 'agent_settled'
+      || entity.kind === 'turn_start' || entity.kind === 'turn_end'
+      || entity.kind === 'compaction_start' || entity.kind === 'compaction_end'
+      || entity.kind === 'runtime_error')
+    .sort((a, b) => b.lastSeq - a.lastSeq)[0]
+  const payload = lifecycle?.payload && typeof lifecycle.payload === 'object'
+    ? lifecycle.payload as Record<string, unknown>
+    : undefined
+  return lifecycle?.kind === 'agent_start'
+    || lifecycle?.kind === 'turn_start'
+    || lifecycle?.kind === 'compaction_start'
+    || (lifecycle?.kind === 'agent_end' && payload?.settlementPending === true)
+}
+
+/**
+ * A crashed runtime has no trustworthy process-death timestamp. Use the last
+ * fully persisted message as the conservative end of its measurable work.
+ */
+function getLastCompletePiMessageTime(snapshot: PiProjectionSnapshotV1): number | undefined {
+  const messages = new Map<string, { lastSeq: number; lastAt?: number; complete: boolean }>()
+
+  for (const entity of snapshot.entities) {
+    if (entity.entityType !== 'content_block'
+      || !entity.payload || typeof entity.payload !== 'object' || Array.isArray(entity.payload)) continue
+    const payload = entity.payload as Record<string, unknown>
+    if (payload.role !== 'user' && payload.role !== 'assistant') continue
+
+    const messageId = typeof payload.messageId === 'string' && payload.messageId
+      ? payload.messageId
+      : entity.entityId
+    const queueStatus = payload.queueStatus
+    const blockComplete = payload.role === 'user'
+      ? payload.streaming !== true
+        && queueStatus !== 'queued' && queueStatus !== 'cancelled' && queueStatus !== 'interrupted'
+      : payload.streaming === false
+        && (typeof payload.stopReason === 'string'
+          || typeof payload.isIntermediate === 'boolean'
+          || typeof payload.isFinal === 'boolean')
+    const timestamps = [entity.createdAt, entity.updatedAt, payload.timestamp]
+      .filter((value): value is number => typeof value === 'number' && Number.isFinite(value) && value >= 0)
+    const blockAt = timestamps.length > 0 ? Math.max(...timestamps) : undefined
+    const current = messages.get(messageId)
+    messages.set(messageId, {
+      lastSeq: Math.max(current?.lastSeq ?? 0, entity.lastSeq),
+      lastAt: blockAt === undefined
+        ? current?.lastAt
+        : Math.max(current?.lastAt ?? 0, blockAt),
+      complete: (current?.complete ?? true) && blockComplete,
+    })
+  }
+
+  return [...messages.values()]
+    .filter(message => message.complete && message.lastAt !== undefined)
+    .sort((a, b) => b.lastSeq - a.lastSeq)[0]?.lastAt
+}
+
+function getLastPersistedPiProjectionTime(snapshot: PiProjectionSnapshotV1): number | undefined {
+  const timestamps = snapshot.entities.flatMap(entity => [entity.createdAt, entity.updatedAt])
+    .filter((value): value is number => typeof value === 'number' && Number.isFinite(value) && value >= 0)
+  return timestamps.length > 0 ? Math.max(...timestamps) : undefined
+}
+
 /** Return true only for an explicitly configured Pi provider key. */
 function hasConfiguredPiProvider(provider?: string): boolean {
   return !!provider && Object.hasOwn(readPiGlobalProviders(), provider)
@@ -1234,7 +1365,9 @@ function managedToSession(
     messages: [],
     isProcessing: m.isProcessing,
     ...(m.deleting ? { deletionState: 'deleting' as const } : {}),
-    ...(m.pendingSettlementReason || m.settlementPromise
+    ...(m.pendingPublicationFailure
+      ? { pendingFailure: m.pendingPublicationFailure }
+      : m.pendingSettlementReason || m.settlementPromise
       ? {
           pendingFailure: {
             code: SESSION_SETTLEMENT_ERROR_CODE,
@@ -1266,6 +1399,7 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
   private readonly toolSideEffectRecorderFactory: (workspaceId: string, sessionId: string) => ToolSideEffectRecorder
   private readonly toolSideEffectWrites = new Map<string, Promise<void>>()
   private sessions: Map<string, ManagedSession> = new Map()
+  private readonly extensionFrontendStates = new ExtensionFrontendStateCache()
   private extensionReloadPromise: Promise<PiExtensionReloadResult> | null = null
   private piProjectionBySession = new Map<string, ConversationProjector>()
   private piProjectionRetiredRuntimeIds = new Map<string, Set<string>>()
@@ -1321,7 +1455,6 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
           sharedId: managed.sharedId,
           sharedUrl: managed.sharedUrl,
           name: managed.name,
-          permissionMode: managed.permissionMode,
         }
       },
       loadStoredSession: session => loadStoredSession(session.workspaceId, session.id),
@@ -1350,10 +1483,7 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
         return managed ? this.generateRemoteTransferSummary(managed) : null
       },
       createImported: async (workspaceId, payload) => {
-        const session = await this.createSession(workspaceId, {
-          name: payload.name,
-          permissionMode: payload.permissionMode,
-        })
+        const session = await this.createSession(workspaceId, { name: payload.name })
         const managed = this.sessions.get(session.id)
         if (!managed) throw new Error(`Transferred session ${session.id} was not created`)
         managed.transferredSessionSummary = payload.summary
@@ -1368,9 +1498,12 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
   // Config watchers for live updates - one per workspace
   private configWatchers: Map<string, ConfigWatcher> = new Map()
   private readonly extensionRuntime: BackendExtensionRuntimeRegistry
+  private readonly messageOutbox: MessageOutboxStore
+  private readonly createWorkspaceRuntimeBackend: WorkspaceRuntimeBackendFactory
+  private readonly workspaceRuntimeWarmups = new Map<string, WorkspaceRuntimeWarmup>()
   // Canonical V3 host runtime - one scheduler/store/ledger owner per workspace.
   private automationHosts: Map<string, AutomationWorkspaceHostV3> = new Map()
-  private automationSessionMetadata = new Map<string, { permissionMode?: string; sessionName?: string }>()
+  private automationHostInitializationErrors = new Map<string, string>()
   // Promise deduplication for lazy-loading messages (prevents race conditions)
   private messageLoadingPromises: Map<string, Promise<void>> = new Map()
   /**
@@ -1417,6 +1550,13 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
     this.extensionRuntime = options.extensionRuntime ?? new BackendExtensionRuntimeRegistry({
       backendType: backendTypeFromProcess(),
     })
+    this.messageOutbox = options.messageOutbox ?? durableMessageOutbox
+    this.createWorkspaceRuntimeBackend = options.createWorkspaceRuntimeBackend
+      ?? ((args) => createBackendFromResolvedContext({
+        context: args.context,
+        coreConfig: args.coreConfig,
+        hostRuntime: buildBackendHostRuntimeContext(),
+      }))
     this.toolSideEffectRecorderFactory = options.toolSideEffectRecorderFactory
       ?? ((workspaceId, sessionId) => new FileToolSideEffectLedger(workspaceId, sessionId))
   }
@@ -1689,7 +1829,8 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
   setupConfigWatcher(workspaceRootPath: string, workspaceId: string): void {
     // Check if already watching this workspace
     if (this.configWatchers.has(workspaceRootPath)) {
-      return // Already watching this workspace
+      this.setupAutomationHost(workspaceRootPath, workspaceId)
+      return
     }
 
     sessionLog.info(`Setting up ConfigWatcher for workspace: ${workspaceId} (${workspaceRootPath})`)
@@ -1759,41 +1900,47 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
           }
         }
 
-        void this.updateAutomationSessionMetadata(workspaceRootPath, workspaceId, sessionId, {
-          permissionMode: header.permissionMode,
-          sessionName: header.name,
-        }).catch(error => sessionLog.error('[Automations] Failed to emit Session metadata event:', error))
-
       },
     }
 
-    const watcher = new ConfigWatcher(workspaceRootPath, callbacks)
+    const watcher = new ConfigWatcher(workspaceRootPath, callbacks, workspaceId)
     watcher.start()
     this.configWatchers.set(workspaceRootPath, watcher)
 
-    if (!this.automationHosts.has(workspaceRootPath)) {
+    this.setupAutomationHost(workspaceRootPath, workspaceId)
+  }
+
+  private setupAutomationHost(workspaceRootPath: string, workspaceId: string): void {
+    if (!this.automationHosts.has(workspaceId)) {
       const executeWebhook = createAutomationWebhookExecutor({
         resolveSecret: {
           resolve: (reference, secretWorkspaceId) =>
             getCredentialManager().getAutomationSecret(secretWorkspaceId, reference.id),
         },
       })
-      const host = new AutomationWorkspaceHostV3({
-        workspaceRootPath,
-        workspaceId,
-        writerId: `${process.env.MORTISE_BUILD_ID ?? 'mortise'}:${process.pid}:${workspaceId}`,
-        callbacks: {
-          prompt: (action, context) => this.executeAutomationPromptAction(action, context),
-          webhook: executeWebhook,
-        },
-        validateSession: (sessionId, expectedWorkspaceId) => this.sessions.get(sessionId)?.workspace.id === expectedWorkspaceId,
-        getCurrentLocationId: () => this.sessions.values().find(session => session.workspace.id === workspaceId)?.workspace.primaryLocationId,
-        onChanged: change => this.broadcastAutomationsChanged(workspaceId, change),
-        onError: error => sessionLog.error(`[Automations] ${workspaceId}:`, error),
-      })
-      host.start()
-      this.automationHosts.set(workspaceId, host)
-      sessionLog.info(`Initialized canonical Automations V3 host for workspace ${workspaceId}`)
+      try {
+        const host = new AutomationWorkspaceHostV3({
+          workspaceRootPath,
+          workspaceId,
+          writerId: `${process.env.MORTISE_BUILD_ID ?? 'mortise'}:${process.pid}:${workspaceId}`,
+          callbacks: {
+            prompt: (action, context) => this.executeAutomationPromptAction(action, context),
+            webhook: executeWebhook,
+          },
+          validateSession: (sessionId, expectedWorkspaceId) => this.sessions.get(sessionId)?.workspace.id === expectedWorkspaceId,
+          getCurrentLocationId: () => this.sessions.values().find(session => session.workspace.id === workspaceId)?.workspace.primaryLocationId,
+          onChanged: change => this.broadcastAutomationsChanged(workspaceId, change),
+          onError: error => sessionLog.error(`[Automations] ${workspaceId}:`, error),
+        })
+        host.start()
+        this.automationHosts.set(workspaceId, host)
+        this.automationHostInitializationErrors.delete(workspaceId)
+        sessionLog.info(`Initialized canonical Automations V3 host for workspace ${workspaceId}`)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        this.automationHostInitializationErrors.set(workspaceId, message)
+        sessionLog.error(`[Automations] Failed to initialize workspace ${workspaceId}:`, error)
+      }
     }
   }
 
@@ -1903,11 +2050,7 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
       const snapshot = JSON.parse(raw) as PiProjectionSnapshotV1
       const projector = new ConversationProjector(sessionId, snapshot.runtimeId, snapshot)
       if (!needsPiProjectionWallClockBackfill(snapshot)) {
-        this.piProjectionBySession.set(sessionId, projector)
-        const restored = projector.createSnapshot()
-        syncPiProjectionComputedMetadata(managed, restored)
-        this.recoverQueuedProjectionMessages(managed, restored)
-        return restored
+        return this.installRestoredPiProjection(managed, projector)
       }
       sessionLog.info(`Rebuilding legacy Pi projection timestamps for ${sessionId}`)
     } catch (error) {
@@ -1930,16 +2073,36 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
         piProjection,
       )
       const projector = new ConversationProjector(sessionId, snapshot.runtimeId, snapshot)
-      this.piProjectionBySession.set(sessionId, projector)
+      const rebuilt = this.installRestoredPiProjection(managed, projector)
       this.persistPiProjection(managed, projector.createSnapshot())
-      const rebuilt = projector.createSnapshot()
-      syncPiProjectionComputedMetadata(managed, rebuilt)
-      this.recoverQueuedProjectionMessages(managed, rebuilt)
       return rebuilt
     } catch (error) {
       sessionLog.warn(`Failed to rebuild Pi projection snapshot for ${sessionId}: ${error instanceof Error ? error.message : error}`)
       return null
     }
+  }
+
+  private installRestoredPiProjection(
+    managed: ManagedSession,
+    projector: ConversationProjector,
+  ): PiProjectionSnapshotV1 {
+    this.piProjectionBySession.set(managed.id, projector)
+    const restored = projector.createSnapshot()
+    if (!managed.isProcessing && !managed.agent?.isProcessing()
+      && isPiProjectionSnapshotProcessing(restored)) {
+      const lastCompleteMessageAt = getLastCompletePiMessageTime(restored)
+      const endedAt = lastCompleteMessageAt ?? getLastPersistedPiProjectionTime(restored)
+      sessionLog.warn(
+        `Recovered stale running Pi projection for ${managed.id}; closing at ${endedAt ?? 'unknown persisted time'}`
+          + (lastCompleteMessageAt === undefined && endedAt !== undefined ? ' (no complete message)' : ''),
+      )
+      this.closeStalePiProjection(managed.id, endedAt ?? null, 'host_restart')
+    }
+
+    const reconciled = projector.createSnapshot()
+    syncPiProjectionComputedMetadata(managed, reconciled)
+    this.recoverQueuedProjectionMessages(managed, reconciled)
+    return reconciled
   }
 
   private recoverQueuedProjectionMessages(
@@ -2115,37 +2278,6 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
     this.enqueuePiProjectionPersist(managed, snapshot)
   }
 
-  private async updateAutomationSessionMetadata(
-    workspaceRootPath: string,
-    workspaceId: string,
-    sessionId: string,
-    next: { permissionMode?: string; sessionName?: string },
-  ): Promise<void> {
-    const previous = this.automationSessionMetadata.get(sessionId)
-    this.automationSessionMetadata.set(sessionId, next)
-    if (!previous || previous.permissionMode === next.permissionMode) return
-    const host = this.automationHosts.get(workspaceId)
-    if (!host) return
-    const result = await host.acceptEvent({
-      specversion: '1.0',
-      id: randomUUID(),
-      source: `mortise://session/${sessionId}`,
-      type: 'PermissionModeChange',
-      time: new Date().toISOString(),
-      datacontenttype: 'application/json',
-      mortisesessionid: sessionId,
-      data: {
-        sessionId,
-        sessionName: next.sessionName ?? '',
-        oldMode: previous.permissionMode ?? '',
-        newMode: next.permissionMode ?? '',
-      },
-    }, { sourceKind: 'mortise', matchValue: next.permissionMode ?? '' })
-    if (result.status !== 'accepted' && result.status !== 'duplicate') {
-      throw new Error(result.error?.message ?? `Session event rejected: ${result.status}`)
-    }
-  }
-
   private enqueuePiProjectionPersist(managed: ManagedSession, snapshot: PiProjectionSnapshotV1): void {
     this.piProjectionPendingSnapshots.set(managed.id, snapshot)
     if (this.piProjectionWrites.has(managed.id)) return
@@ -2214,13 +2346,26 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
       // client connect. This is critical for headless servers where no UI may
       // ever connect, yet scheduled/event-driven automations must still fire.
       const workspaces = getWorkspaces()
+      // Global extensions are application-scoped. Project extensions and Pi
+      // runtimes are opened only when a Workspace is actually attached by a
+      // client, so unopened Workspaces do not execute project code at boot.
+      if (typeof (this.extensionRuntime as Partial<BackendExtensionRuntimeRegistry>).openGlobal === 'function') {
+        void this.extensionRuntime.openGlobal().catch(error => {
+          sessionLog.warn(`Global Extension warmup degraded: ${error instanceof Error ? error.message : error}`)
+        })
+      }
       for (const workspace of workspaces) {
-        this.setupConfigWatcher(requirePrimaryLocalWorkspaceRoot(workspace), workspace.id)
-        await this.openWorkspaceExtensions(workspace)
+        try {
+          const rootPath = requirePrimaryLocalWorkspaceRoot(workspace)
+          this.setupConfigWatcher(rootPath, workspace.id)
+        } catch (error) {
+          sessionLog.warn(`Workspace infrastructure initialization degraded for ${workspace.id}: ${error instanceof Error ? error.message : error}`)
+        }
       }
 
       // Load existing sessions from disk
       this.loadSessionsFromDisk()
+      void this.recoverPendingMessageOutbox()
 
       // Signal that initialization is complete — IPC handlers waiting on initGate will proceed
       this.initGate.markReady()
@@ -2257,15 +2402,7 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
             }
           }
 
-          // Initialize mode-manager state for restored sessions even before agent creation.
-          // This keeps diagnostics/effective mode aligned with persisted session metadata.
-          setPermissionMode(meta.mortiseId, managed.permissionMode ?? 'ask', { changedBy: 'restore' })
-          if (managed.previousPermissionMode) {
-            hydratePreviousPermissionMode(meta.mortiseId, managed.previousPermissionMode)
-          }
-
           this.sessions.set(meta.mortiseId, managed)
-          this.automationSessionMetadata.set(meta.mortiseId, { permissionMode: meta.permissionMode, sessionName: managed.name })
 
           totalSessions++
         }
@@ -2371,6 +2508,156 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
     return getWorkspaces()
   }
 
+  private removeMessageOutboxBestEffort(clientMutationId: string): void {
+    try {
+      this.messageOutbox.remove(clientMutationId)
+    } catch (error) {
+      sessionLog.warn(`Failed to clean acknowledged message outbox ${clientMutationId}: ${error instanceof Error ? error.message : error}`)
+    }
+  }
+
+  private outboxAttempt(clientMutationId: string): number {
+    return this.messageOutbox.listPending().find(record => record.clientMutationId === clientMutationId)?.attempt ?? 1
+  }
+
+  private async hasPersistedOutboxMutation(record: MessageOutboxRecord, managed: ManagedSession): Promise<boolean> {
+    const projection = await findPiSessionProjectionById(
+      record.workspaceId,
+      requirePrimaryLocalWorkspaceRoot(managed.workspace),
+      record.sessionId,
+    )
+    const entries = (projection as { entries?: unknown[] } | null)?.entries ?? []
+    return entries.some(entry => {
+      if (!entry || typeof entry !== 'object') return false
+      const message = (entry as { message?: unknown }).message
+      return Boolean(message && typeof message === 'object'
+        && (message as { clientMutationId?: unknown }).clientMutationId === record.clientMutationId)
+    })
+  }
+
+  /** Reconcile Mortise-accepted messages after a process crash. */
+  private async recoverPendingMessageOutbox(): Promise<void> {
+    let pending: MessageOutboxRecord[]
+    try {
+      pending = this.messageOutbox.listPending()
+    } catch (error) {
+      sessionLog.warn(`Failed to read message outbox during recovery: ${error instanceof Error ? error.message : error}`)
+      return
+    }
+    for (const record of pending) {
+      let managed = this.sessions.get(record.sessionId)
+      if (!managed && record.provisional) {
+        const workspace = this.resolveWorkspaceByNameOrId(record.workspaceId)
+        if (!workspace) {
+          this.messageOutbox.update(record.clientMutationId, {
+            status: 'failed',
+            updatedAt: Date.now(),
+            error: `Workspace ${record.workspaceId} is unavailable during outbox recovery`,
+          })
+          continue
+        }
+        try {
+          await this.createSessionInternal(
+            record.workspaceId,
+            record.sessionOptions as unknown as import('@mortise/shared/protocol').CreateSessionOptions | undefined,
+            true,
+            record.sessionId,
+          )
+          managed = this.sessions.get(record.sessionId)
+        } catch (error) {
+          this.messageOutbox.update(record.clientMutationId, {
+            status: 'failed',
+            updatedAt: Date.now(),
+            error: error instanceof Error ? error.message : String(error),
+          })
+          continue
+        }
+      }
+      if (!managed) {
+        this.messageOutbox.update(record.clientMutationId, {
+          status: 'failed',
+          updatedAt: Date.now(),
+          error: `Session ${record.sessionId} is unavailable during outbox recovery`,
+        })
+        continue
+      }
+      try {
+        const persisted = await this.hasPersistedOutboxMutation(record, managed)
+        if (persisted) {
+          this.messageOutbox.update(record.clientMutationId, { status: 'pi_persisted', updatedAt: Date.now() })
+          if (managed.publicationState) {
+            try {
+              await this.publishProvisionalSessionIfReady(managed)
+            } catch (error) {
+              const publicationError = error instanceof SessionPublicationDurabilityError
+                ? error
+                : new SessionPublicationDurabilityError(managed.id, 'runtime', error)
+              managed.pendingPublicationFailure = {
+                code: publicationError.code,
+                message: publicationError.message,
+                data: publicationError.data,
+              }
+              this.messageOutbox.update(record.clientMutationId, {
+                status: 'failed',
+                updatedAt: Date.now(),
+                error: publicationError.message,
+              })
+              if (record.callerClientId) {
+                this.sendEventToClient({
+                  type: 'session_failure',
+                  sessionId: managed.id,
+                  error: managed.pendingPublicationFailure,
+                }, record.callerClientId)
+              }
+              continue
+            }
+          }
+          if (!managed.publicationState) this.removeMessageOutboxBestEffort(record.clientMutationId)
+          continue
+        }
+        sessionLog.info(`Replaying Mortise-accepted message ${record.clientMutationId}`)
+        void this.sendMessage(
+          record.sessionId,
+          record.message,
+          record.attachments as unknown as FileAttachment[] | undefined,
+          record.storedAttachments as unknown as StoredAttachment[] | undefined,
+          record.options as unknown as SendMessageOptions | undefined,
+          record.clientMutationId,
+          false,
+          undefined,
+          { callerClientId: record.callerClientId },
+        ).catch(error => {
+          const publicationError = error instanceof SessionPublicationDurabilityError
+            ? error
+            : null
+          if (publicationError) {
+            managed.pendingPublicationFailure = {
+              code: publicationError.code,
+              message: publicationError.message,
+              data: publicationError.data,
+            }
+            if (record.callerClientId) {
+              this.sendEventToClient({
+                type: 'session_failure',
+                sessionId: managed.id,
+                error: managed.pendingPublicationFailure,
+              }, record.callerClientId)
+            }
+          }
+          this.messageOutbox.update(record.clientMutationId, {
+            status: 'failed',
+            updatedAt: Date.now(),
+            error: error instanceof Error ? error.message : String(error),
+          })
+        })
+      } catch (error) {
+        this.messageOutbox.update(record.clientMutationId, {
+          status: 'failed', updatedAt: Date.now(), error: error instanceof Error ? error.message : String(error),
+        })
+      }
+    }
+  }
+
   async openWorkspaceExtensions(workspace: Workspace | WorkspaceInfo): Promise<BackendExtensionWorkspaceSnapshot> {
     return this.extensionRuntime.openWorkspace(
       workspace.id,
@@ -2378,8 +2665,163 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
     )
   }
 
+  /**
+   * Prepare one independent Pi runtime for an opened Workspace. The runtime
+   * owns its own Extension instances, while the shared Pi host can reuse the
+   * compiled module/resource caches for later Session runtimes.
+   */
+  private ensureWorkspaceRuntimeWarmup(workspace: Workspace): Promise<void> {
+    const existing = this.workspaceRuntimeWarmups.get(workspace.id)
+    if (existing) return existing.ready
+
+    const startedAt = Date.now()
+    const state: WorkspaceRuntimeWarmup = {
+      workspaceId: workspace.id,
+      status: 'warming',
+      startedAt,
+      ready: Promise.resolve(),
+    }
+    const warmup = (async () => {
+      writeRuntimeLog('info', {
+        scope: 'session',
+        event: 'workspace.runtime.prepare.begin',
+        meta: { workspaceId: workspace.id },
+      })
+      let agent: AgentBackend | undefined
+      try {
+        const workspaceRootPath = requirePrimaryLocalWorkspaceRoot(workspace)
+        const context = resolveBackendContext({})
+        const providerConfig = context.providerConfig
+        const forwardExtensionEvent = createExtensionEventForwarder(
+          this.eventSink,
+          workspace.id,
+          undefined,
+          this.extensionRuntime.backendType,
+        )
+        const onExtensionEvent = (event: ExtensionBridgeEvent) => {
+          if (event.type === 'extension_frontend_state' || event.type === 'extension_contributions_runtime_reset') {
+            const routedEvent = {
+              ...event,
+              sessionId: '',
+              workspaceId: workspace.id,
+              backendType: this.extensionRuntime.backendType,
+            } as ExtensionFrontendStateEvent | Extract<ExtensionBridgeEvent, { type: 'extension_contributions_runtime_reset' }>
+            this.extensionFrontendStates.apply(routedEvent)
+            forwardExtensionEvent(routedEvent)
+            return
+          }
+          forwardExtensionEvent(event)
+        }
+        const coreConfig: CoreBackendConfig = {
+          workspace,
+          model: context.resolvedModel,
+          miniModel: providerConfig?.models?.[0]?.id,
+          thinkingLevel: getDefaultThinkingLevel(),
+          isHeadless: true,
+          skipConfigWatcher: true,
+          envOverrides: { MORTISE_WORKSPACE_PATH: workspaceRootPath },
+          onExtensionEvent,
+        }
+        agent = this.createWorkspaceRuntimeBackend({ workspace, context, coreConfig })
+        state.agent = agent
+        await agent.postInit()
+        await agent.prepareRuntime?.()
+        state.status = 'ready'
+        state.completedAt = Date.now()
+        writeRuntimeLog('info', {
+          scope: 'session',
+          event: 'workspace.runtime.prepare.ready',
+          meta: {
+            workspaceId: workspace.id,
+            durationMs: Date.now() - startedAt,
+          },
+        })
+      } catch (error) {
+        state.status = 'degraded'
+        state.completedAt = Date.now()
+        state.error = error instanceof Error ? error.message : String(error)
+        if (agent) {
+          try {
+            agent.destroy()
+          } catch (destroyError) {
+            sessionLog.warn(`Failed to dispose degraded Workspace warmup ${workspace.id}: ${destroyError instanceof Error ? destroyError.message : destroyError}`)
+          }
+        }
+        state.agent = undefined
+        writeRuntimeLog('warn', {
+          scope: 'session',
+          event: 'workspace.runtime.prepare.degraded',
+          meta: {
+            workspaceId: workspace.id,
+            durationMs: Date.now() - startedAt,
+            error: state.error,
+          },
+        })
+      }
+    })()
+    state.ready = warmup
+    this.workspaceRuntimeWarmups.set(workspace.id, state)
+    return warmup
+  }
+
+  private async disposeWorkspaceRuntimeWarmup(workspaceId: string, reason: string): Promise<void> {
+    const state = this.workspaceRuntimeWarmups.get(workspaceId)
+    if (!state) return
+    await state.ready.catch(() => undefined)
+    this.workspaceRuntimeWarmups.delete(workspaceId)
+    if (!state.agent) return
+    try {
+      if (state.agent.disposeForRestart) await state.agent.disposeForRestart()
+      else state.agent.destroy()
+    } catch (error) {
+      sessionLog.warn(`Failed to dispose Workspace warmup ${workspaceId} (${reason}): ${error instanceof Error ? error.message : error}`)
+    }
+  }
+
+  private async waitForWorkspaceRuntimeWarmup(workspace: Workspace): Promise<void> {
+    const state = this.workspaceRuntimeWarmups.get(workspace.id)
+    if (state?.status === 'warming') await state.ready
+  }
+
+  /**
+   * Complete the workspace-scoped runtime boundary. Automation failures are
+   * retained as feature-scoped diagnostics and do not block extensions or the
+   * rest of the application from starting.
+   */
+  async initializeWorkspace(workspace: Workspace): Promise<void> {
+    const canonical = initializeWorkspaceRegistration(workspace)
+    this.setupConfigWatcher(requirePrimaryLocalWorkspaceRoot(canonical), canonical.id)
+    await this.openWorkspaceExtensions(canonical)
+    void this.ensureWorkspaceRuntimeWarmup(canonical).catch(error => {
+      sessionLog.warn(`Workspace runtime warmup failed for ${canonical.id}: ${error instanceof Error ? error.message : error}`)
+    })
+  }
+
   getWorkspaceExtensionSnapshot(workspaceId: string): BackendExtensionWorkspaceSnapshot | null {
     return this.extensionRuntime.getWorkspaceSnapshot(workspaceId)
+  }
+
+  getExtensionRuntimeState(workspaceId?: string): import('@mortise/shared/config').PiExtensionRuntimeState {
+    const globalSnapshot = typeof (this.extensionRuntime as Partial<BackendExtensionRuntimeRegistry>).getGlobalSnapshot === 'function'
+      ? this.extensionRuntime.getGlobalSnapshot()
+      : null
+    const snapshots = workspaceId
+      ? [this.extensionRuntime.getWorkspaceSnapshot(workspaceId)]
+      : getWorkspaces().map(workspace => this.extensionRuntime.getWorkspaceSnapshot(workspace.id))
+    const loadedSnapshots = snapshots.filter((snapshot): snapshot is BackendExtensionWorkspaceSnapshot => snapshot !== null)
+    const extensionIds = [
+      ...(globalSnapshot?.extensions.map(extension => extension.id) ?? []),
+      ...loadedSnapshots.flatMap(snapshot => snapshot.extensions.map(extension => extension.id)),
+    ]
+    const warmup = workspaceId ? this.workspaceRuntimeWarmups.get(workspaceId) : undefined
+    return {
+      loaded: Boolean(globalSnapshot) || loadedSnapshots.length > 0,
+      extensionIds: Array.from(new Set(extensionIds)).sort(),
+      ...(warmup ? {
+        preparationStatus: warmup.status,
+        ...(warmup.error ? { preparationError: warmup.error } : {}),
+      } : {}),
+    }
   }
 
   getExtensionFileState(workspaceId: string, extensionId: string): ExtensionFileStateV1 {
@@ -2418,6 +2860,15 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
   getAutomationHost(workspaceId: string): AutomationWorkspaceHostV3 | null {
     const workspace = this.resolveWorkspaceByNameOrId(workspaceId)
     return workspace ? this.automationHosts.get(workspace.id) ?? null : null
+  }
+
+  getAutomationHostInitializationError(workspaceId: string): string | null {
+    const workspace = this.resolveWorkspaceByNameOrId(workspaceId)
+    return workspace ? this.automationHostInitializationErrors.get(workspace.id) ?? null : null
+  }
+
+  getAutomationHostInitializationFailures(): Array<{ workspaceId: string; message: string }> {
+    return Array.from(this.automationHostInitializationErrors, ([workspaceId, message]) => ({ workspaceId, message }))
   }
 
   getActiveSessionsInfo(): ActiveSessionInfo[] {
@@ -2798,7 +3249,7 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
   async createAndSendFirstTurn(
     input: CreateAndSendFirstTurnInput,
     prepareProvisional?: (managed: ManagedSession) => void | Promise<void>,
-  ): Promise<{ session: Session; messageId: string }> {
+  ): Promise<import('@mortise/shared/protocol').CreateAndSendFirstTurnResult> {
     if (
       input.createOptions?.hidden
       || input.createOptions?.branchFromSessionId
@@ -2817,7 +3268,7 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
     const control = await this.sessionTurnControl.acquire(requestedSessionId)
     let created: Session | null = null
     try {
-      created = await this.createSessionInternal(input.workspaceId, input.createOptions, false, requestedSessionId)
+      created = await this.createSessionInternal(input.workspaceId, input.createOptions, true, requestedSessionId)
       const managed = this.sessions.get(created.id)
       if (!managed) throw new Error(`Session ${created.id} was not created`)
       managed.turnControl = control
@@ -2878,6 +3329,7 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
         resolve({
           session: managedToSession(managed, { messages: managed.messages }),
           messageId,
+          publication: managed.publicationState ? 'pending' : 'published',
         })
       }
 
@@ -2900,13 +3352,27 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
         input.sendOptions,
         undefined,
         undefined,
-        settleAccepted,
+        undefined,
         { callerClientId: input.callerClientId },
+        false,
+        false,
+        settleAccepted,
       ).then(async () => {
         if (settled) return
         await rejectAfterAbandon(new Error('First turn completed without durably accepting its user message'))
       }).catch(async error => {
-        if (settled) return
+        if (settled) {
+          const managed = this.sessions.get(created.id)
+          const failure = managed?.pendingPublicationFailure
+          if (failure && input.callerClientId) {
+            this.sendEventToClient({
+              type: 'session_failure',
+              sessionId: created.id,
+              error: failure,
+            }, input.callerClientId)
+          }
+          return
+        }
         await rejectAfterAbandon(error)
       })
     })
@@ -2965,7 +3431,18 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
 
     if (existsSync(stagingAttachmentsPath)) {
       if (existsSync(targetAttachmentsPath)) {
-        throw new Error(`First-turn attachment target already exists for ${session.id}`)
+        let targetEntries: string[]
+        try {
+          targetEntries = await readdir(targetAttachmentsPath)
+        } catch (error) {
+          throw new Error(`First-turn attachment target is not an empty directory for ${session.id}: ${error instanceof Error ? error.message : String(error)}`)
+        }
+        if (targetEntries.length > 0) {
+          throw new Error(`First-turn attachment target already exists for ${session.id}`)
+        }
+        // createSessionInternal pre-creates the empty attachments directory.
+        // Remove only that empty directory so the staging rename remains atomic.
+        await rmdir(targetAttachmentsPath)
       }
       await mkdir(dirname(targetAttachmentsPath), { recursive: true })
       await rename(stagingAttachmentsPath, targetAttachmentsPath)
@@ -3021,10 +3498,7 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
       throw new Error(`Workspace ${workspaceId} not found`)
     }
 
-    // Permission mode belongs to the session/Extension boundary, not Workspace
-    // defaults. Explicit session values are still honored.
     const workspaceRootPath = requirePrimaryLocalWorkspaceRoot(workspace)
-    const defaultPermissionMode = options?.permissionMode
 
     // AI defaults are global. An explicit Session value must already be part of
     // the current contract; retired values never silently fall back to default.
@@ -3197,23 +3671,28 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
     // the canonical user entry.
     const provisional = provisionalFirstTurn && !options?.hidden && !validatedBranch
     const now = Date.now()
+    if (provisional && requestedSessionId) validateSessionId(requestedSessionId)
     const storedSession: SessionHeader = provisional
       ? {
-          mortiseId: this.generateProvisionalSessionId(workspace.id),
+          // Crash recovery must recreate the accepted provisional Session under
+          // the same preallocated identity recorded by the outbox.
+          mortiseId: requestedSessionId ?? this.generateProvisionalSessionId(workspace.id),
           workspaceId: workspace.id,
           workspaceRootPath,
           name: options?.name,
           createdAt: now,
           lastUsedAt: now,
-          permissionMode: defaultPermissionMode,
           sdkCwd: workspaceRootPath,
         }
       : await createStoredSession(workspace.id, workspaceRootPath, {
           sessionId: requestedSessionId,
           name: options?.name,
-          permissionMode: defaultPermissionMode,
           hidden: options?.hidden,
         })
+
+    if (options?.extensionBootstrap) {
+      storedSession.extensionBootstrap = structuredClone(options.extensionBootstrap)
+    }
 
     // Branch: project the active Pi path up to the selected entry, then append
     // only canonical messages through Pi's public SessionManager API. Mortise
@@ -3268,7 +3747,7 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
         delete branchedStored.branchFromSdkTurnId
         await saveStoredSession(branchedStored)
       } catch (error) {
-        await deleteStoredSession(workspaceRootPath, storedSession.mortiseId).catch(deleteError => {
+        await deleteStoredSession(workspace.id, storedSession.mortiseId).catch(deleteError => {
           sessionLog.warn(`Failed to roll back branch ${storedSession.mortiseId}: ${deleteError instanceof Error ? deleteError.message : deleteError}`)
         })
         throw new Error(`Could not create branch: ${error instanceof Error ? error.message : String(error)}`)
@@ -3289,7 +3768,6 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
     const isBranch = !!validatedBranch
 
     const managed = createManagedSession(storedSession, workspace, {
-      permissionMode: defaultPermissionMode,
       model: resolvedModel,
       provider: sessionProvider,
       thinkingLevel: defaultThinkingLevel,
@@ -3326,10 +3804,11 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
 
           await rollbackFailedBranchCreation({
             managed,
-            workspaceRootPath,
+            workspaceId: workspace.id,
             sessionId: storedSession.mortiseId,
             deleteFromRuntimeSessions: (id) => {
               this.sessions.delete(id)
+              this.extensionFrontendStates.clearSession(id)
             },
             deleteStoredSession,
           })
@@ -3341,15 +3820,7 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
       }
     }
 
-    // Initialize mode-manager state immediately to avoid UI/enforcement races
-    // before the agent instance is lazily created.
-    setPermissionMode(storedSession.mortiseId, managed.permissionMode ?? 'ask', { changedBy: 'restore' })
-    if (managed.previousPermissionMode) {
-      hydratePreviousPermissionMode(storedSession.mortiseId, managed.previousPermissionMode)
-    }
-
     this.sessions.set(storedSession.mortiseId, managed)
-    if (!provisional) this.automationSessionMetadata.set(storedSession.mortiseId, { permissionMode: storedSession.permissionMode, sessionName: managed.name })
 
     return managedToSession(managed, isBranch ? { messages: managed.messages } : undefined)
   }
@@ -3550,6 +4021,11 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
    * 3. fallback: no provider configured
    */
   private async getOrCreateAgent(managed: ManagedSession): Promise<AgentInstance> {
+    // A Workspace warmup may still be compiling/loading resources in the
+    // shared Pi host. Let Session runtime creation join that same preparation
+    // Promise so a concurrent first message does not duplicate the cold path.
+    await this.waitForWorkspaceRuntimeWarmup(managed.workspace)
+
     // Recovery callbacks are synchronous once the agent is constructed. Load
     // the durable Pi projection before the agent starts.
     if (!this.piProjectionBySession.has(managed.id)) {
@@ -3644,8 +4120,7 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
         sdkCwd: managed.sdkCwd ?? workspaceRootPath,
         model: managed.model,
         provider: managed.provider,
-        permissionMode: managed.permissionMode,
-        previousPermissionMode: managed.previousPermissionMode,
+        extensionBootstrap: managed.extensionBootstrap,
       }
 
       const onSdkSessionIdUpdate = (sdkSessionId: string) => {
@@ -3697,12 +4172,26 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
             if (!managed.publicationState || frontendState) this.eventSink?.(channel, target, ...args)
           })
         : null
-      const onExtensionEvent = createExtensionEventForwarder(
+      const forwardExtensionEvent = createExtensionEventForwarder(
         provisionalAwareEventSink,
         managed.workspace.id,
         managed.id,
         this.extensionRuntime.backendType,
       )
+      const onExtensionEvent = (event: ExtensionBridgeEvent) => {
+        if (event.type === 'extension_frontend_state' || event.type === 'extension_contributions_runtime_reset') {
+          const routedEvent = {
+            ...event,
+            sessionId: managed.id,
+            workspaceId: managed.workspace.id,
+            backendType: this.extensionRuntime.backendType,
+          } as ExtensionFrontendStateEvent | Extract<ExtensionBridgeEvent, { type: 'extension_contributions_runtime_reset' }>
+          this.extensionFrontendStates.apply(routedEvent)
+          forwardExtensionEvent(routedEvent)
+          return
+        }
+        forwardExtensionEvent(event)
+      }
       const onPiProjectionEvent = (event: PiProjectionEventV1) => {
         if (!this.hasTurnControl(managed)) {
           writeRuntimeLog('warn', {
@@ -3894,30 +4383,7 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
       // Post-construction: debug callback, auth callback, postInit()
       // ============================================================
 
-      managed.agent.onDebug = (msg: string) => {
-        const marker = '__PERMISSION_BLOCK__'
-        if (msg.includes(marker)) {
-          const idx = msg.indexOf(marker)
-          const payloadRaw = msg.slice(idx + marker.length)
-          try {
-            const payload = JSON.parse(payloadRaw) as {
-              sessionId: string
-              toolName: string
-              effectiveMode: string
-              modeVersion: number
-              changedBy: string
-              changedAt: string
-              reason: string
-            }
-            sessionLog.info('Tool blocked by permission mode', payload)
-            return
-          } catch {
-            // fall through to plain logging when payload parsing fails
-          }
-        }
-
-        sessionLog.info(msg)
-      }
+      managed.agent.onDebug = (msg: string) => sessionLog.info(msg)
 
       managed.agent.onBeforeToolExecution = async ({ toolCallId, toolName }) => {
         const control = managed.turnControl
@@ -3966,37 +4432,8 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
       // Signal that the agent instance is ready (unblocks title generation)
       managed.agentReadyResolve?.()
 
-      // Permission prompts are owned by the permissions extension. The host
-      // only supplies the neutral tool execution boundary and channel router;
-      // no renderer-facing permission queue is maintained here.
-
-      // Set up mode change handlers
-      managed.agent.onPermissionModeChange = (mode) => {
-        if (managed.permissionMode === mode) {
-          return
-        }
-
-        managed.permissionMode = mode
-        const diagnostics = getPermissionModeDiagnostics(managed.id)
-        managed.previousPermissionMode = diagnostics.previousPermissionMode
-        sessionLog.info('Permission mode changed (agent callback)', {
-          sessionId: managed.id,
-          permissionMode: mode,
-          modeVersion: diagnostics.modeVersion,
-          changedBy: diagnostics.lastChangedBy,
-          changedAt: diagnostics.lastChangedAt,
-        })
-        this.sendEvent({
-          type: 'permission_mode_changed',
-          sessionId: managed.id,
-          permissionMode: managed.permissionMode,
-          modeVersion: diagnostics.modeVersion,
-          changedBy: diagnostics.lastChangedBy,
-          changedAt: diagnostics.lastChangedAt,
-          previousPermissionMode: diagnostics.previousPermissionMode,
-          transitionDisplay: diagnostics.transitionDisplay,
-        }, managed.workspace.id)
-      }
+      // Extension policy runs inside Pi. The host only supplies the neutral
+      // tool execution boundary and generic frontend channel router.
 
       // Wire up plan review as Host control flow. The plan artifact itself is
       // projected by Pi; this event is only for external messaging consumers
@@ -4138,7 +4575,6 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
           prompt: request.prompt!,
           connection: request.provider ?? managed.provider,
           model: request.model ?? template?.model ?? managed.model,
-          permissionMode: request.permissionMode,
           thinkingLevel: request.thinkingLevel,
           name: request.name,
           attachments: request.attachments,
@@ -4174,7 +4610,6 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
           return {
             id: session.id,
             name: session.name ?? session.id,
-            permissionMode: session.permissionMode ?? 'ask',
             createdAt: session.createdAt ?? 0,
             provider: session.provider,
             model: session.model,
@@ -4244,23 +4679,6 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
         },
       })
 
-      // Apply session-scoped permission mode to the newly created agent
-      // This ensures the UI toggle state is reflected in the agent before first message
-      if (managed.permissionMode) {
-        setPermissionMode(managed.id, managed.permissionMode, { changedBy: 'restore' })
-        if (managed.previousPermissionMode) {
-          hydratePreviousPermissionMode(managed.id, managed.previousPermissionMode)
-        }
-        managed.agent!.setPermissionMode(managed.permissionMode)
-        const diagnostics = getPermissionModeDiagnostics(managed.id)
-        sessionLog.info('Applied permission mode to agent', {
-          sessionId: managed.id,
-          permissionMode: managed.permissionMode,
-          modeVersion: diagnostics.modeVersion,
-          changedBy: diagnostics.lastChangedBy,
-          changedAt: diagnostics.lastChangedAt,
-        })
-      }
       managed.backendRuntimeSignature = runtimeSignature
       managed.backendRestartSignature = restartSignature
       end()
@@ -4307,6 +4725,11 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
    */
   async reloadProviderRuntime(provider?: string): Promise<void> {
     await piHostManager.invalidateAll('provider-config-changed')
+    await Promise.all([...this.workspaceRuntimeWarmups.keys()].map(async (workspaceId) => {
+      await this.disposeWorkspaceRuntimeWarmup(workspaceId, 'provider registry reload')
+      const workspace = getWorkspaces().find(candidate => candidate.id === workspaceId)
+      if (workspace) void this.ensureWorkspaceRuntimeWarmup(workspace)
+    }))
     for (const managed of this.sessions.values()) {
       const effectiveProvider = resolveBackendContext({
         sessionProvider: managed.provider,
@@ -4355,13 +4778,28 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
       const targets = Array.from(this.sessions.values()).filter(
         (managed) => managed.agent && typeof managed.agent.reloadExtensions === 'function',
       )
+      // A warm runtime publishes its agent handle before preparation finishes.
+      // Join that promise so reload cannot race extension activation on the
+      // same runtime or retain a handle that preparation just disposed.
+      await Promise.all([...this.workspaceRuntimeWarmups.values()].map(state => state.ready.catch(() => undefined)))
+      const warmupTargets = [...this.workspaceRuntimeWarmups.values()]
+        .filter((state): state is WorkspaceRuntimeWarmup & { agent: AgentBackend } => Boolean(state.agent))
       const results = await Promise.allSettled(targets.map(async (managed) => ({
         sessionId: managed.id,
         result: await managed.agent!.reloadExtensions!(),
       })))
-      const failures = results.flatMap((result, index) => result.status === 'rejected'
-        ? [`${targets[index]?.id ?? 'unknown session'}: ${result.reason instanceof Error ? result.reason.message : String(result.reason)}`]
-        : [])
+      const warmupResults = await Promise.allSettled(warmupTargets.map(async (state) => ({
+        workspaceId: state.workspaceId,
+        result: state.agent.reloadExtensions ? await state.agent.reloadExtensions() : { reloaded: false, deferred: false },
+      })))
+      const failures = [
+        ...results.flatMap((result, index) => result.status === 'rejected'
+          ? [`${targets[index]?.id ?? 'unknown session'}: ${result.reason instanceof Error ? result.reason.message : String(result.reason)}`]
+          : []),
+        ...warmupResults.flatMap((result, index) => result.status === 'rejected'
+          ? [`Workspace ${warmupTargets[index]?.workspaceId ?? 'unknown'}: ${result.reason instanceof Error ? result.reason.message : String(result.reason)}`]
+          : []),
+      ]
       if (failures.length > 0) throw new Error(`Failed to reload Pi extensions: ${failures.join('; ')}`)
 
       let reloadedSessionCount = 0
@@ -4372,8 +4810,17 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
         if (result.value.result.deferred) deferredSessionCount += 1
       }
 
+      const openWorkspaceIds = typeof (this.extensionRuntime as Partial<BackendExtensionRuntimeRegistry>).getOpenWorkspaceIds === 'function'
+        ? this.extensionRuntime.getOpenWorkspaceIds()
+        : [...this.workspaceRuntimeWarmups.keys()]
       this.extensionRuntime.clear()
-      await Promise.all(getWorkspaces().map((workspace) => this.openWorkspaceExtensions(workspace)))
+      if (typeof (this.extensionRuntime as Partial<BackendExtensionRuntimeRegistry>).openGlobal === 'function') {
+        await this.extensionRuntime.openGlobal()
+      }
+      await Promise.all(openWorkspaceIds.map(async (workspaceId) => {
+        const workspace = getWorkspaces().find(candidate => candidate.id === workspaceId)
+        if (workspace) await this.openWorkspaceExtensions(workspace)
+      }))
       return {
         status: 'reloaded',
         interruptedSessionCount: interruptRunning ? currentActiveSessions.length : 0,
@@ -5046,18 +5493,18 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
       )
       if (!isCurrentProvisional()) return false
       const entries = (projection as { entries?: unknown[] } | null)?.entries ?? []
-      const hasAssistant = entries.some(entry => {
+      const hasUser = entries.some(entry => {
         if (!entry || typeof entry !== 'object') return false
         const candidate = entry as { type?: unknown; message?: { role?: unknown } }
-        return candidate.type === 'message' && candidate.message?.role === 'assistant'
+        return candidate.type === 'message' && candidate.message?.role === 'user'
       })
-      if (!hasAssistant) return false
+      if (!hasUser) return false
 
       if (!isCurrentProvisional()) return false
       managed.publicationState = 'publishing'
       try {
-        // Pi's first-assistant write is already atomic and contains the header,
-        // user entry, and assistant entry. Attach Mortise metadata/overlays and
+        // Pi's first-user write is already atomic and contains the header and
+        // canonical user entry. Attach Mortise metadata/overlays and
         // the latest projection before making the session publicly discoverable.
         if (this.sessions.get(managed.id) !== managed || managed.publicationState !== 'publishing') return false
         if (!managed.messagesLoaded) managed.messagesLoaded = true
@@ -5084,11 +5531,20 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
         managed.beforePublish = undefined
         if (this.sessions.get(managed.id) !== managed || managed.publicationState !== 'publishing') return false
 
+        managed.pendingPublicationFailure = undefined
         managed.publicationState = undefined
-        this.automationSessionMetadata.set(managed.id, { permissionMode: managed.permissionMode, sessionName: managed.name })
         this.sendEvent({ type: 'session_created', sessionId: managed.id }, managed.workspace.id)
         this.emitUnreadSummaryChanged()
-        sessionLog.info(`Published provisional session ${managed.id} after first assistant persistence`)
+        writeRuntimeLog('info', {
+          scope: 'session',
+          event: 'first_turn.published',
+          meta: {
+            sessionId: managed.id,
+            workspaceId: managed.workspace.id,
+            publication: 'published',
+          },
+        })
+        sessionLog.info(`Published provisional session ${managed.id} after first user persistence`)
         return true
       } catch (error) {
         if (managed.publicationState === 'publishing') managed.publicationState = 'provisional'
@@ -5124,6 +5580,7 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
       }
       managed.isProcessing = false
       managed.beforePublish = undefined
+      managed.pendingTitleUserMessage = undefined
       managed.processingGeneration++
       await this.disposeManagedAgentRuntime(managed, `provisional session abandoned: ${reason}`)
       // Abandonment is destructive cleanup, not a persistence retry. Wait for
@@ -5134,7 +5591,7 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
       await sessionPersistenceQueue.cancel(managed.id, { preventFutureEnqueue: true })
 
       this.sessions.delete(managed.id)
-      this.automationSessionMetadata.delete(managed.id)
+      this.extensionFrontendStates.clearSession(managed.id)
       this.piProjectionBySession.delete(managed.id)
       this.piProjectionRetiredRuntimeIds.delete(managed.id)
       this.piProjectionWrites.delete(managed.id)
@@ -5158,7 +5615,7 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
       await this.piProjectionWrites.get(managed.id)
       await sessionPersistenceQueue.cancel(managed.id, { preventFutureEnqueue: true })
       this.sessions.delete(managed.id)
-      this.automationSessionMetadata.delete(managed.id)
+      this.extensionFrontendStates.clearSession(managed.id)
       this.piProjectionBySession.delete(managed.id)
       this.piProjectionRetiredRuntimeIds.delete(managed.id)
       this.piProjectionWrites.delete(managed.id)
@@ -5237,7 +5694,7 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
     }
 
     this.sessions.delete(sessionId)
-    this.automationSessionMetadata.delete(sessionId)
+    this.extensionFrontendStates.clearSession(sessionId)
     this.piProjectionBySession.delete(sessionId)
     this.piProjectionRetiredRuntimeIds.delete(sessionId)
     this.piProjectionWrites.delete(sessionId)
@@ -5267,12 +5724,7 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
     options?: SendMessageOptions,
     existingMessageId?: string,
     _isAuthRetry?: boolean,
-    /**
-     * Internal hook fired only after Pi confirms its canonical user entry is
-     * durable (or after first-assistant publication for a provisional Session).
-     * The RPC handler uses this to send a synchronous ack; pre-acceptance errors
-     * still reject the outer promise.
-     */
+    /** Internal hook fired after Pi confirms the canonical user entry is durable. */
     onAck?: (messageId: string) => void,
     /**
      * Optional transport context. The `sessions.sendMessage` RPC handler passes
@@ -5287,6 +5739,8 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
      */
     isQueuedReplay = false,
     isAutomaticResume = false,
+    /** Hook fired once Mortise has durably accepted the outbox record. */
+    onAccepted?: (messageId: string) => void,
   ): Promise<void> {
     const managed = this.sessions.get(sessionId)
     if (!managed) {
@@ -5367,15 +5821,35 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
         this.upsertUserMessageOverlay(managed, messageId, storedAttachments, options?.badges, false)
         this.persistSession(managed)
         await this.flushSession(managed.id)
-        return await new Promise<void>((resolve, reject) => {
-          managed.pendingInputAcks.set(messageId, {
-            resolve: persistedMessageId => {
-              onAck?.(persistedMessageId)
-              resolve()
-            },
-            reject,
-          })
+        const acceptedAt = Date.now()
+        this.messageOutbox.put({
+          clientMutationId: messageId,
+          sessionId,
+          workspaceId: managed.workspace.id,
+          callerClientId: rpcContext?.callerClientId,
+          message,
+          ...(serializeOutboxAttachments(attachments) !== undefined
+            ? { attachments: serializeOutboxAttachments(attachments) }
+            : {}),
+          ...(serializeStoredAttachmentRefs(storedAttachments) !== undefined
+            ? { storedAttachments: serializeStoredAttachmentRefs(storedAttachments) }
+            : {}),
+          ...(options ? { options: options as unknown as JsonValue } : {}),
+          sessionOptions: serializeSessionRecoveryOptions(managed),
+          provisional: managed.publicationState !== undefined,
+          status: 'accepted',
+          attempt: this.outboxAttempt(messageId),
+          createdAt: acceptedAt,
+          updatedAt: acceptedAt,
         })
+        if (onAck) {
+          managed.pendingInputAcks.set(messageId, {
+            resolve: persistedMessageId => onAck(persistedMessageId),
+            reject: () => undefined,
+          })
+        }
+        onAccepted?.(messageId)
+        return
       }
 
       if (managed.messageQueue.length >= MAX_PENDING_FOLLOW_UPS) {
@@ -5393,21 +5867,39 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
         ...(options ?? {}),
         optimisticMessageId: options?.optimisticMessageId ?? messageId,
       }
-      return await new Promise<void>((resolve, reject) => {
-        managed.messageQueue.push({
-          message,
-          attachments,
-          storedAttachments,
-          options: queuedOptions,
-          messageId,
-          optimisticMessageId: queuedOptions.optimisticMessageId,
-          onAck: persistedMessageId => {
-            onAck?.(persistedMessageId)
-            resolve()
-          },
-          onReject: reject,
-        })
+      const acceptedAt = Date.now()
+      this.messageOutbox.put({
+        clientMutationId: messageId,
+        sessionId,
+        workspaceId: managed.workspace.id,
+        callerClientId: rpcContext?.callerClientId,
+        message,
+        ...(serializeOutboxAttachments(attachments) !== undefined
+          ? { attachments: serializeOutboxAttachments(attachments) }
+          : {}),
+        ...(serializeStoredAttachmentRefs(storedAttachments) !== undefined
+          ? { storedAttachments: serializeStoredAttachmentRefs(storedAttachments) }
+          : {}),
+        options: queuedOptions as unknown as JsonValue,
+        sessionOptions: serializeSessionRecoveryOptions(managed),
+        provisional: managed.publicationState !== undefined,
+        status: 'accepted',
+        attempt: this.outboxAttempt(messageId),
+        createdAt: acceptedAt,
+        updatedAt: acceptedAt,
       })
+      managed.messageQueue.push({
+        message,
+        attachments,
+        storedAttachments,
+        options: queuedOptions,
+        messageId,
+        optimisticMessageId: queuedOptions.optimisticMessageId,
+        onAck,
+        onAccepted,
+      })
+      onAccepted?.(messageId)
+      return
     }
 
     const turnControl = await this.acquireTurnControl(managed)
@@ -5421,13 +5913,13 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
     // Pi owns the canonical user message. Mortise only records the UI overlay
     // needed to reconcile optimistic queue/attachment state.
     const messageId = existingMessageId ?? options?.optimisticMessageId ?? generateMessageId()
-    const awaitsFirstAssistantPublication = managed.publicationState === 'provisional'
-    const awaitsCanonicalUserPersistence = !awaitsFirstAssistantPublication && Boolean(onAck)
+    const awaitsCanonicalUserPersistence = Boolean(onAck)
     let acknowledged = false
+    let canonicalUserPersisted = !awaitsCanonicalUserPersistence
     const acknowledge = () => {
       if (acknowledged) return
       acknowledged = true
-      onAck?.(messageId)
+      onAccepted?.(messageId)
       writeRuntimeLog('info', {
         scope: 'session',
         event: 'send_message.accepted',
@@ -5436,7 +5928,7 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
           workspaceId: managed.workspace.id,
           messageId,
           optimisticMessageId: options?.optimisticMessageId,
-          status: awaitsFirstAssistantPublication ? 'published' : 'accepted',
+          status: 'mortise_accepted',
           provider: managed.provider,
           model: managed.model,
         },
@@ -5453,6 +5945,28 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
       )
       this.persistSession(managed)
       await this.flushSession(managed.id)
+      const acceptedAt = Date.now()
+      this.messageOutbox.put({
+        clientMutationId: messageId,
+        sessionId,
+        workspaceId: managed.workspace.id,
+        callerClientId: rpcContext?.callerClientId,
+        message,
+        ...(serializeOutboxAttachments(attachments) !== undefined
+          ? { attachments: serializeOutboxAttachments(attachments) }
+          : {}),
+        ...(serializeStoredAttachmentRefs(storedAttachments) !== undefined
+          ? { storedAttachments: serializeStoredAttachmentRefs(storedAttachments) }
+          : {}),
+        ...(options ? { options: options as unknown as JsonValue } : {}),
+        sessionOptions: serializeSessionRecoveryOptions(managed),
+        provisional: managed.publicationState !== undefined,
+        status: 'accepted',
+        attempt: this.outboxAttempt(messageId),
+        createdAt: acceptedAt,
+        updatedAt: acceptedAt,
+      })
+      acknowledge()
       if (!existingMessageId) {
       // If this is the first user message and no title exists, set one immediately
       // AI generation will enhance it later, but we always have a title from the start
@@ -5482,9 +5996,13 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
           title: initialTitle,
         }, managed.workspace.id)
 
-        // Generate AI title asynchronously using agent's SDK
-        // (waits briefly for agent creation if needed)
-        this.generateTitle(managed, message)
+        // Provisional sessions cannot start detached async work that may outlive
+        // abandonment and leak a late title event. Publish first, then generate.
+        if (managed.publicationState) {
+          managed.pendingTitleUserMessage = message
+        } else {
+          this.generateTitle(managed, message)
+        }
       }
       }
 
@@ -5604,15 +6122,15 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
         }
 
         const published = await this.publishProvisionalSessionIfReady(managed)
-        if (awaitsFirstAssistantPublication && published) acknowledge()
-        if (awaitsFirstAssistantPublication && managed.publicationState) {
+        if (managed.publicationState && published) acknowledge()
+        if (managed.publicationState) {
           if (managed.publicationState !== 'provisional') {
             throw new Error('First turn was abandoned before publishing a session')
           }
           if (event.type === 'error') throw new Error(event.message)
           if (event.type === 'typed_error') throw new Error(event.error.message || event.error.title)
           if (event.type === 'complete') {
-            throw new Error('First turn completed before Pi persisted an assistant message')
+            throw new Error('First turn completed before Pi persisted its user message')
           }
         }
 
@@ -5621,14 +6139,16 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
         await this.processEvent(managed, event)
 
         if (event.type === 'pi_user_message_persisted') {
+          let hadPendingAck = false
           if (event.clientMutationId) {
             const pendingAck = managed.pendingInputAcks.get(event.clientMutationId)
             if (pendingAck) {
+              hadPendingAck = true
               managed.pendingInputAcks.delete(event.clientMutationId)
               pendingAck.resolve(event.clientMutationId)
             }
           }
-          writeRuntimeLog('debug', {
+          writeRuntimeLog('info', {
             scope: 'session',
             event: 'send_message.pi_persisted',
             meta: {
@@ -5639,8 +6159,17 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
               model: managed.model,
             },
           })
-          if (awaitsCanonicalUserPersistence
-            && (!event.clientMutationId || event.clientMutationId === messageId)) acknowledge()
+          if (!event.clientMutationId || event.clientMutationId === messageId) {
+            canonicalUserPersisted = true
+            const persistedMutationId = event.clientMutationId ?? messageId
+            this.messageOutbox.update(persistedMutationId, {
+              status: 'pi_persisted',
+              updatedAt: Date.now(),
+              error: undefined,
+            })
+            if (!managed.publicationState) this.removeMessageOutboxBestEffort(persistedMutationId)
+            if (!hadPendingAck) onAck?.(event.clientMutationId ?? messageId)
+          }
         }
 
         // Fallback: Capture SDK session ID if the onSdkSessionIdUpdate callback didn't fire.
@@ -5663,7 +6192,7 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
         // Handle complete event - SDK always sends this (even after interrupt)
         // This is the central place where processing ends
         if (event.type === 'complete') {
-          if (awaitsCanonicalUserPersistence && !acknowledged) {
+          if (awaitsCanonicalUserPersistence && !canonicalUserPersisted) {
             throw new SessionSendDurabilityError(
               sessionId,
               messageId,
@@ -5738,8 +6267,8 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
       }
 
       // Loop exited - either via complete event (normal) or generator ended after soft interrupt
-      if (awaitsFirstAssistantPublication && managed.publicationState) {
-        throw new Error('First turn ended before Pi persisted an assistant message')
+      if (managed.publicationState) {
+        throw new Error('First turn ended before Pi persisted its user message')
       }
       if (awaitsCanonicalUserPersistence && !acknowledged) {
         throw new SessionSendDurabilityError(
@@ -5759,7 +6288,7 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
         sessionLog.info('Chat loop exited unexpectedly')
       }
     } catch (error) {
-      if (awaitsFirstAssistantPublication && managed.publicationState) {
+      if (managed.publicationState && !acknowledged) {
         sendSpan.mark('chat.provisional_abandoned')
         sendSpan.setMetadata('error', error instanceof Error ? error.message : String(error))
         sendSpan.end()
@@ -5768,6 +6297,34 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
           error instanceof Error ? error.message : String(error),
         )
         throw error
+      }
+
+      // An ordinary first turn is already Mortise-accepted at this point, but
+      // Pi has not yet crossed the publication boundary. Keep the provisional
+      // Session and its original outbox mutation visible and retryable instead
+      // of converting it into a generic chat error or deleting it.
+      if (managed.publicationState && acknowledged) {
+        const publicationError = error instanceof SessionPublicationDurabilityError
+          ? error
+          : new SessionPublicationDurabilityError(sessionId, 'runtime', error)
+        managed.pendingPublicationFailure = {
+          code: publicationError.code,
+          message: publicationError.message,
+          data: publicationError.data,
+        }
+        this.messageOutbox.update(messageId, {
+          status: 'failed',
+          updatedAt: Date.now(),
+          error: publicationError.message,
+        })
+        this.setProcessing(managed, false)
+        await this.releaseTurnControl(managed).catch(releaseError => {
+          sessionLog.warn(`Failed to release provisional turn control for ${sessionId}: ${releaseError instanceof Error ? releaseError.message : releaseError}`)
+        })
+        sendSpan.mark('chat.publication_failed')
+        sendSpan.setMetadata('error', publicationError.message)
+        sendSpan.end()
+        throw publicationError
       }
 
 
@@ -5782,7 +6339,16 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
         throw error
       }
 
-      if (awaitsCanonicalUserPersistence && !acknowledged) {
+      if (managed.publicationState) {
+        this.messageOutbox.update(messageId, {
+          status: 'failed',
+          updatedAt: Date.now(),
+          error: error instanceof Error ? error.message : String(error),
+        })
+        this.setProcessing(managed, false)
+      }
+
+      if (awaitsCanonicalUserPersistence && !canonicalUserPersisted) {
         sendSpan.mark('chat.user_message_unaccepted')
         sendSpan.setMetadata('error', error instanceof Error ? error.message : String(error))
         sendSpan.end()
@@ -6058,6 +6624,108 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
     await this.onProcessingStopped(sessionId, managed.pendingSettlementReason ?? 'error')
   }
 
+  /** Retry an accepted first turn without allocating a new client mutation id. */
+  async retryAcceptedMessage(sessionId: string, callerClientId?: string): Promise<void> {
+    const managed = this.sessions.get(sessionId)
+    if (!managed) throw new Error(`Session ${sessionId} not found`)
+    const record = this.messageOutbox.listPending().find(candidate => (
+      candidate.sessionId === sessionId
+      && candidate.provisional === true
+      && candidate.status !== 'pi_persisted'
+    ))
+    if (!record) throw new Error(`No retryable accepted message exists for Session ${sessionId}`)
+
+    managed.pendingPublicationFailure = undefined
+
+    // A Pi write can succeed while Mortise metadata/projection publication
+    // fails. Reconcile that durable mutation first; replaying the prompt would
+    // otherwise append the same user message and invoke the model twice.
+    let alreadyPersisted = false
+    try {
+      alreadyPersisted = await this.hasPersistedOutboxMutation(record, managed)
+    } catch (error) {
+      sessionLog.warn(`Could not inspect Pi persistence before retrying ${record.clientMutationId}: ${error instanceof Error ? error.message : error}`)
+    }
+    if (alreadyPersisted) {
+      this.messageOutbox.update(record.clientMutationId, {
+        status: 'pi_persisted',
+        updatedAt: Date.now(),
+        error: undefined,
+      })
+      try {
+        if (managed.publicationState) await this.publishProvisionalSessionIfReady(managed)
+        if (!managed.publicationState) this.removeMessageOutboxBestEffort(record.clientMutationId)
+        return
+      } catch (error) {
+        const publicationError = error instanceof SessionPublicationDurabilityError
+          ? error
+          : new SessionPublicationDurabilityError(sessionId, 'runtime', error)
+        const failure: SessionPublicationFailure = {
+          code: publicationError.code,
+          message: publicationError.message,
+          data: publicationError.data,
+        }
+        managed.pendingPublicationFailure = failure
+        this.messageOutbox.update(record.clientMutationId, {
+          status: 'failed',
+          updatedAt: Date.now(),
+          error: publicationError.message,
+        })
+        if (callerClientId) this.sendEventToClient({ type: 'session_failure', sessionId, error: failure }, callerClientId)
+        return
+      }
+    }
+
+    this.messageOutbox.update(record.clientMutationId, {
+      status: 'accepted',
+      attempt: record.attempt + 1,
+      updatedAt: Date.now(),
+      error: undefined,
+    })
+
+    await new Promise<void>((resolve, reject) => {
+      let accepted = false
+      const onAccepted = () => {
+        if (accepted) return
+        accepted = true
+        resolve()
+      }
+      void this.sendMessage(
+        sessionId,
+        record.message,
+        record.attachments as unknown as FileAttachment[] | undefined,
+        record.storedAttachments as unknown as StoredAttachment[] | undefined,
+        record.options as unknown as SendMessageOptions | undefined,
+        record.clientMutationId,
+        false,
+        undefined,
+        { callerClientId },
+        false,
+        false,
+        onAccepted,
+      ).then(() => {
+        if (!accepted) reject(new Error(`Retry for Session ${sessionId} completed without acceptance`))
+      }).catch(error => {
+        if (!accepted) {
+          reject(error)
+          return
+        }
+        const publicationError = error instanceof SessionPublicationDurabilityError
+          ? error
+          : new SessionPublicationDurabilityError(sessionId, 'runtime', error)
+        const failure: SessionPublicationFailure = {
+          code: publicationError.code,
+          message: publicationError.message,
+          data: publicationError.data,
+        }
+        managed.pendingPublicationFailure = failure
+        if (callerClientId) {
+          this.sendEventToClient({ type: 'session_failure', sessionId, error: failure }, callerClientId)
+        }
+      })
+    })
+  }
+
   private async settleProcessing(
     managed: ManagedSession,
     reason: 'complete' | 'interrupted' | 'error' | 'timeout',
@@ -6172,6 +6840,9 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
         tokenUsage: managed.tokenUsage,
         hasUnread: managed.hasUnread,
       }, managed.workspace.id)
+      const pendingTitleUserMessage = managed.pendingTitleUserMessage
+      managed.pendingTitleUserMessage = undefined
+      if (pendingTitleUserMessage) this.generateTitle(managed, pendingTitleUserMessage)
     }
 
   }
@@ -6210,7 +6881,9 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
         undefined,
         next.onAck,
         undefined,
-        true
+        true,
+        false,
+        next.onAccepted,
       ).catch(async err => {
         next.onReject?.(err)
         managed.replayingQueuedMessageId = undefined
@@ -6610,24 +7283,14 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
 
   private isPiProjectionProcessing(sessionId: string): boolean {
     const snapshot = this.piProjectionBySession.get(sessionId)?.createSnapshot()
-    if (!snapshot) return false
-    const lifecycle = snapshot.entities
-      .filter(entity => entity.kind === 'agent_start' || entity.kind === 'agent_end'
-        || entity.kind === 'agent_settled'
-        || entity.kind === 'turn_start' || entity.kind === 'turn_end'
-        || entity.kind === 'compaction_start' || entity.kind === 'compaction_end'
-        || entity.kind === 'runtime_error')
-      .sort((a, b) => b.lastSeq - a.lastSeq)[0]
-    const payload = lifecycle?.payload && typeof lifecycle.payload === 'object'
-      ? lifecycle.payload as Record<string, unknown>
-      : undefined
-    return lifecycle?.kind === 'agent_start'
-      || lifecycle?.kind === 'turn_start'
-      || lifecycle?.kind === 'compaction_start'
-      || (lifecycle?.kind === 'agent_end' && payload?.settlementPending === true)
+    return snapshot ? isPiProjectionSnapshotProcessing(snapshot) : false
   }
 
-  private closeStalePiProjection(sessionId: string): void {
+  private closeStalePiProjection(
+    sessionId: string,
+    occurredAt: number | null = Date.now(),
+    reason?: 'host_restart',
+  ): void {
     const snapshot = this.piProjectionBySession.get(sessionId)?.createSnapshot()
     if (!snapshot) return
     const seq = snapshot.lastSeq + 1
@@ -6641,7 +7304,8 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
       entityType: 'conversation',
       entityVersion: 1,
       kind: 'agent_end',
-      payload: { status: 'interrupted', settlementPending: true },
+      payload: { status: 'interrupted', settlementPending: true, ...(reason ? { reason } : {}) },
+      occurredAt: occurredAt ?? undefined,
     })
     this.applyPiProjectionEvent({
       schemaVersion: 1,
@@ -6653,7 +7317,8 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
       entityType: 'conversation',
       entityVersion: 1,
       kind: 'agent_settled',
-      payload: { status: 'interrupted' },
+      payload: { status: 'interrupted', ...(reason ? { reason } : {}) },
+      occurredAt: occurredAt ?? undefined,
     })
   }
 
@@ -6726,125 +7391,6 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
       const message = error instanceof Error ? error.message : String(error)
       sessionLog.warn(`[listChildSessions] Failed for session ${sessionId}: ${message}`)
       return []
-    }
-  }
-
-  /**
-   * Set the permission mode for a session ('safe', 'ask', 'allow-all')
-   */
-  setSessionPermissionMode(sessionId: string, mode: PermissionMode): void {
-    mode = parsePermissionMode(mode) ?? 'ask'
-    const managed = this.sessions.get(sessionId)
-    if (managed) {
-      const previousManagedMode = managed.permissionMode ?? 'ask'
-      const diagnosticsBefore = getPermissionModeDiagnostics(sessionId)
-      const previousEffectiveMode = diagnosticsBefore.permissionMode
-
-      // No-op only when BOTH managed state and mode-manager state already match.
-      // If managed state matches but diagnostics drifted, heal authoritative mode state.
-      if (previousManagedMode === mode && previousEffectiveMode === mode) {
-        return
-      }
-
-      if (previousManagedMode === mode && previousEffectiveMode !== mode) {
-        sessionLog.warn('Permission mode drift detected on same-mode update; reconciling authoritative mode state', {
-          sessionId,
-          managedMode: previousManagedMode,
-          diagnosticsMode: previousEffectiveMode,
-          targetMode: mode,
-          modeVersion: diagnosticsBefore.modeVersion,
-          changedBy: diagnosticsBefore.lastChangedBy,
-        })
-      }
-
-      // Update in-memory managed mode first
-      managed.permissionMode = mode
-
-      // Reconcile mode-manager state for this specific session.
-      if (previousEffectiveMode !== mode) {
-        const changedBy = previousManagedMode === mode ? 'restore' : 'user'
-        setPermissionMode(sessionId, mode, { changedBy })
-      }
-
-      const diagnostics = getPermissionModeDiagnostics(sessionId)
-      managed.previousPermissionMode = diagnostics.previousPermissionMode
-      sessionLog.info('Permission mode changed', {
-        sessionId,
-        permissionMode: mode,
-        modeVersion: diagnostics.modeVersion,
-        changedBy: diagnostics.lastChangedBy,
-        changedAt: diagnostics.lastChangedAt,
-      })
-
-      // Forward to the agent instance so backends can propagate mode changes downstream.
-      if (managed.agent) {
-        managed.agent.setPermissionMode(mode)
-      }
-
-      this.sendEvent({
-        type: 'permission_mode_changed',
-        sessionId: managed.id,
-        permissionMode: mode,
-        modeVersion: diagnostics.modeVersion,
-        changedBy: diagnostics.lastChangedBy,
-        changedAt: diagnostics.lastChangedAt,
-        previousPermissionMode: diagnostics.previousPermissionMode,
-        transitionDisplay: diagnostics.transitionDisplay,
-      }, managed.workspace.id)
-      // Persist to disk
-      this.persistSession(managed)
-    }
-  }
-
-  /**
-   * Get authoritative permission mode diagnostics for a session.
-   * Used by renderer to reconcile optimistic/stale mode state.
-   */
-  getSessionPermissionModeState(sessionId: string): {
-    permissionMode: PermissionMode
-    previousPermissionMode?: PermissionMode
-    transitionDisplay?: string
-    modeVersion: number
-    changedAt: string
-    changedBy: 'user' | 'system' | 'restore' | 'automation' | 'unknown'
-  } | null {
-    const managed = this.sessions.get(sessionId)
-    if (!managed) return null
-
-    let diagnostics = getPermissionModeDiagnostics(sessionId)
-
-    // Hydrate persisted transition context when mode-manager has been reset (e.g. app restart).
-    if (managed.previousPermissionMode && !diagnostics.previousPermissionMode) {
-      hydratePreviousPermissionMode(sessionId, managed.previousPermissionMode)
-      diagnostics = getPermissionModeDiagnostics(sessionId)
-    }
-
-    // Heal restore races where mode-manager still has default state while
-    // session metadata already has a persisted non-default mode.
-    if (managed.permissionMode && diagnostics.permissionMode !== managed.permissionMode) {
-      sessionLog.warn('Permission mode diagnostics mismatch, reconciling to managed session mode', {
-        sessionId,
-        managedMode: managed.permissionMode,
-        diagnosticsMode: diagnostics.permissionMode,
-        modeVersion: diagnostics.modeVersion,
-        changedBy: diagnostics.lastChangedBy,
-      })
-      setPermissionMode(sessionId, managed.permissionMode, { changedBy: 'restore' })
-      if (managed.previousPermissionMode) {
-        hydratePreviousPermissionMode(sessionId, managed.previousPermissionMode)
-      }
-      diagnostics = getPermissionModeDiagnostics(sessionId)
-    }
-
-    managed.previousPermissionMode = diagnostics.previousPermissionMode
-
-    return {
-      permissionMode: diagnostics.permissionMode,
-      previousPermissionMode: diagnostics.previousPermissionMode,
-      transitionDisplay: diagnostics.transitionDisplay,
-      modeVersion: diagnostics.modeVersion,
-      changedAt: diagnostics.lastChangedAt,
-      changedBy: diagnostics.lastChangedBy,
     }
   }
 
@@ -7327,10 +7873,17 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
     this.eventSink(RPC_CHANNELS.sessions.EVENT, { to: 'workspace', workspaceId }, event)
   }
 
+  private sendEventToClient(event: SessionEvent, clientId: string): void {
+    if (!this.eventSink) {
+      sessionLog.warn('Cannot send targeted event - no event sink')
+      return
+    }
+    this.eventSink(RPC_CHANNELS.sessions.EVENT, { to: 'client', clientId }, event)
+  }
+
   private async executeNewAutomationSession(input: {
     workspaceId: string
     prompt: string
-    permissionMode?: PermissionMode
     provider?: string
     model?: string
     thinkingLevel?: string
@@ -7352,7 +7905,6 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
       message: input.prompt,
       createOptions: {
         name: sessionName,
-        permissionMode: parsePermissionMode(input.permissionMode ?? '') ?? 'ask',
         provider: automationProvider,
         model: input.model,
         thinkingLevel: normalizeThinkingLevel(input.thinkingLevel),
@@ -7418,7 +7970,6 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
         const created = await this.executeNewAutomationSession({
           workspaceId: context.workspaceId,
           prompt,
-          permissionMode: target.permissionMode,
           provider: target.provider,
           model: target.model,
           thinkingLevel: target.thinkingLevel,
@@ -7454,38 +8005,36 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
     }
   }
 
-  /**
-   * Legacy non-renderer bridge retained for messaging clients. The renderer
-   * permissions UI no longer uses this path; approvals are resolved by the
-   * permissions extension channel.
-   */
-  respondToPermission(
-    sessionId: string,
-    requestId: string,
-    allowed: boolean,
-    alwaysAllow: boolean,
-    _options?: import('@mortise/shared/protocol').PermissionResponseOptions,
-  ): boolean {
-    const agent = this.sessions.get(sessionId)?.agent
-    if (!agent) return false
-    agent.respondToPermission(requestId, allowed, alwaysAllow)
-    return true
-  }
-
   async sendExtensionFrontendMessage(sessionId: string, extensionId: string, channelId: string, message: unknown, workspaceId?: string | null): Promise<unknown> {
-    const managed = sessionId
-      ? this.sessions.get(sessionId)
-      : [...this.sessions.values()].find((candidate) => candidate.workspace.id === workspaceId)
-    if (!managed) return undefined
-    const agent = managed.agent ?? await this.getOrCreateAgent(managed)
+    let agent: AgentBackend | null | undefined
+    if (sessionId) {
+      const managed = this.sessions.get(sessionId)
+      if (!managed) return undefined
+      agent = managed.agent ?? await this.getOrCreateAgent(managed)
+    } else {
+      if (!workspaceId) return undefined
+      const workspace = this.resolveWorkspaceByNameOrId(workspaceId)
+      if (!workspace) return undefined
+      await this.ensureWorkspaceRuntimeWarmup(workspace)
+      agent = this.workspaceRuntimeWarmups.get(workspace.id)?.agent
+    }
+    if (!agent) return undefined
     if (typeof agent.sendExtensionFrontendMessage !== 'function') return undefined
     return await agent.sendExtensionFrontendMessage(extensionId, channelId, message)
   }
 
+  getExtensionFrontendStates(sessionId: string, workspaceId?: string | null): ExtensionFrontendStateEvent[] {
+    return sessionId
+      ? this.extensionFrontendStates.get(sessionId)
+      : workspaceId
+        ? this.extensionFrontendStates.getWorkspace(workspaceId)
+        : []
+  }
+
   /**
    * Remove one follow-up from the host queue without stopping the active turn.
-   * The original send RPC is rejected with a typed, non-terminal error so the
-   * renderer can remove its optimistic carrier while preserving processing state.
+   * The original send RPC has already returned after Mortise acceptance, so
+   * withdrawal removes the durable outbox record before restoring the draft.
    */
   async withdrawQueuedMessage(sessionId: string, messageId: string): Promise<void> {
     const managed = this.sessions.get(sessionId)
@@ -7502,6 +8051,8 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
     }
 
     const [queued] = managed.messageQueue.splice(index, 1)
+    const mutationId = queued?.messageId ?? queued?.optimisticMessageId
+    if (mutationId) this.messageOutbox.remove(mutationId)
     queued?.onReject?.(new CodedError('QUEUED_MESSAGE_WITHDRAWN', 'Queued message withdrawn for editing.', {
       sessionId,
       messageId: queued.messageId ?? queued.optimisticMessageId ?? messageId,
@@ -7662,8 +8213,6 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
           sdkCwd: managed.sdkCwd ?? workspaceRootPath,
           model: managed.model,
           provider: managed.provider,
-          permissionMode: managed.permissionMode,
-          previousPermissionMode: managed.previousPermissionMode,
         },
         miniModel,
         envOverrides,
@@ -7876,13 +8425,7 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
     })
     managed.messages = bundleMessages.map(storedToMessage)
 
-    setPermissionMode(sessionId, managed.permissionMode ?? 'ask', { changedBy: 'restore' })
-    if (managed.previousPermissionMode) {
-      hydratePreviousPermissionMode(sessionId, managed.previousPermissionMode)
-    }
-
     this.sessions.set(sessionId, managed)
-    this.automationSessionMetadata.set(sessionId, { permissionMode: storedSession.permissionMode, sessionName: managed.name })
 
     // Emit session_created so renderer picks it up
     this.sendEvent({ type: 'session_created', sessionId }, workspaceId)
@@ -7957,7 +8500,7 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
     }
     await Promise.all([...this.sessions.values()].map(managed => this.flushPiProjectionWrites(managed)))
     this.sessions.clear()
-    this.automationSessionMetadata.clear()
+    this.extensionFrontendStates.clear()
     this.piProjectionBySession.clear()
     this.piProjectionRetiredRuntimeIds.clear()
     this.piProjectionWrites.clear()
@@ -7981,6 +8524,10 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
       }
     }
     this.automationHosts.clear()
+    this.automationHostInitializationErrors.clear()
+    await Promise.all([...this.workspaceRuntimeWarmups.keys()].map(
+      workspaceId => this.disposeWorkspaceRuntimeWarmup(workspaceId, 'application shutdown'),
+    ))
     this.extensionRuntime.clear()
 
 

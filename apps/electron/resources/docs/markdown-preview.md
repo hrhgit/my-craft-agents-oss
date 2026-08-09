@@ -73,7 +73,7 @@ Content loads lazily on tab switch and is cached once loaded.
 
 *Either `src` (single) or `items` (multiple) is required. If both are present, `items` takes precedence.
 
-**Important:** The `src` path must be **absolute**. The renderer reads it via the same path validation as other preview blocks — paths under the user's home directory, the system tmp directory, or workspace directories are accepted; arbitrary absolute paths outside those scopes are rejected. When an agent is writing a file for preview, it must still obey the current permission mode (for example, Explore mode writes are limited to the session `plansFolderPath` / `dataFolderPath`).
+**Important:** The `src` path must be **absolute**. The renderer reads it via the same path validation as other preview blocks — paths under the user's home directory, the system tmp directory, or workspace directories are accepted; arbitrary absolute paths outside those scopes are rejected. Tool execution policy is provided by the active Extensions and remains independent of preview rendering.
 
 ## Common Patterns
 

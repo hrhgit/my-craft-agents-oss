@@ -165,44 +165,28 @@ describe('evaluateConditions', () => {
     });
 
     describe('from/to transitions', () => {
-      it('should match permissionMode to', () => {
+      it('should match a transition target', () => {
         const conditions: AutomationCondition[] = [
-          { condition: 'state', field: 'permissionMode', to: 'allow-all' },
+          { condition: 'state', field: 'status', to: 'done' },
         ];
-        expect(evaluateConditions(conditions, ctx({ newMode: 'allow-all', oldMode: 'safe' }))).toBe(true);
-        expect(evaluateConditions(conditions, ctx({ newMode: 'ask', oldMode: 'safe' }))).toBe(false);
+        expect(evaluateConditions(conditions, ctx({ status: 'done' }))).toBe(true);
+        expect(evaluateConditions(conditions, ctx({ status: 'active' }))).toBe(false);
       });
 
-      it('should match permissionMode from', () => {
+      it('should match a transition source', () => {
         const conditions: AutomationCondition[] = [
-          { condition: 'state', field: 'permissionMode', from: 'safe' },
+          { condition: 'state', field: 'status', from: 'active' },
         ];
-        expect(evaluateConditions(conditions, ctx({ newMode: 'ask', oldMode: 'safe' }))).toBe(true);
-        expect(evaluateConditions(conditions, ctx({ newMode: 'ask', oldMode: 'allow-all' }))).toBe(false);
+        expect(evaluateConditions(conditions, ctx({ status: 'active' }))).toBe(true);
+        expect(evaluateConditions(conditions, ctx({ status: 'done' }))).toBe(false);
       });
 
-      it('should match permissionMode from AND to', () => {
+      it('should require both transition predicates', () => {
         const conditions: AutomationCondition[] = [
-          { condition: 'state', field: 'permissionMode', from: 'safe', to: 'allow-all' },
+          { condition: 'state', field: 'status', from: 'stable', to: 'stable' },
         ];
-        expect(evaluateConditions(conditions, ctx({ newMode: 'allow-all', oldMode: 'safe' }))).toBe(true);
-        expect(evaluateConditions(conditions, ctx({ newMode: 'allow-all', oldMode: 'ask' }))).toBe(false);
-        expect(evaluateConditions(conditions, ctx({ newMode: 'ask', oldMode: 'safe' }))).toBe(false);
-      });
-
-      it('should match permissionMode to', () => {
-        const conditions: AutomationCondition[] = [
-          { condition: 'state', field: 'permissionMode', to: 'done' },
-        ];
-        expect(evaluateConditions(conditions, ctx({ newMode: 'done', oldMode: 'active' }))).toBe(true);
-        expect(evaluateConditions(conditions, ctx({ newMode: 'active', oldMode: 'idle' }))).toBe(false);
-      });
-
-      it('should match permissionMode from', () => {
-        const conditions: AutomationCondition[] = [
-          { condition: 'state', field: 'permissionMode', from: 'active' },
-        ];
-        expect(evaluateConditions(conditions, ctx({ newMode: 'done', oldMode: 'active' }))).toBe(true);
+        expect(evaluateConditions(conditions, ctx({ status: 'stable' }))).toBe(true);
+        expect(evaluateConditions(conditions, ctx({ status: 'changing' }))).toBe(false);
       });
 
       it('should fall back to field name for unknown transition fields', () => {

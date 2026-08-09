@@ -10,12 +10,14 @@ import {
   type UiValidationFaultSetRequest,
   type UiValidationScenarioApplyResult,
 } from '@mortise/shared/ui-validation'
-import type { Message, PermissionRequest, Session, TransportConnectionState } from '../../shared/types'
+import type { Message, Session, TransportConnectionState } from '../../shared/types'
 import type { PiProjectionSnapshotV1 } from '@mortise/shared/protocol'
 import { TooltipProvider } from '@mortise/ui'
-import { TransportConnectionBanner } from '@/components/app-shell/TransportConnectionBanner'
+const ScenarioTransportConnectionBanner = React.lazy(async () => {
+  const module = await import('@/components/app-shell/TransportConnectionBanner')
+  return { default: module.TransportConnectionBanner }
+})
 import { StreamingMarkdown } from '@/components/markdown'
-import { AdminApprovalRequest } from '@/components/app-shell/input/structured/AdminApprovalRequest'
 import { ExtensionContributionZone } from '@/components/extensions/ExtensionContributionZone'
 import { extensionContributionStore } from '@/components/extensions/useExtensionContributions'
 import { SettingsCard, SettingsRow, SettingsSection } from '@/components/settings'
@@ -43,8 +45,8 @@ type ScenarioView =
   | 'transport'
   | 'session-empty'
   | 'session-streaming'
+  | 'session-reasoning-result'
   | 'session-queued'
-  | 'tool-approval'
   | 'extension'
   | 'settings'
 
@@ -56,7 +58,6 @@ export interface AppShellScenarioState {
   view: ScenarioView
   transport?: TransportConnectionState
   stream: { text: string; active: boolean }
-  approval: { resolved?: 'approved' | 'cancelled' }
   extension: { phase: ExtensionPhase; reloads: number }
   route: 'chat' | 'settings.app'
   lastEvent: string
@@ -70,11 +71,10 @@ type ScenarioEvent =
   | { type: 'transport.retrying' }
   | { type: 'show.empty-session' }
   | { type: 'show.streaming'; text: string }
+  | { type: 'show.reasoning-result' }
   | { type: 'show.queued' }
   | { type: 'stream.completed' }
   | { type: 'stream.failed' }
-  | { type: 'show.tool-approval' }
-  | { type: 'approval.resolved'; result: 'approved' | 'cancelled' }
   | { type: 'show.extension'; phase: ExtensionPhase }
   | { type: 'extension.reloaded' }
   | { type: 'show.settings' }
@@ -84,7 +84,6 @@ const INITIAL_STATE: AppShellScenarioState = {
   revision: 0,
   view: 'idle',
   stream: { text: '', active: false },
-  approval: {},
   extension: { phase: 'ready', reloads: 0 },
   route: 'chat',
   lastEvent: 'reset',
@@ -100,11 +99,10 @@ function reduceScenario(state: AppShellScenarioState, event: ScenarioEvent): App
     case 'transport.retrying': return state.transport ? { ...state, revision, transport: { ...state.transport, status: 'reconnecting', attempt: state.transport.attempt + 1 }, lastEvent: event.type } : state
     case 'show.empty-session': return { ...INITIAL_STATE, revision, view: 'session-empty', lastEvent: event.type }
     case 'show.streaming': return { ...INITIAL_STATE, revision, view: 'session-streaming', stream: { text: event.text, active: true }, lastEvent: event.type }
+    case 'show.reasoning-result': return { ...INITIAL_STATE, revision, view: 'session-reasoning-result', lastEvent: event.type }
     case 'show.queued': return { ...INITIAL_STATE, revision, view: 'session-queued', lastEvent: event.type }
     case 'stream.completed': return { ...state, revision, stream: { ...state.stream, active: false }, lastEvent: event.type }
     case 'stream.failed': return { ...state, revision, stream: { ...state.stream, active: false }, lastEvent: event.type }
-    case 'show.tool-approval': return { ...INITIAL_STATE, revision, view: 'tool-approval', lastEvent: event.type }
-    case 'approval.resolved': return { ...state, revision, approval: { resolved: event.result }, lastEvent: event.type }
     case 'show.extension': return { ...INITIAL_STATE, revision, view: 'extension', extension: { ...state.extension, phase: event.phase }, lastEvent: event.type }
     case 'extension.reloaded': return { ...state, revision, extension: { phase: 'ready', reloads: state.extension.reloads + 1 }, lastEvent: event.type }
     case 'show.settings': return { ...INITIAL_STATE, revision, view: 'settings', route: 'settings.app', lastEvent: event.type }
@@ -212,8 +210,8 @@ export class AppShellScenarioService {
     register('transport.state', validateTransportPhase, status => ({ type: 'show.transport', state: transport(status) }))
     register('session.empty', none, () => ({ type: 'show.empty-session' }))
     register('session.streaming', validateStreamText, text => ({ type: 'show.streaming', text }))
+    register('session.reasoning-result', none, () => ({ type: 'show.reasoning-result' }))
     register('session.queued', none, () => ({ type: 'show.queued' }))
-    register('tool.approval', none, () => ({ type: 'show.tool-approval' }))
     register('extension.phase', validateExtensionPhase, phase => ({ type: 'show.extension', phase }))
     register('route.settings', none, () => ({ type: 'show.settings' }))
   }
@@ -290,9 +288,9 @@ export class AppShellScenarioService {
     fixed('transport.reconnect', 'transport.state', 'reconnecting')
     fixed('transport.error', 'transport.state', 'failed')
     fixed('session.empty', 'session.empty')
+    fixed('session.reasoning-result', 'session.reasoning-result')
     fixed('session.streaming', 'session.streaming', 'The validation stream uses the production markdown renderer.\n\n- first block\n- second block', clock => { void this.completeStream(clock) })
     fixed('session.queued', 'session.queued')
-    fixed('tool.approval', 'tool.approval')
     fixed('extension.loading', 'extension.phase', 'loading')
     fixed('extension.ready', 'extension.phase', 'ready')
     fixed('extension.error', 'extension.phase', 'error')
@@ -413,20 +411,23 @@ export function ScenarioAppShellHost() {
     )
   }, [state.extension.phase, state.revision, state.view])
 
-  if (['transport', 'session-empty', 'session-streaming', 'session-queued', 'tool-approval', 'extension', 'settings'].includes(state.view)) {
+  if (['transport', 'session-empty', 'session-streaming', 'session-reasoning-result', 'session-queued', 'extension', 'settings'].includes(state.view)) {
     return <RealScenarioAppShell state={state} />
   }
 
   return (
     <main className="flex h-full min-h-[420px] w-full flex-col bg-background text-foreground" data-testid="scenario.app-shell" data-scenario={state.activeScenario ?? 'none'}>
       <header className="flex h-12 shrink-0 items-center border-b px-4 text-sm font-medium">Mortise Scenario AppShell</header>
-      {state.view === 'transport' && state.transport && <TransportConnectionBanner state={state.transport} onRetry={() => void appShellScenarioService.retryTransport()} />}
+      {state.view === 'transport' && state.transport && (
+        <React.Suspense fallback={null}>
+          <ScenarioTransportConnectionBanner state={state.transport} onRetry={() => void appShellScenarioService.retryTransport()} />
+        </React.Suspense>
+      )}
       <section className="flex min-h-0 flex-1 items-center justify-center overflow-auto p-6">
         {state.view === 'idle' && <p className="text-sm text-muted-foreground">No scenario applied</p>}
         {state.view === 'app-loading' && <SplashScreen isExiting={false} />}
         {state.view === 'session-empty' && <div className="text-center"><h2 className="text-base font-medium">No sessions yet</h2><p className="mt-1 text-sm text-muted-foreground">Create a session to start working.</p></div>}
         {state.view === 'session-streaming' && <article className="w-full max-w-2xl"><StreamingMarkdown content={state.stream.text} isStreaming={state.stream.active} /></article>}
-        {state.view === 'tool-approval' && <div className="h-80 w-full max-w-xl"><AdminApprovalRequest request={{ appName: 'Scenario tool', reason: 'Validate the production approval card', command: 'mortise scenario --verify', impact: 'No real command is executed.' }} onApprove={() => appShellScenarioService.dispatch({ type: 'approval.resolved', result: 'approved' })} onCancel={() => appShellScenarioService.dispatch({ type: 'approval.resolved', result: 'cancelled' })} /></div>}
         {state.view === 'extension' && <div className="w-full max-w-xl"><ExtensionContributionZone sessionId={SCENARIO_SESSION_ID} surface="composer.above" hydrateRuntime={false} /></div>}
         {state.view === 'settings' && <div className="w-full max-w-2xl"><SettingsSection title="Application"><SettingsCard><SettingsRow label="Browser tools" description="Controlled scenario setting"><Button size="sm" variant="outline">Enabled</Button></SettingsRow><SettingsRow label="Keep awake" description="Uses production settings layout"><span className="text-sm text-muted-foreground">Off</span></SettingsRow></SettingsCard></SettingsSection></div>}
       </section>
@@ -435,10 +436,102 @@ export function ScenarioAppShellHost() {
   )
 }
 
+export function createReasoningResultProjection(): PiProjectionSnapshotV1 {
+  const startedAt = 1_786_163_200_000
+  return {
+    schemaVersion: 1,
+    sessionId: SCENARIO_SESSION_ID,
+    runtimeId: SCENARIO_RUNTIME_ID,
+    lastSeq: 8,
+    entities: [
+      {
+        entityId: 'content:user:reasoning-result', entityType: 'content_block', entityVersion: 1,
+        createdSeq: 1, createdAt: startedAt, updatedAt: startedAt,
+        turnId: 'scenario-reasoning-turn', kind: 'user_text',
+        payload: {
+          role: 'user', messageId: 'scenario-reasoning-user',
+          text: '请整理这段信息流。', streaming: false, timestamp: startedAt,
+        },
+        lastEventId: 'scenario-user-text', lastSeq: 1,
+      },
+      {
+        entityId: 'content:thinking:reasoning-result:0', entityType: 'content_block', entityVersion: 1,
+        createdSeq: 2, createdAt: startedAt + 1_000, updatedAt: startedAt + 1_000,
+        turnId: 'scenario-reasoning-turn', kind: 'thinking_end',
+        payload: {
+          role: 'assistant', contentKind: 'thinking', messageId: 'scenario-reasoning-thinking',
+          contentIndex: 0, text: '思考一：先梳理信息之间的关系。', streaming: false,
+          isIntermediate: true, isFinal: false,
+          timestamp: startedAt + 90_000,
+        },
+        lastEventId: 'scenario-thinking-end', lastSeq: 2,
+      },
+      {
+        entityId: 'tool:reasoning-read', entityType: 'tool_run', entityVersion: 2,
+        createdSeq: 3, createdAt: startedAt - 20_000, updatedAt: startedAt - 19_500,
+        turnId: 'scenario-reasoning-turn', kind: 'tool_execution_end',
+        payload: {
+          toolCallId: 'reasoning-read', toolName: 'Read', input: { file_path: 'src/first.ts' },
+          result: '工具一：读取完成。', status: 'completed',
+          timestamp: startedAt - 20_000, startedAt: startedAt - 20_000, completedAt: startedAt - 19_500,
+        },
+        lastEventId: 'scenario-tool-one-end', lastSeq: 3,
+      },
+      {
+        entityId: 'content:thinking:reasoning-result:1', entityType: 'content_block', entityVersion: 1,
+        createdSeq: 4, createdAt: startedAt + 2_000, updatedAt: startedAt + 2_000,
+        turnId: 'scenario-reasoning-turn', kind: 'thinking_end',
+        payload: {
+          role: 'assistant', contentKind: 'thinking', messageId: 'scenario-reasoning-thinking-2',
+          contentIndex: 0, text: '思考二：根据工具结果继续核对。', streaming: false,
+          isIntermediate: true, isFinal: false,
+          timestamp: startedAt + 60_000,
+        },
+        lastEventId: 'scenario-thinking-two-end', lastSeq: 4,
+      },
+      {
+        entityId: 'tool:reasoning-write', entityType: 'tool_run', entityVersion: 2,
+        createdSeq: 5, createdAt: startedAt - 40_000, updatedAt: startedAt - 39_250,
+        turnId: 'scenario-reasoning-turn', kind: 'tool_execution_end',
+        payload: {
+          toolCallId: 'reasoning-write', toolName: 'Write', input: { file_path: 'src/second.ts' },
+          result: '工具二：写入完成。', status: 'completed',
+          timestamp: startedAt - 40_000, startedAt: startedAt - 40_000, completedAt: startedAt - 39_250,
+        },
+        lastEventId: 'scenario-tool-two-end', lastSeq: 5,
+      },
+      {
+        entityId: 'content:text:reasoning-result:0', entityType: 'content_block', entityVersion: 1,
+        createdSeq: 6, createdAt: startedAt + 5_000, updatedAt: startedAt + 5_000,
+        turnId: 'scenario-reasoning-turn', kind: 'assistant_text',
+        payload: {
+          role: 'assistant', messageId: 'scenario-reasoning-result', contentIndex: 0,
+          text: '这是唯一渲染为卡片的最终结果。', streaming: false,
+          isIntermediate: false, isFinal: true, stopReason: 'stop', timestamp: startedAt + 5_000,
+        },
+        lastEventId: 'scenario-result-end', lastSeq: 6,
+      },
+      {
+        entityId: 'turn:scenario-reasoning-turn', entityType: 'turn', entityVersion: 1,
+        createdSeq: 7, createdAt: startedAt, updatedAt: startedAt + 6_000,
+        turnId: 'scenario-reasoning-turn', kind: 'turn_end',
+        payload: { status: 'completed', stopReason: 'stop' },
+        lastEventId: 'scenario-turn-end', lastSeq: 7,
+      },
+      {
+        entityId: 'agent:reasoning-result', entityType: 'conversation', entityVersion: 1,
+        createdSeq: 8, createdAt: startedAt, updatedAt: startedAt + 7_000,
+        kind: 'agent_end', payload: { status: 'completed' },
+        lastEventId: 'scenario-agent-end', lastSeq: 8,
+      },
+    ],
+  }
+}
+
 function RealScenarioAppShell({ state }: { state: AppShellScenarioState }) {
   const [draft, setDraft] = React.useState('')
   const [queuedMessageWithdrawn, setQueuedMessageWithdrawn] = React.useState(false)
-  const needsSession = state.view === 'session-streaming' || state.view === 'session-queued' || state.view === 'tool-approval' || state.view === 'extension'
+  const needsSession = state.view === 'session-streaming' || state.view === 'session-reasoning-result' || state.view === 'session-queued' || state.view === 'extension'
   const messages = React.useMemo<Message[]>(() => state.view === 'session-streaming' ? [{
     id: 'scenario-stream-message',
     role: 'assistant',
@@ -464,6 +557,7 @@ function RealScenarioAppShell({ state }: { state: AppShellScenarioState }) {
   }), [messages, state.extension.phase, state.stream.active, state.view])
 
   const piProjection = React.useMemo<PiProjectionSnapshotV1 | undefined>(() => {
+    if (state.view === 'session-reasoning-result') return createReasoningResultProjection()
     if (state.view !== 'session-queued') return undefined
     const entities: PiProjectionSnapshotV1['entities'] = [{
       entityId: 'runtime:scenario-queued',
@@ -525,7 +619,11 @@ function RealScenarioAppShell({ state }: { state: AppShellScenarioState }) {
   return (
     <div className="flex h-full min-h-[560px] w-full flex-col bg-background text-foreground" data-testid="scenario.real-app-shell" data-scenario={state.activeScenario ?? 'none'}>
       <ScenarioSessionProjectionBoundary projection={projection} />
-      {state.view === 'transport' && state.transport && <TransportConnectionBanner state={state.transport} onRetry={() => void appShellScenarioService.retryTransport()} />}
+      {state.view === 'transport' && state.transport && (
+        <React.Suspense fallback={null}>
+          <ScenarioTransportConnectionBanner state={state.transport} onRetry={() => void appShellScenarioService.retryTransport()} />
+        </React.Suspense>
+      )}
       <div className="min-h-0 flex-1">
         <ActionRegistryProvider>
         <FocusProvider>
@@ -539,10 +637,10 @@ function RealScenarioAppShell({ state }: { state: AppShellScenarioState }) {
                   onCreateAndSendFirstTurn={async () => ({
                     session,
                     messageId: 'scenario-first-turn',
+                    publication: 'published',
                   })}
+                  onDeleteSession={async () => false}
                   onInputChange={(_sessionId, value) => setDraft(value)}
-                  getDraft={() => draft}
-                  onAutoDeleteEmptySession={async () => undefined}
                   isReady
                   isSessionsReady
                   remoteWorkspaceId={null}

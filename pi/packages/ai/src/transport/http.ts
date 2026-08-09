@@ -164,7 +164,8 @@ function classifyStatusCode(status: number, bodyText: string) {
 	}
 	if (status === 429) return "rate_limit" as const;
 	if (status === 401 || status === 403) return "auth_error" as const;
-	if (status === 500 || status === 502 || status === 503 || status === 504) return "server_error" as const;
+	if (status === 500 || status === 502 || status === 503 || status === 504 || status === 529)
+		return "server_error" as const;
 	if (status >= 400 && status < 500) return "client_error" as const;
 	return "unknown" as const;
 }

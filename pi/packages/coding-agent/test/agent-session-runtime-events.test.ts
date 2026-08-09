@@ -299,6 +299,48 @@ describe("AgentSessionRuntime session lifecycle events", () => {
 		expect(initialize).not.toHaveBeenCalled();
 	});
 
+	it("degrades a deferred resource failure without blocking later prompts", async () => {
+		const tempDir = join(tmpdir(), `pi-runtime-degraded-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+		mkdirSync(tempDir, { recursive: true });
+		const services = await createAgentSessionServices({
+			cwd: tempDir,
+			agentDir: tempDir,
+			deferResourceLoad: true,
+			resourceLoaderOptions: { noSkills: true, noPromptTemplates: true },
+		});
+		const loadPhase = vi.fn(async () => {
+			throw new Error("broken optional resource");
+		});
+		services.resourceLoader.loadPhase = loadPhase;
+		const initializeNetwork = vi.spyOn(services.networkManager, "initialize");
+		const applyNetworkSettings = vi.spyOn(services.networkManager, "applySettings");
+		const diagnostics: Array<{ type: "info" | "warning" | "error"; message: string }> = [];
+		const runtime = await createAgentSessionFromServices({
+			services,
+			sessionManager: SessionManager.create(tempDir),
+			persistInitialState: false,
+			onRuntimeDiagnostics: (next) => diagnostics.push(...next),
+		});
+
+		cleanups.push(async () => {
+			runtime.session.dispose();
+			await services.networkManager.dispose();
+			if (existsSync(tempDir)) rmSync(tempDir, { recursive: true, force: true });
+		});
+
+		await expect(runtime.session.prepareForFirstRequest()).resolves.toBeUndefined();
+		expect(runtime.session.requestResourcesReady).toBe(true);
+		expect(diagnostics).toContainEqual({
+			type: "warning",
+			message: "Deferred runtime preparation degraded at resource-load: broken optional resource",
+		});
+
+		await runtime.session.prepareForFirstRequest();
+		expect(loadPhase).toHaveBeenCalledTimes(1);
+		expect(initializeNetwork).toHaveBeenCalledTimes(1);
+		expect(applyNetworkSettings).toHaveBeenCalledTimes(1);
+	});
+
 	it("keeps deferred resource loading for replacement sessions", async () => {
 		const tempDir = join(tmpdir(), `pi-runtime-replacement-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 		const sessionDir = join(tempDir, "sessions");

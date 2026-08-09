@@ -21,7 +21,7 @@ Skills are specialized instructions that extend Claude's capabilities for specif
 Mortise Agent uses **the identical SKILL.md format** as the Claude Code SDK. This means:
 
 1. **Format compatibility**: Any skill written for Claude Code works in Mortise Agent
-2. **Same frontmatter fields**: `name`, `description`, `globs`, `alwaysAllow`
+2. **Same core frontmatter fields**: `name`, `description`, `globs`
 3. **Same content structure**: Markdown body with instructions for Claude
 
 **What Mortise Agent adds:**
@@ -61,7 +61,6 @@ The format is identical to Claude Code SDK skills:
 name: "Skill Display Name"
 description: "Brief description shown in skill list"
 globs: ["*.ts", "*.tsx"]     # Optional: file patterns that trigger skill
-alwaysAllow: ["Bash"]        # Optional: tools to always allow
 ---
 
 # Skill Instructions
@@ -97,16 +96,6 @@ globs:
   - "*.test.ts"           # Test files
   - "*.spec.tsx"          # React test files
   - "**/__tests__/**"     # Test directories
-```
-
-### alwaysAllow (optional)
-Array of tool names that are automatically allowed when this skill is active.
-Useful for skills that require specific tools without prompting.
-
-```yaml
-alwaysAllow:
-  - "Bash"                # Allow bash commands
-  - "Write"               # Allow file writes
 ```
 
 ## Creating a Skill
@@ -198,7 +187,6 @@ This validates:
 ---
 name: "Commit"
 description: "Create well-formatted git commit messages"
-alwaysAllow: ["Bash"]
 ---
 
 # Commit Message Guidelines

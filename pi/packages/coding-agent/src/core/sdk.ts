@@ -3,8 +3,10 @@ import { join } from "node:path";
 import { Agent, type AgentMessage, type AgentOptions, type ThinkingLevel } from "@mortise/pi-agent-core";
 import { clampThinkingLevel } from "@mortise/pi-ai/model-utils";
 import { streamSimple } from "@mortise/pi-ai/stream";
-import type { Message, Model } from "@mortise/pi-ai/types";
+import type { Message, Model, SimpleStreamOptions } from "@mortise/pi-ai/types";
 import { createAssistantMessageEventStream } from "@mortise/pi-ai/utils/event-stream";
+import type { WebSearchMode } from "@mortise/pi-ai/web-search";
+import { classifyWebSearchError, resolveWebSearchMode } from "@mortise/pi-ai/web-search";
 import { getAgentDir } from "../config.ts";
 import { resolvePath } from "../utils/paths.ts";
 import { AgentSession } from "./agent-session.ts";
@@ -54,6 +56,8 @@ export interface CreateAgentSessionOptions {
 	thinkingLevel?: ThinkingLevel;
 	/** Override builtin web_search capability for this session. Default: settings value, else false. */
 	webSearch?: boolean;
+	/** Web search orchestration policy. Legacy webSearch remains supported. */
+	webSearchMode?: WebSearchMode;
 	/** Models available for cycling (Ctrl+P in interactive mode) */
 	scopedModels?: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel }>;
 
@@ -318,6 +322,23 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	];
 	const allowedToolNames = options.tools ?? (options.noTools === "all" ? [] : undefined);
 	const webSearchOverride = options.webSearch;
+	const webSearchModeOverride = options.webSearchMode;
+	const initialWebSearchMode =
+		webSearchModeOverride ??
+		(webSearchOverride === false
+			? "disabled"
+			: webSearchOverride === true
+				? "auto"
+				: settingsManager.getWebSearchMode());
+	const initialWebSearchPlan = resolveWebSearchMode(initialWebSearchMode, model);
+	if (initialWebSearchPlan.capability) {
+		options.onRuntimeDiagnostics?.([
+			{
+				type: "info",
+				message: `联网搜索：策略=${initialWebSearchMode}，能力=${initialWebSearchPlan.capability.mode}，端点=${initialWebSearchPlan.capability.endpointClass}，模型=${initialWebSearchPlan.capability.provider}/${initialWebSearchPlan.capability.model}${initialWebSearchPlan.reason ? `，原因=${initialWebSearchPlan.reason}` : ""}`,
+			},
+		]);
+	}
 	const excludedToolNames = options.excludeTools;
 	const excludedToolNameSet = excludedToolNames ? new Set(excludedToolNames) : undefined;
 	const initialActiveToolNames: string[] = (
@@ -385,7 +406,14 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 				providerRetrySettings.timeoutMs ??
 				(model.api === "openai-codex-responses" ? settingsManager.getHttpIdleTimeoutMs() : undefined);
 			const attributionHeaders = getAttributionHeaders(model, streamOptions?.sessionId);
-			const effectiveWebSearch = webSearchOverride ?? settingsManager.getWebSearch();
+			const effectiveWebSearchMode =
+				webSearchModeOverride ??
+				(webSearchOverride === false
+					? "disabled"
+					: webSearchOverride === true
+						? "auto"
+						: settingsManager.getWebSearchMode());
+			const webSearchPlan = resolveWebSearchMode(effectiveWebSearchMode, model);
 			const requestUrl = model.baseUrl;
 			const requestClass = "model_pre_first_byte";
 			const requestId = randomUUID();
@@ -402,12 +430,15 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			// Host fetch interceptor: wrap whichever fetch the provider will use
 			// (sidecar fetch when routed through the sidecar, global fetch otherwise).
 			const interceptedFetch = options.fetchInterceptor ? options.fetchInterceptor(httpFetch ?? fetch) : httpFetch;
-			const upstream = streamSimple(model, context, {
+			const providerContext = webSearchPlan.native
+				? { ...context, tools: context.tools?.filter((tool) => tool.name !== "web_search") }
+				: context;
+			const providerOptions: SimpleStreamOptions = {
 				...streamOptions,
 				apiKey: auth.apiKey,
 				timeoutMs,
 				transport: "sse",
-				webSearch: effectiveWebSearch,
+				webSearch: webSearchPlan.native,
 				maxRetries: streamOptions?.maxRetries ?? providerRetrySettings.maxRetries,
 				maxRetryDelayMs: streamOptions?.maxRetryDelayMs ?? providerRetrySettings.maxRetryDelayMs,
 				httpFetch: interceptedFetch,
@@ -426,23 +457,63 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 									: {}),
 							}
 						: undefined,
-			});
-			if (!requestContext) {
+			};
+			let upstream = streamSimple(model, providerContext, providerOptions);
+			const canFallback =
+				effectiveWebSearchMode === "auto" &&
+				webSearchPlan.native &&
+				context.tools?.some((tool) => tool.name === "web_search") === true;
+			if (!requestContext && !canFallback) {
 				return upstream;
 			}
 			const wrapped = createAssistantMessageEventStream();
 			void (async () => {
 				try {
+					let emittedProviderOutput = false;
 					for await (const event of upstream) {
-						if (event.type !== "error") {
-							requestContext.firstByteReceived = true;
-							networkManager?.markFirstByte(requestContext.requestId);
+						if (
+							event.type === "error" &&
+							canFallback &&
+							!emittedProviderOutput &&
+							classifyWebSearchError(event.error.errorMessage) === "unsupported"
+						) {
+							options.onRuntimeDiagnostics?.([
+								{
+									type: "warning",
+									message: `原生网页搜索不受支持，已切换到 mortise-web-search Extension（${model.provider}/${model.id}）。`,
+								},
+							]);
+							upstream = streamSimple(model, context, { ...providerOptions, webSearch: false });
+							for await (const fallbackEvent of upstream) {
+								if (fallbackEvent.type === "start") continue;
+								if (fallbackEvent.type === "done" && requestContext) {
+									networkManager?.attachRequestContext(fallbackEvent.message, requestContext);
+									networkManager?.completeRequest(requestContext.requestId, true);
+								}
+								if (fallbackEvent.type === "error" && requestContext) {
+									networkManager?.attachRequestContext(fallbackEvent.error, requestContext);
+									networkManager?.annotateAssistantFailure(fallbackEvent.error, requestContext);
+									networkManager?.completeRequest(requestContext.requestId, false);
+								}
+								wrapped.push(fallbackEvent);
+							}
+							return;
 						}
-						if (event.type === "done") {
+						// The provider emits `start` as soon as response headers arrive. That
+						// is not model output and must not suppress replay of a pre-output
+						// provider failure (for example an overload response after `start`).
+						if (event.type !== "start" && event.type !== "done" && event.type !== "error") {
+							emittedProviderOutput = true;
+							if (requestContext) {
+								requestContext.firstByteReceived = true;
+								networkManager?.markFirstByte(requestContext.requestId);
+							}
+						}
+						if (event.type === "done" && requestContext) {
 							networkManager?.attachRequestContext(event.message, requestContext);
 							networkManager?.completeRequest(requestContext.requestId, true);
 						}
-						if (event.type === "error") {
+						if (event.type === "error" && requestContext) {
 							networkManager?.attachRequestContext(event.error, requestContext);
 							networkManager?.annotateAssistantFailure(event.error, requestContext);
 							networkManager?.completeRequest(requestContext.requestId, false);
@@ -450,10 +521,12 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 						wrapped.push(event);
 					}
 				} catch {
-					networkManager?.completeRequest(requestContext.requestId, false);
+					if (requestContext) networkManager?.completeRequest(requestContext.requestId, false);
 					const finalMessage = await upstream.result();
-					networkManager?.attachRequestContext(finalMessage, requestContext);
-					networkManager?.annotateAssistantFailure(finalMessage, requestContext);
+					if (requestContext) {
+						networkManager?.attachRequestContext(finalMessage, requestContext);
+						networkManager?.annotateAssistantFailure(finalMessage, requestContext);
+					}
 					wrapped.push({ type: "error", reason: "error", error: finalMessage });
 				}
 			})();
@@ -517,6 +590,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		initialActiveToolNames,
 		allowedToolNames,
 		webSearchOverride,
+		webSearchModeOverride,
 		excludedToolNames,
 		extensionRunnerRef,
 		sessionStartEvent: options.sessionStartEvent,

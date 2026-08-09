@@ -1,13 +1,30 @@
 import { describe, expect, it, jest } from 'bun:test'
+import type { Workspace } from '@mortise/core/types'
 import type { PiProjectionEventV1 } from '@mortise/shared/protocol'
 import { SessionManager, createManagedSession } from './SessionManager.ts'
 
 describe('SessionManager cancellation', () => {
   it('closes a stale running Pi projection even when managed processing is already false', async () => {
     const manager = new SessionManager()
+    const workspace: Workspace = {
+      schemaVersion: 2,
+      id: 'workspace-1',
+      revision: 0,
+      name: 'Workspace',
+      nameSource: 'custom',
+      slug: 'workspace',
+      primaryLocationId: 'primary',
+      locations: [{
+        id: 'primary',
+        name: 'Primary',
+        rootName: 'workspace',
+        endpoint: { kind: 'local', rootPath: process.cwd() },
+      }],
+      createdAt: 0,
+    }
     const managed = createManagedSession(
       { mortiseId: 'session-1' },
-      { id: 'workspace-1', name: 'Workspace', rootPath: process.cwd(), createdAt: 0 } as never,
+      workspace,
       { messagesLoaded: true },
     )
     const abort = jest.fn(async () => {})

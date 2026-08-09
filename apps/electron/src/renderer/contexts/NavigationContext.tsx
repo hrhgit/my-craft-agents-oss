@@ -47,7 +47,6 @@ import {
   type ParsedRoute,
 } from '../../shared/route-parser'
 import { routes, type Route, type ViewRoute } from '../../shared/routes'
-import { parsePermissionMode } from '@mortise/shared/agent/mode-types'
 import { NAVIGATE_EVENT, type NavigateOptions } from '../lib/navigate'
 import { waitForRendererCommit } from '../lib/workspace-transition'
 import {
@@ -87,7 +86,6 @@ import {
   focusedPanelRouteAtom,
   focusedPanelIndexAtom,
   updateFocusedPanelRouteAtom,
-  parseSessionIdFromRoute,
 } from '@/atoms/panel-stack'
 
 // Re-export routes for convenience
@@ -135,20 +133,14 @@ interface NavigationProviderProps {
   onCreateAndSendFirstTurn: (
     input: import('@mortise/shared/protocol').CreateAndSendFirstTurnRequest,
   ) => Promise<import('@mortise/shared/protocol').CreateAndSendFirstTurnResult>
+  /** Explicit, user-confirmed deletion for an already published Session. */
+  onDeleteSession: (sessionId: string) => Promise<boolean>
   /** Input change handler for pre-filling chat input */
   onInputChange?: (sessionId: string, value: string) => void
-  /** Get draft input text for a session (reads from ref, no re-render) */
-  getDraft?: (sessionId: string) => string
-  /** Whether a draft has text or attachments. */
-  hasDraft?: (sessionId: string) => boolean
-  /** Auto-delete an empty session (no confirmation needed) */
-  onAutoDeleteEmptySession?: (sessionId: string) => void
   /** Whether the app is ready to navigate */
   isReady?: boolean
   /** Whether session metadata has been initialized (required for deterministic route restoration) */
   isSessionsReady?: boolean
-  /** Whether persisted drafts are available for deferred-session cleanup decisions. */
-  areDraftsReady?: boolean
   /** Remote workspace ID — when set, sessions with this ID are also considered part of the workspace */
   remoteWorkspaceId?: string | null
   /** One-shot destination for an explicit workspace list selection. */
@@ -162,13 +154,10 @@ export function NavigationProvider({
   workspaceSlug,
   onSwitchWorkspaceBySlug,
   onCreateAndSendFirstTurn,
+  onDeleteSession,
   onInputChange,
-  getDraft,
-  hasDraft,
-  onAutoDeleteEmptySession,
   isReady = true,
   isSessionsReady = true,
-  areDraftsReady = true,
   remoteWorkspaceId,
   workspaceSwitchDestination,
   onWorkspaceSwitchDestinationConsumed,
@@ -496,49 +485,6 @@ export function NavigationProvider({
   useEffect(() => { reconcileFromUrlParamsRef.current = reconcileFromUrlParams }, [reconcileFromUrlParams])
 
   // =========================================================================
-  // EMPTY SESSION CLEANUP (reactive — covers navigate, close tab, etc.)
-  // =========================================================================
-
-  // Track which session IDs are visible across all panels. When a session ID
-  // disappears (navigate away, close tab, Cmd+W), check if it was empty and
-  // auto-delete it. This is the single codepath for all navigate-away cleanup.
-  const prevVisibleSessionIdsRef = useRef<Set<string>>(new Set())
-
-  useEffect(() => {
-    const currentPanelStack = store.get(panelStackAtom)
-    const currentIds = new Set<string>()
-    for (const entry of currentPanelStack) {
-      const sessionId = parseSessionIdFromRoute(entry.route)
-      if (sessionId) currentIds.add(sessionId)
-    }
-
-    if (!isSessionsReady || !areDraftsReady) {
-      prevVisibleSessionIdsRef.current = currentIds
-      return
-    }
-
-    const draftHasContent = (sessionId: string) => (
-      hasDraft?.(sessionId) ?? Boolean(getDraft?.(sessionId)?.trim())
-    )
-
-    // Only check after we've seen at least one set of IDs
-    // (skip first render to avoid false positives during initialization)
-    if (onAutoDeleteEmptySession && prevVisibleSessionIdsRef.current.size > 0) {
-      for (const prevId of prevVisibleSessionIdsRef.current) {
-        if (!currentIds.has(prevId)) {
-          const meta = store.get(sessionMetaMapAtom).get(prevId)
-          const isEmpty = meta && !meta.lastFinalMessageId && !meta.name && !meta.isProcessing
-          if (isEmpty && !draftHasContent(prevId)) {
-            onAutoDeleteEmptySession(prevId)
-          }
-        }
-      }
-    }
-
-    prevVisibleSessionIdsRef.current = currentIds
-  }, [areDraftsReady, getDraft, hasDraft, isSessionsReady, onAutoDeleteEmptySession, panelStack, sessionMetas, store, workspaceId])
-
-  // =========================================================================
   // SESSION SELECTION SYNC
   // =========================================================================
 
@@ -704,8 +650,6 @@ export function NavigationProvider({
               const createOptions: import('../../shared/types').CreateSessionOptions = {
                 name: parsed.params.name,
               }
-              const parsedMode = parsed.params.mode ? parsePermissionMode(parsed.params.mode) : undefined
-              if (parsedMode) createOptions.permissionMode = parsedMode
               if (parsed.params.model) createOptions.model = parsed.params.model
               if (parsed.params.systemPrompt) createOptions.systemPromptPreset = parsed.params.systemPrompt
               onInputChange?.(draftStorageKey, parsed.params.input)
@@ -737,21 +681,7 @@ export function NavigationProvider({
 
         case 'delete-session':
           if (parsed.id) {
-            await window.electronAPI.deleteSession(parsed.id)
-          }
-          break
-
-        case 'set-mode':
-          if (parsed.id && parsed.params.mode) {
-            const parsedMode = parsePermissionMode(parsed.params.mode)
-            if (!parsedMode) {
-              console.warn('[Navigation] Invalid permission mode:', parsed.params.mode)
-              break
-            }
-            await window.electronAPI.sessionCommand(
-              parsed.id,
-              { type: 'setPermissionMode', mode: parsedMode }
-            )
+            await onDeleteSession(parsed.id)
           }
           break
 
@@ -765,7 +695,7 @@ export function NavigationProvider({
           console.warn('[Navigation] Unknown action:', parsed.name)
       }
     },
-    [workspaceId, onCreateAndSendFirstTurn, onInputChange, pushPanel, setPageSurfaceRoute, store, t, updateSessionMeta]
+    [workspaceId, onCreateAndSendFirstTurn, onDeleteSession, onInputChange, pushPanel, setPageSurfaceRoute, store, t, updateSessionMeta]
   )
 
   // =========================================================================

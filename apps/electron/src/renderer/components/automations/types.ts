@@ -8,7 +8,6 @@
  */
 
 import { computeNextRuns } from './utils'
-import type { PermissionMode } from '../../../shared/types'
 import type { ThinkingLevel } from '@mortise/shared/agent/thinking-levels'
 import type { AutomationDefinitionPageV1 } from '@mortise/shared/protocol'
 
@@ -16,9 +15,7 @@ import type { AutomationDefinitionPageV1 } from '@mortise/shared/protocol'
 // Automation System Types (mirrored from packages/shared/src/automations/types.ts)
 // ============================================================================
 
-export type AppEvent =
-  | 'PermissionModeChange'
-  | 'scheduled'
+export type AppEvent = 'scheduled'
 
 export type AgentEvent =
   | 'PreToolUse'
@@ -32,19 +29,16 @@ export type AgentEvent =
   | 'SubagentStart'
   | 'SubagentStop'
   | 'PreCompact'
-  | 'PermissionRequest'
   | 'Setup'
 
 export type AutomationTrigger = AppEvent | AgentEvent
 
-export const APP_EVENTS: AppEvent[] = [
-  'PermissionModeChange', 'scheduled'
-]
+export const APP_EVENTS: AppEvent[] = ['scheduled']
 
 export const AGENT_EVENTS: AgentEvent[] = [
   'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'Notification',
   'UserPromptSubmit', 'SessionStart', 'SessionEnd', 'Stop',
-  'SubagentStart', 'SubagentStop', 'PreCompact', 'PermissionRequest', 'Setup'
+  'SubagentStart', 'SubagentStop', 'PreCompact', 'Setup'
 ]
 
 export interface PromptAction {
@@ -102,7 +96,6 @@ export type AutomationConditionUI = TimeConditionUI | StateConditionUI | Logical
 
 /** Human-friendly field names for state conditions */
 const FIELD_LABELS: Record<string, string> = {
-  permissionMode: 'permission mode',
   sessionName: 'session name',
 }
 
@@ -198,8 +191,6 @@ export interface AutomationListItem {
   cron?: string
   /** IANA timezone for cron */
   timezone?: string
-  /** Permission mode */
-  permissionMode?: PermissionMode
   /** Conditions that must pass before actions run */
   conditions?: AutomationConditionUI[]
   /** The actions this automation performs */
@@ -289,7 +280,6 @@ export interface TestResult {
 /** Maps internal event names to user-friendly labels */
 export const EVENT_DISPLAY_NAMES: Record<AutomationTrigger, string> = {
   // App events
-  PermissionModeChange: 'Permission Changed',
   scheduled:            'Scheduled',
 
   // Agent events
@@ -304,24 +294,11 @@ export const EVENT_DISPLAY_NAMES: Record<AutomationTrigger, string> = {
   SubagentStart:        'Sub-agent Started',
   SubagentStop:         'Sub-agent Stopped',
   PreCompact:           'Before Memory Cleanup',
-  PermissionRequest:    'Permission Requested',
   Setup:                'Initial Setup',
 }
 
 export function getEventDisplayName(event: AutomationTrigger): string {
   return EVENT_DISPLAY_NAMES[event] ?? event
-}
-
-/** Maps permission mode values to user-friendly labels */
-export const PERMISSION_DISPLAY_NAMES: Record<PermissionMode, string> = {
-  'safe':      'Ask',
-  'ask':       'Ask',
-  'allow-all': 'Execute',
-}
-
-export function getPermissionDisplayName(mode?: PermissionMode): string {
-  if (!mode) return 'Ask'
-  return PERMISSION_DISPLAY_NAMES[mode] ?? mode
 }
 
 // ============================================================================
@@ -410,9 +387,6 @@ export function getEventCategory(event: AutomationTrigger): EventCategory {
   switch (event) {
     case 'scheduled':
       return 'scheduled'
-    case 'PermissionModeChange':
-    case 'PermissionRequest':
-      return 'permission'
     case 'PreToolUse':
     case 'UserPromptSubmit':
     case 'Setup':

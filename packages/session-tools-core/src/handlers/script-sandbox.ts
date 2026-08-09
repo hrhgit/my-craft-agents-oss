@@ -94,7 +94,7 @@ export async function handleScriptSandbox(
       networkIsolation = applyNetworkIsolation(runtime.command, runtimeArgs);
       if (networkIsolation.status !== 'enforced') {
         return errorResponse(
-          'script_sandbox requires network isolation in all permission modes, but no supported isolation backend is available on this platform/runtime.'
+          'script_sandbox requires network isolation, but no supported isolation backend is available on this platform/runtime.'
         );
       }
 
@@ -107,13 +107,13 @@ export async function handleScriptSandbox(
 
     if (networkIsolation.status !== 'enforced') {
       return errorResponse(
-        'script_sandbox requires network isolation in all permission modes, but no supported isolation backend is available on this platform/runtime.'
+        'script_sandbox requires network isolation, but no supported isolation backend is available on this platform/runtime.'
       );
     }
 
     if (filesystemIsolation.status !== 'enforced') {
       return errorResponse(
-        'script_sandbox requires filesystem isolation in all permission modes, but no supported isolation backend is available on this platform/runtime.'
+        'script_sandbox requires filesystem isolation, but no supported isolation backend is available on this platform/runtime.'
       );
     }
 

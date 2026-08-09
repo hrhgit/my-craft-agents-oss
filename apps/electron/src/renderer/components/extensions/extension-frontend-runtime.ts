@@ -67,6 +67,17 @@ function createRootNode(parent: HTMLElement, descriptor: ExtensionFrontendDescri
   return root
 }
 
+function observeRootVisibility(root: HTMLElement): MutationObserver {
+  const sync = () => {
+    root.hidden = !root.hasChildNodes()
+  }
+  const Observer = root.ownerDocument.defaultView?.MutationObserver ?? MutationObserver
+  const observer = new Observer(sync)
+  observer.observe(root, { childList: true, subtree: true, characterData: true })
+  sync()
+  return observer
+}
+
 function mountFunction(module: ExtensionFrontendModule): NonNullable<ExtensionFrontendModule['mount']> {
   const mount = module.mount ?? module.default?.mount
   if (!mount) throw new Error('Extension frontend module must export mount(context) or default.mount(context)')
@@ -188,7 +199,7 @@ export function createExtensionUIDependencies(
 }
 
 export class ExtensionFrontendHost {
-  private current?: { key: string; abort: AbortController; root: HTMLElement; disposer: ExtensionUIDisposer; styles: HTMLLinkElement[] }
+  private current?: { key: string; abort: AbortController; root: HTMLElement; disposer: ExtensionUIDisposer; styles: HTMLLinkElement[]; visibilityObserver: MutationObserver }
   private mountAbort?: AbortController
   private generation = 0
 
@@ -204,6 +215,7 @@ export class ExtensionFrontendHost {
     if (generation !== this.generation) throw new DOMException('Extension frontend mount was superseded', 'AbortError')
 
     const root = createRootNode(parent, descriptor)
+    const visibilityObserver = observeRootVisibility(root)
     const styles = descriptor.styleUrls.map((url) => {
       const link = document.createElement('link')
       link.rel = 'stylesheet'
@@ -236,12 +248,13 @@ export class ExtensionFrontendHost {
         await disposeExtensionUI(disposer)
         throw new DOMException('Extension frontend mount was aborted', 'AbortError')
       }
-      this.current = { key, abort, root, disposer, styles }
+      this.current = { key, abort, root, disposer, styles, visibilityObserver }
       this.mountAbort = undefined
       return { mode: descriptor.mode, root }
     } catch (error) {
       abort.abort()
       if (this.mountAbort === abort) this.mountAbort = undefined
+      visibilityObserver.disconnect()
       for (const link of styles) link.remove()
       root.remove()
       throw error
@@ -261,6 +274,7 @@ export class ExtensionFrontendHost {
     this.current = undefined
     current.abort.abort()
     await disposeExtensionUI(current.disposer)
+    current.visibilityObserver.disconnect()
     for (const link of current.styles) link.remove()
     current.root.remove()
   }

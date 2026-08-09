@@ -29,7 +29,7 @@ import type {
 	UserAttachmentMetadata,
 } from "@mortise/pi-ai/types";
 import { isContextOverflow } from "@mortise/pi-ai/utils/overflow";
-import { supportsBuiltinWebSearch } from "@mortise/pi-ai/web-search";
+import { resolveWebSearchMode, type WebSearchMode } from "@mortise/pi-ai/web-search";
 import { stripFrontmatter } from "../utils/frontmatter.ts";
 import { resolvePath } from "../utils/paths.ts";
 import { sleep } from "../utils/sleep.ts";
@@ -188,6 +188,8 @@ export interface AgentSessionConfig {
 	scopedModels?: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel }>;
 	/** Session-level override for builtin web_search capability. */
 	webSearchOverride?: boolean;
+	/** Session-level search orchestration policy. */
+	webSearchModeOverride?: WebSearchMode;
 	/** Resource loader for skills, prompts, context files, and system prompt. */
 	resourceLoader: ResourceLoader;
 	/** SDK custom tools registered outside extensions */
@@ -230,14 +232,14 @@ export interface ExtensionBindings {
 	shutdownHandler?: ShutdownHandler;
 	onError?: ExtensionErrorListener;
 	/**
-	 * Host-side permission gate for tool execution.
+	 * Host-side execution interceptor for tool calls.
 	 *
 	 * Runs inside `agent.beforeToolCall`, AFTER extension `tool_call` handlers
 	 * (so it sees extension-mutated input) and before the tool executes. The
-	 * host may allow, block, or modify the input. Intended for embedders (GUI
-	 * shells, RPC hosts) that enforce their own permission policy.
+	 * host may allow, block, or modify the input. Intended for embedders that
+	 * need a neutral execution boundary after extension processing.
 	 */
-	toolPermissionHandler?: ToolPermissionHandler;
+	toolExecutionHandler?: ToolExecutionHandler;
 	/**
 	 * Host-side observer for finalized tool results.
 	 *
@@ -248,8 +250,8 @@ export interface ExtensionBindings {
 	toolResultHandler?: ToolResultHandler;
 }
 
-/** Request passed to a host {@link ToolPermissionHandler}. */
-export interface ToolPermissionRequest {
+/** Request passed to a host {@link ToolExecutionHandler}. */
+export interface ToolExecutionRequest {
 	toolName: string;
 	toolCallId: string;
 	/** Tool input after extension `tool_call` handlers have run (mutations applied). */
@@ -260,20 +262,20 @@ export interface ToolPermissionRequest {
 	assistantTimestamp: number;
 }
 
-/** Result returned by a host {@link ToolPermissionHandler}. */
-export type ToolPermissionResult =
+/** Result returned by a host {@link ToolExecutionHandler}. */
+export type ToolExecutionResult =
 	| { action: "allow" }
 	| { action: "block"; reason?: string }
 	| { action: "modify"; input: Record<string, unknown> };
 
-/** Host-side permission gate invoked before every tool execution. */
-export type ToolPermissionHandler = (request: ToolPermissionRequest) => Promise<ToolPermissionResult>;
+/** Host-side interceptor invoked before every tool execution. */
+export type ToolExecutionHandler = (request: ToolExecutionRequest) => Promise<ToolExecutionResult>;
 
 /** Finalized tool result passed to a host {@link ToolResultHandler}. */
 export interface ToolResultRequest {
 	toolName: string;
 	toolCallId: string;
-	/** Final tool input after extension and host permission mutations. */
+	/** Final tool input after extension and host interceptor mutations. */
 	input: Record<string, unknown>;
 	/** Final content after extension `tool_result` handlers. */
 	content: (TextContent | ImageContent)[];
@@ -359,7 +361,7 @@ interface ToolDefinitionEntry {
 // ============================================================================
 
 /** Standard thinking levels */
-const THINKING_LEVELS: ThinkingLevel[] = ["off", "minimal", "low", "medium", "high"];
+const THINKING_LEVELS: ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 const COMPACTION_THINKING_LEVEL: ThinkingLevel = "medium";
 
 // ============================================================================
@@ -416,6 +418,7 @@ export class AgentSession {
 	private _initialActiveToolNames?: string[];
 	private _allowedToolNames?: Set<string>;
 	private _webSearchOverride?: boolean;
+	private _webSearchModeOverride?: WebSearchMode;
 	private _excludedToolNames?: Set<string>;
 	private _baseToolsOverride?: Record<string, AgentTool>;
 	private _sessionStartEvent: SessionStartEvent;
@@ -428,7 +431,7 @@ export class AgentSession {
 	private _extensionAbortHandler?: () => void;
 	private _extensionShutdownHandler?: ShutdownHandler;
 	private _extensionErrorListener?: ExtensionErrorListener;
-	private _toolPermissionHandler?: ToolPermissionHandler;
+	private _toolExecutionHandler?: ToolExecutionHandler;
 	private _toolResultHandler?: ToolResultHandler;
 	/** Host-set system prompt (PromptOptions.systemPrompt); wins over the loader-built prompt. */
 	private _hostSystemPromptOverride?: string;
@@ -468,6 +471,7 @@ export class AgentSession {
 		this._initialActiveToolNames = config.initialActiveToolNames;
 		this._allowedToolNames = config.allowedToolNames ? new Set(config.allowedToolNames) : undefined;
 		this._webSearchOverride = config.webSearchOverride;
+		this._webSearchModeOverride = config.webSearchModeOverride;
 		this._excludedToolNames = config.excludedToolNames ? new Set(config.excludedToolNames) : undefined;
 		this._baseToolsOverride = config.baseToolsOverride;
 		this._sessionStartEvent = config.sessionStartEvent ?? { type: "session_start", reason: "startup" };
@@ -565,27 +569,27 @@ export class AgentSession {
 
 			// The host execution boundary runs after extension handlers so it sees
 			// extension-mutated input. User approval can be implemented by tool_call.
-			const permissionHandler = this._toolPermissionHandler;
-			if (permissionHandler) {
-				const permission = await permissionHandler({
+			const executionHandler = this._toolExecutionHandler;
+			if (executionHandler) {
+				const decision = await executionHandler({
 					toolName: toolCall.name,
 					toolCallId: toolCall.id,
 					input: effectiveArgs,
 					assistantResponseId: assistantMessage.responseId,
 					assistantTimestamp: assistantMessage.timestamp,
 				});
-				if (permission.action === "block") {
-					return { block: true, reason: permission.reason };
+				if (decision.action === "block") {
+					return { block: true, reason: decision.reason };
 				}
-				if (permission.action === "modify") {
+				if (decision.action === "modify") {
 					// Mutate in place: the agent executes the same args object it passed in,
 					// matching the extension tool_call mutation contract.
 					for (const key of Object.keys(effectiveArgs)) {
-						if (!(key in permission.input)) {
+						if (!(key in decision.input)) {
 							delete effectiveArgs[key];
 						}
 					}
-					Object.assign(effectiveArgs, permission.input);
+					Object.assign(effectiveArgs, decision.input);
 				}
 			}
 
@@ -1224,21 +1228,35 @@ export class AgentSession {
 		return Array.from(unique);
 	}
 
-	private _getEffectiveWebSearchEnabled(): boolean {
-		return this._webSearchOverride ?? this.settingsManager.getWebSearch();
+	private _getEffectiveWebSearchMode(): WebSearchMode {
+		return (
+			this._webSearchModeOverride ??
+			(this._webSearchOverride === false
+				? "disabled"
+				: this._webSearchOverride === true
+					? "auto"
+					: this.settingsManager.getWebSearchMode())
+		);
 	}
 
 	private _getWebSearchPromptGuidelines(): string[] {
-		if (!this._getEffectiveWebSearchEnabled()) {
+		const mode = this._getEffectiveWebSearchMode();
+		const plan = resolveWebSearchMode(mode, this.model);
+		if (mode === "disabled") {
 			return [];
 		}
 
-		if (this.model && supportsBuiltinWebSearch(this.model)) {
+		if (plan.native) {
 			return ["Use the model's built-in web_search capability when you need current public web information."];
+		}
+		if (plan.extension && this._toolRegistry.has("web_search")) {
+			return [
+				"Use the web_search tool when you need current public web information. Search results include source URLs.",
+			];
 		}
 
 		return [
-			"Built-in web search is unavailable for the current model/provider. If the user asks for live web information, say web search is unavailable instead of pretending to have it.",
+			`Web search is unavailable for the current model/provider${plan.reason ? ` (${plan.reason})` : ""}. If the user asks for live web information, say web search is unavailable instead of pretending to have it.`,
 		];
 	}
 
@@ -2371,10 +2389,12 @@ export class AgentSession {
 		}
 
 		// Case 2: Threshold - context is getting large
-		// For error messages (no usage data), estimate from last successful response.
-		// This ensures sessions that hit persistent API errors (e.g. 529) can still compact.
+		// Errors, aborted responses, and responses without usage need an estimate from
+		// the last successful response plus trailing messages. Aborted responses are
+		// checked only before the next prompt, so stopping never starts compaction by
+		// itself but the next prompt cannot bypass a full context.
 		let contextTokens: number;
-		if (assistantMessage.stopReason === "error") {
+		if (assistantMessage.stopReason === "error" || assistantMessage.stopReason === "aborted" || !assistantUsage) {
 			const messages = this.agent.state.messages;
 			const estimate = estimateContextTokens(messages);
 			if (estimate.lastUsageIndex === null) return false; // No usage data at all
@@ -2685,23 +2705,66 @@ export class AgentSession {
 	}
 
 	private async _prepareRequestResourcesOnce(): Promise<void> {
-		const loaded = await (this._resourceLoader.loadPhase?.("beforeFirstRequest") ?? Promise.resolve(false));
-		await this._networkManager?.initialize();
-		if (!loaded) {
-			this._requestResourcesReady = true;
-			return;
+		const warn = (stage: string, error: unknown): void => {
+			const message = error instanceof Error ? error.message : String(error);
+			this._recordRuntimeDiagnostics([
+				{
+					type: "warning",
+					message: `Deferred runtime preparation degraded at ${stage}: ${message}`,
+				},
+			]);
+		};
+
+		let loaded = false;
+		try {
+			loaded = await (this._resourceLoader.loadPhase?.("beforeFirstRequest") ?? Promise.resolve(false));
+		} catch (error) {
+			warn("resource-load", error);
 		}
 
-		this._buildRuntime({
-			activeToolNames: this.getActiveToolNames(),
-			includeAllExtensionTools: true,
-		});
+		try {
+			await this._networkManager?.initialize();
+		} catch (error) {
+			warn("network-initialize", error);
+		}
+		if (loaded) {
+			try {
+				this._buildRuntime({
+					activeToolNames: this.getActiveToolNames(),
+					includeAllExtensionTools: true,
+				});
+			} catch (error) {
+				warn("tool-runtime", error);
+			}
 
-		await this._extensionRunner.emit(this._sessionStartEvent, { activations: ["beforeFirstRequest"] });
-		await this.extendResourcesFromExtensions(this._sessionStartEvent.reason === "reload" ? "reload" : "startup");
-		await this._ensureModelSelectedAfterDeferredLoad();
-		await this._networkManager?.applySettings();
-		this.refreshSystemPrompt();
+			try {
+				await this._extensionRunner.emit(this._sessionStartEvent, { activations: ["beforeFirstRequest"] });
+			} catch (error) {
+				warn("extension-activation", error);
+			}
+			try {
+				await this.extendResourcesFromExtensions(
+					this._sessionStartEvent.reason === "reload" ? "reload" : "startup",
+				);
+			} catch (error) {
+				warn("extension-resources", error);
+			}
+		}
+		try {
+			await this._ensureModelSelectedAfterDeferredLoad();
+		} catch (error) {
+			warn("model-selection", error);
+		}
+		try {
+			await this._networkManager?.applySettings();
+		} catch (error) {
+			warn("network-settings", error);
+		}
+		try {
+			this.refreshSystemPrompt();
+		} catch (error) {
+			warn("system-prompt", error);
+		}
 		this._requestResourcesReady = true;
 	}
 
@@ -2743,8 +2806,8 @@ export class AgentSession {
 		if (bindings.onError !== undefined) {
 			this._extensionErrorListener = bindings.onError;
 		}
-		if (bindings.toolPermissionHandler !== undefined) {
-			this._toolPermissionHandler = bindings.toolPermissionHandler;
+		if (bindings.toolExecutionHandler !== undefined) {
+			this._toolExecutionHandler = bindings.toolExecutionHandler;
 		}
 		if (bindings.toolResultHandler !== undefined) {
 			this._toolResultHandler = bindings.toolResultHandler;
@@ -2783,8 +2846,8 @@ export class AgentSession {
 		if (bindings.onError !== undefined) {
 			this._extensionErrorListener = bindings.onError;
 		}
-		if (bindings.toolPermissionHandler !== undefined) {
-			this._toolPermissionHandler = bindings.toolPermissionHandler;
+		if (bindings.toolExecutionHandler !== undefined) {
+			this._toolExecutionHandler = bindings.toolExecutionHandler;
 		}
 		if (bindings.toolResultHandler !== undefined) {
 			this._toolResultHandler = bindings.toolResultHandler;
@@ -3071,7 +3134,13 @@ export class AgentSession {
 			}
 		}
 
-		this.setActiveToolsByName([...new Set(nextActiveToolNames)]);
+		const searchMode = this._getEffectiveWebSearchMode();
+		const searchPlan = resolveWebSearchMode(searchMode, this.model);
+		const keepDormantFallback = searchMode === "auto" && searchPlan.native;
+		const filteredActiveToolNames = [...new Set(nextActiveToolNames)].filter(
+			(name) => name !== "web_search" || searchPlan.extension || keepDormantFallback,
+		);
+		this.setActiveToolsByName(filteredActiveToolNames);
 	}
 
 	private _buildRuntime(options: { activeToolNames?: string[]; includeAllExtensionTools?: boolean }): void {
@@ -3192,7 +3261,9 @@ export class AgentSession {
 			return { reason: "rate_limit" };
 		}
 		if (
-			/500|502|503|504|524|service.?unavailable|server.?error|internal.?error|upstream.?error/i.test(errorMessage)
+			/overloaded|500|502|503|504|524|529|service.?unavailable|server.?error|internal.?error|upstream.?error/i.test(
+				errorMessage,
+			)
 		) {
 			return { reason: "server" };
 		}
@@ -3264,8 +3335,8 @@ export class AgentSession {
 
 		const err = message.errorMessage;
 		if (this._isNonRetryableProviderLimitError(err)) return false;
-		// Match: overloaded_error, upstream_error, provider returned error, rate limit, 429, 500, 502, 503, 504, 524, service unavailable, network/connection errors (including connection lost), WebSocket transport closes/errors, fetch failed, premature stream endings, stream_read_error, HTTP/2 closed before response, terminated, retry delay exceeded
-		return /overloaded|upstream.?error|provider.?returned.?error|rate.?limit|too many requests|429|500|502|503|504|524|service.?unavailable|server.?error|internal.?error|network.?error|connection.?error|connection.?refused|connection.?lost|fetch failed|upstream.?connect|reset before headers|socket hang up|ended without|stream ended before message_stop|stream_read_error|http2 request did not get a response|timed? out|timeout|terminated|retry delay/i.test(
+		// Match: overloaded_error, upstream_error, provider returned error, rate limit, 429, 500, 502, 503, 504, 524, 529, service unavailable, network/connection errors (including connection lost), WebSocket transport closes/errors, fetch failed, premature stream endings, stream_read_error, HTTP/2 closed before response, terminated, retry delay exceeded
+		return /overloaded|upstream.?error|provider.?returned.?error|rate.?limit|too many requests|429|500|502|503|504|524|529|service.?unavailable|server.?error|internal.?error|network.?error|connection.?error|connection.?refused|connection.?lost|fetch failed|upstream.?connect|reset before headers|socket hang up|ended without|stream ended before message_stop|stream_read_error|http2 request did not get a response|timed? out|timeout|terminated|retry delay/i.test(
 			err,
 		);
 	}

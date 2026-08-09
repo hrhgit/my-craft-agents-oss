@@ -46,8 +46,8 @@ export interface TreeSessionSpawnConfig {
   connection?: string;
   model?: string;
   enabledSources?: string[];
-  permissionMode?: string;
   thinkingLevel?: string;
+  extensionBootstrap?: import('../protocol/extension-frontend-channels.ts').ExtensionSessionBootstrapV1;
   template?: string;
   tools?: string[];
   background?: boolean;
@@ -227,7 +227,6 @@ export function getMortiseIdFromTreeHeader(
 function getMortiseHeaderMetadataSignature(mortise: Partial<MortiseMetadataOnDisk>): string {
   return JSON.stringify({
     name: mortise.name,
-    permissionMode: mortise.permissionMode,
     hasUnread: mortise.hasUnread,
     lastReadMessageId: mortise.lastReadMessageId,
   });
@@ -262,7 +261,6 @@ function buildMortiseMetadataOnDisk(
   if (hasExternalMetadataChange(previousMortise, options)) {
     for (const field of [
       'name',
-      'permissionMode',
       'hasUnread',
       'lastReadMessageId',
     ] as const) {

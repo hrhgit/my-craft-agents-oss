@@ -9,6 +9,7 @@
  * on the request would be silently dropped.
  */
 import { describe, it, expect, beforeEach } from 'bun:test';
+import { THINKING_LEVEL_IDS } from '../thinking-levels.ts';
 import type { SpawnSessionRequest, SpawnSessionResult } from '../base-agent.ts';
 import { TestAgent, createMockBackendConfig } from './test-utils.ts';
 
@@ -48,7 +49,7 @@ describe('spawn_session thinkingLevel forwarding', () => {
   });
 
   it('forwards each valid thinking level unchanged', async () => {
-    const levels = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'] as const;
+    const levels = [...THINKING_LEVEL_IDS];
     for (const level of levels) {
       const { agent: a, captured: c } = setup();
       await a.invokeSpawn({ prompt: 'hi', thinkingLevel: level });
@@ -65,11 +66,9 @@ describe('spawn_session thinkingLevel forwarding', () => {
     await agent.invokeSpawn({
       prompt: 'hi',
       thinkingLevel: 'xhigh',
-      permissionMode: 'ask',
       model: 'claude-opus-4-7',
     });
     expect(captured[0]?.thinkingLevel).toBe('xhigh');
-    expect(captured[0]?.permissionMode).toBe('ask');
     expect(captured[0]?.model).toBe('claude-opus-4-7');
   });
 });

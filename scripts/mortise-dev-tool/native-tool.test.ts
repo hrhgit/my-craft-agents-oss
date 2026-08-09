@@ -39,6 +39,10 @@ describe('Mortise Windows desktop tool', () => {
 
   it('stops the Mortise desktop process tree before the tool closes', () => {
     expect(script).toContain('if (stopDesktopOnClose) StopDesktopOnToolClose()')
+    expect(script).toContain('packageRunner?.TerminateTree()')
+    expect(script).toContain('developerKitRunner?.TerminateTree()')
+    expect(script).toContain('packageRunner?.Dispose()')
+    expect(script).toContain('developerKitRunner?.Dispose()')
     expect(script).toContain('private void StopDesktopOnToolClose()')
     expect(script).toContain('stopRunner?.TerminateTree()')
     expect(script).toContain('!desktopRunner.WaitForExit(5000)')

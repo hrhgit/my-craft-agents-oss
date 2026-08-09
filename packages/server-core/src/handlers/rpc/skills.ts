@@ -123,9 +123,12 @@ export async function discoverSkillsUnderHome(
   const excludedWorkspaceSkillsRoot = workspaceRootPath
     ? join(resolve(workspaceRootPath), '.mortise', 'skills')
     : undefined
+  const excludedGlobalSkillsRoot = join(getPiAgentDir(), 'skills')
   const discovered: DiscoveredSkill[] = []
   for (const skillsRoot of [...skillRoots].sort((a, b) => a.localeCompare(b))) {
-    if (excludedWorkspaceSkillsRoot && isPathWithinDirectory(skillsRoot, excludedWorkspaceSkillsRoot)) continue
+    const excluded = (excludedWorkspaceSkillsRoot && isPathWithinDirectory(skillsRoot, excludedWorkspaceSkillsRoot))
+      || isPathWithinDirectory(skillsRoot, excludedGlobalSkillsRoot)
+    if (excluded) continue
     discovered.push(...await discoverUnderSkillsRoot(skillsRoot))
     if (discovered.length >= MAX_DISCOVERED_SKILLS) break
   }
@@ -160,17 +163,26 @@ export async function importSkillDirectory(
   }
 
   const files = collectDirectoryFiles(resolvedSource)
-  const result = await importResources(workspaceRootPath, {
-    version: 3,
-    exportedAt: Date.now(),
-    resources: { skills: [{ slug, files }] },
-  }, 'skip')
+  const globalSkillsRoot = join(getPiAgentDir(), 'skills')
+  const result = await importResources(
+    workspaceRootPath,
+    {
+      version: 3,
+      exportedAt: Date.now(),
+      resources: { skills: [{ slug, files }] },
+    },
+    'skip',
+    workspaceRootPath,
+    undefined,
+    undefined,
+    globalSkillsRoot,
+  )
 
   const failed = result.skills.failed[0]
   if (failed) throw new Error(failed.error)
 
   invalidateSkillsCache()
-  const skill = loadSkill(workspaceRootPath, slug, workspaceRootPath)
+  const skill = loadSkill('', slug)
   const name = skill?.metadata.name ?? slug
   if (result.skills.skipped.includes(slug)) return { status: 'skipped', slug, name }
   if (!result.skills.imported.includes(slug) || !skill) {
@@ -336,9 +348,6 @@ export function registerSkillsHandlers(server: RpcServer, deps: HandlerDeps): vo
 
     const workspaceRoot = requirePrimaryLocalWorkspaceRoot(workspace)
     const importResult = await importSkillDirectories(workspaceRoot, sourcePaths)
-    for (const imported of importResult.imported) {
-      deps.sessionManager.notifyConfigFileChange(workspaceRoot, `${MORTISE_PROJECT_SKILLS_DIR}/${imported.slug}/SKILL.md`)
-    }
     deps.platform.logger?.info(
       `SKILLS_IMPORT: ${importResult.imported.length} imported, ` +
       `${importResult.skipped.length} skipped, ${importResult.failed.length} failed`,

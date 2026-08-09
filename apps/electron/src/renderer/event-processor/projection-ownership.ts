@@ -6,7 +6,6 @@ const PROJECTION_OWNED_HOST_EVENTS = new Set([
   'error',
   'typed_error',
   'user_message',
-  'permission_request',
   'plan_submitted',
   'plan_artifact_changed',
   'plan_mode_state_changed',

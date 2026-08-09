@@ -126,7 +126,6 @@ The `run` command is fully self-contained — it spawns a headless server, creat
 |------|---------|-------------|
 | `--workspace-dir <path>` | — | Register a workspace directory before running |
 | `--output-format <fmt>` | `text` | Output format: `text` or `stream-json` |
-| `--mode <mode>` | `allow-all` | Permission mode for the session |
 | `--no-cleanup` | `false` | Skip session deletion on exit |
 | `--server-entry <path>` | — | Custom server entry point |
 | `--interactive` | `false` | Render versioned extension interactions (returns a structured cancellation when omitted) |

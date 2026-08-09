@@ -180,7 +180,7 @@ DevTools opens automatically (configured in `index.ts`). Remove `mainWindow.webC
 - **AI-generated titles** - Sessions get automatic titles after first exchange
 - **Subagent support** - Load and apply agent definitions from Mortise documents
 - **Shell integration** - Open URLs in browser, open files in default apps
-- **Permission modes** - Three-level permission system (Explore, Ask to Edit, Auto)
+- **Bundled extensions** - Session controls and approval workflows can ship as precompiled extensions
 - **Background tasks** - Run long-running tasks in background with progress tracking
 - **Multi-file diff** - VS Code-style window for viewing all file changes in a turn
 - **Dynamic statuses** - Workspace-customizable session workflow states
@@ -246,7 +246,7 @@ See `CLAUDE.md` for complete route reference.
 | `renderer/components/chat/Chat.tsx` | Main chat layout with resizable panels |
 | `renderer/components/chat/ChatInput.tsx` | Message input with file attachments |
 | `renderer/components/chat/ChatDisplay.tsx` | Message list with markdown rendering |
-| `renderer/components/app-shell/input/structured/PermissionRequest.tsx` | Bash command approval UI |
+| `resources/pi-extensions/mortise-permissions/` | Bundled tool approval extension and its composer UI |
 | `renderer/components/chat/SessionList.tsx` | Session sidebar with rename support |
 | `renderer/components/chat/AttachmentPreview.tsx` | File attachment bubbles |
 | `renderer/playground/` | Component development playground |

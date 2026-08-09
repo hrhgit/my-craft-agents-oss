@@ -1,13 +1,14 @@
 /**
  * Thinking Level Configuration
  *
- * Six-tier thinking system for extended reasoning:
+ * Seven-tier thinking system for extended reasoning:
  * - OFF: No extended thinking (disabled)
  * - Minimal: Minimal reasoning overhead
  * - Low: Light reasoning, faster responses
  * - Medium: Balanced speed and reasoning (default)
  * - High: Deep reasoning for complex tasks
  * - XHigh: Extra-high reasoning
+ * - Max: Always-on thinking with no constraints (models that expose a provider `max` effort)
  *
  * Session-level setting with a global default.
  *
@@ -31,6 +32,7 @@ export const THINKING_LEVEL_IDS = [
   'medium',
   'high',
   'xhigh',
+  'max',
 ] as const;
 
 export type ThinkingLevel = (typeof THINKING_LEVEL_IDS)[number];
@@ -56,6 +58,7 @@ export const THINKING_LEVELS: readonly ThinkingLevelDefinition[] = [
   { id: 'medium', nameKey: 'thinking.medium', descriptionKey: 'thinking.mediumDesc' },
   { id: 'high', nameKey: 'thinking.high', descriptionKey: 'thinking.highDesc' },
   { id: 'xhigh', nameKey: 'thinking.xhigh', descriptionKey: 'thinking.xhighDesc' },
+  { id: 'max', nameKey: 'thinking.max', descriptionKey: 'thinking.maxDesc' },
 ] as const;
 
 /** Default thinking level for new sessions when workspace has no default */
@@ -66,13 +69,17 @@ export const DEFAULT_THINKING_LEVEL: ThinkingLevel = 'medium';
  * Used with adaptive thinking (thinking: { type: 'adaptive' }).
  * Returns null for 'off' (thinking should be disabled entirely).
  */
-export const THINKING_TO_EFFORT: Record<ThinkingLevel, 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | null> = {
+export const THINKING_TO_EFFORT: Record<
+  ThinkingLevel,
+  'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | null
+> = {
   off: null,
   minimal: 'minimal',
   low: 'low',
   medium: 'medium',
   high: 'high',
   xhigh: 'xhigh',
+  max: 'max',
 };
 
 /**
@@ -92,6 +99,7 @@ const TOKEN_BUDGETS = {
     medium: 4_000,
     high: 6_000,
     xhigh: 7_000,
+    max: 8_000,
   },
   default: {
     off: 0,
@@ -100,6 +108,7 @@ const TOKEN_BUDGETS = {
     medium: 10_000,
     high: 20_000,
     xhigh: 26_000,
+    max: 32_000,
   },
 } as const;
 
@@ -137,8 +146,8 @@ export function isValidThinkingLevel(value: unknown): value is ThinkingLevel {
  * Normalize a thinking level value.
  *
  * Accepts only current {@link THINKING_LEVEL_IDS}. Retired values such as
- * `think` and `max` are not migrated or rewritten; they yield `undefined`,
- * the same result as any other invalid input.
+ * `think` are not migrated or rewritten; they yield `undefined`, the same
+ * result as any other invalid input.
  *
  * @returns The validated ThinkingLevel, or undefined if the value is invalid
  */

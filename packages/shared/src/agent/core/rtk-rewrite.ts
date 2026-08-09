@@ -9,7 +9,7 @@
  * Contract (from rtk's own hooks/claude/rtk-rewrite.sh):
  *   exit 0 + stdout  Rewrite found, no permission rules — auto-allow
  *   exit 1           No RTK equivalent — passthrough unchanged
- *   exit 2           Deny rule — passthrough (our permission system handles)
+ *   exit 2           Deny rule — passthrough to the normal tool boundary
  *   exit 3 + stdout  Ask rule — rewrite, but caller should still prompt
  *
  * On any error (timeout, spawn failure, parse failure, identical output)

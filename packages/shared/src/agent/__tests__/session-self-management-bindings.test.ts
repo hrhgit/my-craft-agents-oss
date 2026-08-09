@@ -15,7 +15,6 @@ function makeSessionInfo(overrides: Partial<SessionInfo> = {}): SessionInfo {
   return {
     id: 'test-session',
     name: 'Test Session',
-    permissionMode: 'execute',
     createdAt: Date.now(),
     isActive: true,
     ...overrides,
@@ -25,6 +24,7 @@ function makeSessionInfo(overrides: Partial<SessionInfo> = {}): SessionInfo {
 function createBaseContext(sessionId: string): SessionToolContext {
   return createSessionToolContext({
     sessionId,
+    workspaceId: 'test-workspace',
     workspacePath: '/tmp/test-workspace',
     onPlanSubmitted: noop,
   });

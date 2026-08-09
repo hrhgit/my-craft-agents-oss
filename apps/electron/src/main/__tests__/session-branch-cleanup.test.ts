@@ -14,7 +14,7 @@ describe('rollbackFailedBranchCreation', () => {
 
     await rollbackFailedBranchCreation({
       managed,
-      workspaceRootPath: '/workspace',
+      workspaceId: 'workspace-1',
       sessionId: 'child',
       deleteFromRuntimeSessions: id => { runtimeDeleted.push(id) },
       deleteStoredSession: (_root, id) => { storageDeleted.push(id) },
@@ -30,7 +30,7 @@ describe('rollbackFailedBranchCreation', () => {
     let runtimeDeleted = false
     await expect(rollbackFailedBranchCreation({
       managed: { agent: { destroy: () => { throw new Error('dispose failed') } } },
-      workspaceRootPath: '/workspace',
+      workspaceId: 'workspace-1',
       sessionId: 'child',
       deleteFromRuntimeSessions: () => { runtimeDeleted = true },
       deleteStoredSession: async () => { throw new Error('delete failed') },

@@ -11,7 +11,9 @@ import {
   type Session,
   type ExtensionInteractionResponseV1,
   type SessionSettlementFailure,
+  type SessionPublicationFailure,
   isSessionSettlementFailure,
+  isSessionPublicationFailure,
   isSerializableFrontendValue,
   validateExtensionInteractionResponseV1,
 } from '@mortise/shared/protocol'
@@ -210,13 +212,12 @@ export const HANDLED_CHANNELS = [
   RPC_CHANNELS.sessions.CANCEL,
   RPC_CHANNELS.sessions.KILL_SHELL,
   RPC_CHANNELS.tasks.GET_OUTPUT,
-  RPC_CHANNELS.sessions.RESPOND_TO_PERMISSION,
   RPC_CHANNELS.extensions.INTERACTION_RESPONSE,
   RPC_CHANNELS.extensions.COMMAND_INVOKE,
   RPC_CHANNELS.extensions.GET_COMMANDS,
+  RPC_CHANNELS.extensions.GET_FRONTEND_STATES,
   RPC_CHANNELS.sessions.COMMAND,
   RPC_CHANNELS.sessions.GET_PENDING_PLAN_EXECUTION,
-  RPC_CHANNELS.sessions.GET_PERMISSION_MODE_STATE,
   RPC_CHANNELS.sessions.LIST_CHILD_SESSIONS,
   RPC_CHANNELS.sessions.SEARCH_CONTENT,
   RPC_CHANNELS.sessions.GET_FILES,
@@ -365,8 +366,8 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
   })
 
   // Ordinary New is one server-owned transaction. The provisional identity is
-  // never returned and this call resolves only after Pi's first assistant-backed
-  // JSONL exists and Mortise has published the durable Session.
+  // is returned only to the requesting client after Mortise durably accepts the
+  // message. Pi later publishes it after its canonical user entry is durable.
   server.handle(RPC_CHANNELS.sessions.CREATE_AND_SEND_FIRST_TURN, async (
     ctx,
     request: CreateAndSendFirstTurnRequest,
@@ -382,8 +383,8 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
       })
       writeRuntimeLog('info', {
         scope: 'session',
-        event: 'first_turn.published',
-        meta: { workspaceId, sessionId: result.session.id, callerClientId: ctx.clientId },
+        event: result.publication === 'pending' ? 'first_turn.accepted' : 'first_turn.published',
+        meta: { workspaceId, sessionId: result.session.id, callerClientId: ctx.clientId, publication: result.publication },
       })
       return result
     } catch (error) {
@@ -416,9 +417,9 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
   // Send a message to a session (with optional file attachments).
   //
   // Behavior:
-  //   - Awaits until Pi confirms the canonical user message is persisted, then returns
-  //     `{ accepted: true, messageId }`. This guarantees the message survives
-  //     a mid-stream crash (#616).
+  //   - Returns `{ accepted: true, messageId }` after Mortise persists its
+  //     recoverable outbox record and UI metadata.
+  //   - Pi JSONL persistence is an asynchronous final confirmation.
   //   - The actual model-streaming work continues in the background; results
   //     flow back via SESSION_EVENT as before.
   //   - Pre-persist errors (session not found, Pi write failure, etc.) reject the RPC so the
@@ -434,7 +435,7 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
 
     return await new Promise<{ accepted: true; messageId: string }>((resolve, reject) => {
       let acked = false
-      const onAck = (messageId: string) => {
+      const onAccepted = (messageId: string) => {
         if (!acked) {
           acked = true
           resolve({ accepted: true, messageId })
@@ -442,7 +443,20 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
       }
 
       sessionManager
-        .sendMessage(sessionId, message, attachments, storedAttachments, options, undefined, undefined, onAck, { callerClientId })
+        .sendMessage(
+          sessionId,
+          message,
+          attachments,
+          storedAttachments,
+          options,
+          undefined,
+          undefined,
+          undefined,
+          { callerClientId },
+          false,
+          false,
+          onAccepted,
+        )
         .then(() => {
           // sendMessage finished without firing onAck — should not happen in
           // practice (every code path that creates a user message acks).
@@ -485,6 +499,19 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
           })
           if (isSessionSettlementFailure(err)) {
             const failure: SessionSettlementFailure = {
+              code: err.code,
+              message: err.message,
+              data: err.data,
+            }
+            pushTyped(server, RPC_CHANNELS.sessions.EVENT, { to: 'client', clientId: callerClientId }, {
+              type: 'session_failure',
+              sessionId,
+              error: failure,
+            })
+            return
+          }
+          if (isSessionPublicationFailure(err)) {
+            const failure: SessionPublicationFailure = {
               code: err.code,
               message: err.message,
               data: err.data,
@@ -551,11 +578,12 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
     return sessionManager.listExtensionCommands(sessionId)
   })
 
-  // Compatibility route for messaging clients. Renderer approval UI uses the
-  // permissions extension frontend channel instead.
-  server.handle(RPC_CHANNELS.sessions.RESPOND_TO_PERMISSION, async (ctx, sessionId: string, requestId: string, allowed: boolean, alwaysAllow: boolean) => {
-    await assertSessionWorkspace(sessionManager, ctx.workspaceId, sessionId)
-    return sessionManager.respondToPermission(sessionId, requestId, allowed, alwaysAllow)
+  // Recover complete frontend channel state when the renderer subscribed after
+  // the live event, refreshed, or reconnected to an already-running session.
+  server.handle(RPC_CHANNELS.extensions.GET_FRONTEND_STATES, async (ctx, sessionId: string) => {
+    if (sessionId) await assertSessionWorkspace(sessionManager, ctx.workspaceId, sessionId)
+    else if (!ctx.workspaceId) throw new Error('Extension frontend state requires a Workspace route')
+    return sessionManager.getExtensionFrontendStates(sessionId, ctx.workspaceId)
   })
 
   server.handle(RPC_CHANNELS.extensions.FRONTEND_MESSAGE, async (
@@ -614,8 +642,6 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
       case 'setActiveViewing':
         // Track which session user is actively viewing (for unread state machine)
         return sessionManager.setActiveViewingSession(sessionId, command.workspaceId)
-      case 'setPermissionMode':
-        return sessionManager.setSessionPermissionMode(sessionId, command.mode)
       case 'setThinkingLevel':
         // Validate thinking level before passing to session manager
         if (!isValidThinkingLevel(command.level)) {
@@ -627,6 +653,11 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
           throw new Error('retrySettlement does not accept a message or any other payload')
         }
         return sessionManager.retryPendingSettlement(sessionId)
+      case 'retryAcceptedMessage':
+        if (Object.keys(command).length !== 1) {
+          throw new Error('retryAcceptedMessage does not accept a message or any other payload')
+        }
+        return sessionManager.retryAcceptedMessage(sessionId, ctx.clientId)
       case 'withdrawQueuedMessage':
         return sessionManager.withdrawQueuedMessage(sessionId, command.messageId)
       case 'showInFinder': {
@@ -693,15 +724,6 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
     return sessionManager.getPendingPlanExecution(sessionId)
   })
 
-  // Get authoritative permission mode diagnostics for renderer reconciliation
-  server.handle(RPC_CHANNELS.sessions.GET_PERMISSION_MODE_STATE, async (
-    ctx,
-    sessionId: string
-  ) => {
-    await assertSessionWorkspace(sessionManager, ctx.workspaceId, sessionId)
-    return sessionManager.getSessionPermissionModeState(sessionId)
-  })
-
   // ============================================================
   // Session Content Search
   // ============================================================
@@ -718,7 +740,7 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
 
     const { searchSessions } = await import('@mortise/server-core/services')
     const workspaceSessions = sessionManager.getSessions(wid)
-    const searchRoots = collectSessionSearchRoots(requirePrimaryLocalWorkspaceRoot(workspace), workspaceSessions)
+    const searchRoots = collectSessionSearchRoots(wid, workspaceSessions)
       .filter((root) => existsSync(root))
     if (searchRoots.length === 0) {
       log.debug(`SEARCH_SESSIONS: No session roots found for workspace ${wid}`)

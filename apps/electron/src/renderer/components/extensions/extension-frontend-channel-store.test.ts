@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { FrontendChannelStore } from './extension-frontend-channel-store'
+import { FrontendChannelStore, restoreExtensionFrontendStates } from './extension-frontend-channel-store'
 
 const stateEvent = (revision: number, state: unknown) => ({
   type: 'extension_frontend_state' as const,
@@ -38,5 +38,14 @@ describe('FrontendChannelStore', () => {
     })
     expect(store.get(exact)).toBeUndefined()
     expect(store.get(routeOnly)).toBeUndefined()
+  })
+
+  it('restores a request that was published before the frontend mounted', async () => {
+    const store = new FrontendChannelStore()
+    const key = ['lab', 'counter', 'session', '', 'session-1', 'workspace-1'].join('\0')
+
+    await restoreExtensionFrontendStates(store, async () => [stateEvent(3, { requestId: 'ask-1' })])
+
+    expect(store.get(key)).toEqual({ revision: 3, state: { requestId: 'ask-1' } })
   })
 })

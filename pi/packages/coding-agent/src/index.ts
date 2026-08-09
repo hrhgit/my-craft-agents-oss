@@ -13,6 +13,7 @@ export { createAgentSession } from "./core/sdk.ts";
 export { getLatestCompactionEntry, parseSessionEntries, SessionManager } from "./core/session-manager.ts";
 export { SettingsManager } from "./core/settings-manager.ts";
 export {
+	createAllToolDefinitions,
 	createBashTool,
 	createCodingTools,
 	createEditTool,

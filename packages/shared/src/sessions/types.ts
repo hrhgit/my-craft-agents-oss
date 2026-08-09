@@ -2,7 +2,7 @@
  * Session Types
  *
  * Unified type definitions for workspace-scoped sessions.
- * Sessions are stored at ~/.mortise/agent/sessions/{encoded-cwd}/{timestamp}_{sessionId}.jsonl
+ * Sessions are stored at ~/.mortise/agent/sessions/{workspace-bucket}/{timestamp}_{sessionId}.jsonl
  *
  * Pi Tree JSONL v3 Format (primary):
  * - On-disk 第一行结构: Pi 顶层字段 + `mortise` 子对象（Mortise 扩展字段）
@@ -11,8 +11,8 @@
  * - 序列化层（tree-jsonl.ts）负责扁平 DTO ↔ 嵌套 tree header 转换
  */
 
-import type { PermissionMode } from '../agent/mode-manager.ts';
 import type { ThinkingLevel } from '../agent/thinking-levels.ts';
+import type { ExtensionSessionBootstrapV1 } from '../protocol/extension-frontend-channels.ts';
 import type { PlanModeStateV1, StoredMessage } from '@mortise/core/types';
 
 /**
@@ -35,7 +35,7 @@ export const MORTISE_SESSION_METADATA_FIELDS = [
   // Read tracking
   'lastReadMessageId', 'hasUnread',
   // Config
-  'permissionMode', 'previousPermissionMode',
+  'extensionBootstrap',
   // Model/Provider
   'model', 'provider', 'thinkingLevel',
   // Sharing
@@ -171,10 +171,8 @@ export interface MortiseSessionMetadata {
   // Mortise 配置
   // ============================================
 
-  /** 权限模式（'safe', 'ask', 'allow-all'） */
-  permissionMode?: PermissionMode;
-  /** 前一次权限模式（保留 modeTransition 上下文跨重启） */
-  previousPermissionMode?: PermissionMode;
+  /** Opaque, Extension-owned state captured before the Session existed. */
+  extensionBootstrap?: ExtensionSessionBootstrapV1;
   /** SDK cwd — 创建时设置一次，永不更改（确保 SDK 能找到 session transcripts） */
   sdkCwd?: string;
 

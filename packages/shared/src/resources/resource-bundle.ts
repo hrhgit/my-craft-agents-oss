@@ -391,6 +391,8 @@ function validateFileEntries(files: BundleFile[], prefix: string, errors: string
  * @param workspaceRootPath - Absolute path to target workspace
  * @param bundle - The validated ResourceBundle to import
  * @param mode - 'skip' (keep existing) or 'overwrite' (replace)
+ * @param skillsRootOverride - Optional absolute skills root; when provided, skills are
+ *   imported there instead of the workspace's own skills directory (e.g. global import).
  */
 export async function importResources(
   workspaceRootPath: string,
@@ -399,6 +401,7 @@ export async function importResources(
   workspaceId = workspaceRootPath,
   automationHost?: AutomationWorkspaceHostV3,
   dependencyResolver?: AutomationDependencyResolverV1,
+  skillsRootOverride?: string,
 ): Promise<ResourceImportResult> {
   // Validate bundle first
   const validation = validateResourceBundle(bundle)
@@ -416,7 +419,7 @@ export async function importResources(
   }
 
   const skillsResult = bundle.resources.skills
-    ? importSkills(workspaceRootPath, bundle.resources.skills, mode)
+    ? importSkills(workspaceRootPath, bundle.resources.skills, mode, skillsRootOverride)
     : emptyBucketResult()
 
   const automationsResult = bundle.resources.automations?.length
@@ -441,9 +444,10 @@ function importSkills(
   workspaceRootPath: string,
   entries: SkillBundleEntry[],
   mode: ResourceImportMode,
+  skillsRootOverride?: string,
 ): ImportBucketResult {
   const result = emptyBucketResult()
-  const skillsDir = getWorkspaceSkillsPath(workspaceRootPath)
+  const skillsDir = skillsRootOverride ?? getWorkspaceSkillsPath(workspaceRootPath)
 
   if (!existsSync(skillsDir)) {
     mkdirSync(skillsDir, { recursive: true })

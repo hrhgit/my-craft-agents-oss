@@ -1,11 +1,8 @@
 import { describe, it, expect } from 'bun:test';
 import {
-  SESSION_TOOL_DEFS,
   getSessionToolDefs,
   getSessionToolNames,
   getSessionToolRegistry,
-  getSessionSafeAllowedToolNames,
-  getSessionSafeBlockedToolNames,
   getToolDefsAsJsonSchema,
   isSessionToolName,
   normalizeSessionToolName,
@@ -43,23 +40,6 @@ describe('session tool filtering helpers', () => {
     const names = defs.map(d => d.name);
 
     expect(names.includes('send_developer_feedback')).toBe(false);
-  });
-
-  it('all canonical session tools declare safeMode metadata', () => {
-    for (const def of SESSION_TOOL_DEFS) {
-      expect(def.safeMode === 'allow' || def.safeMode === 'block').toBe(true);
-    }
-  });
-
-  it('safe-mode helper sets classify expected tools', () => {
-    const allowed = getSessionSafeAllowedToolNames();
-    const blocked = getSessionSafeBlockedToolNames();
-
-    expect(allowed.has('send_developer_feedback')).toBe(true);
-    expect(allowed.has('browser_tool')).toBe(true);
-    expect(allowed.has('script_sandbox')).toBe(true);
-
-    expect(blocked.has('spawn_session')).toBe(true);
   });
 
   it('accepts only exact canonical session tool names', () => {

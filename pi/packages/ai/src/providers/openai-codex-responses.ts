@@ -80,7 +80,7 @@ const CODEX_RESPONSE_STATUSES = new Set<CodexResponseStatus>([
 // ============================================================================
 
 export interface OpenAICodexResponsesOptions extends StreamOptions {
-	reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
+	reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 	reasoningSummary?: "auto" | "concise" | "detailed" | "off" | "on" | null;
 	serviceTier?: ResponseCreateParamsStreaming["service_tier"];
 	textVerbosity?: "low" | "medium" | "high";
@@ -121,7 +121,7 @@ function isRetryableError(status: number, errorText: string): boolean {
 	if (status === 429 && isTerminalRateLimitError(errorText)) {
 		return false;
 	}
-	if (status === 429 || status === 500 || status === 502 || status === 503 || status === 504) {
+	if (status === 429 || status === 500 || status === 502 || status === 503 || status === 504 || status === 529) {
 		return true;
 	}
 	return /rate.?limit|overloaded|service.?unavailable|upstream.?connect|connection.?refused/i.test(errorText);
@@ -423,6 +423,9 @@ function buildRequestBody(
 		body.tools = convertResponsesTools(context.tools, { strict: null });
 	}
 	body.tools = appendResponsesWebSearchTool(body.tools, options?.webSearch);
+	if (options?.webSearch) {
+		body.include = [...new Set([...(body.include ?? []), "web_search_call.action.sources"])] as typeof body.include;
+	}
 
 	if (options?.reasoningEffort !== undefined) {
 		const effort =

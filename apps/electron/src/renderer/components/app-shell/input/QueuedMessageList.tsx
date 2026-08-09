@@ -54,12 +54,12 @@ export function QueuedMessageList({ items, pendingId, onSteer, onDelete, onEdit 
                     disabled={isBusy}
                     onClick={() => onSteer(item.id)}
                     className="inline-flex h-7 items-center justify-center gap-1 rounded-[6px] px-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-foreground/5 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-wait disabled:opacity-60"
-                    aria-label={t('settings.ai.midStream.steer')}
-                    title={t('settings.ai.midStream.steer')}
+                    aria-label={t('settings.app.sending.midStream.steer')}
+                    title={t('settings.app.sending.midStream.steer')}
                     data-mortise-semantic-id={`conversation.queued-message.${item.id}.steer`}
                   >
                     <Compass className="size-3.5" aria-hidden="true" />
-                    <span>{t('settings.ai.midStream.steer')}</span>
+                    <span>{t('settings.app.sending.midStream.steer')}</span>
                   </button>
                   <button
                     type="button"

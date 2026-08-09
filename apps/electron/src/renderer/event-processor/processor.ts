@@ -21,7 +21,6 @@ import {
   handleTypedError,
   handleSessionFailure,
   handleNameChanged,
-  handlePermissionRequest,
   handlePlanSubmitted,
   handlePlanArtifactChanged,
   handlePlanModeStateChanged,
@@ -30,7 +29,6 @@ import {
   handleInterrupted,
   handleTitleGenerated,
   handleAsyncOperation,
-  handlePermissionModeChanged,
   handleSessionModelChanged,
   handleProviderChanged,
   handleUserMessage,
@@ -122,9 +120,6 @@ export function processEvent(
     case 'async_operation':
       return handleAsyncOperation(state, event)
 
-    case 'permission_mode_changed':
-      return handlePermissionModeChanged(state, event)
-
     case 'session_model_changed':
       return handleSessionModelChanged(state, event)
 
@@ -139,9 +134,6 @@ export function processEvent(
 
     case 'name_changed':
       return handleNameChanged(state, event)
-
-    case 'permission_request':
-      return handlePermissionRequest(state, event)
 
     case 'plan_submitted':
       return handlePlanSubmitted(state, event)

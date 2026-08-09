@@ -10,7 +10,7 @@
 
 /// <reference path="../bash-parser.d.ts" />
 import bashParser from 'bash-parser';
-import { looksLikePowerShell, extractPowerShellReadTarget } from '../powershell-validator.ts';
+import { looksLikePowerShell, extractPowerShellReadTarget } from '../powershell-read-patterns.ts';
 
 // ============================================================
 // Types

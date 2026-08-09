@@ -23,7 +23,6 @@ import {
   validatePreferences,
   validateAll,
   validateSkill,
-  validateAllPermissions,
   validateToolIcons,
 } from '../config/validators.ts';
 import { debug } from '../utils/debug.ts';
@@ -39,6 +38,7 @@ export type { SessionToolContext, SessionToolCallbacks } from '@mortise/session-
  */
 export interface SessionToolContextOptions {
   sessionId: string;
+  workspaceId: string;
   workspacePath: string;
   onPlanSubmitted: (planPath: string) => void;
 }
@@ -52,7 +52,7 @@ export interface SessionToolContextOptions {
  * - Workspace-aware validators and preferences
  */
 export function createSessionToolContext(options: SessionToolContextOptions): SessionToolContext {
-  const { sessionId, workspacePath, onPlanSubmitted } = options;
+  const { sessionId, workspaceId, workspacePath, onPlanSubmitted } = options;
 
   // File system implementation
   const fs: FileSystemInterface = {
@@ -80,7 +80,6 @@ export function createSessionToolContext(options: SessionToolContextOptions): Se
   const validators: ValidatorInterface = {
     validateConfig: () => validateConfig(),
     validatePreferences: () => validatePreferences(),
-    validatePermissions: (wsPath: string) => validateAllPermissions(wsPath),
     validateToolIcons: () => validateToolIcons(),
     validateAll: (wsPath: string) => validateAll(wsPath),
     validateSkill: (wsPath: string, slug: string) => validateSkill(wsPath, slug),
@@ -92,9 +91,9 @@ export function createSessionToolContext(options: SessionToolContextOptions): Se
     workspacePath,
     get skillPaths() { return createPiSkillResolver(workspacePath).getSkillPaths().map(e => e.dir); },
     get skillsPath() { return this.skillPaths?.[0] ?? ''; },
-    plansFolderPath: getSessionPlansPath(workspacePath, sessionId),
-    sessionPath: getSessionPath(workspacePath, sessionId),
-    dataPath: getSessionDataPath(workspacePath, sessionId),
+    plansFolderPath: getSessionPlansPath(workspaceId, sessionId),
+    sessionPath: getSessionPath(workspaceId, sessionId),
+    dataPath: getSessionDataPath(workspaceId, sessionId),
     callbacks,
     fs,
     validators,

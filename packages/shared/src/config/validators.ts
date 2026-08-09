@@ -7,7 +7,6 @@
  * Validates:
  * - state.sqlite config/root: Main app configuration
  * - preferences.json: User preferences
- * - permissions.json: Permission rules for Explore mode
  * - tool-icons/tool-icons.json: CLI tool icon mappings
  */
 
@@ -65,8 +64,7 @@ export const StoredConfigSchema = z.object({
   // Legacy connection fields are intentionally not part of the validated shape.
   midStreamBehavior: z.enum(['steer', 'queue']).optional(),
   defaultThinkingLevel: z.enum(THINKING_LEVEL_IDS).optional(),
-  // Note: tokenDisplay, showCost, cumulativeUsage, defaultPermissionMode removed.
-  // Permission mode is Session state; retired default and cycle fields are not global config.
+  // Retired display, cost, and approval-policy fields are not global config.
 });
 
 // --- preferences.json ---
@@ -266,7 +264,6 @@ export function validateAll(workspaceRoot?: string): ValidationResult {
   // Include workspace-scoped validation if workspaceRoot is provided
   if (workspaceRoot) {
     results.push(validateAllSkills(workspaceRoot));
-    results.push(validateAllPermissions(workspaceRoot));
   }
 
   const allErrors = results.flatMap(r => r.errors);
@@ -335,7 +332,6 @@ export const SkillMetadataSchema = z.object({
   name: z.string().min(1, "Add a 'name' field with a human-readable title (e.g., 'Git Commit Helper')"),
   description: z.string().min(1, "Add a 'description' field explaining what this skill does and when to use it (1-2 sentences)"),
   globs: z.array(z.string()).optional(),
-  alwaysAllow: z.array(z.string()).optional(),
 });
 
 /**
@@ -574,165 +570,6 @@ export function validateAllSkills(workspaceRoot: string): ValidationResult {
     errors,
     warnings,
   };
-}
-
-// ============================================================
-// Permissions Validators
-// ============================================================
-
-import { PermissionsConfigSchema } from '../agent/mode-types.ts';
-import {
-  validatePermissionsConfig,
-  getWorkspacePermissionsPath,
-  getAppPermissionsDir,
-} from '../agent/permissions-config.ts';
-
-/**
- * Internal: Validate a single permissions.json file
- * Checks JSON syntax, Zod schema, and regex pattern validity.
- */
-function validatePermissionsFile(filePath: string, displayFile: string): ValidationResult {
-  // File is optional - missing is just a warning
-  if (!existsSync(filePath)) {
-    return {
-      valid: true,
-      errors: [],
-      warnings: [{
-        file: displayFile,
-        path: '',
-        message: 'Permissions file does not exist (using defaults)',
-        severity: 'warning',
-      }],
-    };
-  }
-
-  // Read file and delegate to content-based validator
-  let raw: string;
-  try {
-    raw = readFileSync(filePath, 'utf-8');
-  } catch (e) {
-    return {
-      valid: false,
-      errors: [{
-        file: displayFile,
-        path: '',
-        message: `Cannot read file: ${e instanceof Error ? e.message : 'Unknown error'}`,
-        severity: 'error',
-      }],
-      warnings: [],
-    };
-  }
-
-  return validatePermissionsContent(raw, displayFile);
-}
-
-/**
- * Validate permissions config from a JSON string (no disk reads).
- * Used by PreToolUse hook to validate before writing to disk.
- * Runs Zod schema validation and regex pattern compilation checks.
- *
- * @param jsonString - The raw JSON content of the permissions file
- * @param displayFile - File name for error messages
- */
-export function validatePermissionsContent(jsonString: string, displayFile: string = 'permissions.json'): ValidationResult {
-  const errors: ValidationIssue[] = [];
-
-  // Parse JSON
-  let content: unknown;
-  try {
-    content = safeJsonParse(jsonString);
-  } catch (e) {
-    return {
-      valid: false,
-      errors: [{
-        file: displayFile,
-        path: '',
-        message: `Invalid JSON: ${e instanceof Error ? e.message : 'Unknown error'}`,
-        severity: 'error',
-      }],
-      warnings: [],
-    };
-  }
-
-  // Validate schema
-  const result = PermissionsConfigSchema.safeParse(content);
-  if (!result.success) {
-    errors.push(...zodErrorToIssues(result.error, displayFile));
-    return { valid: false, errors, warnings: [] };
-  }
-
-  // Validate regex patterns (semantic validation)
-  const regexErrors = validatePermissionsConfig(result.data);
-  for (const regexError of regexErrors) {
-    errors.push({
-      file: displayFile,
-      path: regexError.split(':')[0] || '',
-      message: regexError,
-      severity: 'error',
-    });
-  }
-
-  return {
-    valid: errors.length === 0,
-    errors,
-    warnings: [],
-  };
-}
-
-/**
- * Validate workspace-level permissions.json
- * @param workspaceRoot - Absolute path to workspace root folder
- */
-export function validateWorkspacePermissions(workspaceRoot: string): ValidationResult {
-  const permissionsPath = getWorkspacePermissionsPath(workspaceRoot);
-  return validatePermissionsFile(permissionsPath, 'permissions.json');
-}
-
-/**
- * Validate app-level default permissions
- */
-export function validateDefaultPermissions(): ValidationResult {
-  const permissionsPath = join(getAppPermissionsDir(), 'default.json');
-  return validatePermissionsFile(permissionsPath, 'permissions/default.json');
-}
-
-/**
- * Validate all permissions files in a workspace
- * Includes app-level default and workspace-level permissions.
- */
-export function validateAllPermissions(workspaceRoot: string): ValidationResult {
-  const errors: ValidationIssue[] = [];
-  const warnings: ValidationIssue[] = [];
-
-  // Validate app-level default permissions
-  const defaultResult = validateDefaultPermissions();
-  errors.push(...defaultResult.errors);
-  warnings.push(...defaultResult.warnings);
-
-  // Validate workspace-level permissions
-  const wsResult = validateWorkspacePermissions(workspaceRoot);
-  errors.push(...wsResult.errors);
-  warnings.push(...wsResult.warnings);
-
-  return {
-    valid: errors.length === 0,
-    errors,
-    warnings,
-  };
-}
-
-/**
- * Check if a permissions file at the given path is valid.
- * Returns true if the file exists and passes schema validation.
- */
-export function isValidPermissionsFile(filePath: string): boolean {
-  try {
-    const content = readFileSync(filePath, 'utf-8');
-    const result = validatePermissionsContent(content);
-    return result.valid;
-  } catch {
-    return false;
-  }
 }
 
 // ============================================================
@@ -1170,7 +1007,7 @@ export function formatValidationResult(result: ValidationResult): string {
  * Result of detecting what type of config file a path corresponds to.
  */
 export interface ConfigFileDetection {
-  type: 'skill' | 'permissions' | 'tool-icons';
+  type: 'skill' | 'tool-icons';
   /** Slug of the skill (if applicable) */
   slug?: string;
   /** Display file path for error messages */
@@ -1183,7 +1020,6 @@ export interface ConfigFileDetection {
  *
  * Matches patterns:
  * - .../.mortise/skills/{slug}/SKILL.md → skill definition
- * - .../permissions.json → permission rules
  */
 export function detectConfigFileType(filePath: string, workspaceRootPath: string): ConfigFileDetection | null {
   // Normalize to consistent forward slashes and ensure root ends with /
@@ -1203,11 +1039,6 @@ export function detectConfigFileType(filePath: string, workspaceRootPath: string
   const skillMatch = relativePath.match(/^\.mortise\/skills\/([^/]+)\/SKILL\.md$/);
   if (skillMatch) {
     return { type: 'skill', slug: skillMatch[1], displayFile: `${MORTISE_PROJECT_SKILLS_DIR}/${skillMatch[1]}/SKILL.md` };
-  }
-
-  // Match: permissions.json (workspace-level)
-  if (relativePath === 'permissions.json') {
-    return { type: 'permissions', displayFile: 'permissions.json' };
   }
 
   return null;
@@ -1252,8 +1083,6 @@ export function validateConfigFileContent(
   switch (detection.type) {
     case 'skill':
       return validateSkillContent(content, detection.slug || 'unknown');
-    case 'permissions':
-      return validatePermissionsContent(content, detection.displayFile);
     case 'tool-icons':
       return validateToolIconsContent(content);
     default:

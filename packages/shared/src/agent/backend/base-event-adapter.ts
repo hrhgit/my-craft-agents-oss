@@ -6,7 +6,7 @@
  *
  * Subclasses implement provider-specific event dispatch (adapt*() methods)
  * while inheriting:
- * - Block reason tracking (for permission-declined tool results)
+ * - Block reason tracking for host or Extension tool decisions
  * - Read command classification (bash commands → Read tool display)
  * - Command output accumulation (streaming deltas → final tool result)
  * - Tool start/result construction helpers
@@ -73,7 +73,7 @@ export abstract class BaseEventAdapter {
 
   /**
    * Store the block reason for a tool call that will be declined.
-   * Called from the agent when PreToolUse/permission check blocks a tool.
+   * Called from the agent when a pre-tool execution boundary blocks a tool.
    */
   setBlockReason(id: string, reason: string): void {
     this.log.warn('Block reason recorded', { id, reason });

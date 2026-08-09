@@ -446,14 +446,14 @@ function deterministicBackend(
   return {
     supportsBranching: true, chat, postInit: async () => ({ authInjected: false }), ensureBranchReady: async () => undefined,
     getModel: () => 'deterministic', setModel: () => undefined, getThinkingLevel: () => 'medium', setThinkingLevel: () => undefined,
-    getPermissionMode: () => 'ask', getSessionId: () => sessionId, setSessionId: () => undefined, isProcessing: () => false,
+    getSessionId: () => sessionId, setSessionId: () => undefined, isProcessing: () => false,
     abort: async () => undefined, forceAbort: () => undefined, interruptForHandoff: () => undefined, redirect: async () => false,
     followUp: async () => false, runMiniCompletion: async () => null, runIsolatedAgent: async () => null, dispose: () => undefined, destroy: () => undefined,
-    respondToPermission: () => undefined, setPermissionMode: () => undefined, cyclePermissionMode: () => 'ask', updateRuntimeConfig: async () => false,
+    updateRuntimeConfig: async () => false,
     projectQueuedUser: () => undefined, projectRuntimeError: () => undefined, getSummarizeCallback: () => async () => null,
     updateSdkCwd: () => undefined, setWorkspace: () => undefined, generateTitle: async () => null, regenerateTitle: async () => null,
     sendExtensionCommandInvoke: async () => ({ invoked: false, customMessages: [] }),
-    onPermissionRequest: null, onPlanSubmitted: null, onPermissionModeChange: null, onDebug: null, onBackendAuthRequired: null, onSpawnSession: null,
+    onPlanSubmitted: null, onDebug: null, onBackendAuthRequired: null, onSpawnSession: null,
   }
 }
 

@@ -337,7 +337,6 @@ other date information.
 
 <session_state>
 sessionId: injected
-permissionMode: explore
 plansFolderPath: C:\\Users\\32858\\.pi\\agent\\sessions\\demo\\.mortise\\plans
 </session_state>
 
@@ -420,7 +419,6 @@ plansFolderPath: C:\\Users\\32858\\.pi\\agent\\sessions\\demo\\.mortise\\plans
   it('writes Mortise metadata fields through the shared metadata helper', async () => {
     const stored = readSessionJsonl(sessionFile)
     expect(stored).not.toBeNull()
-    stored!.previousPermissionMode = 'safe' as any
     stored!.transferredSessionSummaryApplied = true
 
     await writeSessionJsonl(sessionFile, stored!)
@@ -430,7 +428,6 @@ plansFolderPath: C:\\Users\\32858\\.pi\\agent\\sessions\\demo\\.mortise\\plans
 
     expect(header.mortise.id).toBe(stored!.mortiseId)
     expect(header.mortise.mortiseId).toBeUndefined()
-    expect(header.mortise.previousPermissionMode).toBe('safe')
     expect(header.mortise.transferredSessionSummaryApplied).toBe(true)
     expect(header.mortise.messageCount).toBe(stored!.messages.length)
   })
@@ -505,7 +502,6 @@ plansFolderPath: C:\\Users\\32858\\.pi\\agent\\sessions\\demo\\.mortise\\plans
         mortise: {
           id: 'mortise-owned-session',
           name: 'Mortise title',
-          permissionMode: 'allow-all',
         },
       },
     ])
@@ -516,7 +512,6 @@ plansFolderPath: C:\\Users\\32858\\.pi\\agent\\sessions\\demo\\.mortise\\plans
     expect(stored?.piSessionId).toBe('pi-owned-session')
     expect(stored?.piCwd).toBe('/pi/source-of-truth')
     expect(stored?.name).toBe('Mortise title')
-    expect(stored?.permissionMode).toBe('allow-all')
   })
 
   it('rejects retired organization metadata without rewriting later JSONL bytes', async () => {

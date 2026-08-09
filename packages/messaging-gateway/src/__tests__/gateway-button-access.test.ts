@@ -4,10 +4,10 @@
  * control".
  *
  * Telegram inline buttons are visible to every member of a supergroup
- * topic, so without this gate any non-owner can tap `bind:`, `perm:`, or
- * `plan:` callback buttons and bypass the text-side filter. The gate
+ * topic, so without this gate any non-owner can tap `bind:` or `plan:`
+ * callback buttons and bypass the text-side filter. The gate
  * checks workspace-owner status for `bind:` and binding-level access
- * for `perm:`/`plan:`.
+ * for `plan:`.
  */
 
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test'
@@ -16,7 +16,6 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import type { ISessionManager } from '@mortise/server-core/handlers'
 import { MessagingGateway } from '../gateway'
-import type { SessionEvent } from '../renderer'
 import type {
   ButtonPress,
   IncomingMessage,
@@ -85,7 +84,6 @@ function makeStubSessionManager(): ISessionManager {
     getSession: async (id: string) => ({ id, name: id } as never),
     sendMessage: async () => {},
     cancelProcessing: async () => {},
-    respondToPermission: mock(() => true),
     acceptPlan: mock(async () => {}),
     setPendingPlanExecution: mock(async () => {}),
     clearPendingPlanExecution: mock(async () => {}),
@@ -123,33 +121,6 @@ function buildPress(overrides: Partial<ButtonPress> = {}): ButtonPress {
     buttonId: 'bind:sess-A',
     ...overrides,
   }
-}
-
-/**
- * Drive a `permission_request` event through the gateway so the renderer
- * sends the inline keyboard and the gateway records a `permissionMessages`
- * entry for `requestId`. Required setup for any `perm:` button-press test
- * post-#726 — without it the press is correctly dropped as stale.
- */
-async function registerPermissionPrompt(
-  gateway: MessagingGateway,
-  args: { sessionId: string; requestId: string; channelId?: string },
-): Promise<void> {
-  const event: SessionEvent = {
-    type: 'permission_request',
-    sessionId: args.sessionId,
-    request: {
-      requestId: args.requestId,
-      toolName: 'bash',
-      description: 'run tests',
-    },
-  }
-  gateway.onSessionEvent('session:event', { to: 'workspace', workspaceId: 'ws-test' }, event)
-  // renderer.handle is dispatched as fire-and-forget; let the
-  // sendButtons → recordPermissionMessage chain settle before the test
-  // simulates the user tapping the button.
-  await Promise.resolve()
-  await Promise.resolve()
 }
 
 describe('MessagingGateway button-press access gate', () => {
@@ -191,7 +162,7 @@ describe('MessagingGateway button-press access gate', () => {
     expect(h.adapter.sent.some((s) => s.includes('Bound to'))).toBe(true)
   })
 
-  it('rejects perm: button press from non-binding-allow-list sender', async () => {
+  it('rejects plan: button press from non-binding-allow-list sender', async () => {
     const h = await makeHarness({
       workspaceConfig: {
         enabled: true,
@@ -207,53 +178,16 @@ describe('MessagingGateway button-press access gate', () => {
       undefined,
       { accessMode: 'allow-list', allowedSenderIds: ['alice'] },
     )
-    await registerPermissionPrompt(h.gateway, {
-      sessionId: 'sess-A',
-      requestId: 'request-1',
-      channelId: 'chat-1',
-    })
-
     await h.adapter.fireButton(
       buildPress({
-        buttonId: 'perm:allow:request-1',
+        buttonId: 'plan:accept:token-1',
         channelId: 'chat-1',
         senderId: 'bob',
       }),
     )
 
-    // respondToPermission must NOT have been called.
-    expect(h.sessionManager.respondToPermission).not.toHaveBeenCalled()
+    expect(h.sessionManager.acceptPlan).not.toHaveBeenCalled()
     expect(h.adapter.sent.some((s) => s.includes('allow-list'))).toBe(true)
-  })
-
-  it('allows perm: button press from binding-allow-list sender', async () => {
-    const h = await makeHarness({
-      workspaceConfig: {
-        enabled: true,
-        platforms: { telegram: { enabled: true, accessMode: 'open' } },
-      },
-    })
-    h.gateway.getBindingStore().bind(
-      'ws-test',
-      'sess-A',
-      'telegram',
-      'chat-1',
-      undefined,
-      { accessMode: 'allow-list', allowedSenderIds: ['alice'] },
-    )
-    await registerPermissionPrompt(h.gateway, {
-      sessionId: 'sess-A',
-      requestId: 'request-1',
-      channelId: 'chat-1',
-    })
-    await h.adapter.fireButton(
-      buildPress({
-        buttonId: 'perm:allow:request-1',
-        channelId: 'chat-1',
-        senderId: 'alice',
-      }),
-    )
-    expect(h.sessionManager.respondToPermission).toHaveBeenCalled()
   })
 
   it('silent-drops bot senders on button press (no reply, no side-effect)', async () => {
@@ -275,7 +209,7 @@ describe('MessagingGateway button-press access gate', () => {
     expect(h.adapter.sent.length).toBe(0)
   })
 
-  it('non-owner perm: rejection lands the sender in the pending store', async () => {
+  it('non-owner plan: rejection lands the sender in the pending store', async () => {
     const h = await makeHarness({
       workspaceConfig: {
         enabled: true,
@@ -292,7 +226,7 @@ describe('MessagingGateway button-press access gate', () => {
     )
     await h.adapter.fireButton(
       buildPress({
-        buttonId: 'perm:allow:request-1',
+        buttonId: 'plan:accept:token-1',
         channelId: 'chat-1',
         senderId: 'bob',
       }),

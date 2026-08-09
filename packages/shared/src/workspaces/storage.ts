@@ -20,7 +20,7 @@ import {
   CONFIG_DIR,
   MORTISE_PROJECT_SKILLS_DIR,
   MORTISE_SESSIONS_DIR,
-  encodePiSessionCwd,
+  encodeWorkspaceSessionBucket,
 } from '../config/paths.ts';
 import { MultiWriterStore, type JsonValue } from '../storage/index.ts';
 import type {
@@ -170,12 +170,11 @@ export function getWorkspaceCwd(rootPath: string): string {
 /**
  * Get the Mortise sessions directory for a workspace root bucket.
  *
- * Returns `~/.mortise/agent/sessions/{encoded-cwd}/` — the bucket where this
- * workspace's sessions live. The encoded cwd is always the workspace root.
+ * Returns `~/.mortise/agent/sessions/{workspace-bucket}/` — the bucket where
+ * this workspace's sessions live. The bucket is keyed by stable Workspace ID.
  */
-export function getWorkspaceSessionsDir(rootPath: string): string {
-  const encodedCwd = encodePiSessionCwd(getWorkspaceCwd(rootPath));
-  return join(MORTISE_SESSIONS_DIR, encodedCwd);
+export function getWorkspaceSessionsDir(workspaceId: string): string {
+  return join(MORTISE_SESSIONS_DIR, encodeWorkspaceSessionBucket(workspaceId));
 }
 
 /**
@@ -186,8 +185,8 @@ export function getWorkspaceSessionsDir(rootPath: string): string {
  * that `listSessions` would skip are still counted here — the count is a close
  * approximation, not an exact match to the rendered list length.
  */
-export function countSessionsByCwd(rootPath: string): number {
-  const dir = getWorkspaceSessionsDir(rootPath);
+export function countSessionsByCwd(workspaceId: string): number {
+  const dir = getWorkspaceSessionsDir(workspaceId);
   if (!existsSync(dir)) return 0;
   try {
     let count = 0;
@@ -278,7 +277,7 @@ export function loadWorkspace(rootPath: string): LoadedWorkspace | null {
 
   return {
     config,
-    sessionCount: countSessionsByCwd(rootPath),
+    sessionCount: countSessionsByCwd(config.id),
   };
 }
 
@@ -293,7 +292,7 @@ export function getWorkspaceSummary(rootPath: string): WorkspaceSummary | null {
   return {
     slug: config.slug,
     name: config.name,
-    sessionCount: countSessionsByCwd(rootPath),
+    sessionCount: countSessionsByCwd(config.id),
     createdAt: config.createdAt,
     updatedAt: config.updatedAt,
   };
@@ -356,7 +355,8 @@ export function generateUniqueWorkspacePath(name: string, baseDir: string): stri
 export function createWorkspaceAtPath(
   rootPath: string,
   name: string,
-  defaults?: WorkspaceConfig['defaults']
+  defaults?: WorkspaceConfig['defaults'],
+  workspaceId?: string,
 ): WorkspaceConfig {
   const now = Date.now();
   const slug = generateSlug(name);
@@ -367,7 +367,7 @@ export function createWorkspaceAtPath(
   };
 
   const candidate: WorkspaceConfig = {
-    id: `ws_${randomUUID().slice(0, 8)}`,
+    id: workspaceId ?? `ws_${randomUUID().slice(0, 8)}`,
     name,
     slug,
     defaults: workspaceDefaults,
@@ -391,6 +391,38 @@ export function createWorkspaceAtPath(
   ensurePluginManifest(rootPath, name);
 
   return config;
+}
+
+/**
+ * Ensure the filesystem/config portion of a Workspace is ready for use.
+ *
+ * Workspace topology is persisted by WorkspaceTopologyStore, but the local
+ * root also owns a SQLite config record and the plugin manifest.  Keeping
+ * these checks here gives every creation/reconnect path the same idempotent
+ * repair behavior instead of each caller writing a different subset.
+ */
+export function ensureWorkspaceStorage(
+  rootPath: string,
+  workspaceId: string,
+  workspaceName: string,
+  options: { persistConfig?: boolean; defaults?: WorkspaceConfig['defaults'] } = {},
+): WorkspaceConfig | null {
+  mkdirSync(rootPath, { recursive: true });
+  const persistConfig = options.persistConfig ?? true;
+  if (!persistConfig) return null;
+
+  const current = loadWorkspaceConfig(rootPath);
+  if (!current) {
+    return createWorkspaceAtPath(rootPath, workspaceName, options.defaults, workspaceId);
+  }
+
+  // The topology identity is canonical.  Repair old records that were
+  // created before topology IDs were passed into createWorkspaceAtPath.
+  const identityChanged = current.id !== workspaceId;
+  if (identityChanged) current.id = workspaceId;
+  ensurePluginManifest(rootPath, workspaceName);
+  if (identityChanged) saveWorkspaceConfig(rootPath, current);
+  return current;
 }
 
 /**

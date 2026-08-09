@@ -23,7 +23,7 @@ import { AutomationActionRow } from './AutomationActionRow'
 import { AutomationTestPanel } from './AutomationTestPanel'
 import { AutomationEventTimeline } from './AutomationEventTimeline'
 import { PhaseBadge } from './PhaseBadge'
-import { getEventDisplayName, getPermissionDisplayName, flattenConditions, type AutomationListItem, type ExecutionEntry, type TestResult } from './types'
+import { getEventDisplayName, flattenConditions, type AutomationListItem, type ExecutionEntry, type TestResult } from './types'
 import { describeCron, computeNextRuns } from './utils'
 
 // ============================================================================
@@ -206,7 +206,6 @@ export function AutomationInfoPage({
         {/* Section: Settings */}
         <Info_Section title={t('automations.sectionSettings')} actions={editActions}>
           <Info_Table>
-            <Info_Table.Row label={t('automations.labelAccessLevel')} value={getPermissionDisplayName(automation.permissionMode)} />
             <Info_Table.Row label={t('automations.labelStatus')}>
               <Info_Badge color={automation.enabled ? 'success' : 'muted'}>
                 {automation.enabled ? t('automations.statusActive') : t('automations.statusDisabled')}
@@ -248,7 +247,6 @@ export function AutomationInfoPage({
                 conditions: automation.conditions,
                 cron: automation.cron,
                 timezone: automation.timezone,
-                permissionMode: automation.permissionMode,
                 telegramTopic: automation.telegramTopic,
                 enabled: automation.enabled,
                 actions: automation.actions,

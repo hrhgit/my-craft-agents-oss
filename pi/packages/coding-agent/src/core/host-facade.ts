@@ -298,7 +298,7 @@ export interface HostExtensionsResult {
 	errors: Array<{ path: string; error: string }>;
 }
 
-const VALID_THINKING_LEVELS: HostThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh"];
+const VALID_THINKING_LEVELS: HostThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 const MODELS_FILE_FALLBACK: HostGlobalModelsFile = { providers: {} };
 const SETTINGS_FILE_FALLBACK: Settings = {};
 const MODEL_ID_PREFIX = "pi/";
@@ -629,6 +629,25 @@ export function deleteMortiseLlmConnection(slug: string): boolean {
 
 export function readGlobalSettings(): Settings {
 	return parseJsonFile(settingsPath(), SETTINGS_FILE_FALLBACK, normalizeSettingsFile);
+}
+
+export type HostWebSearchMode = "auto" | "native" | "extension" | "disabled";
+
+export function readGlobalWebSearchMode(cwd?: string): HostWebSearchMode {
+	return createSettingsManager(cwd).getWebSearchMode();
+}
+
+export async function setGlobalWebSearchMode(mode: HostWebSearchMode, cwd?: string): Promise<void> {
+	if (!(["auto", "native", "extension", "disabled"] as const).includes(mode)) {
+		throw new HostFacadeError("invalid_input", `Invalid web search mode: ${mode}`);
+	}
+	const settings = createSettingsManager(cwd);
+	settings.setWebSearchMode(mode);
+	await settings.flush();
+	const errors = settings.drainErrors();
+	if (errors.length > 0) {
+		throw new HostFacadeError("config_write", errors.map((item) => item.error.message).join("; "));
+	}
 }
 
 export function readGlobalCredential(provider: string): AuthCredential | undefined {

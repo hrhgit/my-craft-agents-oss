@@ -1178,14 +1178,12 @@ export function registerFilesHandlers(
       ) {
         throw new Error('Path-only attachments are only accepted from the local Electron window. Upload file contents instead.')
       }
-      const { rootPath: workspaceRootPath } = getRequestWorkspaceLocation(ctx, deps, topologyStore, '')
-
       // SECURITY: Validate sessionId to prevent path traversal attacks
       // This must happen before using sessionId in any file path operations
       validateSessionId(sessionId)
 
       // Create attachments directory if it doesn't exist
-      const attachmentsDir = getSessionAttachmentsPath(workspaceRootPath, sessionId)
+      const attachmentsDir = getSessionAttachmentsPath(workspaceId, sessionId)
       await mkdir(attachmentsDir, { recursive: true })
       throwIfAborted(ctx.signal)
 

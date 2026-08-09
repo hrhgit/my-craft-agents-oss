@@ -5,7 +5,6 @@
 import { describe, it, expect } from 'bun:test';
 import {
   validateSkillContent,
-  validatePermissionsContent,
   validateToolIconsContent,
   detectConfigFileType,
   detectAppConfigFileType,
@@ -33,14 +32,12 @@ Do things.
     expect(result.errors).toHaveLength(0);
   });
 
-  it('passes with optional fields (globs, alwaysAllow)', () => {
+  it('passes with optional glob fields', () => {
     const content = `---
 name: Git Helper
 description: Helps with git operations
 globs:
   - "**/*.ts"
-alwaysAllow:
-  - Bash
 ---
 
 Help with git.
@@ -112,57 +109,6 @@ Content.
 });
 
 // ============================================================
-// validatePermissionsContent
-// ============================================================
-
-describe('validatePermissionsContent', () => {
-  it('passes for valid permissions config', () => {
-    const config = JSON.stringify({
-      allowedBashPatterns: ['git status', 'npm test'],
-      allowedMcpPatterns: ['mcp__session__.*'],
-    });
-    const result = validatePermissionsContent(config);
-    expect(result.valid).toBe(true);
-  });
-
-  it('passes for empty object (all fields optional)', () => {
-    const result = validatePermissionsContent('{}');
-    expect(result.valid).toBe(true);
-  });
-
-  it('passes with object-form patterns (pattern + comment)', () => {
-    const config = JSON.stringify({
-      allowedBashPatterns: [
-        { pattern: 'git .*', comment: 'Allow git commands' },
-        'npm test',
-      ],
-    });
-    const result = validatePermissionsContent(config);
-    expect(result.valid).toBe(true);
-  });
-
-  it('fails for invalid JSON', () => {
-    const result = validatePermissionsContent('{{bad}}');
-    expect(result.valid).toBe(false);
-    expect(result.errors[0].message).toContain('Invalid JSON');
-  });
-
-  it('fails for invalid regex patterns', () => {
-    const config = JSON.stringify({
-      allowedBashPatterns: ['[invalid regex('],
-    });
-    const result = validatePermissionsContent(config);
-    expect(result.valid).toBe(false);
-    expect(result.errors.length).toBeGreaterThan(0);
-  });
-
-  it('uses custom displayFile for error messages', () => {
-    const result = validatePermissionsContent('bad', 'workspace/permissions.json');
-    expect(result.errors[0].file).toBe('workspace/permissions.json');
-  });
-});
-
-// ============================================================
 // validateToolIconsContent
 // ============================================================
 
@@ -199,16 +145,6 @@ describe('detectConfigFileType', () => {
     expect(result!.type).toBe('skill');
     expect(result!.slug).toBe('commit');
     expect(result!.displayFile).toBe('.mortise/skills/commit/SKILL.md');
-  });
-
-  it('detects workspace-level permissions.json', () => {
-    const result = detectConfigFileType(
-      `${workspaceRoot}/permissions.json`,
-      workspaceRoot
-    );
-    expect(result).not.toBeNull();
-    expect(result!.type).toBe('permissions');
-    expect(result!.displayFile).toBe('permissions.json');
   });
 
   it('does not recognize retired workspace-level automations.json', () => {
@@ -276,13 +212,6 @@ Content here.
     expect(result!.valid).toBe(true);
   });
 
-  it('dispatches to permissions validator', () => {
-    const detection = { type: 'permissions' as const, displayFile: 'permissions.json' };
-    const result = validateConfigFileContent(detection, '{}');
-    expect(result).not.toBeNull();
-    expect(result!.valid).toBe(true);
-  });
-
   it('dispatches to tool icon validator', () => {
     const detection = { type: 'tool-icons' as const, displayFile: 'tool-icons/tool-icons.json' };
     const result = validateConfigFileContent(detection, JSON.stringify({
@@ -293,10 +222,4 @@ Content here.
     expect(result!.valid).toBe(true);
   });
 
-  it('returns validation errors for invalid content', () => {
-    const detection = { type: 'permissions' as const, displayFile: 'permissions.json' };
-    const result = validateConfigFileContent(detection, '{ not valid json }');
-    expect(result).not.toBeNull();
-    expect(result!.valid).toBe(false);
-  });
 });

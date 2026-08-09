@@ -305,6 +305,71 @@ describe("AgentSession auto-compaction queue resume", () => {
 		expect(runAutoCompactionSpy).not.toHaveBeenCalled();
 	});
 
+	it("defers aborted responses until the next prompt, then estimates their context", async () => {
+		const model = session.model!;
+		const contextTokens = model.contextWindow - 16_384 + 1;
+		const successfulAssistant: AssistantMessage = {
+			role: "assistant",
+			content: [{ type: "text", text: "large successful response" }],
+			api: model.api,
+			provider: model.provider,
+			model: model.id,
+			usage: {
+				input: contextTokens - 10_000,
+				output: 10_000,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: contextTokens,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			stopReason: "stop",
+			timestamp: Date.now(),
+		};
+		const abortedAssistant = {
+			role: "assistant",
+			content: [],
+			api: model.api,
+			provider: model.provider,
+			model: model.id,
+			stopReason: "aborted",
+			timestamp: Date.now() + 1000,
+		} as unknown as AssistantMessage;
+
+		session.agent.state.messages = [
+			{ role: "user", content: [{ type: "text", text: "hello" }], timestamp: Date.now() - 1000 },
+			successfulAssistant,
+			{
+				role: "toolResult",
+				toolCallId: "call-1",
+				toolName: "read",
+				content: [{ type: "text", text: "large trailing tool output" }],
+				isError: false,
+				timestamp: Date.now() + 500,
+			},
+			abortedAssistant,
+		];
+
+		const runAutoCompactionSpy = vi
+			.spyOn(
+				session as unknown as {
+					_runAutoCompaction: (reason: "overflow" | "threshold", willRetry: boolean) => Promise<void>;
+				},
+				"_runAutoCompaction",
+			)
+			.mockResolvedValue();
+		const checkCompaction = (
+			session as unknown as {
+				_checkCompaction: (assistantMessage: AssistantMessage, skipAbortedCheck?: boolean) => Promise<void>;
+			}
+		)._checkCompaction.bind(session);
+
+		await checkCompaction(abortedAssistant);
+		expect(runAutoCompactionSpy).not.toHaveBeenCalled();
+
+		await checkCompaction(abortedAssistant, false);
+		expect(runAutoCompactionSpy).toHaveBeenCalledWith("threshold", false);
+	});
+
 	it("should not trigger threshold compaction for error messages when no prior usage exists", async () => {
 		const model = session.model!;
 

@@ -6,6 +6,10 @@ describe('THINKING_TO_PI', () => {
     expect(THINKING_TO_PI.xhigh).toBe('xhigh')
   })
 
+  it('maps max to Pi max natively', () => {
+    expect(THINKING_TO_PI.max).toBe('max')
+  })
+
   it('maps minimal to Pi minimal natively', () => {
     expect(THINKING_TO_PI.minimal).toBe('minimal')
   })

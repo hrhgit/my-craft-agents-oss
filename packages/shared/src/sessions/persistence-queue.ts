@@ -16,7 +16,6 @@ interface PendingWrite {
 
 interface HeaderMetadataSignature {
   name?: string
-  permissionMode?: string
   hasUnread?: boolean
   lastReadMessageId?: string
 }
@@ -61,7 +60,6 @@ class CanonicalSessionMetadataMismatchError extends Error {
 function getHeaderMetadataSignature(header: SessionHeader): string {
   const signature: HeaderMetadataSignature = {
     name: header.name,
-    permissionMode: header.permissionMode,
     hasUnread: header.hasUnread,
     lastReadMessageId: header.lastReadMessageId,
   }

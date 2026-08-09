@@ -46,6 +46,13 @@ const scenarioSchema = objectSchema({
 const rendererActions = ['click', 'fill', 'select', 'press', 'drag', 'shortcut', 'clipboard', 'ime', 'rich-text'] as const
 const nativeActions = ['click', 'fill', 'select', 'focus', 'minimize', 'maximize', 'restore', 'close'] as const
 
+function rendererActionDescription(id: typeof rendererActions[number]): string {
+  if (id === 'press') {
+    return 'Physically press a renderer key. Printable keys commit text with keyDown, char, and keyUp; value can override the committed character for keyboard-layout combinations.'
+  }
+  return `Perform the ${id} renderer interaction on a revision-bound semantic target.`
+}
+
 const rendererTargetSchemas = [
   objectSchema({ ref: { type: 'string', minLength: 1 } }, ['ref']),
   objectSchema({ semanticId: { type: 'string', minLength: 1 } }, ['semanticId']),
@@ -99,7 +106,7 @@ const definitions: UiValidationCapabilityDefinition[] = [
   ...rendererActions.map(id => ({
     kind: 'action' as const,
     id,
-    description: `Perform the ${id} renderer interaction on a revision-bound semantic target.`,
+    description: rendererActionDescription(id),
     inputSchema: actionSchema(id, false),
     verificationLevel: 'renderer-verified' as const,
     surfaces: ['electron', 'webui'] as UiValidationCapabilitySurface[],

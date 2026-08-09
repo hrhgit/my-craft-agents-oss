@@ -8,7 +8,7 @@ import {
   type WorkspaceRemotePrimaryResultV1,
 } from '@mortise/shared/protocol'
 import { getCredentialManager } from '@mortise/shared/credentials'
-import { getDefaultWorkspaceTopologyStore } from '@mortise/shared/workspaces'
+import { getDefaultWorkspaceTopologyStore, initializeWorkspace } from '@mortise/shared/workspaces'
 import type { Workspace } from '@mortise/core/types'
 import type { RpcServer, WsRpcClient } from '@mortise/server-core/transport'
 import type { HandlerDeps } from './handler-deps'
@@ -105,7 +105,10 @@ export function registerWorkspaceGuiHandlers(server: RpcServer, deps: HandlerDep
       requireRemoteRootName(remoteWorkspace, command.remoteRootName)
 
       const workspace = createRemotePrimaryWorkspace(command, remoteId)
-      topologyStore.create(workspace, command.operationId)
+      initializeWorkspace(workspace, {
+        topologyStore,
+        operationId: command.operationId,
+      })
       return remotePrimaryResult(
         command,
         workspace,

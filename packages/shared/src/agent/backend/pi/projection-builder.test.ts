@@ -111,23 +111,33 @@ describe('PiProjectionBuilder', () => {
   })
 
   it('projects tool start and result onto the tool call identity', () => {
-    const builder = new PiProjectionBuilder('session-1', 'runtime-1')
+    let now = 1_000
+    const builder = new PiProjectionBuilder('session-1', 'runtime-1', undefined, () => now)
     const start = builder.accept({ type: 'tool_start', toolName: 'Read', toolUseId: 'call-1', input: { path: 'a.ts' }, turnId: 'turn-1' })[0]!
+    now = 1_250
     const result = builder.accept({ type: 'tool_result', toolName: 'Read', toolUseId: 'call-1', result: 'ok', isError: false, turnId: 'turn-1' })[0]!
-    expect(start.entityType).toBe('tool_run')
+    expect(start).toMatchObject({
+      entityType: 'tool_run', occurredAt: 1_000,
+      payload: { timestamp: 1_000, startedAt: 1_000, status: 'running' },
+    })
     expect(result.entityId).toBe(start.entityId)
     expect(result.entityVersion).toBe(2)
+    expect(result.occurredAt).toBe(1_250)
     expect(result.payload).toMatchObject({
       toolCallId: 'call-1', status: 'completed', input: { path: 'a.ts' },
+      timestamp: 1_000, startedAt: 1_000, completedAt: 1_250,
     })
   })
 
   it('projects orphan tool results without requiring a start event', () => {
-    const builder = new PiProjectionBuilder('session-1', 'runtime-1')
+    const builder = new PiProjectionBuilder('session-1', 'runtime-1', undefined, () => 1_500)
     const result = builder.accept({ type: 'tool_result', toolName: 'Read', toolUseId: 'orphan', result: 'ok', isError: false })[0]!
     expect(result).toMatchObject({
-      entityId: 'tool:orphan', entityVersion: 1, kind: 'tool_execution_end',
-      payload: { toolCallId: 'orphan', toolName: 'Read', result: 'ok', status: 'completed' },
+      entityId: 'tool:orphan', entityVersion: 1, kind: 'tool_execution_end', occurredAt: 1_500,
+      payload: {
+        toolCallId: 'orphan', toolName: 'Read', result: 'ok', status: 'completed',
+        timestamp: 1_500, completedAt: 1_500,
+      },
     })
   })
 
@@ -164,21 +174,32 @@ describe('PiProjectionBuilder', () => {
   })
 
   it('finalizes running tools before terminal lifecycle events', () => {
-    const completed = new PiProjectionBuilder('session-1', 'runtime-1')
+    let completedNow = 2_000
+    const completed = new PiProjectionBuilder('session-1', 'runtime-1', undefined, () => completedNow)
     completed.accept({ type: 'tool_start', toolName: 'Read', toolUseId: 'call-1', input: {}, turnId: 'turn-1' })
+    completedNow = 2_400
     const completion = completed.accept({ type: 'complete' })
     expect(completion[0]).toMatchObject({
-      entityId: 'tool:call-1', turnId: 'turn-1', entityVersion: 2,
-      kind: 'tool_execution_end', payload: { status: 'completed', result: '', isError: false },
+      entityId: 'tool:call-1', turnId: 'turn-1', entityVersion: 2, occurredAt: 2_400,
+      kind: 'tool_execution_end',
+      payload: {
+        status: 'completed', result: '', isError: false,
+        timestamp: 2_000, startedAt: 2_000, completedAt: 2_400,
+      },
     })
     expect(completion[1]).toMatchObject({ kind: 'agent_settled' })
 
-    const failed = new PiProjectionBuilder('session-1', 'runtime-1')
+    let failedNow = 3_000
+    const failed = new PiProjectionBuilder('session-1', 'runtime-1', undefined, () => failedNow)
     failed.accept({ type: 'tool_start', toolName: 'Bash', toolUseId: 'call-2', input: {} })
+    failedNow = 3_600
     const failure = failed.accept({ type: 'error', message: 'boom' })
     expect(failure[0]).toMatchObject({
-      entityId: 'tool:call-2', entityVersion: 2,
-      payload: { status: 'failed', result: 'Error occurred', isError: true },
+      entityId: 'tool:call-2', entityVersion: 2, occurredAt: 3_600,
+      payload: {
+        status: 'failed', result: 'Error occurred', isError: true,
+        timestamp: 3_000, startedAt: 3_000, completedAt: 3_600,
+      },
     })
     expect(failure[1]).toMatchObject({ kind: 'runtime_error', payload: { message: 'boom' } })
   })
@@ -208,7 +229,7 @@ describe('PiProjectionBuilder', () => {
 
 <session_state>
 sessionId: session-1
-permissionMode: execute
+plansFolderPath: C:\\workspace\\plans
 </session_state>
 
 Ask me a question`,
@@ -277,6 +298,28 @@ sessionId: session-1
     expect(new Set([agent.entityId, compacting.entityId, compacted.entityId]).size).toBe(3)
   })
 
+  it('projects native web search updates as an ordered source activity', () => {
+    const builder = new PiProjectionBuilder('session-1', 'runtime-1')
+    const base = { type: 'message_update', message: { id: 'assistant-1', role: 'assistant', timestamp: 10 } }
+    const start = builder.acceptRuntimeEvent({
+      ...base,
+      assistantMessageEvent: { type: 'websearch_start', contentIndex: 1, searchId: 'ws-1', query: 'Mortise', source: 'native', provider: 'openai' },
+    })[0]!
+    const update = builder.acceptRuntimeEvent({
+      ...base,
+      assistantMessageEvent: { type: 'websearch_update', contentIndex: 1, searchId: 'ws-1', sources: [{ title: 'Docs', url: 'https://example.com/docs' }] },
+    })[0]!
+    const end = builder.acceptRuntimeEvent({
+      ...base,
+      assistantMessageEvent: { type: 'websearch_end', contentIndex: 1, searchId: 'ws-1', status: 'completed', sources: [{ title: 'Docs', url: 'https://example.com/docs' }], durationMs: 42 },
+    })[0]!
+    expect(start.entityId).toBe('content:webSearch:assistant-1:ws-1')
+    expect(update.entityId).toBe(start.entityId)
+    expect(end.entityId).toBe(start.entityId)
+    expect([start.entityVersion, update.entityVersion, end.entityVersion]).toEqual([1, 2, 3])
+    expect(end.payload).toMatchObject({ contentKind: 'webSearch', status: 'completed', query: 'Mortise', sources: [{ url: 'https://example.com/docs' }], durationMs: 42 })
+  })
+
   it('preserves retrying attempts until logical settlement', () => {
     const builder = new PiProjectionBuilder('session-1', 'runtime-1')
     const start = builder.acceptRuntimeEvent({ type: 'agent_start' })[0]!
@@ -331,24 +374,6 @@ sessionId: session-1
     expect(builder.acceptRuntimeEvent({
       type: 'message_end', message: { role: 'custom', customType: 'mortise-plan-artifact', details: { schemaVersion: 1, artifact: { artifactId: '' } } },
     })).toEqual([])
-  })
-
-  it('keeps permission prompt request and resolution on one stable entity', () => {
-    const builder = new PiProjectionBuilder('session-1', 'runtime-1')
-    const pending = builder.acceptPromptRequest({
-      requestId: 'permission-1', promptKind: 'permission', toolName: 'bash',
-      description: 'Run tests', permissionType: 'bash', impact: 'Executes a command',
-    })[0]!
-    const resolved = builder.acceptPromptResolution('permission-1', 'allowed')[0]!
-    expect(pending).toMatchObject({
-      entityId: 'prompt:permission-1', entityType: 'prompt_request', entityVersion: 1,
-      kind: 'permission_request', payload: { status: 'pending', toolName: 'bash' },
-    })
-    expect(resolved).toMatchObject({
-      entityId: pending.entityId, entityVersion: 2, kind: 'prompt_resolved',
-      payload: { status: 'resolved', resolution: 'allowed' },
-    })
-    expect(JSON.stringify(pending.payload)).not.toContain('input')
   })
 
   it('seeds sequence, entity versions, payload state, and the next turn index from a snapshot', () => {

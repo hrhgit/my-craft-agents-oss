@@ -43,33 +43,6 @@ describe('Mortise extension settings panels', () => {
     expect(isExtensionConfigurable(extension)).toBe(true)
   })
 
-  it('keeps the permissions extension settings field on its dedicated page', () => {
-    const extension = catalogEntry(true, true)
-    extension.id = 'mortise-permissions'
-    v1UI(extension).settings = {
-      schemaVersion: 1,
-      page: { id: 'permissions', title: 'Permissions' },
-      groups: [{ id: 'approval-mode', title: 'Approval mode' }],
-      fields: [{
-        key: 'mode',
-        type: 'select',
-        group: 'approval-mode',
-        label: 'Default mode',
-        default: 'allow-all',
-        options: [
-          { value: 'ask', label: 'Ask' },
-          { value: 'allow-all', label: 'Execute' },
-        ],
-      }],
-    }
-
-    expect(buildExtensionSettingSections(extension)).toEqual([{
-      id: 'approval-mode',
-      title: 'Approval mode',
-      fields: [expect.objectContaining({ key: 'mode', type: 'select' })],
-    }])
-  })
-
   it('keeps ungrouped and unknown-group fields when groups are declared', () => {
     const extension = catalogEntry(true, true)
     v1UI(extension).settings = {

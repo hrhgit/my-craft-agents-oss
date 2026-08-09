@@ -4,7 +4,7 @@
 
 import type { Tool as GoogleApiTool } from "@google/genai";
 import { type Content, FinishReason, FunctionCallingConfigMode, type Part } from "@google/genai";
-import type { Context, ImageContent, Model, StopReason, TextContent, Tool } from "../types.ts";
+import type { Context, ImageContent, Model, StopReason, TextContent, Tool, WebSearchSource } from "../types.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import { transformMessages } from "./transform-messages.ts";
 
@@ -47,6 +47,34 @@ export function isThinkingPart(part: Pick<Part, "thought" | "thoughtSignature">)
 export function retainThoughtSignature(existing: string | undefined, incoming: string | undefined): string | undefined {
 	if (typeof incoming === "string" && incoming.length > 0) return incoming;
 	return existing;
+}
+
+export function extractGoogleWebSearch(
+	candidate: unknown,
+): { query: string; sources: WebSearchSource[]; raw: unknown } | undefined {
+	if (!candidate || typeof candidate !== "object") return undefined;
+	const metadata = (candidate as Record<string, unknown>).groundingMetadata;
+	if (!metadata || typeof metadata !== "object") return undefined;
+	const value = metadata as Record<string, unknown>;
+	const queries = Array.isArray(value.webSearchQueries) ? value.webSearchQueries : [];
+	const sources = Array.isArray(value.groundingChunks)
+		? value.groundingChunks.flatMap((chunk) => {
+				if (!chunk || typeof chunk !== "object") return [];
+				const web = (chunk as Record<string, unknown>).web;
+				if (!web || typeof web !== "object") return [];
+				const item = web as Record<string, unknown>;
+				if (typeof item.uri !== "string" || !item.uri) return [];
+				let domain: string | undefined;
+				try {
+					domain = new URL(item.uri).hostname;
+				} catch {
+					/* keep URL only */
+				}
+				return [{ url: item.uri, title: typeof item.title === "string" ? item.title : undefined, domain }];
+			})
+		: [];
+	if (queries.length === 0 && sources.length === 0) return undefined;
+	return { query: typeof queries[0] === "string" ? queries[0] : "", sources, raw: metadata };
 }
 
 // Thought signatures must be base64 for Google APIs (TYPE_BYTES).

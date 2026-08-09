@@ -7,7 +7,6 @@
  */
 
 import { getSystemPrompt, getDateTimeContext, getWorkingDirectoryContext } from './system.ts';
-import { formatSessionState } from '../agent/mode-manager.ts';
 
 // ANSI color codes for terminal output
 const colors = {
@@ -60,10 +59,9 @@ printAnnotation('Composed of:');
 printAnnotation('  1. User Preferences (if set) - formatPreferencesForPrompt()');
 printAnnotation('  2. Mortise Agent Environment Marker - version, platform, arch');
 printAnnotation('  3. Core Instructions - capabilities and guidelines');
-printAnnotation('  4. Configuration Documentation Refs - permissions, skills, themes, statuses');
-printAnnotation('  5. Permission Modes Documentation - inlined in system prompt');
-printAnnotation('  6. Error Handling & Tool Metadata - guidelines for tool usage');
-printAnnotation('  7. Debug Mode Context (if enabled) - formatDebugModeContext()');
+printAnnotation('  4. Configuration Documentation Refs - skills, themes, statuses');
+printAnnotation('  5. Error Handling & Tool Metadata - guidelines for tool usage');
+printAnnotation('  6. Debug Mode Context (if enabled) - formatDebugModeContext()');
 
 const systemPrompt = getSystemPrompt(
   undefined, // No pinned preferences (use current from disk)
@@ -102,15 +100,7 @@ printAnnotation('    user tail — so the cached prefix is not re-stamped every 
 printSection('1. DATE/TIME CONTEXT - getDateTimeContext()', getDateTimeContext(), colors.magenta);
 printAnnotation('Added first to user message for prompt caching optimization');
 
-// 2. Session State
-const sessionState = formatSessionState('260121-example-session', {
-  plansFolderPath:
-    '/Users/example/.mortise/agent/sessions/encoded-cwd/260121-example-session/plans',
-});
-printSection('2. SESSION STATE - formatSessionState()', sessionState, colors.magenta);
-printAnnotation('Contains: sessionId, permissionMode, modeTransition/modeChangedBy/modeChangedAt/modeVersion (when available), plansFolderPath');
-
-// 3. Workspace Capabilities
+// 2. Workspace Capabilities
 const exampleCapabilities = `<workspace_capabilities>
 local-mcp: enabled (stdio subprocess servers supported)
 </workspace_capabilities>`;
@@ -157,8 +147,6 @@ printAnnotation('How a user message looks after all context is injected');
 
 const completeUserMessage = `${getDateTimeContext()}
 
-${sessionState}
-
 <workspace_capabilities>
 local-mcp: enabled (stdio subprocess servers supported)
 </workspace_capabilities>
@@ -190,17 +178,15 @@ ${colors.bold}Static System Prompt Components:${colors.reset}
   1. User Preferences (if set)           ${colors.dim}// formatPreferencesForPrompt()${colors.reset}
   2. Mortise Agent Environment Marker      ${colors.dim}// Version, platform, arch${colors.reset}
   3. Core Instructions                   ${colors.dim}// Capabilities and guidelines${colors.reset}
-  4. Configuration Documentation Refs    ${colors.dim}// Permissions, skills, themes, statuses${colors.reset}
-  5. Permission Modes Documentation      ${colors.dim}// Inlined in system prompt${colors.reset}
-  6. Error Handling & Tool Metadata      ${colors.dim}// Guidelines for tool usage${colors.reset}
-  7. Debug Mode Context (if enabled)     ${colors.dim}// formatDebugModeContext()${colors.reset}
+  4. Configuration Documentation Refs    ${colors.dim}// Skills, themes, statuses${colors.reset}
+  5. Error Handling & Tool Metadata      ${colors.dim}// Guidelines for tool usage${colors.reset}
+  6. Debug Mode Context (if enabled)     ${colors.dim}// formatDebugModeContext()${colors.reset}
 
 ${colors.bold}Dynamic User Message Components (per message):${colors.reset}
   1. Date/Time Context                   ${colors.dim}// getDateTimeContext()         [VOLATILE]${colors.reset}
-  2. Session State                       ${colors.dim}// formatSessionState()         [VOLATILE]${colors.reset}
-  3. Workspace Capabilities              ${colors.dim}// formatWorkspaceCapabilities()  [STABLE]${colors.reset}
-  4. Working Directory + project_context_file  ${colors.dim}// getWorkingDirectoryContext()  [STABLE]${colors.reset}
-  5. Recovery Context (on resume only)   ${colors.dim}// buildRecoveryContext()${colors.reset}
+  2. Workspace Capabilities              ${colors.dim}// formatWorkspaceCapabilities()  [STABLE]${colors.reset}
+  3. Working Directory + project_context_file  ${colors.dim}// getWorkingDirectoryContext()  [STABLE]${colors.reset}
+  4. Recovery Context (on resume only)   ${colors.dim}// buildRecoveryContext()${colors.reset}
   6. File Attachments                    ${colors.dim}// Inline paths or base64${colors.reset}
   7. User Message Text                   ${colors.dim}// The actual user input${colors.reset}
 
@@ -210,6 +196,5 @@ ${colors.bold}Dynamic User Message Components (per message):${colors.reset}
 ${colors.bold}Key Files:${colors.reset}
   packages/shared/src/prompts/system.ts          ${colors.dim}// Main prompt assembly${colors.reset}
   packages/shared/src/agent/mortise.ts       ${colors.dim}// User message building${colors.reset}
-  packages/shared/src/agent/mode-manager.ts      ${colors.dim}// Permission modes${colors.reset}
   packages/shared/src/config/preferences.ts      ${colors.dim}// User preferences${colors.reset}
 `);

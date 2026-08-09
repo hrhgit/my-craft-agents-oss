@@ -2,16 +2,15 @@
 schema: project-module/v1
 id: app-settings-security
 name: Application Settings and Security
-summary: Global configuration, authentication, credentials, permissions, onboarding, and settings UI.
+summary: Global configuration, authentication, credentials, onboarding, and settings UI.
 status: active
 when_to_read:
-  - global settings, authentication, credentials, permissions, onboarding, or security policy changes
+  - global settings, authentication, credentials, onboarding, or security policy changes
 tags:
   - settings
   - config
   - auth
   - credential
-  - permission
   - onboarding
   - security
 entrypoints:
@@ -27,7 +26,7 @@ frontend_impact:
   affects: true
   areas:
     - Electron and WebUI settings pages
-    - onboarding, authentication, credential, and permission surfaces
+    - onboarding, authentication, and credential surfaces
   interaction_docs:
     - .agents/modules/app-settings-security/frontend-interactions.md
 validation:
@@ -42,19 +41,19 @@ Persist secure global application choices and guide users through connection set
 
 # Boundary
 
-Maintain defaults, migrations, credential lifetimes, global provider choices, permission synchronization, and settings navigation.
+Maintain defaults, migrations, credential lifetimes, global provider choices, and settings navigation.
 
 Do not own provider wire transports, workspace-specific state, or extension execution.
 
 # Capabilities
 
-Own settings schemas and storage, authentication callbacks, credential protection, permission policy, onboarding, and settings presentation.
+Own settings schemas and storage, authentication callbacks, credential protection, onboarding, and settings presentation.
 
 Shared config and credential stores are surfaced through server/Electron handlers and the renderer settings pages. `config/state-contract.ts` exposes the side-effect-free database path and global record identity for consumers that operate on an explicit profile directory.
 
 # Invariants
 
-AI connection, model, and thinking defaults are global; `state.sqlite` is the sole authority for Mortise global configuration and session drafts, while retired JSON files are ignored and left untouched; Mortise's Pi runtime uses `<CONFIG_DIR>/agent` and never falls back to independent Pi's `~/.pi/agent`; Mortise project settings and resources use only `<workspace>/.mortise` and never read or write project `.pi`; user-authored and Extension-provided subagent templates use the same core execution contract, while Extension templates remain read-only and Extension-owned; the one-time root migration is serialized across processes and imports loose extension assets, `extension-data`, package declarations, local extension declarations, and `extensionConfig`, while package-manager caches are rebuilt and sessions, providers, credentials, defaults, and unrelated settings are never imported; provider definitions never carry credentials, and provider API keys enter the canonical auth store only through an explicit credential argument; secrets are never exposed through ordinary DTOs; permission changes validate before persistence.
+AI connection, model, and thinking defaults are global; `state.sqlite` is the sole authority for Mortise global configuration and session drafts, while retired JSON files are ignored and left untouched; Mortise's Pi runtime uses `<CONFIG_DIR>/agent` and never falls back to independent Pi's `~/.pi/agent`; Mortise project settings and resources use only `<workspace>/.mortise` and never read or write project `.pi`; user-authored and Extension-provided subagent templates use the same core execution contract, while Extension templates remain read-only and Extension-owned; the one-time root migration is serialized across processes and imports loose extension assets, `extension-data`, package declarations, local extension declarations, and `extensionConfig`, while package-manager caches are rebuilt and sessions, providers, credentials, defaults, and unrelated settings are never imported; provider definitions never carry credentials, and provider API keys enter the canonical auth store only through an explicit credential argument; secrets are never exposed through ordinary DTOs. Tool approval policy is Extension-owned and does not belong to application settings.
 
 # Change Impact
 
@@ -64,4 +63,4 @@ Configuration schema changes can silently weaken defaults; browser and desktop a
 
 # Validation
 
-Run config, credential, permission, onboarding, and renderer settings tests.
+Run config, credential, onboarding, and renderer settings tests.

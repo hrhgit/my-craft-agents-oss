@@ -19,7 +19,7 @@ const TRANSITION_DURATION = 0.25
 const TRANSITION_EASE = [0.4, 0, 0.2, 1] as const
 
 // Fallback heights (used on first render before measurement)
-const FALLBACK_HEIGHTS = { freeform: 114, 'freeform-compact': 70 } as const
+const FALLBACK_HEIGHTS = { freeform: 98, 'freeform-compact': 70 } as const
 
 /**
  * InputContainer - Main orchestrator for the extension-safe freeform composer.
@@ -175,7 +175,8 @@ export function InputContainer({
       {/* Visible animated container */}
       <motion.div
         className={cn(
-          "input-container relative overflow-hidden transition-colors",
+          "input-container relative transition-colors",
+          isAnimating ? "overflow-hidden" : "overflow-visible",
           attachedTop ? "rounded-b-[12px] rounded-t-none" : "rounded-[12px]",
           isFocusedPanel ? "shadow-middle" : "shadow-minimal",
           "bg-background"

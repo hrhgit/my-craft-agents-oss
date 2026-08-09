@@ -56,7 +56,7 @@ cpSync(resourcesSrc, resourcesDest, { recursive: true, force: true });
 
 console.log('✓ Copied resources/ → dist/resources/');
 
-// Copy PowerShell parser script (for Windows command validation in Explore mode)
+// Copy PowerShell parser script for read-command classification on Windows.
 // Source: packages/shared/src/agent/powershell-parser.ps1
 // Destination: dist/resources/powershell-parser.ps1
 const psParserSrc = join(ROOT_DIR, 'packages', 'shared', 'src', 'agent', 'powershell-parser.ps1');
@@ -65,7 +65,7 @@ try {
   copyFileSync(psParserSrc, psParserDest);
   console.log('✓ Copied powershell-parser.ps1 → dist/resources/');
 } catch (err) {
-  // Only warn - PowerShell validation is optional on non-Windows platforms
+  // Only warn - PowerShell classification is optional on non-Windows platforms.
   console.log('⚠ powershell-parser.ps1 copy skipped (not critical on non-Windows)');
 }
 

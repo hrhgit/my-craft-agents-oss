@@ -66,6 +66,23 @@ describe("web search settings", () => {
 		expect(reloaded.getWebSearch()).toBe(false);
 	});
 
+	it("migrates the legacy boolean and persists the four search modes", async () => {
+		const settingsManager = SettingsManager.create(tempDir, agentDir);
+		expect(settingsManager.getWebSearchMode()).toBe("auto");
+
+		settingsManager.setWebSearchMode("extension");
+		await settingsManager.flush();
+		let reloaded = SettingsManager.create(tempDir, agentDir);
+		expect(reloaded.getWebSearchMode()).toBe("extension");
+		expect(reloaded.getWebSearch()).toBe(true);
+
+		reloaded.setWebSearchMode("disabled");
+		await reloaded.flush();
+		reloaded = SettingsManager.create(tempDir, agentDir);
+		expect(reloaded.getWebSearchMode()).toBe("disabled");
+		expect(reloaded.getWebSearch()).toBe(false);
+	});
+
 	it("adds supported builtin web_search guidance when enabled", async () => {
 		const { session } = await createSession({ webSearch: true });
 
@@ -76,11 +93,31 @@ describe("web search settings", () => {
 		session.dispose();
 	});
 
-	it("adds unsupported guidance when enabled on an unsupported provider", async () => {
+	it("reports fallback unavailable when the search extension is not loaded", async () => {
 		const { session } = await createSession({ webSearch: true, modelProvider: "mistral" });
 
-		expect(session.systemPrompt).toContain("Built-in web search is unavailable");
+		expect(session.systemPrompt).toContain("Web search is unavailable");
+		expect(session.getActiveToolNames()).not.toContain("web_search");
 
+		session.dispose();
+	});
+
+	it("does not silently fall back in native-only mode", async () => {
+		const settingsManager = SettingsManager.create(tempDir, agentDir);
+		settingsManager.setWebSearchMode("native");
+		await settingsManager.flush();
+		const resourceLoader = new DefaultResourceLoader({ cwd: tempDir, agentDir, settingsManager });
+		await resourceLoader.reload();
+		const { session } = await createAgentSession({
+			cwd: tempDir,
+			agentDir,
+			model: getModel("mistral", "mistral-medium-latest")!,
+			settingsManager,
+			sessionManager: SessionManager.inMemory(tempDir),
+			resourceLoader,
+		});
+		expect(session.systemPrompt).toContain("Web search is unavailable");
+		expect(session.getActiveToolNames()).not.toContain("web_search");
 		session.dispose();
 	});
 

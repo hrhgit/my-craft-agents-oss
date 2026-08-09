@@ -29,14 +29,5 @@ export type {
 export { Info_Badge } from './Info_Badge'
 export type { Info_BadgeProps, BadgeColor } from './Info_Badge'
 
-export { Info_StatusBadge } from './Info_StatusBadge'
-export type { Info_StatusBadgeProps } from './Info_StatusBadge'
-
 export { Info_Markdown } from './Info_Markdown'
 export type { Info_MarkdownProps } from './Info_Markdown'
-
-export { PermissionsDataTable } from './PermissionsDataTable'
-export type { PermissionRow, PermissionAccess, PermissionType } from './PermissionsDataTable'
-
-export { ToolsDataTable } from './ToolsDataTable'
-export type { ToolRow, ToolPermission } from './ToolsDataTable'

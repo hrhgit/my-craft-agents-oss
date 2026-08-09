@@ -58,6 +58,7 @@ export const HANDLED_CHANNELS = [
   RPC_CHANNELS.piExtensions.SET_SETTINGS,
   RPC_CHANNELS.piExtensions.UPDATE_SETTINGS,
   RPC_CHANNELS.piExtensions.GET_CATALOG,
+  RPC_CHANNELS.piExtensions.GET_RUNTIME_STATE,
   RPC_CHANNELS.piExtensions.PATCH_EXTENSION_CONFIG,
   RPC_CHANNELS.piExtensions.RELOAD,
   RPC_CHANNELS.piExtensions.IMPORT,
@@ -81,9 +82,9 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
     _ctx,
     update: import('@mortise/shared/config').MainAgentSettingsUpdate,
   ) => {
-    const runtimeProfile = await deps.sessionManager.getAgentRuntimeProfile()
     updateMainAgentSettings(update)
     await deps.sessionManager.reloadProviderRuntime()
+    const runtimeProfile = await deps.sessionManager.getAgentRuntimeProfile()
     return getAgentSettingsSnapshot(runtimeProfile)
   })
 
@@ -291,6 +292,22 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
     await configStorage.setBrowserToolEnabled(enabled)
   })
 
+  server.handle(RPC_CHANNELS.tools.GET_MESSAGING_TOOL_ENABLED, async () => {
+    return configStorage.getMessagingToolEnabled()
+  })
+
+  server.handle(RPC_CHANNELS.tools.SET_MESSAGING_TOOL_ENABLED, async (_ctx, enabled: boolean) => {
+    await configStorage.setMessagingToolEnabled(enabled)
+  })
+
+  server.handle(RPC_CHANNELS.tools.GET_WEB_SEARCH_MODE, async () => {
+    return configStorage.getWebSearchMode()
+  })
+
+  server.handle(RPC_CHANNELS.tools.SET_WEB_SEARCH_MODE, async (_ctx, mode: 'auto' | 'native' | 'extension' | 'disabled') => {
+    await configStorage.setWebSearchMode(mode)
+  })
+
   server.handle(RPC_CHANNELS.piExtensions.GET_SETTINGS, async () => {
     return configStorage.getPiExtensionSettings()
   })
@@ -306,6 +323,10 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
   server.handle(RPC_CHANNELS.piExtensions.GET_CATALOG, async () => {
     const { getPiExtensionCatalog } = await import('@mortise/shared/config/pi-global-config')
     return await getPiExtensionCatalog()
+  })
+
+  server.handle(RPC_CHANNELS.piExtensions.GET_RUNTIME_STATE, async (_ctx, workspaceId?: string) => {
+    return deps.sessionManager.getExtensionRuntimeState(workspaceId)
   })
 
   server.handle(RPC_CHANNELS.piExtensions.PATCH_EXTENSION_CONFIG, async (_ctx, patch: import('@mortise/shared/config').PiExtensionConfigPatch) => {
@@ -354,6 +375,10 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
   server.handle(RPC_CHANNELS.piExtensions.SET_EXTENSION_ENABLED, async (_ctx, name: string, enabled: boolean) => {
     if (typeof name !== 'string' || !name.trim() || typeof enabled !== 'boolean') {
       throw new Error('Invalid Pi extension enabled state')
+    }
+    const { isMortiseModelCapabilityBridgeId } = await import('@mortise/shared/config/pi-extension-settings')
+    if (isMortiseModelCapabilityBridgeId(name)) {
+      throw new Error('Bundled model capability bridges are configured in Application settings')
     }
     const { writePiExtensionEnabled } = await import('@mortise/shared/config/pi-global-config')
     await writePiExtensionEnabled(name, enabled)

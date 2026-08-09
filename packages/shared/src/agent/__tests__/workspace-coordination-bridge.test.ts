@@ -44,14 +44,14 @@ describe('WorkspaceCoordinationBridge', () => {
     const first = new WorkspaceCoordinationBridge({ ...paths, workspaceId: 'ws', sessionId: 'session-a' })
     const second = new WorkspaceCoordinationBridge({ ...paths, workspaceId: 'ws', sessionId: 'session-b' })
     try {
-      expect(await first.afterPermission(request('tool-a', 'write', { path: filePath }), { action: 'allow' }))
+      expect(await first.beforeTool(request('tool-a', 'write', { path: filePath }), { action: 'allow' }))
         .toEqual({ action: 'allow' })
       await first.recordResult({ ...request('tool-a', 'write', { path: filePath }), isError: false })
-      const blocked = await second.afterPermission(request('tool-b', 'edit', { path: filePath }), { action: 'allow' })
+      const blocked = await second.beforeTool(request('tool-b', 'edit', { path: filePath }), { action: 'allow' })
       expect(blocked.action).toBe('block')
       if (blocked.action === 'block') expect(blocked.reason).toContain('session-a')
       first.completeTurn()
-      expect(await second.afterPermission(request('tool-c', 'edit', { path: filePath }), { action: 'allow' }))
+      expect(await second.beforeTool(request('tool-c', 'edit', { path: filePath }), { action: 'allow' }))
         .toEqual({ action: 'allow' })
     } finally {
       first.close()
@@ -66,7 +66,7 @@ describe('WorkspaceCoordinationBridge', () => {
     const bridge = new WorkspaceCoordinationBridge({ ...paths, workspaceId: 'ws', sessionId: 'session-a' })
     try {
       const toolRequest = request('tool-a', 'write', { path: filePath, _intent: 'Update example' })
-      await bridge.afterPermission(toolRequest, { action: 'allow' })
+      await bridge.beforeTool(toolRequest, { action: 'allow' })
       writeFileSync(filePath, 'after\n')
       await bridge.recordResult({ ...toolRequest, isError: false })
 
@@ -93,28 +93,27 @@ describe('WorkspaceCoordinationBridge', () => {
     expect(readFileSync(filePath, 'utf8')).toBe('after\n')
   })
 
-  it('ignores read-only shell commands and records broad advisory mutation attribution', async () => {
+  it('records shell commands as broad advisory mutation attribution', async () => {
     const paths = harness()
     const bridge = new WorkspaceCoordinationBridge({
       ...paths,
       workspaceId: 'ws',
       sessionId: 'session-a',
-      isReadOnlyShellCommand: command => command === 'git status',
     })
     try {
       const read = request('read', 'bash', { command: 'git status' })
-      await bridge.afterPermission(read, { action: 'allow' })
+      await bridge.beforeTool(read, { action: 'allow' })
       await bridge.recordResult({ ...read, isError: false })
 
       const write = request('write', 'bash', { command: 'git add src/app.ts' })
-      await bridge.afterPermission(write, { action: 'allow' })
+      await bridge.beforeTool(write, { action: 'allow' })
       await bridge.recordResult({ ...write, isError: false })
       bridge.completeTurn()
 
       const store = WorkspaceCoordinationStore.open({ ...paths, workspaceId: 'ws', writerId: 'reader' })
       try {
         const changes = store.listRecentChanges(10)
-        expect(changes).toHaveLength(1)
+        expect(changes).toHaveLength(2)
         expect(changes[0]?.resource).toMatchObject({ kind: 'logical', name: 'workspace/fs' })
         expect(changes[0]?.summary).toContain('broad shell attribution')
       } finally {

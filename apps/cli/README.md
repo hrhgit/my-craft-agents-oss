@@ -29,7 +29,6 @@ mortise-cli run <message> [options]
 | Flag | Description |
 |------|-------------|
 | `--workspace-dir <path>` | Use directory as workspace (creates if needed) |
-| `--mode <mode>` | Permission mode (default: `allow-all`) |
 | `--output-format` | `text` or `stream-json` (default: `text`) |
 | `--no-cleanup` | Keep session after completion |
 | `--server-entry` | Path to server/index.ts |

@@ -313,7 +313,7 @@ function classifyStatusError(
 		});
 	}
 
-	if (status === 500 || status === 502 || status === 503 || status === 504) {
+	if (status === 500 || status === 502 || status === 503 || status === 504 || status === 529) {
 		return new TransportError({
 			code: "server_error",
 			message,

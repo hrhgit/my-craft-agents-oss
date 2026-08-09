@@ -54,7 +54,6 @@ function makeSessionManager(sessions: Session[] = []): ISessionManager {
       makeSession(opts?.name ?? 'created'),
     sendMessage: async () => {},
     cancelProcessing: async () => {},
-    respondToPermission: () => true,
   } as unknown as ISessionManager
 }
 

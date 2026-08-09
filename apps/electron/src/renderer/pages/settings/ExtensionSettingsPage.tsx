@@ -10,6 +10,7 @@ import type { PiExtensionCatalogEntry, PiExtensionCatalogError, PiExtensionSetti
 import { ExtensionDetailPanel } from './ExtensionDetailPanel'
 import { usePiGlobalConfig } from '@/hooks/usePiGlobalConfig'
 import { ExtensionFrontendZone } from '@/components/extensions/ExtensionFrontendZone'
+import { isExtensionInRuntime } from '@/components/extensions/extension-runtime-catalog'
 
 export function ExtensionSettingsPage({ extensionId, pageId }: { extensionId: string; pageId: string }) {
   const { providers, settings } = usePiGlobalConfig()
@@ -20,13 +21,16 @@ export function ExtensionSettingsPage({ extensionId, pageId }: { extensionId: st
 
   const load = useCallback(async () => {
     try {
-      const catalog = await window.electronAPI.getPiExtensionCatalog()
-      const next = catalog.extensions.find((entry) => entry.enabled
+      const [catalog, runtimeState] = await Promise.all([
+        window.electronAPI.getPiExtensionCatalog(),
+        window.electronAPI.getPiExtensionRuntimeState(),
+      ])
+      const next = catalog.extensions.find((entry) => isExtensionInRuntime(entry, runtimeState)
         && entry.id === extensionId
         && entry.ui?.schemaVersion === 1
         && entry.ui.settings?.page?.id === pageId)
       const frontend = catalog.extensions
-        .find((entry) => entry.enabled && entry.id === extensionId)
+        .find((entry) => isExtensionInRuntime(entry, runtimeState) && entry.id === extensionId)
         ?.frontendDescriptors?.find((descriptor) => descriptor.surface === 'settings.page' && descriptor.page?.id === pageId)
       setExtension(next ?? null)
       setFrontendDescriptor(frontend ?? null)

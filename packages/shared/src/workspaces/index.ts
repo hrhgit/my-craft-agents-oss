@@ -48,6 +48,11 @@ export {
   type WorkspaceTopologyStoreOptions,
 } from './topology-storage.ts';
 
+export {
+  initializeWorkspace,
+  type WorkspaceInitializationOptions,
+} from './initialization.ts';
+
 // Storage functions
 export {
   // Path utilities
@@ -68,6 +73,7 @@ export {
   generateSlug,
   generateUniqueWorkspacePath,
   createWorkspaceAtPath,
+  ensureWorkspaceStorage,
   deleteWorkspaceFolder,
   isValidWorkspace,
   renameWorkspaceFolder,

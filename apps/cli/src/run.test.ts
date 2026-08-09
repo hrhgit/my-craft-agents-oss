@@ -219,14 +219,14 @@ describe('run command', () => {
     const result = await client.invoke('sessions:createAndSendFirstTurn', {
       workspaceId: 'ws-1',
       message: 'test',
-      createOptions: { permissionMode: 'allow-all' },
+      createOptions: {},
     }) as { session: { id: string } }
     expect(result.session.id).toBe('run-session-1')
 
     expect(mockWsServer!.createFirstTurnArgs).toEqual([{
       workspaceId: 'ws-1',
       message: 'test',
-      createOptions: { permissionMode: 'allow-all' },
+      createOptions: {},
     }])
 
     // Verify channel order
@@ -286,7 +286,7 @@ describe('run command', () => {
     await client.invoke('sessions:createAndSendFirstTurn', {
       workspaceId: 'ws-1',
       message: 'test',
-      createOptions: { permissionMode: 'allow-all' },
+      createOptions: {},
     })
     await client.invoke('sessions:delete', 'run-session-1')
 
@@ -341,7 +341,7 @@ describe('run command', () => {
     await client.invoke('sessions:createAndSendFirstTurn', {
       workspaceId: ws.id,
       message: 'test',
-      createOptions: { permissionMode: 'allow-all' },
+      createOptions: {},
     })
 
     expect(mockWsServer!.invokedChannels).toEqual([

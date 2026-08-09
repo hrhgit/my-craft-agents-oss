@@ -52,7 +52,7 @@ function resolveDeploymentName(model: Model<"azure-openai-responses">, options?:
 
 // Azure OpenAI Responses-specific options
 export interface AzureOpenAIResponsesOptions extends StreamOptions {
-	reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh";
+	reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 	reasoningSummary?: "auto" | "detailed" | "concise" | null;
 	azureApiVersion?: string;
 	azureResourceName?: string;
@@ -266,6 +266,7 @@ function buildParams(
 		params.tools = convertResponsesTools(context.tools);
 	}
 	params.tools = appendResponsesWebSearchTool(params.tools, options?.webSearch);
+	if (options?.webSearch) params.include = ["web_search_call.action.sources"];
 
 	if (model.reasoning) {
 		if (options?.reasoningEffort || options?.reasoningSummary) {

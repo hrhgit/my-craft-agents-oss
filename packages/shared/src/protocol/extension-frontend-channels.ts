@@ -8,7 +8,11 @@ export interface ExtensionFrontendStateV2 {
   scope: ExtensionFrontendChannelScope
   revision: number
   state: unknown
+  /** Include this channel snapshot as opaque Extension-owned bootstrap state when a new Session is created. */
+  sessionBootstrap?: boolean
 }
+
+export type ExtensionSessionBootstrapV1 = Record<string, Record<string, unknown>>
 
 export interface ExtensionFrontendMessageV2 {
   schemaVersion: typeof EXTENSION_FRONTEND_CHANNEL_SCHEMA_VERSION
@@ -37,6 +41,7 @@ export function validateExtensionFrontendStateV2(value: unknown): string | null 
   if (typeof state.channelId !== 'string' || !state.channelId || state.channelId.length > 128) return 'channelId is invalid'
   if (!['session', 'workspace', 'global'].includes(String(state.scope))) return 'scope is invalid'
   if (!Number.isSafeInteger(state.revision) || Number(state.revision) < 0) return 'revision is invalid'
+  if (state.sessionBootstrap !== undefined && typeof state.sessionBootstrap !== 'boolean') return 'sessionBootstrap must be boolean'
   if (!isSerializableFrontendValue(state.state)) return 'state must be serializable'
   return null
 }

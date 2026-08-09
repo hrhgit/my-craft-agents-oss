@@ -64,7 +64,7 @@ function getPromptCacheRetention(
 
 // OpenAI Responses-specific options
 export interface OpenAIResponsesOptions extends StreamOptions {
-	reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh";
+	reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 	reasoningSummary?: "auto" | "detailed" | "concise" | null;
 	serviceTier?: ResponseCreateParamsStreaming["service_tier"];
 }
@@ -253,6 +253,7 @@ function buildParams(model: Model<"openai-responses">, context: Context, options
 		params.tools = convertResponsesTools(context.tools);
 	}
 	params.tools = appendResponsesWebSearchTool(params.tools, options?.webSearch);
+	if (options?.webSearch) params.include = ["web_search_call.action.sources"];
 
 	if (model.reasoning) {
 		if (options?.reasoningEffort || options?.reasoningSummary) {

@@ -47,7 +47,6 @@ export type PromptTargetV3 =
       provider?: string
       model?: string
       thinkingLevel?: string
-      permissionMode?: 'ask' | 'allow-all'
       telegramTopic?: string
     }
   | {

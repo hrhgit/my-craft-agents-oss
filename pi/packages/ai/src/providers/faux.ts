@@ -14,6 +14,7 @@ import type {
 	ToolCall,
 	ToolResultMessage,
 	Usage,
+	WebSearchContent,
 } from "../types.ts";
 import { createAssistantMessageEventStream } from "../utils/event-stream.ts";
 
@@ -147,7 +148,7 @@ function contentToText(content: string | Array<TextContent | ImageContent>): str
 		.join("\n");
 }
 
-function assistantContentToText(content: Array<TextContent | ThinkingContent | ToolCall>): string {
+function assistantContentToText(content: Array<TextContent | ThinkingContent | WebSearchContent | ToolCall>): string {
 	return content
 		.map((block) => {
 			if (block.type === "text") {
@@ -155,6 +156,9 @@ function assistantContentToText(content: Array<TextContent | ThinkingContent | T
 			}
 			if (block.type === "thinking") {
 				return block.thinking;
+			}
+			if (block.type === "webSearch") {
+				return `${block.query}\n${block.sources.map((source) => source.url).join("\n")}`;
 			}
 			return `${block.name}:${JSON.stringify(block.arguments)}`;
 		})
@@ -359,6 +363,30 @@ async function streamWithDeltas(
 				stream.push({ type: "text_delta", contentIndex: index, delta: chunk, partial: { ...partial } });
 			}
 			stream.push({ type: "text_end", contentIndex: index, content: block.text, partial: { ...partial } });
+			continue;
+		}
+
+		if (block.type === "webSearch") {
+			partial.content = [...partial.content, { ...block, status: "running", sources: [] }];
+			stream.push({
+				type: "websearch_start",
+				contentIndex: index,
+				searchId: block.searchId,
+				query: block.query,
+				source: block.source,
+				provider: block.provider,
+				partial: { ...partial },
+			});
+			partial.content[index] = block;
+			stream.push({
+				type: "websearch_end",
+				contentIndex: index,
+				searchId: block.searchId,
+				status: block.status === "running" ? "completed" : block.status,
+				sources: block.sources,
+				raw: block.raw,
+				partial: { ...partial },
+			});
 			continue;
 		}
 

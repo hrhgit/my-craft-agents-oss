@@ -1,0 +1,12 @@
+{
+  "name": "conversation-board",
+  "private": true,
+  "type": "module",
+  "pi": { "extensions": [{
+    "id": "conversation-board",
+    "path": "./index.js",
+    "activation": "startup",
+    "manifest": { "schemaVersion": 1, "name": "Conversation Board", "version": "1.0.0", "author": { "name": "Mortise" }, "description": "Test-only session workboard.", "dependencies": { "mortise-ui-kit": "^1.0.0" }, "permissions": [] },
+    "ui": { "schemaVersion": 2, "title": "Conversation Board", "category": "ui", "compatibility": { "uiApi": "^2.0.0", "mortise": ">=0.1.0 <0.2.0" }, "frontends": [{ "id": "board", "entry": "./board.js", "styles": ["./board.css"], "surface": "conversation.timeline.before", "mode": "append", "scope": "session" }, { "id": "toolbar", "entry": "./toolbar.js", "styles": ["./board.css"], "surface": "composer.toolbar", "mode": "append", "scope": "session" }] }
+  }] }
+}

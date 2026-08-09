@@ -98,7 +98,7 @@ describe('settings default thinking RPC handlers', () => {
     expect(setDefaultThinkingLevelMock).toHaveBeenCalledTimes(1)
   })
 
-  it.each(['think', 'max'])('rejects retired thinking level %s before persistence', async (level) => {
+  it.each(['think', 'ultra'])('rejects invalid thinking level %s before persistence', async (level) => {
     const setHandler = handlers.get(RPC_CHANNELS.settings.SET_DEFAULT_THINKING_LEVEL)
     expect(setHandler).toBeTruthy()
 

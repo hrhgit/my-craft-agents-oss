@@ -35,4 +35,23 @@ describe('extension GUI migration guard', () => {
     expect(existsSync(resolve(root, 'apps/electron/src/renderer/hooks/useRemoteUIRequests.ts'))).toBe(false)
     expect(hostSources).not.toMatch(/remoteui_request|legacy-widget:/)
   })
+
+  it('keeps the migrated permissions toolbar extension-owned without the removed legacy settings page', () => {
+    expect(existsSync(resolve(root, 'apps/electron/src/renderer/pages/settings/PermissionsSettingsPage.tsx'))).toBe(false)
+    expect(existsSync(resolve(root, 'apps/electron/src/renderer/components/app-shell/input/CompactPermissionModeSelector.tsx'))).toBe(false)
+    expect(existsSync(resolve(root, 'apps/electron/resources/pi-extensions/mortise-permissions/src/settings.ts'))).toBe(false)
+    expect(existsSync(resolve(root, 'apps/electron/resources/pi-extensions/mortise-permissions/dist/ui/settings.js'))).toBe(false)
+
+    const bundledCatalog = JSON.parse(read('apps/electron/resources/pi-extensions/package.json'))
+    const permissions = bundledCatalog.pi.extensions.find((entry: { id: string }) => entry.id === 'mortise-permissions')
+    expect(permissions).toBeDefined()
+    expect(permissions.ui).toMatchObject({
+      schemaVersion: 2,
+      frontends: [
+        { id: 'toolbar', surface: 'composer.toolbar', mode: 'append', scope: 'session' },
+        { id: 'approval', surface: 'composer.above', mode: 'append', scope: 'session' },
+      ],
+    })
+    expect(read('apps/electron/resources/pi-extensions/mortise-permissions/package.json')).toContain('"schemaVersion": 2')
+  })
 })

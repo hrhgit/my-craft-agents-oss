@@ -1,6 +1,5 @@
 import type {
   FileAttachment,
-  PermissionMode,
   MessagingPlatformRuntimeInfo,
   WhatsAppUiEvent,
 } from '../../shared/types'
@@ -734,10 +733,6 @@ export const mockInputCallbacks = {
 
   onFocusChange: (focused: boolean) => {
     console.log('[Playground] Focus changed:', focused)
-  },
-
-  onPermissionModeChange: (mode: PermissionMode) => {
-    console.log('[Playground] Permission mode changed:', mode)
   },
 
   onWorkingDirectoryChange: (path: string) => {

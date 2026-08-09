@@ -28,7 +28,6 @@ function makeSessionManager(sessions: Session[]): ISessionManager {
     createSession: async () => { throw new Error('not implemented') },
     sendMessage: async () => {},
     cancelProcessing: async () => {},
-    respondToPermission: () => true,
   } as unknown as ISessionManager
 }
 

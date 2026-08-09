@@ -218,4 +218,17 @@ describe("transport websocket helpers", () => {
 		expect(error.status).toBe(503);
 		expect(error.message).toContain("503 Service Unavailable");
 	});
+
+	it("classifies provider overload status 529 as a retryable server error", () => {
+		const error = classifyTransportError(
+			Object.assign(new Error("Our servers are currently overloaded. Please try again later."), {
+				status: 529,
+			}),
+			{ phase: "sdk" },
+		);
+
+		expect(error.code).toBe("server_error");
+		expect(error.status).toBe(529);
+		expect(error.retryable).toBe(true);
+	});
 });

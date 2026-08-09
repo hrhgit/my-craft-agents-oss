@@ -90,6 +90,19 @@ describe('channel routing behavior', () => {
     expect(getAllChannelValues()).not.toContain('workspaces:updateRemote')
     expect(getAllChannelValues()).not.toContain('workspaces:remoteUpdated')
   })
+
+  test('routes applied Extension state and reload to the Workspace runtime', () => {
+    expect(REMOTE_ELIGIBLE_CHANNELS.has(RPC_CHANNELS.piExtensions.GET_RUNTIME_STATE)).toBe(true)
+    expect(REMOTE_ELIGIBLE_CHANNELS.has(RPC_CHANNELS.piExtensions.RELOAD)).toBe(true)
+    expect(REMOTE_ELIGIBLE_CHANNELS.has(RPC_CHANNELS.extensions.GET_FRONTEND_STATES)).toBe(true)
+    expect(LOCAL_ONLY_CHANNELS.has(RPC_CHANNELS.piExtensions.GET_CATALOG)).toBe(true)
+    expect(LOCAL_ONLY_CHANNELS.has(RPC_CHANNELS.piExtensions.SET_EXTENSION_ENABLED)).toBe(true)
+  })
+
+  test('keeps the application-owned web search policy local', () => {
+    expect(LOCAL_ONLY_CHANNELS.has(RPC_CHANNELS.tools.GET_WEB_SEARCH_MODE)).toBe(true)
+    expect(LOCAL_ONLY_CHANNELS.has(RPC_CHANNELS.tools.SET_WEB_SEARCH_MODE)).toBe(true)
+  })
 })
 
 describe('platform capability protocol', () => {

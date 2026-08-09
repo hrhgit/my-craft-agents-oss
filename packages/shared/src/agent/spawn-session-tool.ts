@@ -29,8 +29,7 @@ interface SpawnSessionToolArgs {
   name?: string;
   provider?: string;
   model?: string;
-  permissionMode?: 'ask' | 'allow-all';
-  thinkingLevel?: 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
+  thinkingLevel?: 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
   attachments?: Array<{ path: string; name?: string }>;
 }
 
@@ -53,7 +52,7 @@ Use this to delegate temporary child tasks, inspect their state and output, send
 Call with help=true first to discover available providers and models.
 When spawning, the 'prompt' parameter is required.
 
-Optional overrides: provider, model, permissionMode, and thinkingLevel. Omitted AI fields inherit from the spawning session or the global default.
+Optional overrides: provider, model, and thinkingLevel. Omitted AI fields inherit from the spawning session or the global default.
 
 thinkingLevel is silently ignored on non-reasoning models (e.g. gpt-4o, gemini-2.5-flash) — the SDK drops the reasoning param rather than erroring.
 
@@ -78,9 +77,7 @@ Attachments pass existing absolute file paths to the child task. The selected te
         .describe('Pi provider key (e.g., "anthropic", "openai")'),
       model: z.string().optional()
         .describe('Model ID override'),
-      permissionMode: z.enum(['ask', 'allow-all']).optional()
-        .describe('Permission mode for the new session'),
-      thinkingLevel: z.enum(['off', 'minimal', 'low', 'medium', 'high', 'xhigh']).optional()
+      thinkingLevel: z.enum(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']).optional()
         .describe('Reasoning level for the new session. Silently ignored on non-reasoning models (e.g. gpt-4o, gemini-2.5-flash). Omit to inherit the global default.'),
       attachments: z.array(z.object({
         path: z.string().describe('Absolute file path on disk'),

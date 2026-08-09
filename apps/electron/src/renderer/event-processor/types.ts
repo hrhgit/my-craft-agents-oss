@@ -5,7 +5,7 @@
  * All agent events flow through a single pure function for consistent state transitions.
  */
 
-import type { Session, Message, PermissionRequest, TypedError, PermissionMode, ToolDisplayMeta } from '../../shared/types'
+import type { Session, Message, TypedError, ToolDisplayMeta } from '../../shared/types'
 import type { PlanModeStateV1 } from '@mortise/core/types'
 import type { SessionEvent } from '@mortise/shared/protocol'
 
@@ -117,16 +117,6 @@ export interface ErrorEvent {
 export type SessionFailureEvent = Extract<SessionEvent, { type: 'session_failure' }>
 
 /**
- * Permission request event
- * Matches SessionEvent shape from shared/types.ts
- */
-export interface PermissionRequestEvent {
-  type: 'permission_request'
-  sessionId: string
-  request: PermissionRequest
-}
-
-/**
  * Labels changed event
  */
 /**
@@ -225,20 +215,6 @@ export interface AsyncOperationEvent {
   type: 'async_operation'
   sessionId: string
   isOngoing: boolean
-}
-
-/**
- * Permission mode changed event
- */
-export interface PermissionModeChangedEvent {
-  type: 'permission_mode_changed'
-  sessionId: string
-  permissionMode: PermissionMode
-  previousPermissionMode?: PermissionMode
-  transitionDisplay?: string
-  modeVersion?: number
-  changedAt?: string
-  changedBy?: 'user' | 'system' | 'restore' | 'automation' | 'unknown'
 }
 
 /**
@@ -377,9 +353,7 @@ export type AgentEvent = Exclude<SessionEvent, { type: 'session_created' | 'sess
  * Side effects that need to be handled outside the pure processor
  */
 export type Effect =
-  | { type: 'permission_request'; request: PermissionRequest }
   | { type: 'generate_title'; sessionId: string; userMessage: string }
-  | { type: 'permission_mode_changed'; sessionId: string; permissionMode: PermissionMode; previousPermissionMode?: PermissionMode; transitionDisplay?: string; modeVersion?: number; changedAt?: string; changedBy?: 'user' | 'system' | 'restore' | 'automation' | 'unknown' }
   | { type: 'restore_input'; text: string }
   | { type: 'toast_error'; message: string }
 
@@ -388,6 +362,6 @@ export type Effect =
  */
 export interface ProcessResult {
   state: SessionState
-  /** Side effects to execute (permissions, etc.) */
+  /** Side effects to execute outside the pure state transition. */
   effects: Effect[]
 }

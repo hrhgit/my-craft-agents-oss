@@ -54,8 +54,8 @@ import type {
 	RpcSlashCommand,
 	RpcToolExecuteRequest,
 	RpcToolExecuteResponse,
-	RpcToolPermissionRequest,
-	RpcToolPermissionResponse,
+	RpcToolExecutionRequest,
+	RpcToolExecutionResponse,
 	RpcToolResultRequest,
 	RpcToolResultResponse,
 } from "./rpc-types.ts";
@@ -154,15 +154,15 @@ export type RpcClientEvent =
 	| RpcExtensionFrontendResetEvent
 	| RpcExtensionErrorEvent
 	| RpcProcessLifecycleEvent
-	| RpcToolPermissionRequest
+	| RpcToolExecutionRequest
 	| RpcToolResultRequest
 	| RpcToolExecuteRequest;
 export type RpcEventListener = (event: RpcAgentEvent) => void;
 export type RpcClientEventListener = (event: RpcClientEvent) => void;
 
-/** Host-side permission handler invoked for every tool_permission_request. */
-export type RpcToolPermissionHandler = (
-	request: RpcToolPermissionRequest,
+/** Host-side interceptor invoked before every tool execution. */
+export type RpcToolExecutionHandler = (
+	request: RpcToolExecutionRequest,
 ) => Promise<
 	{ action: "allow" } | { action: "block"; reason?: string } | { action: "modify"; input: Record<string, unknown> }
 >;
@@ -197,10 +197,10 @@ export class RpcClient {
 	private stderr = "";
 	private exitError: Error | null = null;
 	private options: RpcClientOptions;
-	private toolPermissionHandler: RpcToolPermissionHandler | null = null;
+	private toolExecutionHandler: RpcToolExecutionHandler | null = null;
 	private toolResultHandler: RpcToolResultHandler | null = null;
 	private toolExecutor: RpcToolExecutor | null = null;
-	private runtimeToolPermissionHandlers = new Map<string, RpcToolPermissionHandler>();
+	private runtimeToolExecutionHandlers = new Map<string, RpcToolExecutionHandler>();
 	private runtimeToolResultHandlers = new Map<string, RpcToolResultHandler>();
 	private runtimeToolExecutors = new Map<string, RpcToolExecutor>();
 	private extensionUIOwners = new Map<
@@ -441,7 +441,7 @@ export class RpcClient {
 
 	async closeRuntime(runtimeId: string): Promise<boolean> {
 		const response = await this.send({ type: "close_runtime", runtimeId });
-		this.runtimeToolPermissionHandlers.delete(runtimeId);
+		this.runtimeToolExecutionHandlers.delete(runtimeId);
 		this.runtimeToolResultHandlers.delete(runtimeId);
 		this.runtimeToolExecutors.delete(runtimeId);
 		return this.getData<{ closed: boolean }>(response).closed;
@@ -543,16 +543,16 @@ export class RpcClient {
 	}
 
 	/**
-	 * Install a host-side tool permission gate.
+	 * Install a host-side tool execution interceptor.
 	 *
-	 * Sends `enable_tool_permissions` to the agent; every subsequent tool call
-	 * emits a `tool_permission_request` which is routed to `handler`. The
-	 * handler's result is sent back as a `tool_permission_response`. Pass
-	 * `null` to disable the gate.
+	 * Sends `enable_tool_execution_interceptor` to the agent; every subsequent
+	 * tool call emits a `tool_execution_request` which is routed to `handler`.
+	 * The handler's result is sent back as a `tool_execution_response`. Pass
+	 * `null` to disable the interceptor.
 	 */
-	async setToolPermissionHandler(handler: RpcToolPermissionHandler | null): Promise<void> {
-		this.toolPermissionHandler = handler;
-		await this.send({ type: "enable_tool_permissions", enabled: handler !== null });
+	async setToolExecutionHandler(handler: RpcToolExecutionHandler | null): Promise<void> {
+		this.toolExecutionHandler = handler;
+		await this.send({ type: "enable_tool_execution_interceptor", enabled: handler !== null });
 	}
 
 	/** Install a host-side observer for finalized tool results. */
@@ -973,11 +973,11 @@ export class RpcClient {
 		return this.getData<T>(response);
 	}
 
-	/** @internal Install a runtime-scoped permission handler. */
-	async setRuntimeToolPermissionHandler(runtimeId: string, handler: RpcToolPermissionHandler | null): Promise<void> {
-		if (handler) this.runtimeToolPermissionHandlers.set(runtimeId, handler);
-		else this.runtimeToolPermissionHandlers.delete(runtimeId);
-		await this.requestRuntime(runtimeId, { type: "enable_tool_permissions", enabled: handler !== null });
+	/** @internal Install a runtime-scoped tool execution interceptor. */
+	async setRuntimeToolExecutionHandler(runtimeId: string, handler: RpcToolExecutionHandler | null): Promise<void> {
+		if (handler) this.runtimeToolExecutionHandlers.set(runtimeId, handler);
+		else this.runtimeToolExecutionHandlers.delete(runtimeId);
+		await this.requestRuntime(runtimeId, { type: "enable_tool_execution_interceptor", enabled: handler !== null });
 	}
 
 	/** @internal Install a runtime-scoped finalized tool-result observer. */
@@ -1185,8 +1185,8 @@ export class RpcClient {
 				this.extensionUIOwners.delete(event.id);
 			}
 			this.emitClientEvent(event);
-			if (event.type === "tool_permission_request") {
-				this.handleToolPermissionRequest(event);
+			if (event.type === "tool_execution_request") {
+				this.handleToolExecutionRequest(event);
 				return;
 			}
 			if (event.type === "tool_result_request") {
@@ -1216,10 +1216,10 @@ export class RpcClient {
 		}
 	}
 
-	private handleToolPermissionRequest(request: RpcToolPermissionRequest): void {
+	private handleToolExecutionRequest(request: RpcToolExecutionRequest): void {
 		const handler =
-			(request.runtimeId && this.runtimeToolPermissionHandlers.get(request.runtimeId)) ?? this.toolPermissionHandler;
-		const respond = (response: RpcToolPermissionResponse) => {
+			(request.runtimeId && this.runtimeToolExecutionHandlers.get(request.runtimeId)) ?? this.toolExecutionHandler;
+		const respond = (response: RpcToolExecutionResponse) => {
 			const stdin = this.getWritableInput();
 			if (!stdin || stdin.destroyed || !stdin.writable) return;
 			stdin.write(
@@ -1234,26 +1234,26 @@ export class RpcClient {
 		if (!handler) {
 			// No handler installed (gate disabled or handler cleared mid-flight):
 			// allow so the agent never hangs.
-			respond({ type: "tool_permission_response", id: request.id, action: "allow" });
+			respond({ type: "tool_execution_response", id: request.id, action: "allow" });
 			return;
 		}
 
 		void handler(request)
 			.then((result) => {
 				if (result.action === "block") {
-					respond({ type: "tool_permission_response", id: request.id, action: "block", reason: result.reason });
+					respond({ type: "tool_execution_response", id: request.id, action: "block", reason: result.reason });
 				} else if (result.action === "modify") {
-					respond({ type: "tool_permission_response", id: request.id, action: "modify", input: result.input });
+					respond({ type: "tool_execution_response", id: request.id, action: "modify", input: result.input });
 				} else {
-					respond({ type: "tool_permission_response", id: request.id, action: "allow" });
+					respond({ type: "tool_execution_response", id: request.id, action: "allow" });
 				}
 			})
 			.catch((err: unknown) => {
 				respond({
-					type: "tool_permission_response",
+					type: "tool_execution_response",
 					id: request.id,
 					action: "block",
-					reason: `Permission handler failed: ${err instanceof Error ? err.message : String(err)}`,
+					reason: `Tool execution interceptor failed: ${err instanceof Error ? err.message : String(err)}`,
 				});
 			});
 	}
@@ -1500,6 +1500,10 @@ export class PiRuntimeHandle {
 		return this.requestData({ type: "get_state" });
 	}
 
+	prepareRuntime(): Promise<void> {
+		return this.requestVoid({ type: "prepare_runtime" });
+	}
+
 	getLastAssistantText(): Promise<string | null> {
 		return this.requestData<{ text: string | null }>({ type: "get_last_assistant_text" }).then(
 			(result) => result.text,
@@ -1658,8 +1662,8 @@ export class PiRuntimeHandle {
 		return this.requestData({ type: "reload_extensions" });
 	}
 
-	setToolPermissionHandler(handler: RpcToolPermissionHandler | null): Promise<void> {
-		return this.client.setRuntimeToolPermissionHandler(this.runtimeId, handler);
+	setToolExecutionHandler(handler: RpcToolExecutionHandler | null): Promise<void> {
+		return this.client.setRuntimeToolExecutionHandler(this.runtimeId, handler);
 	}
 
 	setToolResultHandler(handler: RpcToolResultHandler | null): Promise<void> {

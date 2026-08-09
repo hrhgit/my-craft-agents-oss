@@ -155,7 +155,8 @@ export function registerWorkspaceCoreHandlers(
       }
       const workspaceId = [...markerIds][0]!
       const restored = topologyStore.restore(workspaceId)
-      await deps.sessionManager.openWorkspaceExtensions?.(restored)
+      if (deps.sessionManager.initializeWorkspace) await deps.sessionManager.initializeWorkspace(restored)
+      else await deps.sessionManager.openWorkspaceExtensions?.(restored)
       setActiveWorkspace(restored.id)
       const workspace = topologyStore.getInfo(restored.id)
       if (!workspace) throw new Error(`Workspace topology not found after restoration: ${restored.id}`)
@@ -197,7 +198,8 @@ export function registerWorkspaceCoreHandlers(
     })
     const workspace = ensureWorkspaceTopology(topologyStore, candidate)
     // Client projections hide local paths; the extension runtime must receive the canonical record.
-    await deps.sessionManager.openWorkspaceExtensions?.(candidate)
+    if (deps.sessionManager.initializeWorkspace) await deps.sessionManager.initializeWorkspace(candidate)
+    else await deps.sessionManager.openWorkspaceExtensions?.(candidate)
     // Make it active
     setActiveWorkspace(workspace.id)
     deps.platform.logger.info(`Created workspace "${workspaceName}" with ${locations.length} location(s)`)
@@ -221,6 +223,15 @@ export function registerWorkspaceCoreHandlers(
       const primary = topology.locations.find(location => location.id === topology.primaryLocationId)
       if (primary?.endpoint.kind === 'local') {
         sessionManager.setupConfigWatcher(primary.endpoint.rootPath, workspaceId)
+      }
+      // Project extensions and the Workspace Pi runtime are warmed in the
+      // background. The workspace identity RPC remains fast, while a first
+      // message joins the same preparation Promise if it races this task.
+      const initialization = sessionManager.initializeWorkspace?.(topology)
+      if (initialization) {
+        void initialization.catch(error => {
+          deps.platform.logger.warn(`Workspace runtime warmup degraded for ${workspaceId}: ${error instanceof Error ? error.message : error}`)
+        })
       }
     }
     return workspaceId
@@ -279,6 +290,12 @@ export function registerWorkspaceCoreHandlers(
     const primary = workspace.locations.find(location => location.id === workspace.primaryLocationId)!
     if (primary.endpoint.kind === 'local') {
       sessionManager.setupConfigWatcher(primary.endpoint.rootPath, workspaceId)
+    }
+    const initialization = sessionManager.initializeWorkspace?.(workspace)
+    if (initialization) {
+      void initialization.catch(error => {
+        deps.platform.logger.warn(`Workspace runtime warmup degraded for ${workspaceId}: ${error instanceof Error ? error.message : error}`)
+      })
     }
     end()
 

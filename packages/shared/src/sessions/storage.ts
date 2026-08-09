@@ -13,13 +13,16 @@
  */
 
 import {
+  constants as fsConstants,
   existsSync,
+  copyFileSync,
   mkdirSync,
   readFileSync,
   writeFileSync,
   readdirSync,
   renameSync,
   rmSync,
+  rmdirSync,
   statSync,
   unlinkSync,
 } from 'fs';
@@ -39,7 +42,11 @@ import type { Plan } from '../agent/plan-types.ts';
 import { debug } from '../utils/debug.ts';
 import { readSessionHeader, readSessionJsonl } from './jsonl.ts';
 import { sessionPersistenceQueue } from './persistence-queue.ts';
-import { MORTISE_SESSIONS_DIR, encodePiSessionCwd } from '../config/paths.ts';
+import {
+  MORTISE_SESSIONS_DIR,
+  encodePiSessionCwd,
+  encodeWorkspaceSessionBucket,
+} from '../config/paths.ts';
 import { materializeStoredSessionViaPiSessionManager, readTreeSessionAsStoredSession, readTreeSessionHeader, readTreeSessionMetadata, writeTreeSessionMortiseMetadataAsync } from './tree-jsonl.ts';
 import {
   deleteSessionUiMetadata as deletePiSessionUiMetadata,
@@ -47,6 +54,7 @@ import {
 } from '@mortise/pi-coding-agent/host-facade';
 
 let sharedPiSessionsDirOverride: string | undefined;
+const preparedWorkspaceBuckets = new Set<string>();
 
 export interface EnsureSharedPiTreeSessionFileOptions {
   workspaceId: string;
@@ -58,6 +66,7 @@ export interface EnsureSharedPiTreeSessionFileOptions {
  */
 export function setSharedPiSessionsDirForTests(dir: string | undefined): void {
   sharedPiSessionsDirOverride = dir;
+  preparedWorkspaceBuckets.clear();
 }
 
 function getPiSessionsRoot(): string {
@@ -68,7 +77,205 @@ function getPiSessionsRoot(): string {
  * Session storage root is always under the Pi sessions directory.
  */
 function getSessionStorageRootPath(workspaceId: string): string {
-  return join(getPiSessionsRoot(), encodePiSessionCwd(workspaceId));
+  return join(getPiSessionsRoot(), encodeWorkspaceSessionBucket(workspaceId));
+}
+
+export interface WorkspaceSessionBucketMigrationReport {
+  target: string;
+  sources: string[];
+  movedSessionFiles: number;
+  movedSidecarEntries: number;
+  removedDuplicates: number;
+  conflicts: string[];
+}
+
+function filesAreEqual(left: string, right: string): boolean {
+  try {
+    const leftStat = statSync(left);
+    const rightStat = statSync(right);
+    if (leftStat.size !== rightStat.size) return false;
+    return readFileSync(left).equals(readFileSync(right));
+  } catch {
+    return false;
+  }
+}
+
+function moveFileWithoutOverwrite(
+  source: string,
+  target: string,
+  report: WorkspaceSessionBucketMigrationReport,
+): boolean {
+  mkdirSync(dirname(target), { recursive: true });
+  if (existsSync(target)) {
+    if (filesAreEqual(source, target)) {
+      unlinkSync(source);
+      report.removedDuplicates++;
+      return false;
+    }
+    report.conflicts.push(source);
+    return false;
+  }
+  try {
+    copyFileSync(source, target, fsConstants.COPYFILE_EXCL);
+    unlinkSync(source);
+    return true;
+  } catch (error) {
+    if (!existsSync(source) && existsSync(target)) return false;
+    if (!existsSync(target)) throw error;
+    if (filesAreEqual(source, target)) {
+      unlinkSync(source);
+      report.removedDuplicates++;
+      return false;
+    }
+    report.conflicts.push(source);
+    return false;
+  }
+}
+
+function removeDirectoryIfEmpty(path: string): void {
+  try {
+    if (readdirSync(path).length === 0) rmdirSync(path);
+  } catch {
+    // A concurrent process may still be moving entries from this directory.
+  }
+}
+
+function mergeDirectoryWithoutOverwrite(
+  source: string,
+  target: string,
+  report: WorkspaceSessionBucketMigrationReport,
+): void {
+  if (!existsSync(source)) return;
+  if (!existsSync(target)) {
+    mkdirSync(dirname(target), { recursive: true });
+    try {
+      renameSync(source, target);
+      report.movedSidecarEntries++;
+      return;
+    } catch (error) {
+      if (!existsSync(source) && existsSync(target)) return;
+      if (!existsSync(target)) throw error;
+    }
+  }
+
+  mkdirSync(target, { recursive: true });
+  for (const entry of readdirSync(source, { withFileTypes: true })) {
+    const sourceEntry = join(source, entry.name);
+    const targetEntry = join(target, entry.name);
+    if (entry.isDirectory()) {
+      mergeDirectoryWithoutOverwrite(sourceEntry, targetEntry, report);
+    } else if (entry.isFile() && moveFileWithoutOverwrite(sourceEntry, targetEntry, report)) {
+      report.movedSidecarEntries++;
+    }
+  }
+  removeDirectoryIfEmpty(source);
+}
+
+function getTreeSessionId(sessionFile: string): string | null {
+  const header = readTreeSessionHeader(sessionFile);
+  if (!header) return null;
+  return header.mortise?.id ?? header.id ?? basename(sessionFile, '.jsonl');
+}
+
+function moveSessionFromLegacyBucket(
+  sourceBucket: string,
+  sessionFile: string,
+  targetBucket: string,
+  report: WorkspaceSessionBucketMigrationReport,
+): void {
+  const sessionId = getTreeSessionId(sessionFile);
+  if (!sessionId) return;
+  const targetFile = join(targetBucket, basename(sessionFile));
+  if (moveFileWithoutOverwrite(sessionFile, targetFile, report)) report.movedSessionFiles++;
+  mergeDirectoryWithoutOverwrite(
+    join(sourceBucket, '.mortise', sanitizeSessionId(sessionId)),
+    join(targetBucket, '.mortise', sanitizeSessionId(sessionId)),
+    report,
+  );
+}
+
+/**
+ * Merge historical cwd-keyed buckets into the stable Workspace bucket.
+ * Existing destination files are never overwritten; differing conflicts stay
+ * in the source bucket for explicit recovery.
+ */
+export function migrateLegacyWorkspaceSessionBuckets(
+  workspaceId: string,
+  legacyWorkspaceRootPath?: string,
+): WorkspaceSessionBucketMigrationReport {
+  const root = getPiSessionsRoot();
+  const target = getSessionStorageRootPath(workspaceId);
+  const report: WorkspaceSessionBucketMigrationReport = {
+    target,
+    sources: [],
+    movedSessionFiles: 0,
+    movedSidecarEntries: 0,
+    removedDuplicates: 0,
+    conflicts: [],
+  };
+  if (!existsSync(root)) return report;
+
+  const trustedBuckets = new Set<string>([
+    join(root, encodePiSessionCwd(workspaceId)),
+    ...(legacyWorkspaceRootPath ? [join(root, encodePiSessionCwd(legacyWorkspaceRootPath))] : []),
+  ]);
+
+  for (const entry of readdirSync(root, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const sourceBucket = join(root, entry.name);
+    if (sourceBucket === target) continue;
+
+    const trusted = trustedBuckets.has(sourceBucket);
+    const matchedFiles: string[] = [];
+    try {
+      for (const child of readdirSync(sourceBucket, { withFileTypes: true })) {
+        if (!child.isFile() || !child.name.endsWith('.jsonl')) continue;
+        const sessionFile = join(sourceBucket, child.name);
+        const header = readTreeSessionHeader(sessionFile);
+        if (trusted || header?.mortise?.workspaceId === workspaceId) matchedFiles.push(sessionFile);
+      }
+    } catch {
+      continue;
+    }
+
+    const legacySidecars = join(sourceBucket, '.mortise');
+    if (matchedFiles.length === 0 && !(trusted && existsSync(legacySidecars))) continue;
+    report.sources.push(sourceBucket);
+    mkdirSync(target, { recursive: true });
+    for (const sessionFile of matchedFiles) {
+      moveSessionFromLegacyBucket(sourceBucket, sessionFile, target, report);
+    }
+
+    // Pre-unification root buckets can contain useful sidecars even when their
+    // draft transcript was never published. Merge those directories as well.
+    if (trusted && existsSync(legacySidecars)) {
+      for (const sidecar of readdirSync(legacySidecars, { withFileTypes: true })) {
+        if (!sidecar.isDirectory()) continue;
+        mergeDirectoryWithoutOverwrite(
+          join(legacySidecars, sidecar.name),
+          join(target, '.mortise', sidecar.name),
+          report,
+        );
+      }
+      removeDirectoryIfEmpty(legacySidecars);
+    }
+    removeDirectoryIfEmpty(sourceBucket);
+  }
+  return report;
+}
+
+function prepareWorkspaceSessionBucket(workspaceId: string, legacyWorkspaceRootPath?: string): void {
+  const cacheKey = `${getPiSessionsRoot()}\0${workspaceId}\0${legacyWorkspaceRootPath ?? ''}`;
+  if (preparedWorkspaceBuckets.has(cacheKey)) return;
+  try {
+    const report = migrateLegacyWorkspaceSessionBuckets(workspaceId, legacyWorkspaceRootPath);
+    if (report.sources.length > 0) {
+      debug('[sessions] Migrated legacy Workspace session buckets', report);
+    }
+    preparedWorkspaceBuckets.add(cacheKey);
+  } catch (error) {
+    debug(`[sessions] Failed to migrate legacy buckets for Workspace "${workspaceId}":`, error);
+  }
 }
 
 export type LegacySessionBucketAdoptionStatus = 'adopted' | 'already-current' | 'no-legacy';
@@ -77,18 +284,10 @@ export function adoptLegacyWorkspaceSessionBucket(
   workspaceId: string,
   legacyWorkspaceRootPath: string,
 ): LegacySessionBucketAdoptionStatus {
-  const target = getSessionStorageRootPath(workspaceId);
-  if (existsSync(target)) return 'already-current';
-  const legacy = join(getPiSessionsRoot(), encodePiSessionCwd(legacyWorkspaceRootPath));
-  if (!existsSync(legacy)) return 'no-legacy';
-  mkdirSync(dirname(target), { recursive: true });
-  try {
-    renameSync(legacy, target);
-    return 'adopted';
-  } catch (error) {
-    if (existsSync(target)) return 'already-current';
-    throw error;
-  }
+  const targetExisted = existsSync(getSessionStorageRootPath(workspaceId));
+  const report = migrateLegacyWorkspaceSessionBuckets(workspaceId, legacyWorkspaceRootPath);
+  if (report.sources.length === 0) return targetExisted ? 'already-current' : 'no-legacy';
+  return targetExisted ? 'already-current' : 'adopted';
 }
 
 export function getSharedPiSidecarPathForFile(sessionFile: string, sessionId: string): string {
@@ -143,7 +342,7 @@ function findSharedPiSessionFile(sessionId: string, workspaceRootPath?: string):
   if (!existsSync(root)) return null;
 
   if (workspaceRootPath) {
-    const scopedDir = join(root, encodePiSessionCwd(workspaceRootPath));
+    const scopedDir = getSessionStorageRootPath(workspaceRootPath);
     const scopedFile = findSharedPiSessionFileInDir(scopedDir, sessionId);
     if (scopedFile) return scopedFile;
     return null;
@@ -208,7 +407,7 @@ function listMortiseSessionDirs(workspaceId: string): Array<{ sessionId: string;
     }
   };
 
-  const cwdPath = join(root, encodePiSessionCwd(workspaceId));
+  const cwdPath = getSessionStorageRootPath(workspaceId);
   scanCwdPath(cwdPath);
   return result;
 }
@@ -221,6 +420,7 @@ function listMortiseSessionDirs(workspaceId: string): Array<{ sessionId: string;
  * Ensure sessions directory exists for a workspace
  */
 export function ensureSessionsDir(workspaceRootPath: string): string {
+  prepareWorkspaceSessionBucket(workspaceRootPath);
   const dir = getSessionStorageRootPath(workspaceRootPath);
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true });
@@ -269,7 +469,7 @@ export function tryGetSessionFilePath(workspaceRootPath: string, sessionId: stri
   const sharedPiFile = findSharedPiSessionFile(sessionId, workspaceRootPath);
   if (sharedPiFile) return sharedPiFile;
   // Mirror getPiNativeSessionFilePath logic but without mkdir side effect.
-  const dir = join(getPiSessionsRoot(), encodePiSessionCwd(workspaceRootPath));
+  const dir = getSessionStorageRootPath(workspaceRootPath);
   if (!existsSync(dir)) return null;
   return join(dir, buildPiSessionFileName(sessionId));
 }
@@ -278,7 +478,8 @@ export function tryGetSessionFilePath(workspaceRootPath: string, sessionId: stri
  * Get the native Pi session directory for a cwd when shared Pi storage is on.
  */
 export function getPiNativeSessionDir(workspaceRootPath: string): string {
-  const dir = join(getPiSessionsRoot(), encodePiSessionCwd(workspaceRootPath));
+  prepareWorkspaceSessionBucket(workspaceRootPath);
+  const dir = getSessionStorageRootPath(workspaceRootPath);
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true });
   }
@@ -415,7 +616,6 @@ export async function createSession(
   options?: {
     sessionId?: string;
     name?: string;
-    permissionMode?: SessionHeader['permissionMode'];
     model?: string;
     provider?: string;
     hidden?: boolean;
@@ -424,6 +624,7 @@ export async function createSession(
   if (options && Object.prototype.hasOwnProperty.call(options, 'workingDirectory')) {
     throw new RemovedSessionFieldError('workingDirectory');
   }
+  prepareWorkspaceSessionBucket(workspaceId, workspaceRootPath);
   ensureSessionsDir(workspaceId);
 
   const now = Date.now();
@@ -442,7 +643,6 @@ export async function createSession(
     createdAt: now,
     lastUsedAt: now,
     sdkCwd,
-    permissionMode: options?.permissionMode,
     model: options?.model,
     provider: options?.provider,
     hidden: options?.hidden,
@@ -491,6 +691,7 @@ export { sessionPersistenceQueue, getHeaderMetadataSignature } from './persisten
  * Loads session from folder structure in JSONL format.
  */
 export function loadSession(workspaceId: string, sessionId: string): StoredSession | null {
+  prepareWorkspaceSessionBucket(workspaceId);
   const end = perf.start('session.loadSession', { sessionId });
 
   const jsonlPath = getSessionFilePath(workspaceId, sessionId);
@@ -520,6 +721,7 @@ export function loadSession(workspaceId: string, sessionId: string): StoredSessi
  * same cwd see the same list.
  */
 export function listSessions(workspaceId: string, workspaceRootPath: string): SessionHeader[] {
+  prepareWorkspaceSessionBucket(workspaceId, workspaceRootPath);
   const span = perf.span('session.listSessions');
   const sessionDirs = listMortiseSessionDirs(workspaceId);
   span.mark('readdir');
@@ -600,6 +802,7 @@ function headerToMetadata(
  * Deletes session folder and all associated files
  */
 export async function deleteSession(workspaceRootPath: string, sessionId: string): Promise<boolean> {
+  prepareWorkspaceSessionBucket(workspaceRootPath);
   validateSessionId(sessionId);
 
   // Cancel any pending persistence write so it cannot resurrect the session
@@ -664,7 +867,6 @@ export async function updateSessionMetadata(
     | 'lastReadMessageId'
     | 'hasUnread'
     | 'sdkCwd'
-    | 'permissionMode'
     | 'sharedUrl'
     | 'sharedId'
     | 'model'
@@ -679,7 +881,6 @@ export async function updateSessionMetadata(
 
   if (updates.name !== undefined) session.name = updates.name;
   if (updates.sdkCwd !== undefined) session.sdkCwd = updates.sdkCwd;
-  if (updates.permissionMode !== undefined) session.permissionMode = updates.permissionMode;
   if ('lastReadMessageId' in updates) session.lastReadMessageId = updates.lastReadMessageId;
   if ('hasUnread' in updates) session.hasUnread = updates.hasUnread;
   if ('sharedUrl' in updates) session.sharedUrl = updates.sharedUrl;

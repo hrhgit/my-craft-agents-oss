@@ -1,6 +1,8 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { basename, extname, join } from 'node:path';
 import {
+  buildSystemPrompt,
+  createAllToolDefinitions,
   DEFAULT_COMPACTION_PROMPT,
   parseFrontmatter,
 } from '@mortise/pi-coding-agent';
@@ -9,7 +11,6 @@ import {
   getSessionHostToolDefs,
   PI_EXTENSION_OWNED_SESSION_TOOL_NAMES,
 } from '../agent/backend/pi/session-tool-defs.ts';
-import { getSystemPrompt } from '../prompts/system.ts';
 import { atomicWriteFileSync } from '../utils/files.ts';
 import {
   getPiAgentDir,
@@ -122,6 +123,18 @@ function normalizeToolNames(value: unknown): string[] {
   )];
 }
 
+export function getPiNativeSystemPrompt(cwd = process.cwd()): string {
+  const definitions = createAllToolDefinitions(cwd);
+  const selectedTools = Object.keys(definitions);
+  const toolSnippets = Object.fromEntries(
+    Object.entries(definitions)
+      .filter(([, definition]) => Boolean(definition.promptSnippet))
+      .map(([name, definition]) => [name, definition.promptSnippet!]),
+  );
+  const promptGuidelines = Object.values(definitions).flatMap((definition) => definition.promptGuidelines ?? []);
+  return buildSystemPrompt({ cwd, selectedTools, toolSnippets, promptGuidelines });
+}
+
 function fallbackRuntimeProfile(): AgentRuntimeProfile {
   const shellTool = process.platform === 'win32' ? 'pwsh' : 'bash';
   const builtinNames = ['read', shellTool, 'edit', 'write', 'grep', 'find', 'ls', 'web_fetch'];
@@ -139,7 +152,7 @@ function fallbackRuntimeProfile(): AgentRuntimeProfile {
     ...hostTools,
   ];
   return {
-    systemPrompt: '',
+    systemPrompt: getPiNativeSystemPrompt(),
     compactionPrompt: DEFAULT_COMPACTION_PROMPT,
     activeTools: tools.map((tool) => tool.name),
     tools,
@@ -248,14 +261,7 @@ export async function getAgentSettingsSnapshot(
   return {
     schemaVersion: 1,
     mainAgent: {
-      systemPrompt: customSystemPrompt ?? getSystemPrompt(
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        'Mortise Backend',
-      ),
+      systemPrompt: customSystemPrompt ?? (runtime.systemPrompt.trim() || fallback.systemPrompt),
       systemPromptSource: customSystemPrompt === null ? 'default' : 'custom',
       compactionPrompt: customCompactionPrompt ?? fallback.compactionPrompt,
       compactionPromptSource: customCompactionPrompt === null ? 'default' : 'custom',
@@ -283,7 +289,9 @@ export function getCustomCompactionPrompt(): string | undefined {
 
 export function updateMainAgentSettings(update: MainAgentSettingsUpdate): void {
   if (update.schemaVersion !== 1) throw new Error('Unsupported agent settings schema version');
-  writeOptionalTextFile(SYSTEM_PROMPT_FILE, update.systemPrompt ?? '');
+  // Reset means restore Pi's native prompt as the Mortise-managed base. Keep it
+  // in SYSTEM.md so the runtime always uses the same host override path.
+  writeOptionalTextFile(SYSTEM_PROMPT_FILE, update.systemPrompt ?? getPiNativeSystemPrompt());
   writeOptionalTextFile(COMPACTION_PROMPT_FILE, update.compactionPrompt ?? '');
   writePiMortiseSettingsBulk({ disabledTools: normalizeToolNames(update.disabledTools) });
 }

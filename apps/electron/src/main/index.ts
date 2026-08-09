@@ -463,20 +463,14 @@ app.whenReady().then(async () => {
   // Export packaged state as env var so logger.ts (and headless Bun) don't need 'electron'
   process.env.MORTISE_IS_PACKAGED = app.isPackaged ? 'true' : 'false'
 
-  // Register bundled assets root so all seeding functions can find their files
-  // (docs, permissions, themes, tool-icons resolve via getBundledAssetsDir)
+  // Register bundled assets root so resource initialization can resolve packaged files.
   setBundledAssetsRoot(__dirname)
 
   // Initialize backend runtime bootstrapping (Codex vendor root, Pi agent server paths).
   initializeBackendHostRuntime({ hostRuntime: electronRuntime })
 
-  // Register PowerShell validator root so it can find the bundled parser script
-  // (Windows only: validates PowerShell commands in Explore mode using AST analysis)
-
   // Initialize bundled docs
   initializeDocs()
-
-  // Ensure default permissions file exists (copies bundled default.json on first run)
 
   // Seed tool icons to ~/.mortise/tool-icons/ (copies bundled SVGs on first run)
   ensureToolIcons()
@@ -1023,7 +1017,11 @@ app.whenReady().then(async () => {
               if (!host) return {
                 schemaVersion: 1,
                 status: 'unsupported',
-                error: { code: 'automation_host_unavailable', message: 'The workspace automation host is unavailable', retryable: true },
+                error: {
+                  code: 'automation_host_unavailable',
+                  message: sm.getAutomationHostInitializationError(workspace.id) ?? 'The workspace automation host is unavailable',
+                  retryable: !sm.getAutomationHostInitializationError(workspace.id),
+                },
               }
               return executeAutomationWorkspaceOperationV1({
                 workspaceId: workspace.id,
@@ -1041,7 +1039,11 @@ app.whenReady().then(async () => {
               if (!host) return {
                 schemaVersion: 1,
                 status: 'unsupported',
-                error: { code: 'automation_host_unavailable', message: 'The workspace automation host is unavailable', retryable: true },
+                error: {
+                  code: 'automation_host_unavailable',
+                  message: sm.getAutomationHostInitializationError(workspace.id) ?? 'The workspace automation host is unavailable',
+                  retryable: !sm.getAutomationHostInitializationError(workspace.id),
+                },
               }
               return executeAutomationWorkspaceOperationV1({
                 workspaceId: workspace.id,
@@ -1137,6 +1139,16 @@ app.whenReady().then(async () => {
 
       // Capture module-level references for before-quit cleanup and deep-link handlers
       sessionManager = instance.sessionManager
+      const automationFailures = instance.sessionManager.getAutomationHostInitializationFailures()
+        .map(failure => ({
+          ...failure,
+          workspaceName: getWorkspaceByNameOrId(failure.workspaceId)?.name ?? failure.workspaceId,
+        }))
+      if (automationFailures.length > 0) {
+        process.env.MORTISE_AUTOMATION_INITIALIZATION_FAILURES = JSON.stringify(automationFailures)
+      } else {
+        delete process.env.MORTISE_AUTOMATION_INITIALIZATION_FAILURES
+      }
       moduleSink = instance.wsServer.push.bind(instance.wsServer)
       moduleClientResolver = resolveClientId
       layoutCoordinator?.setChangedHandler(layout => {

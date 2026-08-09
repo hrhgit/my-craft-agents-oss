@@ -164,24 +164,17 @@ describe('default thinking level storage', () => {
     expect(output).not.toBe('medium')
   }, 15_000)
 
-  it('rejects the retired "max" value at the setter boundary without persisting an alias', () => {
+  it('accepts the "max" value at the setter boundary and persists it', () => {
     const { configDir } = setupWorkspaceConfigDir()
-    // setDefaultThinkingLevel returns false when normalization fails; it must
-    // not persist anything. Mutation guard: if the max -> xhigh alias is
-    // reintroduced, the setter returns true and persists 'xhigh'.
+    // max is a current thinking level, so the setter must accept and persist it.
     const accepted = runEval(configDir, "console.log(String(await setDefaultThinkingLevel('max')))")
-    expect(accepted).toBe('false')
+    expect(accepted).toBe('true')
 
     const piSettingsPath = join(configDir, 'agent', 'settings.json')
     const persistedLevel = existsSync(piSettingsPath)
       ? (JSON.parse(readFileSync(piSettingsPath, 'utf-8')) as { defaultThinkingLevel?: unknown }).defaultThinkingLevel
       : undefined
-    expect(persistedLevel).not.toBe('xhigh')
-    expect(persistedLevel).toBeUndefined()
-
-    // Getter still returns the workspace default, proving nothing was persisted.
-    const output = runEval(configDir, "console.log(String(getDefaultThinkingLevel()))")
-    expect(output).toBe('off')
+    expect(persistedLevel).toBe('max')
   }, 15_000)
 
   it('does not read legacy defaultThinkingLevel from mortise config', () => {

@@ -47,6 +47,36 @@ interface SmartTypographyResult {
   replaced: boolean
 }
 
+export interface SmartTypographyReplacement {
+  from: number
+  to: number
+  text: string
+  cursor: number
+}
+
+export function findSmartTypographyReplacement(
+  text: string,
+  cursor: number
+): SmartTypographyReplacement | null {
+  if (cursor === 0 || text[cursor - 1] !== ' ' || isInsideCode(text, cursor)) {
+    return null
+  }
+
+  const textBeforeSpace = text.slice(0, cursor - 1)
+  for (const { pattern, replacement } of REPLACEMENTS) {
+    if (!textBeforeSpace.endsWith(pattern)) continue
+    const from = cursor - 1 - pattern.length
+    return {
+      from,
+      to: cursor - 1,
+      text: replacement,
+      cursor: cursor - (pattern.length - replacement.length),
+    }
+  }
+
+  return null
+}
+
 /**
  * Check if cursor is inside a code block (backticks)
  * Simple heuristic: count backticks before cursor, odd = inside code
@@ -79,32 +109,12 @@ export function applySmartTypography(
   text: string,
   cursor: number
 ): SmartTypographyResult {
-  // Only transform if user just typed a space
-  if (cursor === 0 || text[cursor - 1] !== ' ') {
-    return { text, cursor, replaced: false }
-  }
-
-  // Don't transform if cursor is inside code
-  if (isInsideCode(text, cursor)) {
-    return { text, cursor, replaced: false }
-  }
-
-  // Get the text before the space to check for patterns
-  const textBeforeSpace = text.slice(0, cursor - 1)
-
-  // Try each replacement pattern (ordered by priority - longer first)
-  for (const { pattern, replacement } of REPLACEMENTS) {
-    if (textBeforeSpace.endsWith(pattern)) {
-      // Found a match - replace pattern (keep the space)
-      const patternStart = cursor - 1 - pattern.length
-      const newText =
-        text.slice(0, patternStart) + replacement + ' ' + text.slice(cursor)
-
-      // Adjust cursor: pattern replaced with shorter replacement, space stays
-      const cursorAdjustment = pattern.length - replacement.length
-      const newCursor = cursor - cursorAdjustment
-
-      return { text: newText, cursor: newCursor, replaced: true }
+  const replacement = findSmartTypographyReplacement(text, cursor)
+  if (replacement) {
+    return {
+      text: text.slice(0, replacement.from) + replacement.text + text.slice(replacement.to),
+      cursor: replacement.cursor,
+      replaced: true,
     }
   }
 

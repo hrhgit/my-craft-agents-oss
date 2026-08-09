@@ -47,7 +47,6 @@ export function createMockSession(overrides: Partial<Session> = {}): Session {
     workspaceRootPath: '/test/workspace',
     createdAt: Date.now(),
     lastUsedAt: Date.now(),
-    permissionMode: 'ask',
     ...overrides,
     workspaceId: overrides.workspaceId ?? 'test-workspace-id',
   };
@@ -86,7 +85,6 @@ export class TestAgent extends BaseAgent {
   public chatCalls: Array<{ message: string; attachments?: unknown[]; options?: ChatOptions }> = [];
   public abortCalls: Array<{ reason?: string }> = [];
   public forceAbortCalls: Array<{ reason: AbortReason }> = [];
-  public respondToPermissionCalls: Array<{ requestId: string; allowed: boolean; alwaysAllow?: boolean }> = [];
 
   private _isProcessing: boolean = false;
 
@@ -122,10 +120,6 @@ export class TestAgent extends BaseAgent {
     return this._isProcessing;
   }
 
-  respondToPermission(requestId: string, allowed: boolean, alwaysAllow?: boolean): void {
-    this.respondToPermissionCalls.push({ requestId, allowed, alwaysAllow });
-  }
-
   async runMiniCompletion(_prompt: string): Promise<string | null> {
     return 'Test Response';
   }
@@ -142,7 +136,6 @@ export class TestAgent extends BaseAgent {
     this.chatCalls = [];
     this.abortCalls = [];
     this.forceAbortCalls = [];
-    this.respondToPermissionCalls = [];
   }
 }
 

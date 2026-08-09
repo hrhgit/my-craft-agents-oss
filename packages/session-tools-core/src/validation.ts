@@ -187,7 +187,6 @@ export const SkillMetadataSchema = z.object({
   name: z.string().min(1, "Add a 'name' field with a human-readable title"),
   description: z.string().min(1, "Add a 'description' field explaining what this skill does"),
   globs: z.array(z.string()).optional(),
-  alwaysAllow: z.array(z.string()).optional(),
   icon: z.string().optional(),
 }).passthrough();
 

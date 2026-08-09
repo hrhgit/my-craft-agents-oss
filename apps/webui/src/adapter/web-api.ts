@@ -98,7 +98,11 @@ export function createWebApi(options: WebApiOptions): {
     // System info
     getVersions: () => ({ node: 'n/a', chrome: navigator.userAgent, electron: 'web' }),
     getRuntimeEnvironment: () => 'web',
-    getSystemWarnings: () => Promise.resolve({ vcredistMissing: false, workspaceRuntimeDegraded: false }),
+    getSystemWarnings: () => Promise.resolve({
+      vcredistMissing: false,
+      workspaceRuntimeDegraded: false,
+      automationInitializationFailures: [],
+    }),
     isDebugMode: () => Promise.resolve(import.meta.env.DEV),
     getPiExtensionCatalog: async () => {
       const result = await baseApi.getPiExtensionCatalog()

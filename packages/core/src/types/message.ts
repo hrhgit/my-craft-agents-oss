@@ -423,36 +423,6 @@ export interface TypedError {
 }
 
 /**
- * Permission request type categories
- */
-export type PermissionRequestType = 'bash' | 'file_write' | 'tool_mutation' | 'mcp_mutation' | 'admin_approval';
-
-/**
- * Permission request from agent (e.g., bash command approval)
- */
-export interface PermissionRequest {
-  requestId: string;
-  toolName: string;
-  command?: string;  // Optional: bash and mutation prompts may provide a stable command key
-  description: string;
-  type?: PermissionRequestType;  // Type of permission request
-  /** Friendly app/package label for admin approval prompts */
-  appName?: string;
-  /** Plain-language reason shown in admin approval prompt */
-  reason?: string;
-  /** Plain-language impact shown in admin approval prompt */
-  impact?: string;
-  /** Whether native OS auth prompt is expected */
-  requiresSystemPrompt?: boolean;
-  /** Optional remember window for this exact command */
-  rememberForMinutes?: number;
-  /** Hash binding for approval integrity checks */
-  commandHash?: string;
-  /** Approval validity window */
-  approvalTtlSeconds?: number;
-}
-
-/**
  * Usage data emitted by MortiseAgent in 'complete' events
  * Note: This is a subset of TokenUsage - totalTokens/contextTokens are computed by consumers
  */
@@ -480,21 +450,6 @@ export type AgentEvent =
   | { type: 'pi_turn_anchor'; sdkMessageId: string; sdkTurnAnchor: string }
   | { type: 'tool_start'; toolName: string; toolUseId: string; input: Record<string, unknown>; intent?: string; displayName?: string; turnId?: string; parentToolUseId?: string; toolDisplayMeta?: ToolDisplayMeta }
   | { type: 'tool_result'; toolUseId: string; toolName?: string; result: string; isError: boolean; input?: Record<string, unknown>; turnId?: string; parentToolUseId?: string }
-  | {
-      type: 'permission_request';
-      requestId: string;
-      toolName: string;
-      command?: string;
-      description: string;
-      permissionType?: PermissionRequestType;
-      appName?: string;
-      reason?: string;
-      impact?: string;
-      requiresSystemPrompt?: boolean;
-      rememberForMinutes?: number;
-      commandHash?: string;
-      approvalTtlSeconds?: number;
-    }
   | { type: 'error'; message: string }
   | { type: 'typed_error'; error: TypedError }
   | { type: 'complete'; usage?: AgentEventUsage }

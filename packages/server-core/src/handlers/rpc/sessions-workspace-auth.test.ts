@@ -28,7 +28,10 @@ class TestRpcServer implements RpcServer {
   }
 }
 
-function createDeps(onInteraction?: (requestId: string, response: unknown) => boolean): HandlerDeps {
+function createDeps(
+  onInteraction?: (requestId: string, response: unknown) => boolean,
+  frontendStates: unknown[] = [],
+): HandlerDeps {
   const sessionManager = new Proxy({
     async getSession(sessionId: string) {
       return {
@@ -42,6 +45,9 @@ function createDeps(onInteraction?: (requestId: string, response: unknown) => bo
     },
     respondToExtensionInteraction(_sessionId: string, requestId: string, response: unknown) {
       return onInteraction?.(requestId, response) ?? true
+    },
+    getExtensionFrontendStates() {
+      return frontendStates
     },
   }, {
     get(target, prop, receiver) {
@@ -97,11 +103,10 @@ const protectedCalls: Array<{ channel: string; args: unknown[] }> = [
   { channel: RPC_CHANNELS.sessions.SEND_MESSAGE, args: ['session-1', 'attacker prompt'] },
   { channel: RPC_CHANNELS.sessions.CANCEL, args: ['session-1'] },
   { channel: RPC_CHANNELS.sessions.KILL_SHELL, args: ['session-1', 'shell-1'] },
-  { channel: RPC_CHANNELS.sessions.RESPOND_TO_PERMISSION, args: ['session-1', 'request-1', true, true] },
   { channel: RPC_CHANNELS.extensions.INTERACTION_RESPONSE, args: ['session-1', 'request-1', { schemaVersion: 1, status: 'cancelled', reason: 'user' }] },
   { channel: RPC_CHANNELS.extensions.COMMAND_INVOKE, args: ['session-1', 'command-1', {}] },
+  { channel: RPC_CHANNELS.extensions.GET_FRONTEND_STATES, args: ['session-1'] },
   { channel: RPC_CHANNELS.sessions.LIST_CHILD_SESSIONS, args: ['session-1'] },
-  { channel: RPC_CHANNELS.sessions.COMMAND, args: ['session-1', { type: 'setPermissionMode', mode: 'allow-all' }] },
 ]
 
 describe('session RPC workspace authorization', () => {
@@ -135,5 +140,14 @@ describe('session RPC workspace authorization', () => {
       requestId: 'request-1',
       response: { schemaVersion: 1, status: 'cancelled', reason: 'user' },
     }])
+  })
+
+  it('returns cached frontend states for the authenticated session', async () => {
+    const states = [{ type: 'extension_frontend_state', extensionId: 'ask-user' }]
+    const server = new TestRpcServer()
+    registerSessionsHandlers(server, createDeps(undefined, states))
+
+    const handler = server.handlers.get(RPC_CHANNELS.extensions.GET_FRONTEND_STATES)!
+    expect(await handler({ ...ctx, workspaceId: 'workspace-b' }, 'session-1')).toBe(states)
   })
 })

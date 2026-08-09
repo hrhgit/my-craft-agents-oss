@@ -10,7 +10,7 @@
 import { describe, it, expect } from 'bun:test';
 import { join } from 'node:path';
 import { parseReadCommand } from '../read-patterns.ts';
-import { looksLikePowerShell, isPowerShellAvailable, setPowerShellValidatorRoot } from '../../powershell-validator.ts';
+import { looksLikePowerShell, isPowerShellAvailable, setPowerShellValidatorRoot } from '../../powershell-read-patterns.ts';
 
 setPowerShellValidatorRoot(join(import.meta.dir, '..', '..'));
 

@@ -10,7 +10,6 @@
  * 3. Add UI control in FreeFormInput.tsx (or wherever needed)
  */
 
-import type { PermissionMode } from '../../shared/types'
 import type { ThinkingLevel } from '@mortise/shared/agent/thinking-levels'
 import { DEFAULT_THINKING_LEVEL } from '@mortise/shared/agent/thinking-levels'
 
@@ -18,17 +17,12 @@ import { DEFAULT_THINKING_LEVEL } from '@mortise/shared/agent/thinking-levels'
  * All session-scoped options in one place.
  */
 export interface SessionOptions {
-  /** Permission mode ('safe', 'ask', 'allow-all') */
-  permissionMode: PermissionMode
-  /** Monotonic version from backend permission mode state (used to ignore stale events) */
-  permissionModeVersion?: number
   /** Session-level thinking level — sticky, persisted. See {@link ThinkingLevel}. */
   thinkingLevel: ThinkingLevel
 }
 
 /** Default values for new sessions */
 export const defaultSessionOptions: SessionOptions = {
-  permissionMode: 'allow-all', // Default to execute mode
   thinkingLevel: DEFAULT_THINKING_LEVEL, // Default to 'medium' level
 }
 

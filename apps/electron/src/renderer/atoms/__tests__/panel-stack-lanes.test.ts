@@ -50,7 +50,7 @@ describe('panel stack single-lane behavior', () => {
     expect(store.get(compactDockViewIntentAtom)).toBeNull()
   })
 
-  it('only replaces the selected tab when that tab is a session', () => {
+  it('replaces the selected session tab even when its runtime state is protected', () => {
     const store = createStore()
 
     store.set(pushPanelAtom, { route: 'allSessions/session/s1' })
@@ -63,10 +63,7 @@ describe('panel stack single-lane behavior', () => {
       [sessionTabId]: { pinned: false, dirty: false, running: true, awaitingInput: false },
     })
     expect(store.get(activeDockTabProtectionAtom).running).toBe(true)
-    expect(shouldReplaceActiveTabWithSession(
-      store.get(activeDockTabTypeAtom),
-      store.get(activeDockTabProtectionAtom),
-    )).toBe(false)
+    expect(shouldReplaceActiveTabWithSession(store.get(activeDockTabTypeAtom))).toBe(true)
 
     store.set(activeDockTabIdAtom, 'dock:content:files')
     expect(store.get(activeDockTabTypeAtom)).toBe('other')

@@ -131,3 +131,4 @@ export {
 	type WorkspaceHistoryRecord,
 } from "./session-activity-registry.ts";
 export { createSyntheticSourceInfo } from "./source-info.ts";
+export { buildSystemPrompt } from "./system-prompt.ts";

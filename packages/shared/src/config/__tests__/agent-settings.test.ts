@@ -95,13 +95,13 @@ describe('agent settings storage', () => {
     ])
   }, 15_000)
 
-  it('returns Mortise defaults without freezing them into override files', () => {
+  it('returns the Pi-native default without freezing it into override files', () => {
     const { output, piAgentDir } = runEval(`
       const snapshot = await settings.getAgentSettingsSnapshot();
       console.log(JSON.stringify({
         systemSource: snapshot.mainAgent.systemPromptSource,
         compactionSource: snapshot.mainAgent.compactionPromptSource,
-        isMortisePrompt: snapshot.mainAgent.systemPrompt.includes('Mortise'),
+        isPiNativePrompt: snapshot.mainAgent.systemPrompt.includes('expert coding assistant operating inside Mortise'),
         tools: snapshot.mainAgent.tools.map((tool) => tool.name),
         browserSource: snapshot.mainAgent.tools.find((tool) => tool.name === 'browser_tool')?.source,
       }));
@@ -109,7 +109,7 @@ describe('agent settings storage', () => {
     expect(JSON.parse(output)).toEqual({
       systemSource: 'default',
       compactionSource: 'default',
-      isMortisePrompt: true,
+      isPiNativePrompt: true,
       tools: expect.arrayContaining(['read', 'edit', 'write', 'grep', 'find', 'ls', 'web_fetch', 'config_validate', 'spawn_session']),
       browserSource: 'extension',
     })
@@ -226,7 +226,7 @@ describe('agent settings storage', () => {
     expect(output).toBe('Subagent id already exists: second')
   })
 
-  it('restores Pi defaults by removing custom prompt files', () => {
+  it('restores Pi defaults by writing the native prompt into the Mortise override file', () => {
     const { output, piAgentDir } = runEval(`
       settings.updateMainAgentSettings({
         schemaVersion: 1,
@@ -247,8 +247,12 @@ describe('agent settings storage', () => {
         settings.resolveMainAgentSystemPrompt('Mortise default'),
       ]));
     `)
-    expect(JSON.parse(output)).toEqual(['default', 'default', 'Mortise default'])
-    expect(existsSync(join(piAgentDir, 'SYSTEM.md'))).toBe(false)
+    const result = JSON.parse(output)
+    expect(result[0]).toBe('custom')
+    expect(result[1]).toBe('default')
+    expect(result[2]).toContain('expert coding assistant operating inside Mortise')
+    expect(existsSync(join(piAgentDir, 'SYSTEM.md'))).toBe(true)
+    expect(readFileSync(join(piAgentDir, 'SYSTEM.md'), 'utf8')).toContain('expert coding assistant operating inside Mortise')
     expect(existsSync(join(piAgentDir, 'COMPACTION.md'))).toBe(false)
   })
 })

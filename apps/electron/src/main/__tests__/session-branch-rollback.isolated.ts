@@ -68,7 +68,6 @@ mock.module('@mortise/shared/config', () => ({
   getWorkspaces: () => [workspace],
   loadConfigDefaults: () => ({
     workspaceDefaults: {
-      permissionMode: 'ask',
       thinkingLevel: 'medium',
     },
   }),
@@ -105,9 +104,10 @@ mock.module('@mortise/shared/config', () => ({
 }))
 
 mock.module('@mortise/shared/workspaces', () => ({
+  initializeWorkspace: (workspace: unknown) => workspace,
+  getDefaultWorkspaceTopologyStore: () => ({ list: () => [], get: () => null }),
   loadWorkspaceConfig: () => ({
     defaults: {
-      permissionMode: 'ask',
       thinkingLevel: 'medium',
       provider: undefined,
     },
@@ -116,14 +116,8 @@ mock.module('@mortise/shared/workspaces', () => ({
 
 mock.module('@mortise/shared/agent', () => ({
   ...actualSharedAgentModule,
-  setPermissionMode: () => {},
-  getPermissionModeDiagnostics: () => ({ mode: 'ask', source: 'test' }),
   unregisterSessionScopedToolCallbacks: () => {},
   mergeSessionScopedToolCallbacks: () => {},
-  hydratePreviousPermissionMode: () => {},
-  initializeModeState: () => {},
-  cleanupModeState: () => {},
-  getPermissionMode: () => 'ask',
   registerSessionScopedToolCallbacks: () => {},
   cleanupSessionScopedTools: () => {},
   getSessionScopedTools: () => [],
@@ -188,7 +182,6 @@ mock.module('@mortise/shared/sessions', () => ({
       mortiseId: id,
       name: opts?.name ?? null,
       messages: [],
-      permissionMode: opts?.permissionMode ?? 'ask',
       hidden: !!opts?.hidden,
       createdAt: now,
       lastUsedAt: now,

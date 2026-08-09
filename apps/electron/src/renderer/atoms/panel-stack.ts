@@ -114,10 +114,12 @@ export const activeDockTabTypeAtom = atom<PanelType>((get) => {
 
 export function shouldReplaceActiveTabWithSession(
   activeTabType: PanelType,
-  protection: DockTabProtection = UNPROTECTED_DOCK_TAB,
 ): boolean {
+  // A normal session selection replaces the current conversation page even
+  // while that session is running, pinned, or has a local draft. Those states
+  // keep the session alive; they are not an implicit request to split the dock.
+  // Explicit new-panel actions remain responsible for opening another page.
   return activeTabType === 'session'
-    && !isDockTabProtected(protection)
 }
 
 export const panelCountAtom = atom((get) => get(panelStackAtom).length)

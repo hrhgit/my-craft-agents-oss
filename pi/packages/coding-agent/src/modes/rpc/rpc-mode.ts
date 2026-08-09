@@ -95,8 +95,8 @@ import type {
 	RpcSlashCommand,
 	RpcToolExecuteRequest,
 	RpcToolExecuteResponse,
-	RpcToolPermissionRequest,
-	RpcToolPermissionResponse,
+	RpcToolExecutionRequest,
+	RpcToolExecutionResponse,
 	RpcToolResultContent,
 	RpcToolResultRequest,
 	RpcToolResultResponse,
@@ -121,8 +121,8 @@ export type {
 	RpcSessionState,
 	RpcToolExecuteRequest,
 	RpcToolExecuteResponse,
-	RpcToolPermissionRequest,
-	RpcToolPermissionResponse,
+	RpcToolExecutionRequest,
+	RpcToolExecutionResponse,
 	RpcToolResultContent,
 	RpcToolResultRequest,
 	RpcToolResultResponse,
@@ -411,7 +411,7 @@ export async function runRpcMode(
 		runtime: AgentSessionRuntime;
 		session: AgentSession;
 		uiCapabilities: RpcHostUICapabilities;
-		toolPermissionsEnabled: boolean;
+		toolExecutionInterceptorEnabled: boolean;
 		toolResultsEnabled: boolean;
 		pendingExtensionReload: boolean;
 		unsubscribe?: () => void;
@@ -432,7 +432,7 @@ export async function runRpcMode(
 				runtime: runtimeHost,
 				session: runtimeHost.session,
 				uiCapabilities: normalizeRpcHostUICapabilities(options.uiCapabilities),
-				toolPermissionsEnabled: false,
+				toolExecutionInterceptorEnabled: false,
 				toolResultsEnabled: false,
 				pendingExtensionReload: false,
 			}
@@ -470,6 +470,7 @@ export async function runRpcMode(
 			scope: ExtensionFrontendChannelOptions["scope"];
 			snapshot: unknown;
 			revision: number;
+			sessionBootstrap?: boolean;
 			onMessage?: ExtensionFrontendChannelOptions["onMessage"];
 			disabled?: boolean;
 		}
@@ -488,7 +489,9 @@ export async function runRpcMode(
 		if (channel.disabled) return;
 		if (!isSerializableFrontendValue(state)) {
 			channel.disabled = true;
-			console.warn(`[extension:${extensionId}] Disabled frontend channel ${channelId}: state is not JSON serializable`);
+			console.warn(
+				`[extension:${extensionId}] Disabled frontend channel ${channelId}: state is not JSON serializable`,
+			);
 			return;
 		}
 		channel.revision += 1;
@@ -497,7 +500,14 @@ export async function runRpcMode(
 			{
 				type: "extension_frontend_state",
 				extensionId,
-				state: { schemaVersion: 2, channelId, scope: channel.scope, revision: channel.revision, state },
+				state: {
+					schemaVersion: 2,
+					channelId,
+					scope: channel.scope,
+					revision: channel.revision,
+					state,
+					...(channel.sessionBootstrap ? { sessionBootstrap: true } : {}),
+				},
 			},
 			binding,
 		);
@@ -744,12 +754,12 @@ export async function runRpcMode(
 		);
 
 	// Pending tool permission requests waiting for host response
-	const pendingToolPermissionRequests = new Map<
+	const pendingToolExecutionRequests = new Map<
 		string,
-		{ resolve: (value: RpcToolPermissionResponse) => void; reject: (error: Error) => void }
+		{ resolve: (value: RpcToolExecutionResponse) => void; reject: (error: Error) => void }
 	>();
 
-	const requestToolPermission = (
+	const requestToolExecution = (
 		binding: RuntimeBinding,
 		request: {
 			toolName: string;
@@ -758,20 +768,20 @@ export async function runRpcMode(
 			assistantResponseId?: string;
 			assistantTimestamp: number;
 		},
-	): Promise<RpcToolPermissionResponse> => {
+	): Promise<RpcToolExecutionResponse> => {
 		const id = crypto.randomUUID();
-		return new Promise<RpcToolPermissionResponse>((resolve, reject) => {
-			pendingToolPermissionRequests.set(id, { resolve, reject });
+		return new Promise<RpcToolExecutionResponse>((resolve, reject) => {
+			pendingToolExecutionRequests.set(id, { resolve, reject });
 			output(
 				{
-					type: "tool_permission_request",
+					type: "tool_execution_request",
 					id,
 					toolName: request.toolName,
 					toolCallId: request.toolCallId,
 					input: request.input,
 					assistantResponseId: request.assistantResponseId,
 					assistantTimestamp: request.assistantTimestamp,
-				} satisfies RpcToolPermissionRequest,
+				} satisfies RpcToolExecutionRequest,
 				binding,
 			);
 		});
@@ -1506,11 +1516,14 @@ export async function runRpcMode(
 				const key = frontendChannelKey(binding, extensionId, channelId);
 				if (!binding.uiCapabilities.contributions) return;
 				if (!channelId || !isSerializableFrontendValue(options.snapshot ?? null)) {
-					console.warn(`[extension:${extensionId}] Disabled frontend channel ${channelId || "<missing>"}: initial state is not JSON serializable`);
+					console.warn(
+						`[extension:${extensionId}] Disabled frontend channel ${channelId || "<missing>"}: initial state is not JSON serializable`,
+					);
 					frontendChannels.set(key, {
 						scope: options.scope,
 						snapshot: null,
 						revision: 0,
+						sessionBootstrap: options.sessionBootstrap,
 						disabled: true,
 					});
 					return;
@@ -1519,6 +1532,7 @@ export async function runRpcMode(
 					scope: options.scope,
 					snapshot: options.snapshot ?? null,
 					revision: 0,
+					sessionBootstrap: options.sessionBootstrap,
 					onMessage: options.onMessage,
 				});
 				if (options.snapshot !== undefined) publishFrontendState(binding, extensionId, channelId, options.snapshot);
@@ -1526,11 +1540,11 @@ export async function runRpcMode(
 			publishFrontendState: (extensionId, channelId, state) =>
 				publishFrontendState(binding, extensionId, channelId, state),
 			capabilitiesContextFactory: (extensionId) => createExtensionCapabilitiesContext(binding, extensionId),
-			toolPermissionHandler: async (request) => {
-				if (!binding.toolPermissionsEnabled) {
+			toolExecutionHandler: async (request) => {
+				if (!binding.toolExecutionInterceptorEnabled) {
 					return { action: "allow" };
 				}
-				const response = await requestToolPermission(binding, request);
+				const response = await requestToolExecution(binding, request);
 				if (response.action === "block") {
 					return { action: "block", reason: response.reason };
 				}
@@ -1680,7 +1694,7 @@ export async function runRpcMode(
 				runtime,
 				session: runtime.session,
 				uiCapabilities: normalizeRpcHostUICapabilities(globalHostFactory.defaultRuntime.uiCapabilities),
-				toolPermissionsEnabled: false,
+				toolExecutionInterceptorEnabled: false,
 				toolResultsEnabled: false,
 				pendingExtensionReload: false,
 			};
@@ -1824,7 +1838,7 @@ export async function runRpcMode(
 				runtime,
 				session: runtime.session,
 				uiCapabilities: normalizeRpcHostUICapabilities(command.uiCapabilities),
-				toolPermissionsEnabled: false,
+				toolExecutionInterceptorEnabled: false,
 				toolResultsEnabled: false,
 				pendingExtensionReload: false,
 			};
@@ -1889,6 +1903,11 @@ export async function runRpcMode(
 		const session = binding.session;
 
 		switch (command.type) {
+			case "prepare_runtime": {
+				await session.prepareForFirstRequest();
+				return success(id, "prepare_runtime");
+			}
+
 			// =================================================================
 			// Prompting
 			// =================================================================
@@ -2387,16 +2406,16 @@ export async function runRpcMode(
 				return success(id, "get_model_catalog", getModelCatalog({ provider: command.provider }));
 			}
 
-			case "enable_tool_permissions": {
-				binding.toolPermissionsEnabled = command.enabled;
+			case "enable_tool_execution_interceptor": {
+				binding.toolExecutionInterceptorEnabled = command.enabled;
 				if (!command.enabled) {
 					// Unblock any in-flight requests so tools don't hang forever.
-					for (const [, pending] of pendingToolPermissionRequests) {
-						pending.resolve({ type: "tool_permission_response", id: "", action: "allow" });
+					for (const [, pending] of pendingToolExecutionRequests) {
+						pending.resolve({ type: "tool_execution_response", id: "", action: "allow" });
 					}
-					pendingToolPermissionRequests.clear();
+					pendingToolExecutionRequests.clear();
 				}
-				return success(id, "enable_tool_permissions");
+				return success(id, "enable_tool_execution_interceptor");
 			}
 
 			case "enable_tool_results": {
@@ -2439,10 +2458,10 @@ export async function runRpcMode(
 			cleanup();
 		}
 		// Unblock in-flight tool permission waits so dispose doesn't hang on them.
-		for (const [, pending] of pendingToolPermissionRequests) {
-			pending.resolve({ type: "tool_permission_response", id: "", action: "block", reason: "Server shutting down" });
+		for (const [, pending] of pendingToolExecutionRequests) {
+			pending.resolve({ type: "tool_execution_response", id: "", action: "block", reason: "Server shutting down" });
 		}
-		pendingToolPermissionRequests.clear();
+		pendingToolExecutionRequests.clear();
 		cancelToolResultRequests(() => true, "RPC host shut down before the host recorded the tool result");
 		// Fail in-flight host tool executions so dispose doesn't hang on them.
 		for (const [, pending] of pendingToolExecuteRequests) {
@@ -2622,17 +2641,17 @@ export async function runRpcMode(
 			return;
 		}
 
-		// Handle tool permission responses
+		// Handle neutral tool execution interceptor responses
 		if (
 			typeof parsed === "object" &&
 			parsed !== null &&
 			"type" in parsed &&
-			parsed.type === "tool_permission_response"
+			parsed.type === "tool_execution_response"
 		) {
-			const response = parsed as RpcToolPermissionResponse;
-			const pending = pendingToolPermissionRequests.get(response.id);
+			const response = parsed as RpcToolExecutionResponse;
+			const pending = pendingToolExecutionRequests.get(response.id);
 			if (pending) {
-				pendingToolPermissionRequests.delete(response.id);
+				pendingToolExecutionRequests.delete(response.id);
 				pending.resolve(response);
 			}
 			return;

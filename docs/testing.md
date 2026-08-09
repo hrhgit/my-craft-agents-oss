@@ -54,7 +54,7 @@ The fixed bridge exposes `list()`, `snapshot()`, `apply(request)`, `reset()`, `c
 Initial AppShell scenarios are:
 
 - `app.loading`, `transport.reconnect`, `transport.error`
-- `session.empty`, `session.streaming`, `tool.approval`
+- `session.empty`, `session.streaming`
 - `extension.loading`, `extension.ready`, `extension.error`, `extension.reload`
 - `settings.app`
 
@@ -162,7 +162,7 @@ For native Electron behavior, use the same run through either `snapshot --params
 
 Use `capabilities relevant` to return only the current route and actions advertised by the currently disclosed targets. Use `capabilities list` for navigation alternatives, scenarios, runtime extension discovery, or actions not currently available, and `capabilities describe` for the bounded input schema, supported surfaces, modes, and expected verification level of one route, scenario, or action. The catalog is protocol V1 data and never exposes Playwright, CDP, selectors, JavaScript evaluation, or renderer state. The full catalog's `runtimeDiscovery.extensionDefinitions` entry describes the dynamic extension discovery call. Read extension identities from the `scope: "extension"` entries returned by `status --full` or `runs inspect`, then call `snapshot --params '{"target":{"kind":"extension","sessionId":"...","extensionId":"..."}}'`. The result contains the host-validated readiness signals, actions, scenarios, and input schemas contributed by that running extension; callers do not inspect extension or renderer source.
 
-`fixture` is the default profile. Without `--fixture`, it sets `setupDeferred` and opens the normal application on a populated product-release conversation. The preset contains three disposable workspaces: a product launch with code, release files, multiple sessions, a tool-call transcript, and plan data; customer research with Markdown/CSV/JSON inputs and analysis sessions; and support operations with runbooks, incident/ticket files, triage sessions, and unread state. A custom `--fixture` replaces that preset with the declared real data scene. Fixture profiles contain no provider credentials or live endpoints; use registered typed scenarios for transient loading, streaming, approval, extension, permission, and error states.
+`fixture` is the default profile. Without `--fixture`, it sets `setupDeferred` and opens the normal application on a populated product-release conversation. The preset contains three disposable workspaces: a product launch with code, release files, multiple sessions, a tool-call transcript, and plan data; customer research with Markdown/CSV/JSON inputs and analysis sessions; and support operations with runbooks, incident/ticket files, triage sessions, and unread state. A custom `--fixture` replaces that preset with the declared real data scene. Fixture profiles contain no provider credentials or live endpoints; use registered typed scenarios for transient loading, streaming, Extension, and error states.
 
 Use `isolated` only for onboarding and pristine-profile behavior. When real provider or user configuration is required, clone mode requires the Mortise profile explicitly and redirects every write into temporary directories:
 

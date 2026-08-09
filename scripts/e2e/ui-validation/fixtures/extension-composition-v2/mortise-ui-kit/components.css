@@ -1,0 +1,5 @@
+.mortise-kit-stack{display:flex;flex-direction:column;gap:var(--mortise-kit-gap,8px)}
+.mortise-kit-row{display:flex;align-items:center;gap:var(--mortise-kit-gap,8px)}
+.mortise-kit-toolbar{display:flex;align-items:center;gap:6px;min-width:0}
+.mortise-kit-divider{border:0;border-top:1px solid color-mix(in srgb,currentColor 14%,transparent);width:100%}
+.mortise-kit-badge{display:inline-flex;align-items:center;min-height:20px;padding:0 7px;border-radius:999px;font-size:11px;font-weight:600}

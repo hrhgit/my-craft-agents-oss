@@ -93,7 +93,6 @@ export function ChatInputZone({
           fallback={null}
         >
           <ActiveOptionBadges
-            showPermissionModeBadge={false}
             tasks={tasks}
             sessionId={sessionId}
             onKillTask={onKillTask}

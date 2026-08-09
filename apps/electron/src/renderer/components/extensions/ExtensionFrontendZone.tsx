@@ -10,6 +10,19 @@ import { getPrimaryRemoteWorkspaceId } from '@/lib/workspace-info'
 import { createExtensionUIBackend } from './extension-frontend-channel-store'
 import { ExtensionFrontendSurface } from './ExtensionFrontendSurface'
 import { createExtensionUIHost, createExtensionUIDependencies, type ExtensionFrontendRuntimeContext } from './extension-frontend-runtime'
+import { refreshRuntimeExtensions } from './extension-runtime-catalog'
+
+const RUNTIME_STATE_TIMEOUT_MS = 5_000
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), timeoutMs)
+  })
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer) clearTimeout(timer)
+  })
+}
 
 interface ExtensionFrontendZoneProps {
   surface: ExtensionFrontendSurfaceV2
@@ -37,16 +50,33 @@ export function ExtensionFrontendZone({ surface, sessionId, workspaceId, classNa
     let active = true
     let timer: ReturnType<typeof setInterval> | undefined
     let startupAttempts = 0
+    let refreshInFlight = false
+    let hasLoadedRuntimeSnapshot = false
     const maxStartupAttempts = 20
     const refresh = async () => {
+      if (refreshInFlight) return
+      refreshInFlight = true
       try {
-        const catalog = await window.electronAPI.getPiExtensionCatalog()
-        if (!active) return
-        setExtensions((current) => frontendCatalogKey(current) === frontendCatalogKey(catalog.extensions) ? current : catalog.extensions)
+        const runtimeState = await refreshRuntimeExtensions({
+          loadCatalog: async () => (await window.electronAPI.getPiExtensionCatalog()).extensions,
+          loadRuntimeState: () => withTimeout(
+            window.electronAPI.getPiExtensionRuntimeState(resolvedWorkspaceId),
+            RUNTIME_STATE_TIMEOUT_MS,
+            'Timed out loading the applied extension runtime state',
+          ),
+          apply: (nextExtensions) => {
+            if (!active) return
+            setExtensions((current) => frontendCatalogKey(current) === frontendCatalogKey(nextExtensions) ? current : nextExtensions)
+          },
+          applyConfigured: !hasLoadedRuntimeSnapshot,
+        })
+        hasLoadedRuntimeSnapshot = runtimeState.loaded
         startupAttempts = maxStartupAttempts
       } catch (error) {
-        console.warn('Failed to load extension frontend catalog:', error)
+        console.warn('Failed to refine extension frontend runtime state; keeping the last available catalog:', error)
         startupAttempts += 1
+      } finally {
+        refreshInFlight = false
       }
     }
     void refresh()
@@ -75,7 +105,7 @@ export function ExtensionFrontendZone({ surface, sessionId, workspaceId, classNa
       if (timer) clearInterval(timer)
       window.removeEventListener('mortise:pi-extensions-reloaded', handleReload)
     }
-  }, [])
+  }, [resolvedWorkspaceId])
 
   const descriptors = React.useMemo(() => resolveFrontendDescriptors(extensions, surface, extensionId, frontendId),
   [extensionId, extensions, frontendId, surface])
@@ -134,9 +164,9 @@ function resolveFrontendDescriptors(
   frontendId?: string,
 ): ExtensionFrontendDescriptorV2[] {
   const base = extensions
-    .filter((extension) => extension.enabled && (!extensionId || extension.id === extensionId))
+    .filter((extension) => !extensionId || extension.id === extensionId)
     .flatMap((extension) => (extension.frontendDescriptors ?? []).filter((descriptor) => descriptor.surface === surface && (!frontendId || descriptor.frontendId === frontendId)))
-  const allOverrides = extensions.filter(extension => extension.enabled).flatMap(extension => extension.overrideDescriptors ?? [])
+  const allOverrides = extensions.flatMap(extension => extension.overrideDescriptors ?? [])
   return base.map((descriptor) => {
     let current = descriptor
     const applied = new Set<string>()
@@ -164,11 +194,11 @@ function resolveFrontendDescriptors(
 function frontendCatalogKey(extensions: PiExtensionCatalogEntry[]): string {
   return extensions.flatMap((extension) => [
     ...(extension.frontendDescriptors ?? []).map((descriptor) =>
-      `${extension.enabled}:frontend:${descriptor.extensionId}:${descriptor.frontendId}:${descriptor.revision}:${descriptor.entryUrl}:${descriptor.styleUrls.join(',')}`),
+      `frontend:${descriptor.extensionId}:${descriptor.frontendId}:${descriptor.revision}:${descriptor.entryUrl}:${descriptor.styleUrls.join(',')}`),
     ...(extension.moduleDescriptors ?? []).map((descriptor) =>
-      `${extension.enabled}:module:${descriptor.extensionId}:${descriptor.moduleId}:${descriptor.revision}:${descriptor.entryUrl}:${descriptor.styleUrls.join(',')}`),
+      `module:${descriptor.extensionId}:${descriptor.moduleId}:${descriptor.revision}:${descriptor.entryUrl}:${descriptor.styleUrls.join(',')}`),
     ...(extension.overrideDescriptors ?? []).map((descriptor) =>
-      `${extension.enabled}:override:${descriptor.extensionId}:${descriptor.overrideId}:${descriptor.revision}:${descriptor.entryUrl}:${descriptor.styleUrls.join(',')}`),
+      `override:${descriptor.extensionId}:${descriptor.overrideId}:${descriptor.revision}:${descriptor.entryUrl}:${descriptor.styleUrls.join(',')}`),
   ]).join('|')
 }
 

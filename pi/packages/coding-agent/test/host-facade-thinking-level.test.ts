@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { HostFacadeError, normalizeHostThinkingLevel } from "../src/core/host-facade.ts";
 
-const CURRENT_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const;
+const CURRENT_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 
 describe("normalizeHostThinkingLevel", () => {
 	it("accepts every current host thinking level unchanged", () => {
@@ -14,11 +14,8 @@ describe("normalizeHostThinkingLevel", () => {
 		expect(normalizeHostThinkingLevel(undefined)).toBeUndefined();
 	});
 
-	it("rejects the retired 'max' value as invalid host/runtime input", () => {
-		// Mutation guard: if the max -> xhigh alias is reintroduced, the call
-		// resolves to "xhigh" instead of throwing, and these expectations fail.
-		expect(() => normalizeHostThinkingLevel("max")).toThrow(HostFacadeError);
-		expect(() => normalizeHostThinkingLevel("max")).toThrow(/Invalid thinking level: max/);
+	it("accepts the current 'max' value unchanged", () => {
+		expect(normalizeHostThinkingLevel("max")).toBe("max");
 	});
 
 	it("rejects the retired 'think' value as invalid host/runtime input", () => {
@@ -35,12 +32,12 @@ describe("normalizeHostThinkingLevel", () => {
 
 	it("reports invalid_input with a message naming the offending value", () => {
 		try {
-			normalizeHostThinkingLevel("max");
+			normalizeHostThinkingLevel("ultra");
 			throw new Error("expected normalizeHostThinkingLevel to throw");
 		} catch (error) {
 			expect(error).toBeInstanceOf(HostFacadeError);
 			expect((error as HostFacadeError).errorKind).toBe("invalid_input");
-			expect((error as Error).message).toContain("max");
+			expect((error as Error).message).toContain("ultra");
 		}
 	});
 });

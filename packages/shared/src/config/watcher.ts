@@ -10,7 +10,6 @@
  * - ~/.mortise/themes/*.json - Preset theme files (app-level)
  * - ~/.mortise/workspaces/{slug}/ - Workspace directory (recursive)
  *   - .mortise/skills/{slug}/SKILL.md, icon.*
- *   - permissions.json
  */
 
 import { watch, existsSync, readdirSync, statSync, readFileSync, mkdirSync } from 'fs';
@@ -28,7 +27,6 @@ import {
   validatePreferences,
   type ValidationResult,
 } from './validators.ts';
-import { permissionsConfigCache, getAppPermissionsDir } from '../agent/permissions-config.ts';
 import { getWorkspacePath, getWorkspaceSkillsPath, getWorkspaceSessionsDir } from '../workspaces/storage.ts';
 import type { LoadedSkill } from '../skills/types.ts';
 import { loadSkill, loadAllSkills, invalidateSkillsCache, skillNeedsIconDownload, downloadSkillIcon } from '../skills/storage.ts';
@@ -103,12 +101,6 @@ export interface ConfigWatcherCallbacks {
   /** Called when the skills list changes (add/remove folders) */
   onSkillsListChange?: (skills: LoadedSkill[]) => void;
 
-  // Permissions callbacks
-  /** Called when app-level default permissions change (~/.mortise/permissions/default.json) */
-  onDefaultPermissionsChange?: () => void;
-  /** Called when workspace permissions.json changes */
-  onWorkspacePermissionsChange?: (workspaceId: string) => void;
-
   // Session callbacks
   /** Called when a session's JSONL header is modified externally. */
   onSessionMetadataChange?: (sessionId: string, header: SessionHeader) => void;
@@ -174,7 +166,7 @@ export class ConfigWatcher {
   private workspaceDir: string;
   private skillsDir: string;
 
-  constructor(workspaceIdOrPath: string, callbacks: ConfigWatcherCallbacks) {
+  constructor(workspaceIdOrPath: string, callbacks: ConfigWatcherCallbacks, workspaceIdOverride?: string) {
     this.callbacks = callbacks;
     // Support both workspace ID and workspace root path
     // Paths contain '/' or '\\' (Windows) while IDs don't
@@ -182,7 +174,7 @@ export class ConfigWatcher {
     if (isPath) {
       this.workspaceDir = expandPath(workspaceIdOrPath);
       // Extract workspace ID from path (last segment) - handle both separators
-      this.workspaceId = workspaceIdOrPath.split(/[/\\]/).pop() || workspaceIdOrPath;
+      this.workspaceId = workspaceIdOverride?.trim() || workspaceIdOrPath.split(/[/\\]/).pop() || workspaceIdOrPath;
     } else {
       this.workspaceId = workspaceIdOrPath;
       this.workspaceDir = getWorkspacePath(workspaceIdOrPath);
@@ -243,10 +235,6 @@ export class ConfigWatcher {
     // Watch app-level themes directory
     this.watchAppThemesDir();
     span.mark('watchAppThemesDir');
-
-    // Watch app-level permissions directory
-    this.watchAppPermissionsDir();
-    span.mark('watchAppPermissionsDir');
 
     // Initial scan to populate known skills and themes.
     this.scanSkills();
@@ -402,7 +390,7 @@ export class ConfigWatcher {
   private watchSessionsDir(): void {
     let sessionsDir: string;
     try {
-      sessionsDir = getWorkspaceSessionsDir(this.workspaceDir);
+      sessionsDir = getWorkspaceSessionsDir(this.workspaceId);
     } catch {
       debug('[ConfigWatcher] Could not resolve Mortise sessions dir for workspace:', this.workspaceDir);
       return;
@@ -448,12 +436,6 @@ export class ConfigWatcher {
    */
   private handleWorkspaceFileChange(relativePath: string, eventType: string): void {
     const parts = relativePath.split('/');
-
-    // Workspace-level permissions.json
-    if (relativePath === 'permissions.json') {
-      this.debounce('workspace-permissions', () => this.handleWorkspacePermissionsChange());
-      return;
-    }
 
     // Skills changes: .mortise/skills/{slug}/...
     if (parts[0] === MORTISE_PROJECT_DIR && parts[1] === 'skills' && parts.length >= 3) {
@@ -618,23 +600,6 @@ export class ConfigWatcher {
     }
   }
 
-  // ============================================================
-  // Safe Mode & Config Handlers
-  // ============================================================
-
-  /**
-   * Handle workspace permissions.json change
-   */
-  private handleWorkspacePermissionsChange(): void {
-    debug('[ConfigWatcher] Workspace permissions.json changed:', this.workspaceId);
-
-    // Invalidate cache
-    permissionsConfigCache.invalidateWorkspace(this.workspaceDir);
-
-    // Notify callback
-    this.callbacks.onWorkspacePermissionsChange?.(this.workspaceId);
-  }
-
   private handleProvidersChange(): void {
     try {
       const providers = readPiGlobalProviders();
@@ -680,7 +645,7 @@ export class ConfigWatcher {
   private handleSessionMetadataChange(sessionId: string): void {
     // session files now live under ~/.mortise/agent/sessions/{encoded-cwd}/.
     // The workspaceDir no longer contains a sessions/ subdirectory.
-    const sessionFile = getSessionFilePath(this.workspaceDir, sessionId);
+    const sessionFile = getSessionFilePath(this.workspaceId, sessionId);
 
     if (!existsSync(sessionFile)) {
       return;
@@ -733,49 +698,6 @@ export class ConfigWatcher {
     } catch (error) {
       debug('[ConfigWatcher] Error watching app themes directory:', error);
     }
-  }
-
-  /**
-   * Watch app-level permissions directory (~/.mortise/permissions/)
-   * Watches for changes to default.json which contains the default read-only patterns
-   */
-  private watchAppPermissionsDir(): void {
-    const permissionsDir = getAppPermissionsDir();
-
-    // Create permissions directory if it doesn't exist
-    if (!existsSync(permissionsDir)) {
-      mkdirSync(permissionsDir, { recursive: true });
-    }
-
-    try {
-      const watcher = watch(permissionsDir, (eventType, filename) => {
-        if (!filename) return;
-
-        // Only watch default.json - this is where the default patterns live
-        if (filename === 'default.json') {
-          this.debounce('default-permissions', () => this.handleDefaultPermissionsChange());
-        }
-      });
-
-      watcher.on('error', (err) => debug('[ConfigWatcher] App permissions watcher error:', err));
-      this.watchers.push(watcher);
-      debug('[ConfigWatcher] Watching app permissions directory:', permissionsDir);
-    } catch (error) {
-      debug('[ConfigWatcher] Error watching app permissions directory:', error);
-    }
-  }
-
-  /**
-   * Handle default.json permissions change (app-level)
-   */
-  private handleDefaultPermissionsChange(): void {
-    debug('[ConfigWatcher] Default permissions changed');
-
-    // Invalidate the cache so next getMergedConfig() reloads from file
-    permissionsConfigCache.invalidateDefaults();
-
-    // Notify callback
-    this.callbacks.onDefaultPermissionsChange?.();
   }
 
   /**
@@ -848,9 +770,10 @@ export class ConfigWatcher {
  */
 export function createConfigWatcher(
   workspaceId: string,
-  callbacks: ConfigWatcherCallbacks
+  callbacks: ConfigWatcherCallbacks,
+  workspaceIdOverride?: string,
 ): ConfigWatcher {
-  const watcher = new ConfigWatcher(workspaceId, callbacks);
+  const watcher = new ConfigWatcher(workspaceId, callbacks, workspaceIdOverride);
   watcher.start();
   return watcher;
 }

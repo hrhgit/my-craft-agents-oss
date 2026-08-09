@@ -90,7 +90,6 @@ Manage project skills stored under `.mortise/skills/{slug}/SKILL.md`.
 | `--body "..."` | Skill content/instructions (markdown body) |
 | `--icon "<url>"` | Icon URL (auto-downloaded to `icon.*`) |
 | `--globs "*.ts,*.tsx"` | Comma-separated glob patterns for auto-suggestion |
-| `--always-allow "Bash,Write"` | Comma-separated tool names to always allow |
 
 ### Examples
 
@@ -99,7 +98,7 @@ mortise skill list
 mortise skill list --workspace-only
 mortise skill where commit-helper
 mortise skill create --name "Commit Helper" --description "Generate conventional commits" --slug commit-helper
-mortise skill create --name "Code Review" --description "Review PRs" --globs "*.ts,*.tsx" --always-allow "Bash"
+mortise skill create --name "Code Review" --description "Review PRs" --globs "*.ts,*.tsx"
 mortise skill update commit-helper --json '{"body":"Use concise, imperative commit messages."}'
 mortise skill validate commit-helper
 mortise skill validate commit-helper --source global
@@ -150,59 +149,6 @@ mortise-cli --workspace ws-1 automation token path
 - Prompt and outbound webhook actions share the same run ledger and history.
 - External input uses the loopback CloudEvents endpoint. `token path` exposes only the owner-only file path, not the token. The default local producer token accepts sources under `urn:mortise:external:` and event types under `mortise.`.
 <!-- cli:automation:end -->
-
----
-
-<!-- cli:permission:start -->
-## Permission
-
-Manage workspace Explore mode permissions stored in `permissions.json`.
-
-### Commands
-- `mortise permission list`
-- `mortise permission get`
-- `mortise permission set --json '{...}'`
-- `mortise permission add-mcp-pattern "<pattern>" [--comment "..."]`
-- `mortise permission add-bash-pattern "<pattern>" [--comment "..."]`
-- `mortise permission add-write-path "<glob>"`
-- `mortise permission remove <index> --type mcp|api|bash|write-path|blocked`
-- `mortise permission validate`
-- `mortise permission reset`
-
-### Scope
-
-Commands operate on the workspace-level `permissions.json`.
-
-### Examples
-
-```bash
-# Read workspace permissions
-mortise permission list
-# Get workspace permissions
-mortise permission get
-# Add read-only MCP patterns
-mortise permission add-mcp-pattern "list" --comment "List operations"
-mortise permission add-mcp-pattern "get" --comment "Get operations"
-mortise permission add-mcp-pattern "search" --comment "Search operations"
-# Add bash patterns
-mortise permission add-bash-pattern "^ls\\s" --comment "Allow ls"
-# Add write path globs
-mortise permission add-write-path "/tmp/**"
-# Remove a rule by index and type
-mortise permission remove 1 --type mcp
-# Replace entire config
-mortise permission set --json '{"allowedMcpPatterns":[{"pattern":"list","comment":"List ops"}]}'
-# Validate all permissions
-mortise permission validate
-# Delete permissions file (revert to defaults)
-mortise permission reset
-```
-
-### Notes
-- `remove` uses 0-based index within the specified rule type array. Use `get` to see indices.
-- `validate` runs schema and regex validation for workspace permissions.
-- `reset` deletes the permissions file, reverting to defaults.
-<!-- cli:permission:end -->
 
 ---
 

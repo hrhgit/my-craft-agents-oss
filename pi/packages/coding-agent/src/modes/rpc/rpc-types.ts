@@ -45,6 +45,7 @@ export const PI_RPC_COMMANDS = [
 	"query_llm",
 	"get_capabilities",
 	"open_runtime",
+	"prepare_runtime",
 	"close_runtime",
 	"get_runtime_state",
 	"list_runtimes",
@@ -73,7 +74,7 @@ export const PI_RPC_COMMANDS = [
 	"set_session_name",
 	"list_child_sessions",
 	"get_messages",
-	"enable_tool_permissions",
+	"enable_tool_execution_interceptor",
 	"enable_tool_results",
 	"register_tools",
 	"get_commands",
@@ -203,6 +204,7 @@ export type RpcCommand = RpcEnvelope &
 		// State
 		| { id?: string; type: "get_capabilities" }
 		| ({ id?: string; type: "open_runtime" } & RpcRuntimeOpenOptions)
+		| { id?: string; type: "prepare_runtime" }
 		| { id?: string; type: "close_runtime" }
 		| { id?: string; type: "get_runtime_state" }
 		| { id?: string; type: "list_runtimes" }
@@ -248,8 +250,8 @@ export type RpcCommand = RpcEnvelope &
 		// Messages
 		| { id?: string; type: "get_messages" }
 
-		// Tool permissions (host-side gate; see RpcToolPermissionRequest)
-		| { id?: string; type: "enable_tool_permissions"; enabled: boolean }
+		// Neutral host-side tool execution interceptor
+		| { id?: string; type: "enable_tool_execution_interceptor"; enabled: boolean }
 		// Finalized tool results (host-side observer; see RpcToolResultRequest)
 		| { id?: string; type: "enable_tool_results"; enabled: boolean }
 
@@ -434,6 +436,7 @@ export interface RpcExtensionFrontendStateEvent extends RpcEnvelope {
 		scope: "session" | "workspace" | "global";
 		revision: number;
 		state: unknown;
+		sessionBootstrap?: boolean;
 	};
 }
 
@@ -602,8 +605,8 @@ export type RpcResponse = RpcEnvelope &
 		// Messages
 		| { id?: string; type: "response"; command: "get_messages"; success: true; data: { messages: AgentMessage[] } }
 
-		// Tool permissions
-		| { id?: string; type: "response"; command: "enable_tool_permissions"; success: true }
+		// Neutral tool execution interceptor
+		| { id?: string; type: "response"; command: "enable_tool_execution_interceptor"; success: true }
 		// Finalized tool results
 		| { id?: string; type: "response"; command: "enable_tool_results"; success: true }
 
@@ -819,16 +822,16 @@ export type RpcExtensionHostCapabilityResponse = RpcEnvelope &
 	));
 
 // ============================================================================
-// Tool Permission Events (stdout) / Responses (stdin)
+// Tool Execution Interceptor Events (stdout) / Responses (stdin)
 // ============================================================================
 
 /**
- * Emitted before a tool executes when the host has enabled the permission
- * gate (`enable_tool_permissions`). The host must reply with a
- * `tool_permission_response` carrying the same `id`.
+ * Emitted after Extension tool_call handlers and before execution when the
+ * host has enabled its neutral execution interceptor. The host must reply with
+ * a `tool_execution_response` carrying the same `id`.
  */
-export interface RpcToolPermissionRequest {
-	type: "tool_permission_request";
+export interface RpcToolExecutionRequest {
+	type: "tool_execution_request";
 	id: string;
 	clientId?: string;
 	runtimeId?: string;
@@ -840,12 +843,12 @@ export interface RpcToolPermissionRequest {
 	assistantTimestamp: number;
 }
 
-/** Host reply to a `tool_permission_request`. */
-export type RpcToolPermissionResponse = RpcEnvelope &
+/** Host reply to a `tool_execution_request`. */
+export type RpcToolExecutionResponse = RpcEnvelope &
 	(
-		| { type: "tool_permission_response"; id: string; action: "allow" }
-		| { type: "tool_permission_response"; id: string; action: "block"; reason?: string }
-		| { type: "tool_permission_response"; id: string; action: "modify"; input: Record<string, unknown> }
+		| { type: "tool_execution_response"; id: string; action: "allow" }
+		| { type: "tool_execution_response"; id: string; action: "block"; reason?: string }
+		| { type: "tool_execution_response"; id: string; action: "modify"; input: Record<string, unknown> }
 	);
 
 // ============================================================================

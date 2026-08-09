@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 import type { PiProjectionEntityV1 } from '@mortise/shared/protocol'
-import { buildPiTimelineItems, findPiTimelineMatches, getPiTimelinePageStart, selectPendingPiPermission, selectPiProcessingStatusMessage, selectPiRuntimeState } from '../pi-timeline-model'
+import { buildPiTimelineItems, findPiTimelineMatches, getPiTimelinePageStart, selectPiProcessingStatusMessage, selectPiRuntimeState } from '../pi-timeline-model'
 
 function entity(overrides: Partial<PiProjectionEntityV1>): PiProjectionEntityV1 {
   return {
@@ -81,17 +81,6 @@ describe('buildPiTimelineItems', () => {
       entity({ entityType: 'conversation', payload: { usage: {} } }),
       entity({ entityId: 'empty', payload: { text: '' } }),
     ])).toEqual([])
-  })
-
-  it('selects only pending Host permission prompt entities', () => {
-    const pending = entity({
-      entityId: 'prompt:one', entityType: 'prompt_request', kind: 'permission_request',
-      payload: { requestId: 'one', toolName: 'bash', description: 'Run tests', command: 'bun test', permissionType: 'bash', status: 'pending' },
-    })
-    expect(selectPendingPiPermission([pending], 'session-1')).toMatchObject({
-      sessionId: 'session-1', requestId: 'one', command: 'bun test', type: 'bash',
-    })
-    expect(selectPendingPiPermission([{ ...pending, kind: 'prompt_resolved', payload: { requestId: 'one', status: 'resolved' } }], 'session-1')).toBeUndefined()
   })
 
   it('derives processing from the latest Pi lifecycle event and preserves errors', () => {

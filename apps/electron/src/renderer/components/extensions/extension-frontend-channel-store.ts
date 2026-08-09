@@ -2,19 +2,19 @@ import type { ExtensionBridgeEvent } from '@mortise/shared/agent/backend/types'
 import type {
   ExtensionFrontendChannelScope,
   ExtensionFrontendMessageV2,
-  ExtensionFrontendStateV2,
 } from '@mortise/shared/protocol'
 import type { ExtensionUIBackend, ExtensionUIChannel, ExtensionUIChannelSnapshot } from '@mortise/extension-ui'
 
 type ChannelKey = string
 type Listener = (snapshot: ExtensionUIChannelSnapshot<unknown>) => void
+type StoredSnapshot = ExtensionUIChannelSnapshot<unknown> & { sessionBootstrap?: boolean }
 
 function keyOf(extensionId: string, channelId: string, scope: ExtensionFrontendChannelScope, runtimeId?: string, sessionId?: string, workspaceId?: string): ChannelKey {
   return [extensionId, channelId, scope, runtimeId ?? '', sessionId ?? '', workspaceId ?? ''].join('\0')
 }
 
 export class FrontendChannelStore {
-  private readonly snapshots = new Map<ChannelKey, ExtensionUIChannelSnapshot<unknown>>()
+  private readonly snapshots = new Map<ChannelKey, StoredSnapshot>()
   private readonly listeners = new Map<ChannelKey, Set<Listener>>()
   private readonly subscriptions = new Set<() => void>()
 
@@ -29,7 +29,7 @@ export class FrontendChannelStore {
         // runtime keys remain authoritative once supplied by the host.
         keyOf(event.extensionId, state.channelId, state.scope, undefined, event.sessionId, event.workspaceId),
       ]
-      if (state.scope !== 'session') {
+      if (state.scope !== 'session' || state.sessionBootstrap) {
         // Workspace/global frontends (notably settings pages) can mount
         // without a session route. Mirror the latest runtime snapshot into a
         // route-independent key while keeping session keys authoritative.
@@ -39,7 +39,7 @@ export class FrontendChannelStore {
       for (const key of keys) {
         const current = this.snapshots.get(key)
         if (current && state.revision <= current.revision) continue
-        const snapshot = { revision: state.revision, state: state.state }
+        const snapshot = { revision: state.revision, state: state.state, sessionBootstrap: state.sessionBootstrap }
         this.snapshots.set(key, snapshot)
         for (const listener of this.listeners.get(key) ?? []) listener(snapshot)
       }
@@ -67,6 +67,18 @@ export class FrontendChannelStore {
     return this.snapshots.get(key)
   }
 
+  getSessionBootstrap(workspaceId?: string): import('@mortise/shared/protocol').ExtensionSessionBootstrapV1 | undefined {
+    if (!workspaceId) return undefined
+    const bootstrap: import('@mortise/shared/protocol').ExtensionSessionBootstrapV1 = {}
+    for (const [key, snapshot] of this.snapshots) {
+      if (!snapshot.sessionBootstrap) continue
+      const [extensionId, channelId, , runtimeId, sessionId, routedWorkspaceId] = key.split('\0')
+      if (runtimeId || sessionId || routedWorkspaceId !== workspaceId) continue
+      ;(bootstrap[extensionId] ??= {})[channelId] = snapshot.state
+    }
+    return Object.keys(bootstrap).length > 0 ? bootstrap : undefined
+  }
+
   clear(): void {
     this.snapshots.clear()
   }
@@ -74,10 +86,37 @@ export class FrontendChannelStore {
 
 export const extensionFrontendChannelStore = new FrontendChannelStore()
 let hostSubscription: (() => void) | undefined
+const restoreInFlight = new Map<string, Promise<void>>()
 
 function ensureSubscription(): void {
   if (hostSubscription || typeof window === 'undefined') return
   hostSubscription = window.electronAPI?.onExtensionEvent?.((event) => extensionFrontendChannelStore.apply(event))
+}
+
+export async function restoreExtensionFrontendStates(
+  store: FrontendChannelStore,
+  load: () => Promise<Array<Extract<ExtensionBridgeEvent, { type: 'extension_frontend_state' }>>>,
+): Promise<void> {
+  for (const event of await load()) store.apply(event)
+}
+
+function ensureStateRestore(sessionId?: string, workspaceId?: string): void {
+  if ((!sessionId && !workspaceId) || typeof window === 'undefined' || typeof window.electronAPI?.getExtensionFrontendStates !== 'function') return
+  const routeKey = sessionId || `workspace:${workspaceId}`
+  if (restoreInFlight.has(routeKey)) return
+  const restore = restoreExtensionFrontendStates(
+    extensionFrontendChannelStore,
+    () => window.electronAPI.getExtensionFrontendStates(sessionId ?? ''),
+  ).catch((error) => {
+    console.warn(`Failed to restore extension frontend states for ${routeKey}:`, error)
+  }).finally(() => {
+    if (restoreInFlight.get(routeKey) === restore) restoreInFlight.delete(routeKey)
+  })
+  restoreInFlight.set(routeKey, restore)
+}
+
+export function getExtensionSessionBootstrap(workspaceId?: string): import('@mortise/shared/protocol').ExtensionSessionBootstrapV1 | undefined {
+  return extensionFrontendChannelStore.getSessionBootstrap(workspaceId)
 }
 
 export function createExtensionUIBackend(options: {
@@ -88,6 +127,7 @@ export function createExtensionUIBackend(options: {
   sessionId?: string
 }): ExtensionUIBackend {
   ensureSubscription()
+  ensureStateRestore(options.sessionId, options.workspaceId)
   return {
     channel<TState = unknown, TMessage = unknown>(channelId: string, channelOptions?: { scope?: ExtensionFrontendChannelScope }): ExtensionUIChannel<TState, TMessage> {
       const scope = channelOptions?.scope ?? options.scope

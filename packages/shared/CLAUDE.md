@@ -4,10 +4,10 @@
 Core business logic package for Mortise Agent:
 - Agent backends and session-scoped tools
 - Credentials, sessions, and config
-- Permission modes and validation
+- Generic Extension bridges and tool execution coordination
 
 ## Key folders
-- `src/agent/` — `pi-agent.ts`, `base-agent.ts`, tools, permissions
+- `src/agent/` — `pi-agent.ts`, `base-agent.ts`, tools, Extension bridges
 - `src/sessions/` — session persistence/index
 - `src/config/` — config/preferences/theme/watcher
 - `src/credentials/` — pi auth.json thin wrapper
@@ -19,7 +19,7 @@ cd packages/shared && bun run tsc --noEmit
 ```
 
 ## Hard rules
-- Permission modes are fixed: `safe`, `ask`, `allow-all`.
+- Tool approval policy belongs to `mortise-permissions`; shared code stays policy-neutral.
 - Keep credential handling in `src/credentials/` pathways (no ad-hoc secret storage).
 - Keep user-facing tool contracts backward-compatible where possible.
 
@@ -35,7 +35,7 @@ cd packages/shared && bun run tsc --noEmit
 - The OpenAI Chat Completions strip stream (`unified-network-interceptor.ts:createOpenAiSseStrippingStream`) emits **one consolidated SSE event per logical tool call** with `id + name + cleanArgs` together — never split across init + args-only deltas. Some downstream SDKs (Pi SDK) treat args-only deltas as new tool_calls instead of merging by index, which produces duplicate empty-id entries on parallel-tool turns from DeepSeek and other relays. `sanitizeOpenAiHistoryInPlace` recovers sessions whose history was persisted by the pre-fix split-emit version.
 - Mortise's global `midStreamBehavior` controls the plain Enter action during an in-flight turn; Ctrl/Cmd+Enter uses the opposite action. It is independent of provider selection and is read via `getMidStreamBehavior()` in `SessionManager.sendMessage`.
 - Mortise no longer injects the network interceptor into Pi subprocesses. Pi owns provider/model HTTP transport; Mortise should consume Pi's public RPC events and only keep host-side UI/session adapters here. Keep `unified-network-interceptor.ts` as an opt-in helper with direct tests, not as part of Pi runtime resolution.
-- Per-message context is split into **volatile** vs **stable** blocks (`PromptBuilder.buildVolatileContextParts()` / `buildStableContextParts()`, composed by `buildContextParts()`). Volatile blocks include date/time and `session_state`; working-directory context is stable. **Pi** folds only stable blocks into the system prefix and routes volatile blocks to the user tail. `buildVolatileContextParts` consumes the one-shot mode-change signal (`consumeModeChangeUserSignal`), so call it exactly once per turn.
+- Per-message context is split into **volatile** vs **stable** blocks (`PromptBuilder.buildVolatileContextParts()` / `buildStableContextParts()`, composed by `buildContextParts()`). Working-directory context is stable; Pi folds only stable blocks into the system prefix and routes volatile blocks to the user tail.
 - Provider credentials and OAuth identities are owned by Pi `auth.json`; Mortise must not add a parallel provider credential record.
 - **Mythos-class thinking (Claude Fable 5 / Mythos 5).** These models have adaptive thinking **always on** and the Messages API **rejects `thinking: { type: 'disabled' }`** (unlike Opus/Sonnet/Haiku, whose API is unchanged). `resolveClaudeThinkingOptions` therefore detects them via `isAdaptiveThinkingAlwaysOnModel()` (`config/models.ts`) and maps the "off"/`minimizeThinking` case to `{ thinking: { type: 'adaptive' }, effort: 'low' }` instead of `disabled` — there is no way to turn thinking off on these models. `runMiniCompletion` is unaffected (it runs on the resolved mini model, which is always Haiku). Model id is the dateless pinned snapshot `claude-fable-5` (1M context, 128k max output); registered in `MODEL_REGISTRY`.
 
@@ -77,7 +77,6 @@ Keys use **flat dot-notation** with a category prefix:
 | `skillsList.*` | Skills list panel | `skillsList.addSkill` |
 | `editPopover.*` | EditPopover labels/placeholders | `editPopover.label.addSkill` |
 | `status.*` | Session status names (by status ID) | `status.needs-review` |
-| `mode.*` | Permission mode names (by mode ID) | `mode.safe` |
 | `hints.*` | Empty state workflow suggestions | `hints.summarizeGmail` |
 | `table.*` | Data table column headers | `table.access` |
 | `time.*` | Relative time strings | `time.minutesAgo_other` |
@@ -97,7 +96,6 @@ Keys use **flat dot-notation** with a category prefix:
 6. **Use `i18n.resolvedLanguage`** (not `i18n.language`) when comparing against supported language codes.
 7. **Keys must exist in all locale files** (`en.json`, `es.json`, `zh-Hans.json`, and any future locales). Keep alphabetically sorted.
 8. **Watch translation length for constrained UI elements.** Translations can be 20-100%+ longer than English. For buttons, badges, tab labels, and dropdown items, keep translations concise — use shorter synonyms if needed. High-risk areas:
-   - Permission mode badges (3-5 characters max)
    - Settings tab labels (≤10 characters ideal)
    - Button labels (avoid exceeding 2x the English length)
    - Menu items (flexible, but avoid 3x+ growth)

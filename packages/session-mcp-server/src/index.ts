@@ -35,9 +35,7 @@ import { isDeveloperFeedbackEnabled } from '@mortise/shared/feature-flags';
 import {
   CONFIG_DIR,
   MORTISE_PROJECT_SKILLS_DIR,
-  MORTISE_SESSIONS_DIR,
   MORTISE_SKILLS_DIR,
-  encodePiSessionCwd,
 } from '@mortise/shared/config/paths';
 import { validateSessionId } from '@mortise/shared/sessions/validation';
 // Import from session-tools-core
@@ -124,7 +122,9 @@ function createCodexContext(config: McpServerConfig): SessionToolContext {
   // resolve the sidecar next to Pi's workspace-scoped session projection without
   // scanning the global Pi session root from this subprocess.
   validateSessionId(sessionId);
-  const sessionsDir = join(MORTISE_SESSIONS_DIR, encodePiSessionCwd(workspaceRootPath), '.mortise', sessionId);
+  // The host already resolved this session's stable sidecar path. Derive it
+  // from the plans folder so this subprocess never re-encodes a cwd.
+  const sessionsDir = dirname(plansFolderPath);
   const sessionDataDir = join(sessionsDir, 'data');
   // Build context
   return {

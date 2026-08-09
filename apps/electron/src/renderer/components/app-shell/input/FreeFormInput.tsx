@@ -18,22 +18,11 @@ import { Spinner } from '@mortise/ui'
 
 import * as storage from '@/lib/local-storage'
 import { Button } from '@/components/ui/button'
-import {
-  InlineSlashCommand,
-  useInlineSlashCommand,
-  type SlashCommandId,
-  type SlashCommand,
-  type SlashSection,
-} from '@/components/ui/slash-command-menu'
+import type { SlashCommandId, SlashCommand, SlashSection } from '@/components/ui/slash-command-menu'
 import { useExtensionCommands } from '@/hooks/useExtensionCommands'
-import {
-  InlineMentionMenu,
-  useInlineMention,
-  type MentionItem,
-  type MentionItemType,
-} from '@/components/ui/mention-menu'
+import type { MentionItemType } from '@/components/ui/mention-menu'
 import { parseMentions } from '@/lib/mentions'
-import { RichTextInput, type RichTextInputHandle } from '@/components/ui/rich-text-input'
+import type { RichTextInputHandle } from '@/components/ui/rich-text-input'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@mortise/ui'
 import {
   DropdownMenu,
@@ -50,8 +39,8 @@ import {
 } from '@/components/ui/styled-dropdown'
 import { cn } from '@/lib/utils'
 import { coerceInputText } from '@/lib/input-text'
+import { measureComposerPerformance } from '@/lib/composer-performance'
 import { isMac } from '@/lib/platform'
-import { applySmartTypography } from '@/lib/smart-typography'
 import { AttachmentPreview } from '../AttachmentPreview'
 import { ImageSupportWarningBanner } from './ImageSupportWarningBanner'
 import { ANTHROPIC_MODELS, getModelShortName, getModelDisplayName, type ModelDefinition } from '@config/models'
@@ -93,9 +82,22 @@ import {
 import {
   getConnectionModelContextWindow,
   getContextUsagePercent,
+  isContextWarning,
 } from './context-usage'
 import { useModelVisionToggle } from './useModelVisionToggle'
 import { resolveMidStreamSendIntent } from './midstream-shortcuts'
+import {
+  ComposerSuggestionMenus,
+  type ComposerSuggestionMenusHandle,
+} from './ComposerSuggestionMenus'
+
+// The ProseMirror runtime is intentionally kept out of the renderer's static
+// entry graph. The composer already has a local basic-text fallback, so the
+// editor can be fetched while the input shell remains responsive.
+const RichTextInput = React.lazy(async () => {
+  const module = await import('./ComposerEditor')
+  return { default: module.ComposerEditor }
+})
 
 function formatFollowUpChipText(text: string, fallback: string, maxLength = 50): string {
   const normalized = text.replace(/\s+/g, ' ').trim()
@@ -109,10 +111,14 @@ function ContextUsageRing({
   contextStatus,
   currentModel,
   configuredContextWindow,
+  isProcessing = false,
+  onRequestCompact,
 }: {
   contextStatus?: FreeFormInputProps['contextStatus']
   currentModel: string
   configuredContextWindow?: number
+  isProcessing?: boolean
+  onRequestCompact?: () => void
 }) {
   const { t } = useTranslation()
   const usage = getContextUsagePercent(contextStatus, currentModel, configuredContextWindow)
@@ -120,34 +126,75 @@ function ContextUsageRing({
   const radius = 5
   const circumference = 2 * Math.PI * radius
   const dashOffset = circumference * (1 - percent / 100)
+  // Approaching auto-compaction is signaled by color (red ring) rather than a
+  // number badge; the warning ring doubles as the click-to-compact affordance.
+  const isWarning = isContextWarning(usage, contextStatus?.isCompacting)
+
+  const ring = (
+    <svg width="16" height="16" viewBox="0 0 16 16" className="-rotate-90">
+      <circle
+        cx="8"
+        cy="8"
+        r={radius}
+        fill="none"
+        stroke="currentColor"
+        strokeOpacity={isWarning ? 0.45 : 0.22}
+        strokeWidth="2"
+      />
+      <circle
+        cx="8"
+        cy="8"
+        r={radius}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={isWarning ? 2.5 : 2}
+        strokeLinecap="round"
+        strokeDasharray={circumference}
+        strokeDashoffset={dashOffset}
+      />
+    </svg>
+  )
+
+  const tooltip = isWarning
+    ? isProcessing
+      ? `${percent}% context used — wait for current operation`
+      : `${percent}% context used — click to compact`
+    : usage.inputTokens && usage.contextWindow
+      ? `${formatTokenCount(usage.inputTokens)} / ${formatTokenCount(usage.contextWindow)} tokens (${usage.percent}%)`
+      : 'Context usage unavailable'
+
+  const baseClassName =
+    "h-8 w-8 shrink-0 inline-flex items-center justify-center rounded-full transition-colors"
 
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <div
-          className="h-8 w-8 shrink-0 inline-flex items-center justify-center rounded-full text-foreground/65"
-          aria-label={usage.percent === null ? t('chat.context') : `${usage.percent}% ${t('chat.context')}`}
-        >
-          <svg width="16" height="16" viewBox="0 0 16 16" className="-rotate-90">
-            <circle cx="8" cy="8" r={radius} fill="none" stroke="currentColor" strokeOpacity="0.22" strokeWidth="2" />
-            <circle
-              cx="8"
-              cy="8"
-              r={radius}
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeDasharray={circumference}
-              strokeDashoffset={dashOffset}
-            />
-          </svg>
-        </div>
+        {isWarning ? (
+          <button
+            type="button"
+            disabled={isProcessing}
+            onClick={() => { if (!isProcessing) onRequestCompact?.() }}
+            aria-label={`${percent}% ${t('chat.context')}`}
+            className={cn(
+              baseClassName,
+              "text-destructive shadow-tinted cursor-pointer select-none hover:bg-destructive/10",
+              isProcessing && "opacity-60 cursor-not-allowed",
+            )}
+            style={{ '--shadow-color': 'var(--destructive-rgb)' } as React.CSSProperties}
+          >
+            {ring}
+          </button>
+        ) : (
+          <div
+            aria-label={usage.percent === null ? t('chat.context') : `${usage.percent}% ${t('chat.context')}`}
+            className={cn(baseClassName, "text-foreground/65")}
+          >
+            {ring}
+          </div>
+        )}
       </TooltipTrigger>
       <TooltipContent side="top" className="text-xs">
-        {usage.inputTokens && usage.contextWindow
-          ? `${formatTokenCount(usage.inputTokens)} / ${formatTokenCount(usage.contextWindow)} tokens (${usage.percent}%)`
-          : 'Context usage unavailable'}
+        {tooltip}
       </TooltipContent>
     </Tooltip>
   )
@@ -241,7 +288,7 @@ export interface FreeFormInputProps {
   /** Callback when model changes (includes provider key for proper persistence) */
   onModelChange: (model: string, provider?: string) => void
   // Thinking level (session-level setting)
-  /** Current thinking level ('off', 'minimal', 'low', 'medium', 'high', 'xhigh') */
+  /** Current thinking level ('off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max') */
   thinkingLevel?: ThinkingLevel
   /** Callback when thinking level changes */
   onThinkingLevelChange?: (level: ThinkingLevel) => void
@@ -299,7 +346,7 @@ export interface FreeFormInputProps {
   compactMode?: boolean
   /**
    * When `compactMode` is true, render the compact (drawer-based) model
-   * selector next to the permission-mode pill. Defaults to false so that
+   * selector alongside other compact composer controls. Defaults to false so that
    * EditPopover (which has no use for a model picker) keeps its current
    * behavior.
    */
@@ -514,24 +561,38 @@ export function FreeFormInput({
   )
   const effectivePlaceholder = isFocusedPanel ? shuffledPlaceholder : ''
 
-  // Performance optimization: Always use internal state for typing to avoid parent re-renders
-  // Sync FROM parent on mount/change (for restoring drafts)
-  // Sync TO parent on blur/submit (debounced persistence)
+  // Stable editor handle shared by external callers, draft restoration and
+  // suggestion menus. It is intentionally created before the text mutators.
+  const internalInputRef = React.useRef<RichTextInputHandle>(null)
+  const richInputRef = externalInputRef || internalInputRef
+  const suggestionMenusRef = React.useRef<ComposerSuggestionMenusHandle>(null)
+
+  // The editor owns the live body text. React only keeps a seed snapshot for
+  // external draft/session changes and the empty/non-empty boundary used by
+  // the send affordance. Ordinary transactions never update this component.
   const initialInput = coerceInputText(inputValue)
   const initialAttachments = attachmentsValue ?? []
-  const [input, setInputState] = React.useState(initialInput)
+  const [hasTextContent, setHasTextContent] = React.useState(initialInput.trim().length > 0)
   const [attachments, setAttachmentsState] = React.useState<FileAttachment[]>(initialAttachments)
   const composerTextRef = React.useRef(initialInput)
   const attachmentsRef = React.useRef<FileAttachment[]>(initialAttachments)
   const composerRevisionRef = React.useRef(0)
 
+  const readComposerText = React.useCallback(() => {
+    const nextValue = coerceInputText(richInputRef.current?.value ?? composerTextRef.current)
+    composerTextRef.current = nextValue
+    return nextValue
+  }, [richInputRef])
+
   const setInput = React.useCallback((next: React.SetStateAction<string>) => {
-    const value = typeof next === 'function' ? next(composerTextRef.current) : next
+    const currentValue = typeof next === 'function' ? readComposerText() : composerTextRef.current
+    const value = typeof next === 'function' ? next(currentValue) : next
     if (value === composerTextRef.current) return
     composerTextRef.current = value
     composerRevisionRef.current += 1
-    setInputState(value)
-  }, [])
+    setHasTextContent(value.trim().length > 0)
+    richInputRef.current?.setValue(value)
+  }, [readComposerText, richInputRef])
 
   const setAttachments = React.useCallback((next: React.SetStateAction<FileAttachment[]>) => {
     const value = typeof next === 'function' ? next(attachmentsRef.current) : next
@@ -583,35 +644,50 @@ export function FreeFormInput({
       setInput(nextInputValue)
       prevInputValueRef.current = nextInputValue
     }
-  }, [inputValue])
+  }, [inputValue, setInput])
 
   // Debounced sync to parent (saves draft without blocking typing)
-  const syncTimeoutRef = React.useRef<NodeJS.Timeout | null>(null)
-  const syncToParent = React.useCallback((value: string) => {
+  const syncTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
+  const syncToParent = React.useCallback((knownValue?: string) => {
     if (!onInputChange) return
     if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current)
     syncTimeoutRef.current = setTimeout(() => {
-      onInputChange(value)
+      const value = measureComposerPerformance('draft-snapshot', () => {
+        const snapshot = knownValue ?? readComposerText()
+        onInputChange(snapshot)
+        return snapshot
+      })
       prevInputValueRef.current = value
     }, 300) // Debounce 300ms
-  }, [onInputChange])
+  }, [onInputChange, readComposerText])
+
+  const flushToParent = React.useCallback(() => {
+    if (syncTimeoutRef.current) {
+      clearTimeout(syncTimeoutRef.current)
+      syncTimeoutRef.current = null
+    }
+    if (!onInputChange) return
+    const value = measureComposerPerformance('draft-snapshot', () => readComposerText())
+    if (value === prevInputValueRef.current) return
+    onInputChange(value)
+    prevInputValueRef.current = value
+  }, [onInputChange, readComposerText])
+
+  const handleEditorTransaction = React.useCallback(({ isEmpty }: { isEmpty: boolean }) => {
+    composerRevisionRef.current += 1
+    const hasText = !isEmpty
+    setHasTextContent(previous => previous === hasText ? previous : hasText)
+    syncToParent()
+  }, [syncToParent])
 
   // Sync immediately on unmount to preserve input across mode switches
   // Also cleanup any pending debounced sync
-  const inputRef = React.useRef(input)
-  inputRef.current = input // Keep ref in sync with state
-
   React.useEffect(() => {
     return () => {
       // Cancel pending debounced sync
-      if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current)
-      // Immediately sync current value to parent on unmount
-      // This preserves input when switching to structured input (e.g., permission request)
-      if (onInputChange && inputRef.current !== prevInputValueRef.current) {
-        onInputChange(inputRef.current)
-      }
+      flushToParent()
     }
-  }, [onInputChange])
+  }, [flushToParent])
 
   const [isDraggingOver, setIsDraggingOver] = React.useState(false)
   const [loadingCount, setLoadingCount] = React.useState(0)
@@ -662,11 +738,7 @@ export function FreeFormInput({
   const containerRef = React.useRef<HTMLDivElement>(null)
   const fileInputRef = React.useRef<HTMLInputElement>(null)
 
-  // Merge refs for RichTextInput
-  const internalInputRef = React.useRef<RichTextInputHandle>(null)
-  const richInputRef = externalInputRef || internalInputRef
-
-  // Track last caret position for focus restoration (e.g., after permission mode popover closes)
+  // Track last caret position for focus restoration after composer popovers close.
   const lastCaretPositionRef = React.useRef<number | null>(null)
 
   // Listen for mortise:insert-text events (generic mechanism for inserting text into input)
@@ -689,7 +761,7 @@ export function FreeFormInput({
 
     window.addEventListener('mortise:insert-text', handleInsertText as EventListener)
     return () => window.removeEventListener('mortise:insert-text', handleInsertText as EventListener)
-  }, [sessionId, isFocusedPanel, syncToParent, richInputRef])
+  }, [sessionId, isFocusedPanel, setInput, syncToParent, richInputRef])
 
   const handleToggleModelVision = useModelVisionToggle()
 
@@ -787,7 +859,7 @@ export function FreeFormInput({
     return () => window.removeEventListener('mortise:paste-files', handlePasteFiles as unknown as EventListener)
   }, [disabled, sessionId, isFocusedPanel, richInputRef])
 
-  // Permission selection remains in the composer footer; slash commands only
+  // Extension controls remain in the composer footer; slash commands only
   // expose command-like actions that do not already have a dedicated control.
   const activeCommands = React.useMemo<SlashCommandId[]>(() => [], [])
 
@@ -835,27 +907,14 @@ export function FreeFormInput({
     }
   }, [isProcessing, onSubmit, triggerExtensionCommand])
 
-  // Inline slash command hook (modes and extension features)
-  const inlineSlash = useInlineSlashCommand({
-    inputRef: richInputRef,
-    onSelectCommand: handleSlashCommand,
-    onSelectFolder: () => undefined,
-    activeCommands,
-    extraSections: extensionSections,
-  })
-
-  // Files and skills need no special handling beyond text insertion.
-  const handleMentionSelect = React.useCallback((_item: MentionItem) => {}, [])
-
-  // Inline mention hook (for skills and files)
-  const inlineMention = useInlineMention({
-    inputRef: richInputRef,
-    skills,
-    basePath: workspaceRoot,
-    onSelect: handleMentionSelect,
-    // Use workspace slug (not UUID) for SDK skill qualification
-    workspaceId: workspaceSlug,
-  })
+  // Compact request from the context usage ring warning state (red ring).
+  const handleRequestCompact = React.useCallback(() => {
+    if (isProcessing) return
+    void onSubmit(snapshotComposerSubmission({
+      composerText: '/compact',
+      message: '/compact',
+    }))
+  }, [isProcessing, onSubmit])
 
   // Report height changes to parent (for external animation sync)
   React.useLayoutEffect(() => {
@@ -1072,7 +1131,7 @@ export function FreeFormInput({
     setAttachments(prev => [...prev, attachment])
     // Focus input after adding attachment
     richInputRef.current?.focus()
-  }, []) // No deps needed - uses ref
+  }, [richInputRef, setAttachments])
 
   const handleDrop = async (e: React.DragEvent) => {
     e.preventDefault()
@@ -1091,14 +1150,15 @@ export function FreeFormInput({
 
   // Submit message - backend handles queueing and interruption
   const submitMessage = React.useCallback((midStreamSendIntent: MidStreamSendIntent = 'default') => {
-    const hasContent = input.trim() || attachments.length > 0 || followUpItems.length > 0
+    const currentInput = readComposerText()
+    const hasContent = currentInput.trim() || attachments.length > 0 || followUpItems.length > 0
     if (!hasContent || disabled) return false
 
     // Tutorial may disable sending to guide user through specific steps
     if (disableSend) return false
 
     const exactExtensionCommand = attachments.length === 0 && followUpItems.length === 0
-      ? matchExactExtensionCommand(input, extensionCommands)
+      ? matchExactExtensionCommand(currentInput, extensionCommands)
       : undefined
     if (exactExtensionCommand) {
       void triggerExtensionCommand(exactExtensionCommand.name).then(result => {
@@ -1114,13 +1174,13 @@ export function FreeFormInput({
 
     // Parse all @mentions (skills and folders)
     const skillSlugs = skills.map(s => s.slug)
-    const mentions = parseMentions(input, skillSlugs)
+    const mentions = parseMentions(currentInput, skillSlugs)
 
     const attachmentSnapshot = attachments
 
     const attempt = snapshotComposerSubmission({
-      composerText: input,
-      message: input.trim(),
+      composerText: currentInput,
+      message: currentInput.trim(),
       attachments: attachmentSnapshot,
       skillSlugs: mentions.skills,
       midStreamSendIntent,
@@ -1170,7 +1230,7 @@ export function FreeFormInput({
     })
 
     return true
-  }, [input, attachments, followUpItems, disabled, disableSend, extensionCommands, triggerExtensionCommand, onInputChange, onAttachmentsChange, onSubmit, setAttachments, setInput, skills])
+  }, [attachments, followUpItems, disabled, disableSend, extensionCommands, triggerExtensionCommand, onInputChange, onAttachmentsChange, onSubmit, readComposerText, richInputRef, setAttachments, setInput, skills])
 
   // Listen for mortise:submit-input events (simulate pressing the Send button)
   React.useEffect(() => {
@@ -1199,33 +1259,7 @@ export function FreeFormInput({
       return
     }
 
-    // Don't submit when mention menu is open AND has visible content
-    if (inlineMention.isOpen) {
-      // Only intercept navigation/selection keys if menu actually shows items or is loading
-      const hasVisibleContent = inlineMention.sections.some(s => s.items.length > 0) || inlineMention.isSearching
-      if (hasVisibleContent && (e.key === 'Enter' || e.key === 'Tab' || e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
-        // These keys are handled by the InlineMentionMenu component
-        return
-      }
-      if (e.key === 'Escape') {
-        e.preventDefault()
-        inlineMention.close()
-        return
-      }
-    }
-
-    // Don't submit when slash command menu is open - let it handle the Enter key
-    if (inlineSlash.isOpen) {
-      if (e.key === 'Enter' || e.key === 'Tab' || e.key === 'ArrowUp' || e.key === 'ArrowDown') {
-        // These keys are handled by the InlineSlashCommand component
-        return
-      }
-      if (e.key === 'Escape') {
-        e.preventDefault()
-        inlineSlash.close()
-        return
-      }
-    }
+    if (suggestionMenusRef.current?.handleKeyDown(e)) return
 
     const midStreamSendIntent = resolveMidStreamSendIntent(sendMessageKey, {
       key: e.key,
@@ -1252,78 +1286,61 @@ export function FreeFormInput({
   // Handle input changes from RichTextInput
   const handleInputChange = React.useCallback((value: string) => {
     const nextValue = coerceInputText(value)
-    setInput(nextValue)
-    syncToParent(nextValue) // Debounced sync to parent for draft persistence
+    if (nextValue === composerTextRef.current) return
+    composerTextRef.current = nextValue
+    composerRevisionRef.current += 1
+    const nextHasText = nextValue.trim().length > 0
+    setHasTextContent(previous => previous === nextHasText ? previous : nextHasText)
+    syncToParent(nextValue)
   }, [syncToParent])
 
-  // Handle input with cursor position (for menu detection)
-  const handleRichInput = React.useCallback((value: string, cursorPosition: number) => {
-    const nextValue = coerceInputText(value)
-    const textBeforeCursor = nextValue.slice(0, cursorPosition)
+  const applyEditorValue = React.useCallback((nextValue: string, cursorPosition?: number) => {
+    const currentValue = readComposerText()
+    if (nextValue === currentValue) return
 
-    if (/(?:^|\s)\/[\w:-]*$/.test(textBeforeCursor)) {
-      refreshExtensionCommands()
+    let start = 0
+    while (start < currentValue.length && start < nextValue.length && currentValue[start] === nextValue[start]) start += 1
+
+    let currentEnd = currentValue.length
+    let nextEnd = nextValue.length
+    while (currentEnd > start && nextEnd > start && currentValue[currentEnd - 1] === nextValue[nextEnd - 1]) {
+      currentEnd -= 1
+      nextEnd -= 1
     }
 
-    // Update inline slash command state
-    inlineSlash.handleInputChange(nextValue, cursorPosition)
-
-    // Update inline mention state (for @mentions - skills, files, folders)
-    inlineMention.handleInputChange(nextValue, cursorPosition)
-
-    // Auto-capitalize first letter (but not for slash commands or @mentions)
-    // Only if autoCapitalisation setting is enabled
-    let newValue = nextValue
-    if (autoCapitalisation && nextValue.length > 0 && nextValue.charAt(0) !== '/' && nextValue.charAt(0) !== '@' && nextValue.charAt(0) !== '#') {
-      const capitalizedFirst = nextValue.charAt(0).toUpperCase()
-      if (capitalizedFirst !== nextValue.charAt(0)) {
-        newValue = capitalizedFirst + nextValue.slice(1)
-        // Set cursor position BEFORE state update so it's used when useEffect syncs the value
-        richInputRef.current?.setSelectionRange(cursorPosition, cursorPosition)
-        setInput(newValue)
-        syncToParent(newValue)
-        return
-      }
+    const editorHandle = richInputRef.current
+    if (editorHandle?.replaceTextRange) {
+      editorHandle.replaceTextRange(start, currentEnd, nextValue.slice(start, nextEnd))
+    } else {
+      handleInputChange(nextValue)
+      editorHandle?.setValue(nextValue)
     }
+    if (cursorPosition !== undefined) richInputRef.current?.setSelectionRange(cursorPosition, cursorPosition)
+  }, [handleInputChange, readComposerText, richInputRef])
 
-    // Apply smart typography (-> to →, etc.)
-    const typography = applySmartTypography(nextValue, cursorPosition)
-    if (typography.replaced) {
-      newValue = typography.text
-      // Set cursor position BEFORE state update so it's used when useEffect syncs the value
-      richInputRef.current?.setSelectionRange(typography.cursor, typography.cursor)
-      setInput(newValue)
-      syncToParent(newValue)
-    }
-  }, [inlineSlash, inlineMention, syncToParent, autoCapitalisation, refreshExtensionCommands])
+  const handleComposerFocus = React.useCallback(() => {
+    setIsFocused(true)
+    onFocusChange?.(true)
+  }, [onFocusChange])
 
-  // Handle inline slash command selection (removes the /command text)
-  const handleInlineSlashCommandSelect = React.useCallback((commandId: SlashCommandId) => {
-    const newValue = inlineSlash.handleSelectCommand(commandId)
-    setInput(newValue)
-    syncToParent(newValue)
-    richInputRef.current?.focus()
-  }, [inlineSlash, syncToParent])
+  const handleComposerBlur = React.useCallback(() => {
+    lastCaretPositionRef.current = richInputRef.current?.selectionStart ?? null
+    flushToParent()
+    setIsFocused(false)
+    onFocusChange?.(false)
+  }, [flushToParent, onFocusChange, richInputRef])
 
-  // Handle inline slash folder selection (inserts a directory badge)
-  const handleInlineSlashFolderSelect = React.useCallback((path: string) => {
-    const newValue = inlineSlash.handleSelectFolder(path)
-    setInput(newValue)
-    syncToParent(newValue)
-    richInputRef.current?.focus()
-  }, [inlineSlash, syncToParent])
+  const handleSuggestionChange = React.useCallback((
+    kind: 'slash' | 'mention',
+    value: string,
+    cursorPosition: number,
+  ) => {
+    suggestionMenusRef.current?.update(kind, value, cursorPosition)
+  }, [])
 
-  // Handle inline mention selection (inserts appropriate mention text)
-  const handleInlineMentionSelect = React.useCallback((item: MentionItem) => {
-    const { value: newValue, cursorPosition } = inlineMention.handleSelect(item)
-    setInput(newValue)
-    syncToParent(newValue)
-    // Focus input and restore cursor position after badge renders
-    setTimeout(() => {
-      richInputRef.current?.focus()
-      richInputRef.current?.setSelectionRange(cursorPosition, cursorPosition)
-    }, 0)
-  }, [inlineMention, syncToParent])
+  const handleSuggestionExit = React.useCallback((kind: 'slash' | 'mention') => {
+    suggestionMenusRef.current?.exit(kind)
+  }, [])
 
   const followUpLayoutKey = React.useMemo(
     () => followUpItems.map(item => [
@@ -1352,20 +1369,20 @@ export function FreeFormInput({
     return () => window.clearTimeout(timer)
   }, [followUpLayoutKey])
 
-  const hasContent = input.trim() || attachments.length > 0 || followUpItems.length > 0
+  const hasContent = hasTextContent || attachments.length > 0 || followUpItems.length > 0
   const semanticComposerScopeId = (sessionId ?? semanticScopeId)?.replace(/[^A-Za-z0-9._:-]/g, '_')
   const inputSemanticProps = useUiSemanticNode(semanticComposerScopeId ? {
     id: `composer.${semanticComposerScopeId}.input`,
     role: 'textbox',
     name: t('chatInput.placeholder.typeMessage'),
-    value: input,
+    value: composerTextRef.current,
     sensitive: true,
     state: { disabled, readonly: disabled },
     actions: ['click', 'fill', 'clear', 'focus'],
     physicalActions: ['click', 'fill', 'press', 'shortcut', 'clipboard', 'ime', 'rich-text'],
     invoke: (action, payload) => {
       if (action === 'focus' || action === 'click') return richInputRef.current?.focus()
-      handleInputChange(action === 'clear' ? '' : payload.value ?? '')
+      setInput(action === 'clear' ? '' : payload.value ?? '')
     },
   } : null)
   const sendSemanticProps = useUiSemanticNode(semanticComposerScopeId ? {
@@ -1397,7 +1414,7 @@ export function FreeFormInput({
       <div
         ref={containerRef}
         className={cn(
-          'overflow-hidden transition-all',
+          'overflow-visible transition-all',
           // Container styling - only when not wrapped by InputContainer
           !unstyled && 'rounded-[16px] shadow-middle',
           !unstyled && 'bg-background',
@@ -1408,29 +1425,17 @@ export function FreeFormInput({
         onDragOver={handleDragOver}
         onDrop={handleDrop}
       >
-        {/* Inline Slash Command Autocomplete */}
-        <InlineSlashCommand
-          open={inlineSlash.isOpen}
-          onOpenChange={(open) => !open && inlineSlash.close()}
-          sections={inlineSlash.sections}
+        <ComposerSuggestionMenus
+          ref={suggestionMenusRef}
+          inputRef={richInputRef}
+          skills={skills}
+          workspaceRoot={workspaceRoot}
+          workspaceId={workspaceSlug}
           activeCommands={activeCommands}
-          onSelectCommand={handleInlineSlashCommandSelect}
-          onSelectFolder={handleInlineSlashFolderSelect}
-          filter={inlineSlash.filter}
-          position={inlineSlash.position}
-        />
-
-        {/* Inline Mention Autocomplete (skills and files) */}
-        <InlineMentionMenu
-          open={inlineMention.isOpen}
-          onOpenChange={(open) => !open && inlineMention.close()}
-          sections={inlineMention.sections}
-          onSelect={handleInlineMentionSelect}
-          filter={inlineMention.filter}
-          position={inlineMention.position}
-          workspaceId={workspaceId}
-          maxWidth={280}
-          isSearching={inlineMention.isSearching}
+          extensionSections={extensionSections}
+          onRefreshExtensionCommands={refreshExtensionCommands}
+          onSelectSlashCommand={handleSlashCommand}
+          onApplyEditorValue={applyEditorValue}
         />
 
         {/* Pre-flight image-support warning — only for pi_custom connections
@@ -1564,16 +1569,12 @@ export function FreeFormInput({
             fallback={({ retry }) => (
               <BasicComposerTextarea
                 ref={richInputRef}
-                value={input}
+                value={composerTextRef.current}
                 onValueChange={handleInputChange}
                 onSubmit={() => submitMessage()}
                 onPaste={event => { void handlePaste(event) }}
-                onFocus={() => { setIsFocused(true); onFocusChange?.(true) }}
-                onBlur={() => {
-                  lastCaretPositionRef.current = richInputRef.current?.selectionStart ?? null
-                  setIsFocused(false)
-                  onFocusChange?.(false)
-                }}
+                onFocus={handleComposerFocus}
+                onBlur={handleComposerBlur}
                 placeholder={Array.isArray(effectivePlaceholder) ? effectivePlaceholder[0] : effectivePlaceholder}
                 disabled={disabled}
                 maxHeight={inputMaxHeight}
@@ -1581,32 +1582,46 @@ export function FreeFormInput({
               />
             )}
           >
-            <RichTextInput
-              {...inputSemanticProps}
-              data-mortise-ui-interactions="shortcut clipboard ime rich-text"
-              ref={richInputRef}
-              value={input}
-              onChange={handleInputChange}
-              onInput={handleRichInput}
-              onKeyDown={handleKeyDown}
-              onPaste={handlePaste}
-              onLongTextPaste={handleLongTextPaste}
-              onFocus={() => { setIsFocused(true); onFocusChange?.(true) }}
-              onBlur={() => {
-                // Save caret position before losing focus (for restoration via mortise:focus-input)
-                lastCaretPositionRef.current = richInputRef.current?.selectionStart ?? null
-                setIsFocused(false)
-                onFocusChange?.(false)
-              }}
-              placeholder={effectivePlaceholder}
-              disabled={disabled}
-              skills={skills}
-              workspaceId={workspaceSlug}
-              className="pl-5 pr-4 pt-4 pb-3 overflow-y-auto min-h-[88px]"
-              style={{ maxHeight: inputMaxHeight }}
-              data-tutorial="chat-input"
-              spellCheck={spellCheck}
-            />
+            <React.Suspense
+              fallback={(
+                <BasicComposerTextarea
+                  ref={richInputRef}
+                  value={composerTextRef.current}
+                  onValueChange={handleInputChange}
+                  onSubmit={() => submitMessage()}
+                  onPaste={event => { void handlePaste(event) }}
+                  onFocus={handleComposerFocus}
+                  onBlur={handleComposerBlur}
+                  placeholder={Array.isArray(effectivePlaceholder) ? effectivePlaceholder[0] : effectivePlaceholder}
+                  disabled={disabled}
+                  maxHeight={inputMaxHeight}
+                />
+              )}
+            >
+              <RichTextInput
+                {...inputSemanticProps}
+                data-mortise-ui-interactions="shortcut clipboard ime rich-text"
+                ref={richInputRef}
+                value={composerTextRef.current}
+                onTransaction={handleEditorTransaction}
+                onSuggestionChange={handleSuggestionChange}
+                onSuggestionExit={handleSuggestionExit}
+                onKeyDown={handleKeyDown}
+                onPaste={handlePaste}
+                onLongTextPaste={handleLongTextPaste}
+                onFocus={handleComposerFocus}
+                onBlur={handleComposerBlur}
+                placeholder={effectivePlaceholder}
+                disabled={disabled}
+                autoCapitalisation={autoCapitalisation}
+                skills={skills}
+                workspaceId={workspaceSlug}
+                className="min-h-[72px] overflow-y-auto pb-2 pl-5 pr-4 pt-3"
+                style={{ maxHeight: inputMaxHeight }}
+                data-tutorial="chat-input"
+                spellCheck={spellCheck}
+              />
+            </React.Suspense>
           </InputErrorBoundary>
         )}
 
@@ -1626,7 +1641,7 @@ export function FreeFormInput({
           </InputErrorBoundary>
 
           <div
-            className={cn("flex items-center gap-1 px-2 py-2", !compactMode && "border-t border-border/50")}
+            className="flex items-center gap-1 px-2 py-2"
             data-mortise-ui-anchor="composer.toolbar"
           >
           {/* Hidden file input for attach button (shared by compact and desktop) */}
@@ -1638,12 +1653,10 @@ export function FreeFormInput({
             onChange={handleFileInputChange}
           />
 
-          {/* Compact mode: standard icon badges plus the permission selector in the input footer.
-              Wrapper absorbs all squeeze so the model label truncates first and the send button stays
-              anchored to the right (mortise-oss#798). overflow-hidden is safe — Radix Drawer /
-              dropdowns inside render via portals, so they aren't clipped. */}
+          {/* Compact mode: standard icon badges plus extension toolbar controls.
+              Keep overflow visible because extension-owned menus render inside their scoped root. */}
           {compactMode && (
-          <div className="flex items-center gap-1 min-w-0 shrink overflow-hidden">
+          <div className="flex items-center gap-1 min-w-0 shrink overflow-visible">
           <FreeFormInputContextBadge
             icon={<Paperclip className="h-4 w-4" />}
             label={attachments.length > 0
@@ -1658,7 +1671,7 @@ export function FreeFormInput({
             disabled={disabled}
           />
           {sessionId && <ExtensionContributionZone className="w-auto shrink-0" sessionId={sessionId} surface="composer.toolbar" />}
-          {sessionId && <ExtensionFrontendZone className="contents" sessionId={sessionId} workspaceId={workspaceId} surface="composer.toolbar" />}
+          <ExtensionFrontendZone className="contents" sessionId={sessionId} workspaceId={workspaceId} surface="composer.toolbar" />
           {enableCompactModelPicker && (
             <InputErrorBoundary
               sessionId={sessionId}
@@ -1684,7 +1697,7 @@ export function FreeFormInput({
 
           {/* Desktop: full badges row with labels and working directory */}
           {!compactMode && (
-          <div className="flex items-center gap-1 min-w-32 shrink overflow-hidden">
+          <div className="flex items-center gap-1 min-w-32 shrink overflow-visible">
           {/* 1. Attach Files Badge */}
           <FreeFormInputContextBadge
             icon={<Paperclip className="h-4 w-4" />}
@@ -1700,7 +1713,7 @@ export function FreeFormInput({
             disabled={disabled}
           />
           {sessionId && <ExtensionContributionZone className="w-auto shrink-0" sessionId={sessionId} surface="composer.toolbar" />}
-          {sessionId && <ExtensionFrontendZone className="contents" sessionId={sessionId} workspaceId={workspaceId} surface="composer.toolbar" />}
+          <ExtensionFrontendZone className="contents" sessionId={sessionId} workspaceId={workspaceId} surface="composer.toolbar" />
 
           </div>
           )}
@@ -1725,7 +1738,9 @@ export function FreeFormInput({
           {/* Right side: Model + Send - never shrink so they're always visible */}
           <div className="flex items-center shrink-0">
           {/* Context usage ring - placed before model selector so it reads as
-              "how full is the context" relative to the active model. */}
+              "how full is the context" relative to the active model. Once usage
+              crosses the pre-compaction warning threshold (~62% of the window)
+              it turns red and becomes the click-to-compact affordance. */}
           <InputErrorBoundary
             sessionId={sessionId}
             resetKey={`${sessionId ?? semanticScopeId ?? 'composer'}::context-usage`}
@@ -1736,6 +1751,8 @@ export function FreeFormInput({
               contextStatus={contextStatus}
               currentModel={currentModel}
               configuredContextWindow={configuredContextWindow}
+              isProcessing={isProcessing}
+              onRequestCompact={handleRequestCompact}
             />
           </InputErrorBoundary>
           {/* 5. Model/Connection Selector - Hidden in compact mode (EditPopover embedding) */}
@@ -2111,65 +2128,6 @@ export function FreeFormInput({
               onThinkingLevelChange={onThinkingLevelChange}
               disabled={thinkingDisabled}
             />
-          </InputErrorBoundary>
-
-          {/* 5.5 Context Usage Warning Badge - shows when approaching auto-compaction threshold.
-              Percentage matches the ring (full-window denominator); the trigger threshold
-              is 80% of the compaction threshold (~62% of the full window) so the user is
-              warned before the SDK auto-compacts at ~77.5% of the window. */}
-          <InputErrorBoundary
-            sessionId={sessionId}
-            resetKey={`${sessionId ?? semanticScopeId ?? 'composer'}::context-warning`}
-            section="context-warning"
-            fallback={null}
-          >
-          <IsolatedInputSection render={() => {
-            const usage = getContextUsagePercent(
-              contextStatus,
-              currentModel,
-              configuredContextWindow,
-            )
-            const usagePercent = usage.percent
-            // Compaction triggers at ~77.5% of the window; warn at 80% of that.
-            const warningThresholdPercent = Math.round(0.775 * 0.8 * 100) // ~62
-            const showWarning = usagePercent !== null && usagePercent >= warningThresholdPercent && !contextStatus?.isCompacting
-
-            if (!showWarning) return null
-
-            const handleCompactClick = () => {
-              if (!isProcessing) {
-                void onSubmit(snapshotComposerSubmission({
-                  composerText: '/compact',
-                  message: '/compact',
-                }))
-              }
-            }
-
-            return (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    type="button"
-                    onClick={handleCompactClick}
-                    disabled={isProcessing}
-                    className="inline-flex items-center h-8 px-2 text-[13px] font-medium bg-info/10 rounded-[6px] shadow-tinted select-none cursor-pointer hover:bg-info/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                    style={{
-                      '--shadow-color': 'var(--info-rgb)',
-                      color: 'color-mix(in oklab, var(--info) 30%, var(--foreground))',
-                    } as React.CSSProperties}
-                  >
-                    {usagePercent}%
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent side="top">
-                  {isProcessing
-                    ? `${usagePercent}% context used — wait for current operation`
-                    : `${usagePercent}% context used — click to compact`
-                  }
-                </TooltipContent>
-              </Tooltip>
-            )
-          }} />
           </InputErrorBoundary>
 
           {/* 6. Send/Stop Button - Always show stop when processing */}

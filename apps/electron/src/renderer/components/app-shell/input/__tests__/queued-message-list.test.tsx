@@ -5,7 +5,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 mock.module('react-i18next', () => ({
   useTranslation: () => ({
     t: (key: string) => ({
-      'settings.ai.midStream.steer': '引导',
+      'settings.app.sending.midStream.steer': '引导',
       'common.delete': '删除',
       'common.edit': '编辑',
     }[key] ?? key),

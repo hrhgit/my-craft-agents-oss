@@ -5,7 +5,6 @@
  */
 
 import type { SessionHeader, StoredSession } from './types.ts';
-import type { PermissionMode } from '../agent/mode-types.ts';
 import { debug } from '../utils/debug.ts';
 import {
   projectTreeSessionHeaderAsSessionHeader,
@@ -13,30 +12,6 @@ import {
   readTreeSessionAsStoredSession,
   writeTreeSessionMortiseMetadata,
 } from './tree-jsonl.ts';
-
-function normalizePermissionMode(value: unknown): PermissionMode | undefined {
-  if (value === 'safe' || value === 'explore') return 'ask';
-  return value === 'ask' || value === 'allow-all' ? value : undefined;
-}
-
-function normalizeHeaderPermissionModes<T extends SessionHeader>(header: T): T {
-  const permissionMode = normalizePermissionMode(header.permissionMode);
-  const previousPermissionMode = normalizePermissionMode(header.previousPermissionMode);
-
-  if (permissionMode) {
-    header.permissionMode = permissionMode;
-  } else {
-    delete (header as Partial<SessionHeader>).permissionMode;
-  }
-
-  if (previousPermissionMode) {
-    header.previousPermissionMode = previousPermissionMode;
-  } else {
-    delete (header as Partial<SessionHeader>).previousPermissionMode;
-  }
-
-  return header;
-}
 
 /**
  * Read only the header (first line) from a flat Pi session JSONL file.
@@ -47,7 +22,7 @@ export function readSessionHeader(sessionFile: string): SessionHeader | null {
     const treeHeader = readTreeSessionHeader(sessionFile);
     if (!treeHeader) return null;
     const metadata = projectTreeSessionHeaderAsSessionHeader(treeHeader, sessionFile);
-    return normalizeHeaderPermissionModes({
+    return {
       ...metadata,
       tokenUsage: metadata.tokenUsage ?? {
         inputTokens: 0,
@@ -56,7 +31,7 @@ export function readSessionHeader(sessionFile: string): SessionHeader | null {
         contextTokens: 0,
         costUsd: 0,
       },
-    });
+    };
   } catch (error) {
     debug('[jsonl] Failed to read session header:', sessionFile, error);
     return null;
@@ -70,7 +45,7 @@ export function readSessionHeader(sessionFile: string): SessionHeader | null {
 export function readSessionJsonl(sessionFile: string): StoredSession | null {
   try {
     const session = readTreeSessionAsStoredSession(sessionFile);
-    return session ? normalizeHeaderPermissionModes(session) : null;
+    return session;
   } catch (error) {
     debug('[jsonl] Failed to read session:', sessionFile, error);
     return null;

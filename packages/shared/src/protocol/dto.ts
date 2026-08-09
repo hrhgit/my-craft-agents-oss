@@ -12,15 +12,14 @@ import type {
   ContentBadge,
   ToolDisplayMeta,
   AnnotationV1,
-  PermissionRequest as BasePermissionRequest,
   Session as CoreSession,
   StoredAttachment,
   PlanModeStateV1,
 } from '@mortise/core/types'
-import type { PermissionMode } from '../agent/mode-types'
 import type { ThinkingLevel } from '../agent/thinking-levels'
 import type { FileAttachment } from '../utils/files'
-import type { SessionSettlementFailure } from './types'
+import type { SessionFailure } from './types'
+import type { ExtensionSessionBootstrapV1 } from './extension-frontend-channels'
 
 // Re-export generateMessageId for handler convenience
 export { generateMessageId } from '@mortise/core/types'
@@ -48,8 +47,6 @@ export interface Session extends Omit<CoreSession, 'createdAt' | 'lastUsedAt'> {
   readOnly?: boolean
   /** Parent/child deletion is frozen or retryable after a failed cascade. */
   deletionState?: 'deleting'
-  /** Permission mode for this session ('safe', 'ask', 'allow-all') */
-  permissionMode?: PermissionMode
   /**
    * Explicit unread flag - single source of truth for NEW badge.
    * Set to true when assistant message completes while user is NOT viewing.
@@ -57,7 +54,7 @@ export interface Session extends Omit<CoreSession, 'createdAt' | 'lastUsedAt'> {
    */
   hasUnread?: boolean
   /** Runtime-only host durability failure. A fresh Host snapshot clears stale client state. */
-  pendingFailure?: SessionSettlementFailure
+  pendingFailure?: SessionFailure
   sessionFolderPath?: string
   sharedUrl?: string
   sharedId?: string
@@ -94,7 +91,8 @@ export interface Session extends Omit<CoreSession, 'createdAt' | 'lastUsedAt'> {
 
 export interface CreateSessionOptions {
   name?: string
-  permissionMode?: PermissionMode
+  /** Opaque snapshots selected by Extension frontends before the Session exists. */
+  extensionBootstrap?: ExtensionSessionBootstrapV1
   /**
    * Reasoning/thinking level override. When set, takes precedence over workspace
    * and global defaults. Silently ignored by the underlying SDK on non-reasoning
@@ -131,28 +129,20 @@ export interface CreateAndSendFirstTurnRequest {
 
 export interface CreateAndSendFirstTurnResult {
   session: Session
-  /** Host identity of the first user message accepted by the published turn. */
+  /** Host identity of the first user message accepted by Mortise. */
   messageId: string
+  /** Pending sessions are visible only to the client receiving this response. */
+  publication: 'pending' | 'published'
 }
 
 export interface RemoteSessionTransferPayload {
   sourceSessionId: string
   name?: string
-  permissionMode?: PermissionMode
   summary: string
 }
 
 export interface ImportRemoteSessionTransferResult {
   sessionId: string
-}
-
-export interface PermissionModeState {
-  permissionMode: PermissionMode
-  previousPermissionMode?: PermissionMode
-  transitionDisplay?: string
-  modeVersion: number
-  changedAt: string
-  changedBy: 'user' | 'system' | 'restore' | 'automation' | 'unknown'
 }
 
 // ---------------------------------------------------------------------------
@@ -167,15 +157,13 @@ export type SessionEvent =
   | { type: 'tool_result'; sessionId: string; toolUseId: string; toolName: string; result: string; turnId?: string; parentToolUseId?: string; isError?: boolean; timestamp?: number }
   | { type: 'error'; sessionId: string; error: string; timestamp?: number }
   | { type: 'typed_error'; sessionId: string; error: TypedError; timestamp?: number }
-  | { type: 'session_failure'; sessionId: string; error: SessionSettlementFailure; timestamp?: number }
+  | { type: 'session_failure'; sessionId: string; error: SessionFailure; timestamp?: number }
   | { type: 'complete'; sessionId: string; tokenUsage?: Session['tokenUsage']; hasUnread?: boolean }
   | { type: 'interrupted'; sessionId: string; message?: Message; queuedMessages?: string[] }
   | { type: 'status'; sessionId: string; message: string; statusType?: 'compacting' }
   | { type: 'info'; sessionId: string; message: string; statusType?: 'compaction_complete'; level?: 'info' | 'warning' | 'error' | 'success'; timestamp?: number }
   | { type: 'title_generated'; sessionId: string; title: string }
   | { type: 'async_operation'; sessionId: string; isOngoing: boolean }
-  | { type: 'permission_request'; sessionId: string; request: PermissionRequest }
-  | { type: 'permission_mode_changed'; sessionId: string; permissionMode: PermissionMode; previousPermissionMode?: PermissionMode; transitionDisplay?: string; modeVersion?: number; changedAt?: string; changedBy?: PermissionModeState['changedBy'] }
   | { type: 'plan_submitted'; sessionId: string; message: Message }
   | { type: 'plan_artifact_changed'; sessionId: string; message: Message; supersededArtifactIds?: string[] }
   | { type: 'plan_mode_state_changed'; sessionId: string; state: PlanModeStateV1 }
@@ -216,10 +204,11 @@ export type SessionCommand =
   | { type: 'markRead' }
   | { type: 'markUnread' }
   | { type: 'setActiveViewing'; workspaceId: string }
-  | { type: 'setPermissionMode'; mode: PermissionMode }
   | { type: 'setThinkingLevel'; level: ThinkingLevel }
   /** Retries only an already-accepted turn's pending settlement; carries no user payload. */
   | { type: 'retrySettlement' }
+  /** Replays a Mortise-accepted unpublished turn with its original mutation id. */
+  | { type: 'retryAcceptedMessage' }
   /** Withdraw one queued follow-up without interrupting the active turn. */
   | { type: 'withdrawQueuedMessage'; messageId: string }
   | { type: 'showInFinder' }
@@ -245,15 +234,6 @@ export interface NewChatActionParams {
 // ---------------------------------------------------------------------------
 // Permission / credential types
 // ---------------------------------------------------------------------------
-
-export type { BasePermissionRequest }
-
-/**
- * Permission request with session context (for multi-session Electron app)
- */
-export interface PermissionRequest extends BasePermissionRequest {
-  sessionId: string
-}
 
 export interface PermissionResponseOptions {
   rememberForMinutes?: number

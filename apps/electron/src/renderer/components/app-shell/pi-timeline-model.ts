@@ -1,4 +1,4 @@
-import type { PermissionRequest, PiProjectionEntityV1 } from '@mortise/shared/protocol'
+import type { PiProjectionEntityV1 } from '@mortise/shared/protocol'
 import { isPlanArtifactV1, type PlanArtifactV1 } from '@mortise/core'
 
 export type PiTimelineItem =
@@ -57,7 +57,6 @@ export interface PiRuntimeState {
   isProcessing: boolean
   isCompacting: boolean
 }
-
 export interface PiTimelineSearchMatch {
   matchId: string
   itemId: string
@@ -215,34 +214,4 @@ export function selectPiProcessingStatusMessage(
   return typeof payload?.message === 'string' && payload.message
     ? payload.message
     : undefined
-}
-
-/** Selects the newest Host-approved prompt; raw Pi permission checks never enter this view. */
-export function selectPendingPiPermission(
-  entities: readonly PiProjectionEntityV1[],
-  sessionId: string,
-): PermissionRequest | undefined {
-  const entity = entities
-    .filter(candidate => candidate.entityType === 'prompt_request' && candidate.kind === 'permission_request')
-    .sort((a, b) => b.lastSeq - a.lastSeq)
-    .find(candidate => record(candidate.payload)?.status === 'pending')
-  const payload = entity ? record(entity.payload) : null
-  if (!payload || typeof payload.requestId !== 'string' || typeof payload.toolName !== 'string') return undefined
-  return {
-    sessionId,
-    requestId: payload.requestId,
-    toolName: payload.toolName,
-    description: typeof payload.description === 'string' ? payload.description : payload.toolName,
-    command: typeof payload.command === 'string' ? payload.command : undefined,
-    type: payload.permissionType === 'bash' || payload.permissionType === 'file_write'
-      || payload.permissionType === 'tool_mutation' || payload.permissionType === 'mcp_mutation'
-      || payload.permissionType === 'admin_approval' ? payload.permissionType : undefined,
-    appName: typeof payload.appName === 'string' ? payload.appName : undefined,
-    reason: typeof payload.reason === 'string' ? payload.reason : undefined,
-    impact: typeof payload.impact === 'string' ? payload.impact : undefined,
-    requiresSystemPrompt: typeof payload.requiresSystemPrompt === 'boolean' ? payload.requiresSystemPrompt : undefined,
-    rememberForMinutes: typeof payload.rememberForMinutes === 'number' ? payload.rememberForMinutes : undefined,
-    commandHash: typeof payload.commandHash === 'string' ? payload.commandHash : undefined,
-    approvalTtlSeconds: typeof payload.approvalTtlSeconds === 'number' ? payload.approvalTtlSeconds : undefined,
-  }
 }

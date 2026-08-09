@@ -31,7 +31,6 @@ export type {
   CoreBackendConfig,
   BackendConfig,
   BackendHostRuntimeContext,
-  PermissionCallback,
   PlanCallback,
   ChatOptions,
   RecoveryMessage,
@@ -75,6 +74,7 @@ export {
   BackendExtensionRuntimeRegistry,
   backendTypeFromProcess,
   type BackendExtensionWorkspaceSnapshot,
+  type BackendExtensionGlobalSnapshot,
   type BackendExtensionRuntimeRegistryOptions,
 } from './backend-extension-runtime.ts';
 

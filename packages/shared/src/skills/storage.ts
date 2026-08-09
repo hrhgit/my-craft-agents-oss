@@ -40,7 +40,6 @@ function metadataFromHostSkill(skill: HostSkillSummary): SkillMetadata {
     name: skill.name,
     description: skill.description,
     globs: Array.isArray(frontmatter.globs) ? frontmatter.globs.filter((entry): entry is string => typeof entry === 'string') : undefined,
-    alwaysAllow: Array.isArray(frontmatter.alwaysAllow) ? frontmatter.alwaysAllow.filter((entry): entry is string => typeof entry === 'string') : undefined,
     icon: validateIconValue(frontmatter.icon, 'Skills'),
   };
 }

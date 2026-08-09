@@ -44,7 +44,6 @@ function bindingOpts(binding: ChannelBinding): SendOptions {
   return binding.threadId !== undefined ? { threadId: binding.threadId } : {}
 }
 import type { PlanTokenRegistry } from './plan-tokens'
-import type { PermissionRequest } from '@mortise/core/types'
 import type { PiProjectionEventV1 } from '@mortise/shared/protocol'
 
 /** Session event shape (subset of the full SessionEvent from server-core). */
@@ -110,34 +109,18 @@ export type PlanMessageRecorder = (
   messageId: string,
 ) => void
 
-/**
- * Hook the renderer calls when a permission prompt with inline buttons has
- * just been posted. Mirrors {@link PlanMessageRecorder}; the gateway uses
- * this to track live prompts so it can (a) idempotently claim the prompt on
- * tap, and (b) clear the inline keyboard when the agent moves on (resolved
- * from any channel — desktop, MCP, etc.).
- */
-export type PermissionMessageRecorder = (
-  binding: ChannelBinding,
-  requestId: string,
-  messageId: string,
-) => void
-
 export class Renderer {
   /** Per-binding render state. Keyed by binding.id */
   private states = new Map<string, RenderState>()
   private readonly planTokens: PlanTokenRegistry | undefined
   private readonly recordPlanMessage: PlanMessageRecorder | undefined
-  private readonly recordPermissionMessage: PermissionMessageRecorder | undefined
 
   constructor(deps?: {
     planTokens?: PlanTokenRegistry
     recordPlanMessage?: PlanMessageRecorder
-    recordPermissionMessage?: PermissionMessageRecorder
   }) {
     this.planTokens = deps?.planTokens
     this.recordPlanMessage = deps?.recordPlanMessage
-    this.recordPermissionMessage = deps?.recordPermissionMessage
   }
 
   private getState(bindingId: string): RenderState {
@@ -166,12 +149,6 @@ export class Renderer {
     binding: ChannelBinding,
     adapter: PlatformAdapter,
   ): Promise<void> {
-    // Permission / error prompts are mode-agnostic — handle first so they
-    // can't be swallowed by mode state.
-    if (event.type === 'permission_request') {
-      await this.handlePermissionRequest(event, binding, adapter, this.getState(binding.id))
-      return
-    }
     if (event.type === 'credential_request') {
       await this.handleCredentialRequest(binding, adapter)
       return
@@ -523,61 +500,8 @@ export class Renderer {
   }
 
   // ---------------------------------------------------------------------------
-  // Permissions / errors (shared across modes)
+  // Interactive prompts / errors (shared across modes)
   // ---------------------------------------------------------------------------
-
-  private async handlePermissionRequest(
-    event: SessionEvent,
-    binding: ChannelBinding,
-    adapter: PlatformAdapter,
-    state: RenderState,
-  ): Promise<void> {
-    const request = event.request as PermissionRequest | undefined
-    if (!request?.requestId) return
-
-    // Flush any streaming state first so the prompt lands as a distinct
-    // message (progress-mode bubble stays in place as a separate message).
-    if (state.streamingMessageId && state.textBuffer.trim()) {
-      this.cancelEditTimer(state)
-      await this.tryEditMessage(
-        adapter,
-        binding,
-        state.streamingMessageId,
-        state.textBuffer.trim(),
-        state,
-      )
-      state.streamingMessageId = null
-      state.textBuffer = ''
-      state.lastEditedLength = 0
-    }
-
-    if (binding.platform === 'whatsapp') {
-      await adapter.sendText(
-        binding.channelId,
-        `⏸ Permission required: ${request.description}
-Approve it in the desktop app to continue.`,
-        bindingOpts(binding),
-      )
-      return
-    }
-
-    if (binding.config.approvalChannel === 'chat' && adapter.capabilities.inlineButtons) {
-      const text = formatPermissionText(request)
-      const buttons: InlineButton[] = [
-        { id: `perm:allow:${request.requestId}`, label: '✅ Allow' },
-        { id: `perm:deny:${request.requestId}`, label: '❌ Deny' },
-      ]
-      const sent = await adapter.sendButtons(binding.channelId, text, buttons, bindingOpts(binding))
-      this.recordPermissionMessage?.(binding, request.requestId, sent.messageId)
-    } else {
-      await adapter.sendText(
-        binding.channelId,
-        `⏸ Permission required: ${request.description}
-Approve in the desktop app to continue.`,
-        bindingOpts(binding),
-      )
-    }
-  }
 
   private async handleCredentialRequest(
     binding: ChannelBinding,
@@ -819,14 +743,6 @@ function extractErrorMessage(err: unknown): string {
     if (typeof msg === 'string') return msg
   }
   return 'An error occurred'
-}
-
-function formatPermissionText(request: PermissionRequest): string {
-  const lines = ['⚡ Permission required']
-  lines.push(`Tool: ${request.toolName}`)
-  if (request.command) lines.push(`Command: ${request.command}`)
-  if (request.description) lines.push(request.description)
-  return lines.join('\n')
 }
 
 function firstLines(text: string, n: number): string {

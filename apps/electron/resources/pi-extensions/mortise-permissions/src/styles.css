@@ -1,0 +1,46 @@
+.mortise-permissions-toolbar { position: relative; display: inline-flex; min-width: 0; }
+.mortise-permissions-mode-trigger { height: 32px; padding: 0 12px 0 10px; display: inline-flex; align-items: center; gap: 6px; border: 0; border-radius: 6px; background: color-mix(in srgb, var(--foreground) 5%, transparent); color: color-mix(in srgb, var(--foreground) 60%, transparent); font: inherit; font-size: 13px; font-weight: 500; outline: none; user-select: none; white-space: nowrap; flex-shrink: 0; box-shadow: rgba(var(--shadow-color), 0) 0 0 0, rgba(var(--shadow-color), 0) 0 0 0, rgba(var(--shadow-color), calc(var(--shadow-border-opacity) * 1.5)) 0 0 0 1px, rgba(var(--shadow-color), var(--shadow-border-opacity)) 0 1px 1px -0.5px, rgba(var(--shadow-color), var(--shadow-blur-opacity)) 0 3px 3px -1.5px, rgba(var(--shadow-color), calc(var(--shadow-blur-opacity) * 0.67)) 0 6px 6px -3px; }
+.mortise-permissions-tone-info { color: var(--info); background: color-mix(in srgb, var(--info) 10%, transparent); }
+.mortise-permissions-tone-accent { color: var(--accent); background: color-mix(in srgb, var(--accent) 5%, transparent); }
+.mortise-permissions-mode-icon { width: 14px; height: 14px; flex: none; }
+.mortise-permissions-option-icon { width: 16px; height: 16px; flex: none; }
+.mortise-permissions-chevron { width: 12px; height: 12px; opacity: .6; }
+.mortise-permissions-mode-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.mortise-permissions-mode-menu { position: absolute; z-index: 400; bottom: calc(100% + 4px); left: 0; min-width: 220px; max-height: min(28rem, calc(100vh - 2rem)); overflow: auto; display: flex; flex-direction: column; gap: 2px; padding: 4px; border: 0; border-radius: 8px; background: var(--background); color: var(--foreground); box-shadow: rgba(0, 0, 0, 0) 0 0 0 0, rgba(0, 0, 0, 0) 0 0 0 0, rgba(var(--foreground-rgb), .06) 0 0 0 1px, rgba(0, 0, 0, calc(var(--shadow-blur-opacity) * .67)) 0 1px 1px -.5px, rgba(0, 0, 0, calc(var(--shadow-blur-opacity) * .67)) 0 3px 3px 0, rgba(0, 0, 0, calc(var(--shadow-blur-opacity) * .33)) 0 6px 6px 0, rgba(0, 0, 0, calc(var(--shadow-blur-opacity) * .33)) 0 12px 12px 0, rgba(0, 0, 0, calc(var(--shadow-blur-opacity) * .33)) 0 24px 24px 0; }
+.mortise-permissions-mode-item { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px; border: 0; border-radius: 8px; background: transparent; color: inherit; text-align: left; cursor: pointer; font: inherit; }
+.mortise-permissions-mode-item:hover, .mortise-permissions-mode-item:focus-visible { background: color-mix(in srgb, var(--foreground) 3%, transparent); outline: none; }
+.mortise-permissions-item-icon { width: 16px; height: 16px; display: inline-flex; align-items: center; justify-content: center; flex: none; }
+.mortise-permissions-item-copy { min-width: 0; flex: 1; display: grid; gap: 2px; }
+.mortise-permissions-item-copy strong { font-size: 14px; font-weight: 500; }
+.mortise-permissions-item-copy small { color: var(--muted-foreground); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mortise-permissions-check { width: 14px; height: 14px; flex: none; color: color-mix(in srgb, var(--foreground) 60%, transparent); }
+.mortise-permission-surface { display: block; min-height: 0; }
+.mortise-permission-card { box-sizing: border-box; display: flex; min-height: 0; flex-direction: column; overflow: hidden; border: 1px solid color-mix(in srgb, var(--info) 30%, transparent); border-radius: 8px; background: color-mix(in srgb, var(--info) 5%, var(--background)); box-shadow: 0 6px 20px rgb(0 0 0 / 12%); }
+.mortise-permission-body { min-height: 0; flex: 1; overflow: auto; padding: 16px; }
+.mortise-permission-title { display: flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 600; }
+.mortise-permission-icon { width: 14px; height: 14px; flex: none; color: var(--info); }
+.mortise-permission-description { margin-top: 8px; color: var(--muted-foreground); font-size: 12px; line-height: 18px; white-space: pre-wrap; }
+.mortise-permission-description strong { color: var(--foreground); font-weight: 600; }
+.mortise-permission-command { max-height: 96px; overflow: auto; margin: 12px 0 0; border-radius: 6px; padding: 12px; background: color-mix(in srgb, var(--foreground) 6%, transparent); color: var(--foreground); font: 12px/18px ui-monospace, SFMono-Regular, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+.mortise-permission-queue { margin-top: 10px; color: var(--muted-foreground); font-size: 11px; }
+.mortise-permission-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; border-top: 1px solid color-mix(in srgb, var(--foreground) 14%, transparent); padding: 8px 12px; }
+.mortise-permission-button { height: 36px; display: inline-flex; align-items: center; gap: 6px; border-radius: 6px; padding: 0 11px; border: 1px solid color-mix(in srgb, var(--foreground) 15%, transparent); background: transparent; color: var(--foreground); cursor: pointer; font: inherit; font-size: 12px; }
+.mortise-permission-button:hover { background: color-mix(in srgb, var(--foreground) 7%, transparent); }
+.mortise-permission-button:disabled { cursor: wait; opacity: .55; }
+.mortise-permission-button.primary { border-color: var(--foreground); background: var(--foreground); color: var(--background); }
+.mortise-permission-button.danger { border-style: dashed; color: var(--destructive); }
+.mortise-permission-button .mortise-permission-icon { color: currentColor; }
+.mortise-permission-tip { min-width: 0; flex: 1; color: var(--muted-foreground); font-size: 10px; line-height: 14px; text-align: right; }
+.mortise-permission-spacer { min-width: 0; flex: 1; }
+.mortise-permission-remember { display: inline-flex; align-items: center; gap: 8px; color: var(--muted-foreground); font-size: 11px; cursor: pointer; white-space: nowrap; }
+.mortise-permission-switch { appearance: none; width: 28px; height: 16px; margin: 0; border-radius: 999px; background: color-mix(in srgb, var(--foreground) 20%, transparent); position: relative; cursor: pointer; transition: background .15s ease; }
+.mortise-permission-switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: var(--background); box-shadow: 0 1px 2px rgb(0 0 0 / 20%); transition: transform .15s ease; }
+.mortise-permission-switch:checked { background: var(--info); }
+.mortise-permission-switch:checked::after { transform: translateX(12px); }
+@media (max-width: 520px) {
+  .mortise-permission-actions { align-items: stretch; }
+  .mortise-permission-button { flex: 1 1 auto; }
+  .mortise-permission-tip { flex-basis: 100%; text-align: left; }
+  .mortise-permission-spacer { display: none; }
+  .mortise-permission-remember { flex-basis: 100%; justify-content: flex-end; }
+}

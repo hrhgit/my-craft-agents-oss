@@ -1230,6 +1230,15 @@ export class ResourceResolver {
 	}
 
 	async resolve(): Promise<ResolvedPaths> {
+		return this.toResolvedPaths(this.collectConfiguredResources());
+	}
+
+	/** Collect configured and discovered resources without resolving extension dependencies. */
+	async resolveRaw(): Promise<ResolvedPaths> {
+		return this.toResolvedPaths(this.collectConfiguredResources(), false);
+	}
+
+	private collectConfiguredResources(): ResourceAccumulator {
 		const globalSettings = this.settingsManager.getGlobalSettings();
 		const projectSettings = this.settingsManager.getProjectSettings();
 		const accumulator = this.createAccumulator();
@@ -1247,10 +1256,13 @@ export class ResourceResolver {
 			baseDir: this.agentDir,
 		});
 		this.addAutoDiscoveredResources(accumulator, projectBase, this.agentDir, projectSettings, globalSettings);
-		return this.toResolvedPaths(accumulator);
+		return accumulator;
 	}
 
-	async resolveExtensionSources(sources: ResourcePathEntry[]): Promise<ResolvedPaths> {
+	async resolveExtensionSources(
+		sources: ResourcePathEntry[],
+		options: { resolveGraph?: boolean } = {},
+	): Promise<ResolvedPaths> {
 		const accumulator = this.createAccumulator();
 		for (const source of sources) {
 			if (typeof source === "string") {
@@ -1274,7 +1286,7 @@ export class ResourceResolver {
 				baseDir: this.cwd,
 			});
 		}
-		return this.toResolvedPaths(accumulator);
+		return this.toResolvedPaths(accumulator, options.resolveGraph !== false);
 	}
 
 	private createAccumulator(): ResourceAccumulator {
@@ -1467,7 +1479,7 @@ export class ResourceResolver {
 		if (!target.has(key)) target.set(key, { metadata: { ...metadata }, enabled });
 	}
 
-	private resolveExtensionManifestGraph(entries: ResolvedResource[]): ResolvedResource[] {
+	resolveExtensionManifestGraph(entries: ResolvedResource[]): ResolvedResource[] {
 		const originalIndex = new Map(entries.map((entry, index) => [entry, index]));
 		const byId = new Map<string, ResolvedResource>();
 		const addDiagnostic = (entry: ResolvedResource, diagnostic: ExtensionManifestDiagnostic): void => {
@@ -1652,14 +1664,14 @@ export class ResourceResolver {
 		return [...ordered, ...inactive];
 	}
 
-	private toResolvedPaths(accumulator: ResourceAccumulator): ResolvedPaths {
+	private toResolvedPaths(accumulator: ResourceAccumulator, resolveGraph = true): ResolvedPaths {
 		const convert = (entries: Map<string, { metadata: PathMetadata; enabled: boolean }>): ResolvedResource[] =>
 			Array.from(entries.entries()).map(([path, value]) => ({ path, ...value }));
 		const extensions = convert(accumulator.extensions).sort(
 			(a, b) => resourcePrecedenceRank(a.metadata) - resourcePrecedenceRank(b.metadata),
 		);
 		return {
-			extensions: this.resolveExtensionManifestGraph(extensions),
+			extensions: resolveGraph ? this.resolveExtensionManifestGraph(extensions) : extensions,
 			skills: convert(accumulator.skills),
 			prompts: convert(accumulator.prompts),
 		};

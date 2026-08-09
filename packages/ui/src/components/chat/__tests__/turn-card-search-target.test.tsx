@@ -58,7 +58,7 @@ describe('TurnCard search targets', () => {
     expect(markup).toContain('data-mortise-search-target-type="tool-result" data-mortise-search-target-id="nested-tool"')
   })
 
-  it('keeps non-empty process text cards visible while tool activities are collapsed', () => {
+  it('keeps process text in the collapsible thinking stream and renders only the final result card', () => {
     const processText = {
       id: 'process-text',
       type: 'intermediate' as const,
@@ -90,30 +90,93 @@ describe('TurnCard search targets', () => {
 
     const collapsedMarkup = renderToStaticMarkup(
       <TurnCard
-        turnId="process-card-turn"
+        turnId="thinking-stream-turn"
         activities={[processText, emptyProcessText, emptyStreamingProcessText, tool]}
+        response={{ text: 'Only final result', isStreaming: false, messageId: 'final-result' }}
         isStreaming={false}
         isComplete
         isExpanded={false}
       />,
     )
 
-    expect(collapsedMarkup).toContain('data-mortise-process-text-card="process-text"')
-    expect(collapsedMarkup).toContain('Visible reasoning block')
-    expect(collapsedMarkup).not.toContain('data-mortise-process-text-card="empty-process-text"')
-    expect(collapsedMarkup).not.toContain('data-mortise-process-text-card="empty-streaming-process-text"')
+    expect(collapsedMarkup).toContain('Only final result')
+    expect(collapsedMarkup).not.toContain('Visible reasoning block')
+    expect(collapsedMarkup).not.toContain('data-mortise-process-text-card')
     expect(collapsedMarkup).not.toContain('data-mortise-search-target-id="collapsed-tool"')
 
     const expandedMarkup = renderToStaticMarkup(
       <TurnCard
-        turnId="process-card-turn"
+        turnId="thinking-stream-turn"
         activities={[processText, emptyProcessText, emptyStreamingProcessText, tool]}
+        response={{ text: 'Only final result', isStreaming: false, messageId: 'final-result' }}
         isStreaming={false}
         isComplete
         isExpanded
       />,
     )
+    expect(expandedMarkup).toContain('Visible reasoning block')
+    expect(expandedMarkup).toContain('Only final result')
+    expect(expandedMarkup).not.toContain('data-mortise-process-text-card')
     expect(expandedMarkup).toContain('data-mortise-search-target-id="collapsed-tool"')
+  })
+
+  it('renders mixed-scale activities by stable order instead of timestamp', () => {
+    const firstReasoning = {
+      id: 'ordered-reasoning-one',
+      type: 'intermediate' as const,
+      status: 'completed' as const,
+      content: 'First ordered reasoning',
+      order: 2,
+      timestamp: 1_900_000_000_000,
+    }
+    const firstTool = {
+      id: 'ordered-tool-one',
+      type: 'tool' as const,
+      status: 'completed' as const,
+      toolName: 'Read',
+      toolUseId: 'ordered-tool-one-use',
+      toolInput: { file_path: 'src/one.ts' },
+      order: 3,
+      timestamp: 30,
+    }
+    const secondReasoning = {
+      ...firstReasoning,
+      id: 'ordered-reasoning-two',
+      content: 'Second ordered reasoning',
+      order: 4,
+      timestamp: 1_800_000_000_000,
+    }
+    const secondTool = {
+      ...firstTool,
+      id: 'ordered-tool-two',
+      toolUseId: 'ordered-tool-two-use',
+      toolInput: { file_path: 'src/two.ts' },
+      order: 5,
+      timestamp: 10,
+    }
+
+    const markup = renderToStaticMarkup(
+      <TurnCard
+        turnId="ordered-activity-turn"
+        activities={[secondTool, secondReasoning, firstTool, firstReasoning]}
+        response={{ text: 'Ordered final result', isStreaming: false, messageId: 'ordered-final-result' }}
+        isStreaming={false}
+        isComplete
+        isExpanded
+      />,
+    )
+
+    const firstReasoningIndex = markup.indexOf('First ordered reasoning')
+    const firstToolIndex = markup.indexOf('data-mortise-search-target-id="ordered-tool-one"')
+    const secondReasoningIndex = markup.indexOf('Second ordered reasoning')
+    const secondToolIndex = markup.indexOf('data-mortise-search-target-id="ordered-tool-two"')
+    const finalResultIndex = markup.indexOf('Ordered final result')
+    expect([firstReasoningIndex, firstToolIndex, secondReasoningIndex, secondToolIndex, finalResultIndex]
+      .every(index => index >= 0)).toBe(true)
+    expect(firstReasoningIndex).toBeLessThan(firstToolIndex)
+    expect(firstToolIndex).toBeLessThan(secondReasoningIndex)
+    expect(secondReasoningIndex).toBeLessThan(secondToolIndex)
+    expect(secondToolIndex).toBeLessThan(finalResultIndex)
   })
 
   it('lets response cards grow without internal vertical scrolling', () => {

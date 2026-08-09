@@ -38,8 +38,6 @@ export interface SessionMeta {
    * Set to false when user views the session (and not processing).
    */
   hasUnread?: boolean
-  /** Permission mode ('safe', 'ask', 'allow-all'). */
-  permissionMode?: string
   /** Role/type of the last message (for badge display without loading messages) */
   lastMessageRole?: 'user' | 'assistant' | 'plan' | 'tool' | 'error'
   /** Whether an async operation is ongoing (sharing, updating share, revoking, title regeneration) */

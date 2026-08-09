@@ -31,6 +31,8 @@ import type {
 	Tool,
 	ToolCall,
 	ToolResultMessage,
+	WebSearchContent,
+	WebSearchSource,
 } from "../types.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
@@ -382,8 +384,26 @@ export const streamAnthropic: StreamFunction<"anthropic-messages", AnthropicOpti
 			await options?.onResponse?.({ status: response.status, headers: headersToRecord(response.headers) }, model);
 			stream.push({ type: "start", partial: output });
 
-			type Block = (ThinkingContent | TextContent | (ToolCall & { partialJson: string })) & { index: number };
+			type Block = (ThinkingContent | TextContent | WebSearchContent | (ToolCall & { partialJson: string })) & {
+				index: number;
+			};
 			const blocks = output.content as Block[];
+			const webSearchBlocks = new Map<string, { block: WebSearchContent; index: number; startedAt: number }>();
+			const normalizeSearchSources = (value: unknown): WebSearchSource[] => {
+				if (!Array.isArray(value)) return [];
+				return value.flatMap((candidate) => {
+					if (!candidate || typeof candidate !== "object") return [];
+					const item = candidate as Record<string, unknown>;
+					if (item.type !== "web_search_result" || typeof item.url !== "string") return [];
+					let domain: string | undefined;
+					try {
+						domain = new URL(item.url).hostname;
+					} catch {
+						/* keep URL only */
+					}
+					return [{ url: item.url, title: typeof item.title === "string" ? item.title : undefined, domain }];
+				});
+			};
 
 			for await (const event of iterateAnthropicEvents(response, options?.signal)) {
 				if (event.type === "message_start") {
@@ -399,7 +419,67 @@ export const streamAnthropic: StreamFunction<"anthropic-messages", AnthropicOpti
 						output.usage.input + output.usage.output + output.usage.cacheRead + output.usage.cacheWrite;
 					calculateCost(model, output.usage);
 				} else if (event.type === "content_block_start") {
-					if (event.content_block.type === "text") {
+					const providerBlock = event.content_block as unknown as Record<string, unknown>;
+					if (providerBlock.type === "server_tool_use" && providerBlock.name === "web_search") {
+						const input =
+							providerBlock.input && typeof providerBlock.input === "object"
+								? (providerBlock.input as Record<string, unknown>)
+								: {};
+						const searchId =
+							typeof providerBlock.id === "string" ? providerBlock.id : `web-search-${event.index}`;
+						const block: Block = {
+							type: "webSearch",
+							searchId,
+							query: typeof input.query === "string" ? input.query : "",
+							status: "running",
+							sources: [],
+							provider: model.provider,
+							source: "native",
+							raw: event.content_block,
+							index: event.index,
+						};
+						output.content.push(block);
+						const index = output.content.length - 1;
+						webSearchBlocks.set(searchId, { block, index, startedAt: Date.now() });
+						stream.push({
+							type: "websearch_start",
+							contentIndex: index,
+							searchId,
+							query: block.query,
+							source: "native",
+							provider: model.provider,
+							partial: output,
+						});
+					} else if (providerBlock.type === "web_search_tool_result") {
+						const searchId = typeof providerBlock.tool_use_id === "string" ? providerBlock.tool_use_id : "";
+						const state = webSearchBlocks.get(searchId);
+						if (state) {
+							const content = providerBlock.content;
+							const failed = !Array.isArray(content);
+							state.block.sources = normalizeSearchSources(content);
+							state.block.status = failed ? "failed" : "completed";
+							state.block.raw = event.content_block;
+							stream.push({
+								type: "websearch_update",
+								contentIndex: state.index,
+								searchId,
+								sources: state.block.sources,
+								raw: event.content_block,
+								partial: output,
+							});
+							stream.push({
+								type: "websearch_end",
+								contentIndex: state.index,
+								searchId,
+								status: state.block.status,
+								sources: state.block.sources,
+								raw: event.content_block,
+								durationMs: Math.max(0, Date.now() - state.startedAt),
+								partial: output,
+							});
+							webSearchBlocks.delete(searchId);
+						}
+					} else if (event.content_block.type === "text") {
 						const block: Block = {
 							type: "text",
 							text: "",
@@ -516,6 +596,8 @@ export const streamAnthropic: StreamFunction<"anthropic-messages", AnthropicOpti
 								toolCall: block,
 								partial: output,
 							});
+						} else if (block.type === "webSearch") {
+							delete (block as { index?: number }).index;
 						}
 					}
 				} else if (event.type === "message_delta") {
@@ -840,9 +922,9 @@ function buildParams(
 				// Adaptive thinking: Claude decides when and how much to think.
 				params.thinking = { type: "adaptive", display };
 				if (options.effort) {
-					// The Anthropic SDK types can lag newly supported effort values such as "xhigh".
+					// The Anthropic SDK types can lag newly supported effort values such as "xhigh" and "max".
 					params.output_config =
-						options.effort === "xhigh"
+						options.effort === "xhigh" || options.effort === "max"
 							? ({ effort: options.effort } as unknown as NonNullable<
 									MessageCreateParamsStreaming["output_config"]
 								>)

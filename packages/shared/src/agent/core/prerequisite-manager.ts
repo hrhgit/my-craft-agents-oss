@@ -13,7 +13,6 @@
 import { existsSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { expandPath } from './path-processor.ts';
-import { getBrowserToolEnabled } from '../../config/storage.ts';
 import { CONFIG_DIR } from '../../config/paths.ts';
 
 // ============================================================
@@ -60,12 +59,11 @@ const BROWSER_TOOLS_DOC_PATH = resolve(join(CONFIG_DIR, 'docs', 'browser-tools.m
  */
 const RULES: PrerequisiteRule[] = [
   // Built-in browser tool: require browser-tools.md first.
-  // Only matches the session-scoped tool (not external MCP browser tools like mcp__playwright__*),
-  // and skipped entirely when the built-in browser tool is disabled.
+  // Only matches the session-scoped tool (not external MCP browser tools like mcp__playwright__*).
+  // If the tool is present in this runtime, its prerequisite remains stable for
+  // that runtime even when the next-load registration setting changes.
   {
-    toolMatcher: (toolName: string) =>
-      getBrowserToolEnabled() &&
-      toolName === 'browser_tool',
+    toolMatcher: (toolName: string) => toolName === 'browser_tool',
     resolveRequiredPath: () => {
       return existsSync(BROWSER_TOOLS_DOC_PATH) ? BROWSER_TOOLS_DOC_PATH : null;
     },

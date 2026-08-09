@@ -18,14 +18,15 @@ export const THINKING_TO_PI: Record<ThinkingLevel, PiThinkingLevel> = {
   medium: 'medium',
   high: 'high',
   xhigh: 'xhigh',
+  max: 'max',
 };
 
 /**
- * Map Pi SDK lowercase tool names to PascalCase names used by our permission system.
- * Pi's built-in tools use lowercase names (e.g., 'read', 'bash') but
- * ALWAYS_ALLOWED_TOOLS and shouldAllowToolInMode expect PascalCase (e.g., 'Read', 'Bash').
+ * Map Pi SDK lowercase tool names to canonical display names.
+ * Pi's built-in tools use lowercase names while Mortise projections use
+ * PascalCase labels (for example, 'Read' and 'Bash').
  *
- * Used by PiAgent (permission enforcement) and PiEventAdapter (tool name normalization).
+ * Used by PiAgent and PiEventAdapter for tool name normalization.
  */
 export const PI_TOOL_NAME_MAP: Record<string, string> = {
   bash: 'Bash',

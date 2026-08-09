@@ -63,6 +63,8 @@ describe('composer error isolation', () => {
     expect(markup).toContain('<textarea')
     expect(markup).toContain('unsent draft')
     expect(markup).toContain('aria-label="shortcuts.sendMessage"')
+    expect(markup).toContain('min-h-[72px]')
+    expect(markup).not.toContain('border-t border-border/50')
   })
 
   test('submits the exact basic-text draft through the normal composer contract', () => {

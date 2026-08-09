@@ -30,7 +30,6 @@ export const AgentsSettingsIcon = ({ className }: IconProps) => <Bot className={
 export const ExtensionsSettingsIcon = ({ className }: IconProps) => <Puzzle className={className} />
 export const DeveloperSettingsIcon = ({ className }: IconProps) => <Wrench className={className} />
 export const AppearanceIcon = ({ className }: IconProps) => <Palette className={className} />
-export const InputIcon = ({ className }: IconProps) => <Keyboard className={className} />
 export const PermissionsIcon = ({ className }: IconProps) => <ShieldCheck className={className} />
 export const LabelsIcon = ({ className }: IconProps) => <Tag className={className} />
 export const MessagingSettingsIcon = ({ className }: IconProps) => <MessageSquare className={className} />
@@ -49,7 +48,6 @@ export const SETTINGS_ICONS: Record<BuiltInSettingsSubpage, React.ComponentType<
   extensions: ExtensionsSettingsIcon,
   developer: DeveloperSettingsIcon,
   appearance: AppearanceIcon,
-  input: InputIcon,
   messaging: MessagingSettingsIcon,
   server: ServerSettingsIcon,
   shortcuts: ShortcutsIcon,

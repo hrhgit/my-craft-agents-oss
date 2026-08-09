@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 import type { DiscoveredSkill } from '../../../shared/types'
-import { groupSkillImportCandidates, toggleSkillImportGroup } from './SkillImportDialog'
+import { groupSkillImportCandidates, toggleSkillImportExpanded, toggleSkillImportGroup } from './SkillImportDialog'
 
 const candidates: DiscoveredSkill[] = [
   { sourcePath: 'C:\\Users\\test\\.agents\\skills\\beta', skillsRoot: 'C:\\Users\\test\\.agents\\skills', slug: 'beta' },
@@ -29,5 +29,15 @@ describe('SkillImportDialog grouping', () => {
 
     const deselected = toggleSkillImportGroup(selected, agentsGroup)
     expect([...deselected]).toEqual([codexPath])
+  })
+
+  it('toggles a single source group between expanded and collapsed', () => {
+    const expandedRoots = new Set(['C:\\Users\\test\\.agents\\skills', 'C:\\Users\\test\\.codex\\skills'])
+
+    const collapsed = toggleSkillImportExpanded(expandedRoots, 'C:\\Users\\test\\.agents\\skills')
+    expect([...collapsed]).toEqual(['C:\\Users\\test\\.codex\\skills'])
+
+    const restored = toggleSkillImportExpanded(collapsed, 'C:\\Users\\test\\.agents\\skills')
+    expect([...restored].sort()).toEqual([...expandedRoots].sort())
   })
 })

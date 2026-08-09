@@ -10,7 +10,6 @@ export { default as AiSettingsPage, meta as AiSettingsMeta } from './AiSettingsP
 export { default as AgentSettingsPage, meta as AgentSettingsMeta } from './AgentSettingsPage'
 export { default as AppearanceSettingsPage, meta as AppearanceMeta } from './AppearanceSettingsPage'
 export { default as ExtensionsSettingsPage, meta as ExtensionsMeta } from './ExtensionsSettingsPage'
-export { default as InputSettingsPage, meta as InputMeta } from './InputSettingsPage'
 export { default as ShortcutsPage, meta as ShortcutsMeta } from './ShortcutsPage'
 export { default as PreferencesPage, meta as PreferencesMeta } from './PreferencesPage'
 

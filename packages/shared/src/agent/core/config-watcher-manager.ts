@@ -6,7 +6,6 @@
  *
  * Used by agent backends for hot-reloading:
  * - Skills config changes
- * - Permissions config changes
  * - Validation errors
  */
 
@@ -41,17 +40,6 @@ export interface ConfigWatcherManagerCallbacks {
   onSkillsListChange?: (skills: LoadedSkill[]) => void;
 
   /**
-   * Called when workspace permissions change.
-   * @param workspaceId - Workspace ID
-   */
-  onWorkspacePermissionsChange?: (workspaceId: string) => void;
-
-  /**
-   * Called when default (app-level) permissions change.
-   */
-  onDefaultPermissionsChange?: () => void;
-
-  /**
    * Called when a validation error occurs while loading config.
    * @param file - File path relative to config root
    * @param errors - Validation errors
@@ -70,6 +58,9 @@ export interface ConfigWatcherManagerCallbacks {
  * Configuration for ConfigWatcherManager
  */
 export interface ConfigWatcherManagerConfig {
+  /** Stable Workspace identity used for global session storage. */
+  workspaceId: string;
+
   /**
    * Workspace root path to watch.
    * Can be either workspace ID or full path.
@@ -102,12 +93,14 @@ export interface ConfigWatcherManagerConfig {
  */
 export class ConfigWatcherManager {
   private watcher: ConfigWatcher | null = null;
+  private workspaceId: string;
   private workspaceRootPath: string;
   private isHeadless: boolean;
   private callbacks: ConfigWatcherManagerCallbacks;
   private onDebugCallback: ((message: string) => void) | null;
 
   constructor(config: ConfigWatcherManagerConfig, callbacks: ConfigWatcherManagerCallbacks = {}) {
+    this.workspaceId = config.workspaceId;
     this.workspaceRootPath = config.workspaceRootPath;
     this.isHeadless = config.isHeadless ?? false;
     this.callbacks = callbacks;
@@ -140,16 +133,6 @@ export class ConfigWatcherManager {
         this.callbacks.onSkillsListChange?.(skills);
       },
 
-      onWorkspacePermissionsChange: (workspaceId) => {
-        this.debug(`Workspace permissions changed: ${workspaceId}`);
-        this.callbacks.onWorkspacePermissionsChange?.(workspaceId);
-      },
-
-      onDefaultPermissionsChange: () => {
-        this.debug('Default permissions changed');
-        this.callbacks.onDefaultPermissionsChange?.();
-      },
-
       onValidationError: (file, result) => {
         // Map ValidationIssue objects to string messages for the callback
         const errorMessages = result.errors.map(e => e.message);
@@ -163,7 +146,11 @@ export class ConfigWatcherManager {
       },
     };
 
-    this.watcher = createConfigWatcher(this.workspaceRootPath, watcherCallbacks);
+    this.watcher = createConfigWatcher(
+      this.workspaceRootPath,
+      watcherCallbacks,
+      this.workspaceId,
+    );
     this.debug('Config watcher started');
   }
 

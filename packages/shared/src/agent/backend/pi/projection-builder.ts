@@ -100,36 +100,6 @@ export class PiProjectionBuilder {
     ]
   }
 
-  acceptPromptRequest(request: {
-    requestId: string
-    promptKind: 'permission'
-    toolName: string
-    description?: string
-    command?: string
-    permissionType?: string
-    appName?: string
-    reason?: string
-    impact?: string
-    requiresSystemPrompt?: boolean
-    rememberForMinutes?: number
-    commandHash?: string
-    approvalTtlSeconds?: number
-  }): PiProjectionEventV1[] {
-    const entityId = `prompt:${request.requestId}`
-    const state = this.nextEntity(entityId)
-    return [this.createEvent(entityId, 'prompt_request', state.version, 'permission_request', {
-      ...request, status: 'pending',
-    })]
-  }
-
-  acceptPromptResolution(requestId: string, resolution: 'allowed' | 'denied' | 'cancelled'): PiProjectionEventV1[] {
-    const entityId = `prompt:${requestId}`
-    const state = this.nextEntity(entityId)
-    return [this.createEvent(entityId, 'prompt_request', state.version, 'prompt_resolved', {
-      requestId, status: 'resolved', resolution,
-    })]
-  }
-
   accept(event: AgentEvent): PiProjectionEventV1[] {
     if (!this.isProjectable(event)) return []
 
@@ -138,26 +108,36 @@ export class PiProjectionBuilder {
         const entityId = `tool:${event.toolUseId}`
         const state = this.nextEntity(entityId)
         const turnId = event.turnId ?? this.activeTurnId ?? undefined
+        const startedAt = this.now()
         state.turnId = turnId
         state.payload = {
           toolCallId: event.toolUseId, toolName: event.toolName, input: event.input,
           intent: event.intent, displayName: event.displayName,
           parentToolUseId: event.parentToolUseId, status: 'running',
+          timestamp: startedAt, startedAt,
         }
-        return [this.createEvent(entityId, 'tool_run', state.version, 'tool_execution_start', state.payload, turnId)]
+        return [this.createEvent(entityId, 'tool_run', state.version, 'tool_execution_start', state.payload, turnId, startedAt)]
       }
       case 'tool_result': {
         const entityId = `tool:${event.toolUseId}`
         const state = this.nextEntity(entityId)
         const turnId = event.turnId ?? state.turnId ?? this.activeTurnId ?? undefined
+        const completedAt = this.now()
+        const startedAt = typeof state.payload?.startedAt === 'number' && Number.isFinite(state.payload.startedAt)
+          ? state.payload.startedAt
+          : undefined
+        const timestamp = typeof state.payload?.timestamp === 'number' && Number.isFinite(state.payload.timestamp)
+          ? state.payload.timestamp
+          : completedAt
         state.turnId = turnId
         state.payload = {
           ...state.payload,
           toolCallId: event.toolUseId, toolName: event.toolName, result: event.result,
           isError: event.isError === true, parentToolUseId: event.parentToolUseId,
           status: event.isError ? 'failed' : 'completed',
+          timestamp, startedAt, completedAt,
         }
-        return [this.createEvent(entityId, 'tool_run', state.version, 'tool_execution_end', state.payload, turnId)]
+        return [this.createEvent(entityId, 'tool_run', state.version, 'tool_execution_end', state.payload, turnId, completedAt)]
       }
       case 'status':
         if (this.isCompactionCompatibilityMessage(event.message)) return []
@@ -208,11 +188,13 @@ export class PiProjectionBuilder {
     for (const [entityId, existing] of this.entities) {
       if (!entityId.startsWith('tool:') || existing.payload?.status !== 'running') continue
       const state = this.nextEntity(entityId)
+      const completedAt = this.now()
       state.payload = {
         ...existing.payload,
         result: failed ? 'Error occurred' : (existing.payload.result ?? ''),
         isError: failed,
         status: failed ? 'failed' : 'completed',
+        completedAt,
       }
       events.push(this.createEvent(
         entityId,
@@ -221,6 +203,7 @@ export class PiProjectionBuilder {
         'tool_execution_end',
         state.payload,
         existing.turnId,
+        completedAt,
       ))
     }
     return events
@@ -443,6 +426,8 @@ export class PiProjectionBuilder {
     const update = event.assistantMessageEvent
     if (!update || typeof update !== 'object') return []
     const value = update as { type?: unknown; contentIndex?: unknown; delta?: unknown; content?: unknown }
+    const isWebSearch = value.type === 'websearch_start' || value.type === 'websearch_update' || value.type === 'websearch_end'
+    if (isWebSearch) return this.acceptWebSearchUpdate(event, value as Record<string, unknown>)
     const isThinking = value.type === 'thinking_start' || value.type === 'thinking_delta' || value.type === 'thinking_end'
     const isText = value.type === 'text_start' || value.type === 'text_delta' || value.type === 'text_end'
     if (!isThinking && !isText) return []
@@ -474,6 +459,48 @@ export class PiProjectionBuilder {
     }, this.activeTurnId ?? undefined, this.messageTimestamp(message))]
   }
 
+  private acceptWebSearchUpdate(event: Record<string, unknown>, value: Record<string, unknown>): PiProjectionEventV1[] {
+    const contentIndex = Number.isInteger(value.contentIndex) && (value.contentIndex as number) >= 0
+      ? value.contentIndex as number
+      : 0
+    const searchId = typeof value.searchId === 'string' && value.searchId ? value.searchId : `search-${contentIndex}`
+    const message = event.message && typeof event.message === 'object'
+      ? event.message as { id?: unknown; timestamp?: unknown }
+      : {}
+    const messageId = this.messageIdentity(message)
+    const entityId = `content:webSearch:${messageId}:${searchId}`
+    const state = this.nextEntity(entityId)
+    const previous = state.payload ?? {}
+    const status = value.type === 'websearch_start'
+      ? 'running'
+      : value.type === 'websearch_end'
+        ? (value.status === 'failed' || value.status === 'cancelled' ? value.status : 'completed')
+        : (previous.status ?? 'running')
+    state.payload = {
+      ...previous,
+      role: 'assistant', contentKind: 'webSearch', messageId, searchId,
+      query: typeof value.query === 'string' ? value.query : (previous.query ?? ''),
+      status,
+      sources: Array.isArray(value.sources) ? value.sources : (previous.sources ?? []),
+      provider: typeof value.provider === 'string' ? value.provider : previous.provider,
+      source: value.source === 'extension' ? 'extension' : (previous.source ?? 'native'),
+      durationMs: typeof value.durationMs === 'number' ? value.durationMs : previous.durationMs,
+      error: value.error && typeof value.error === 'object' ? value.error : previous.error,
+      raw: value.raw ?? previous.raw,
+      contentIndex,
+      timestamp: this.messageTimestamp(message),
+    }
+    return [this.createEvent(
+      entityId,
+      'content_block',
+      state.version,
+      String(value.type),
+      state.payload,
+      this.activeTurnId ?? undefined,
+      this.messageTimestamp(message),
+    )]
+  }
+
   private acceptAssistantMessageEnd(message: {
     id?: unknown
     timestamp?: unknown
@@ -496,8 +523,31 @@ export class PiProjectionBuilder {
         ? 'thinking'
         : part.type === 'text'
           ? 'text'
+          : part.type === 'webSearch'
+            ? 'webSearch'
           : null
       if (!contentKind) continue
+      if (contentKind === 'webSearch') {
+        const searchId = typeof part.searchId === 'string' && part.searchId ? part.searchId : `${messageId}:${contentIndex}`
+        const entityId = `content:webSearch:${messageId}:${searchId}`
+        const state = this.nextEntity(entityId)
+        state.payload = {
+          role: 'assistant', contentKind, messageId, searchId,
+          query: typeof part.query === 'string' ? part.query : '',
+          status: part.status === 'running' || part.status === 'failed' || part.status === 'cancelled' ? part.status : 'completed',
+          sources: Array.isArray(part.sources) ? part.sources : [],
+          provider: typeof part.provider === 'string' ? part.provider : undefined,
+          source: part.source === 'extension' ? 'extension' : 'native',
+          raw: part.raw,
+          contentIndex,
+          timestamp: this.messageTimestamp(message),
+        }
+        events.push(this.createEvent(
+          entityId, 'content_block', state.version, 'websearch_end', state.payload,
+          this.activeTurnId ?? undefined, this.messageTimestamp(message),
+        ))
+        continue
+      }
       const text = contentKind === 'thinking'
         ? (typeof part.thinking === 'string' ? part.thinking : '')
         : (typeof part.text === 'string' ? part.text : '')

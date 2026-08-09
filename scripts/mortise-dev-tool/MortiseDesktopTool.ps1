@@ -289,6 +289,8 @@ namespace MortiseDevTool
             Shown += (_, __) => DetectExistingDesktop();
             FormClosing += (_, __) =>
             {
+                packageRunner?.TerminateTree();
+                developerKitRunner?.TerminateTree();
                 if (stopDesktopOnClose) StopDesktopOnToolClose();
             };
             FormClosed += (_, __) =>
@@ -296,6 +298,8 @@ namespace MortiseDevTool
                 timer.Stop();
                 desktopRunner?.Dispose();
                 stopRunner?.Dispose();
+                packageRunner?.Dispose();
+                developerKitRunner?.Dispose();
             };
         }
 

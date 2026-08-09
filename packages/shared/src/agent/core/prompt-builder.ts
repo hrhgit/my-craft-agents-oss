@@ -30,7 +30,6 @@ import type {
  *
  * // Build context blocks for a user message
  * const contextParts = promptBuilder.buildContextParts({
- *   permissionMode: 'explore',
  *   plansFolderPath: '/path/to/plans',
  * });
  * ```
@@ -56,9 +55,7 @@ export class PromptBuilder {
    *
    * This is the Claude path: it composes {@link buildVolatileContextParts} and
    * {@link buildStableContextParts} so the output is byte-identical to the
-   * pre-split version (same 5 blocks, same order) AND the one-shot mode-change
-   * signal is consumed exactly once per turn (only the volatile builder consumes
-   * it). Callers that place volatile vs stable context in different locations
+   * pre-split version. Callers that place volatile vs stable context in different locations
    * (e.g. the Pi adapter, to preserve prompt caching — issue #862) should call
    * the two halves directly instead of this method.
    *
@@ -75,16 +72,6 @@ export class PromptBuilder {
    * ride the user-message tail rather than the cached system prefix (issue
    * #862). Folding these into the system prompt re-stamps the cache prefix each
    * turn and kills prompt-cache reuse for all downstream history.
-   *
-   * Blocks (in order):
-   *  1. date/time (minute precision)
-   *  2. session_state (permission mode + plans/data paths; carries
-   *     modeChangedAt/modeVersion and **consumes** the one-shot mode-change user
-   *     signal — see {@link formatSessionState})
-   *
-   * MUST be called exactly once per turn, because it consumes one-shot mode
-   * state. Never call it a second time to compute a cache-debug hash — hash the
-   * already-produced string instead.
    *
    * @param options - Context building options
    */

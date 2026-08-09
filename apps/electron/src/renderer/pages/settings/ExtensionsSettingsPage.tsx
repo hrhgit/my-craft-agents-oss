@@ -10,7 +10,12 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { SettingsCard, SettingsCardContent, SettingsSection } from '@/components/settings'
 import { routes } from '@/lib/navigate'
 import type { DetailsPageMeta } from '@/lib/navigation-registry'
-import type { PiExtensionCatalogEntry, PiExtensionCatalogError, PiExtensionSettingScalar } from '@mortise/shared/config'
+import {
+  isMortiseModelCapabilityBridgeId,
+  type PiExtensionCatalogEntry,
+  type PiExtensionCatalogError,
+  type PiExtensionSettingScalar,
+} from '@mortise/shared/config/pi-extension-settings'
 import { ExtensionListPanel } from './PiExtensionsSettingsPanel'
 import { ExtensionDetailPanel } from './ExtensionDetailPanel'
 import { usePiGlobalConfig } from '@/hooks/usePiGlobalConfig'
@@ -47,11 +52,12 @@ export default function ExtensionsSettingsPage() {
 
   const loadCatalog = useCallback(async () => {
     const catalog = await window.electronAPI.getPiExtensionCatalog()
-    setExtensionCatalog(catalog.extensions)
+    const visibleExtensions = catalog.extensions.filter((extension) => !isMortiseModelCapabilityBridgeId(extension.id))
+    setExtensionCatalog(visibleExtensions)
     setExtensionErrors(catalog.errors)
-    setExtensionStates(Object.fromEntries(catalog.extensions.map((extension) => [extension.id, extension.enabled])))
+    setExtensionStates(Object.fromEntries(visibleExtensions.map((extension) => [extension.id, extension.enabled])))
     confirmedConfig.current.clear()
-    for (const extension of catalog.extensions) {
+    for (const extension of visibleExtensions) {
       for (const [key, value] of Object.entries(extension.config ?? {})) {
         if (isSettingScalar(value)) confirmedConfig.current.set(configFieldId(extension.id, key), { present: true, value })
       }

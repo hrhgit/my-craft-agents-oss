@@ -1,11 +1,7 @@
 import { cn } from '@/lib/utils'
-import type { PermissionMode } from '@mortise/shared/agent/modes'
 import { ActiveTasksBar, type BackgroundTask } from './ActiveTasksBar'
 
 export interface ActiveOptionBadgesProps {
-  permissionMode?: PermissionMode
-  onPermissionModeChange?: (mode: PermissionMode) => void
-  showPermissionModeBadge?: boolean
   tasks?: BackgroundTask[]
   sessionId?: string
   onKillTask?: (taskId: string) => void

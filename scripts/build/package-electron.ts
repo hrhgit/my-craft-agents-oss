@@ -73,6 +73,7 @@ export function packageElectron(args = process.argv.slice(2)): void {
     process.env.MORTISE_DEVELOPER_KIT_BUILD_ROOT ?? join(repoRoot, 'output', 'developer-kit-builds'),
   )
   const bunExecutable = publishBuildBunToolchain(buildRoot)
+  console.log(`[electron-package] Starting ${resolvedTarget.target} ${mode} packaging.`)
   const runId = `package-${resolvedTarget.target}-${process.pid}-${randomUUID().slice(0, 8)}`
   const runsRoot = join(repoRoot, 'output', 'electron-build-runs')
   reapAbandonedPackageRuns(runsRoot)
@@ -97,6 +98,7 @@ export function packageElectron(args = process.argv.slice(2)): void {
   let packageSource: ReturnType<ReturnType<typeof captureElectronBuildSource>['materialize']> | undefined
   try {
     if (expectedBuildId) {
+      console.log(`[electron-package] Acquiring pinned build ${expectedBuildId.slice(0, 12)}...`)
       lease = acquireElectronBuild({
         runId,
         runDir,
@@ -107,7 +109,9 @@ export function packageElectron(args = process.argv.slice(2)): void {
         skipBuild: true,
       })
     } else {
+      console.log('[electron-package] Capturing immutable source snapshot...')
       capturedSource = captureElectronBuildSource({ repoRoot: buildSourceRoot, buildRoot })
+      console.log(`[electron-package] Source snapshot ${capturedSource.sourceId.slice(0, 12)} ready.`)
       lease = acquireElectronBuild({ runId, runDir, repoRoot: buildSourceRoot, buildRoot, mode, capturedSource })
     }
     const buildEnvironment = createElectronBuildCommandEnvironment(
@@ -118,6 +122,7 @@ export function packageElectron(args = process.argv.slice(2)): void {
       bunExecutable,
     )
     if (resolvedTarget.target === 'win') {
+      console.log('[electron-package] Materializing installer source and Developer Kit inputs...')
       capturedSource ??= captureElectronBuildSource({ repoRoot: buildSourceRoot, buildRoot })
       if (capturedSource.sourceId !== lease.manifest.sourceId) {
         throw new Error(
@@ -155,6 +160,7 @@ export function packageElectron(args = process.argv.slice(2)): void {
           },
         )
       }
+      console.log(`[electron-package] Packaging Electron build ${staged.buildId.slice(0, 12)}...`)
       run(
         bunExecutable,
         [

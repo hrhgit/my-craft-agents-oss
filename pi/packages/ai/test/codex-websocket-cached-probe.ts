@@ -90,7 +90,7 @@ function printHelp(): void {
 Options:
   --turns <n>          Number of user turns. Default: ${DEFAULT_TURNS}
   --transport <mode>   sse | websocket | websocket-cached | auto. Default: websocket-cached
-  --reasoning <level>  minimal | low | medium | high | xhigh. Default: low
+  --reasoning <level>  minimal | low | medium | high | xhigh | max. Default: low
   --max-tokens <n>     Max output tokens per model request. Default: ${DEFAULT_MAX_TOKENS}
   --session-id <id>    Session id for websocket/cache state
 `);

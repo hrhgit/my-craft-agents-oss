@@ -154,6 +154,48 @@ function toInputModifiers(modifiers: UiDriverActionRequest['modifiers']): Array<
   return modifiers ? [...modifiers] : []
 }
 
+type PhysicalKeyInputEvent = {
+  type: 'keyDown' | 'char' | 'keyUp'
+  keyCode: string
+  modifiers: Array<'shift' | 'control' | 'alt' | 'meta'>
+}
+
+function singlePrintableCharacter(value: string): string | undefined {
+  const characters = [...value]
+  if (characters.length !== 1) return undefined
+  const codePoint = characters[0]!.codePointAt(0)!
+  if (codePoint <= 0x1f || (codePoint >= 0x7f && codePoint <= 0x9f)) return undefined
+  return characters[0]
+}
+
+function inferredPressCharacter(key: string, modifiers: PhysicalKeyInputEvent['modifiers']): string | undefined {
+  if (modifiers.some(modifier => modifier === 'control' || modifier === 'alt' || modifier === 'meta')) return undefined
+  const character = key === 'Space' || key === 'Spacebar' ? ' ' : singlePrintableCharacter(key)
+  if (!character || !modifiers.includes('shift')) return character
+  const uppercase = character.toLocaleUpperCase()
+  return [...uppercase].length === 1 ? uppercase : character
+}
+
+export function physicalKeyInputEvents(request: Pick<UiDriverActionRequest, 'action' | 'key' | 'value' | 'modifiers'>): PhysicalKeyInputEvent[] {
+  if (!request.key) throw new ElectronUiDriverError('UNSUPPORTED', 'press requires key.')
+  const modifiers = toInputModifiers(request.modifiers)
+  let character: string | undefined
+  if (request.action === 'press' && request.value !== '') {
+    character = request.value === undefined
+      ? inferredPressCharacter(request.key, modifiers)
+      : singlePrintableCharacter(request.value)
+    if (request.value !== undefined && !character) {
+      throw new ElectronUiDriverError('UNSUPPORTED', 'physical press value must be one printable character or an empty string.')
+    }
+  }
+
+  return [
+    { type: 'keyDown', keyCode: request.key, modifiers },
+    ...(character ? [{ type: 'char' as const, keyCode: character, modifiers }] : []),
+    { type: 'keyUp', keyCode: request.key, modifiers },
+  ]
+}
+
 export class ElectronUiSurfaceDriver {
   private readonly states = new Map<number, DriverWindowState>()
   private disposed = false
@@ -430,18 +472,8 @@ export class ElectronUiSurfaceDriver {
       if (request.value === undefined) throw new ElectronUiDriverError('UNSUPPORTED', 'rich-text requires value.')
       await state.cdp.replaceTextElement(resolved.cdpRef, request.value)
     } else {
-      if (!request.key) throw new ElectronUiDriverError('UNSUPPORTED', 'press requires key.')
       await state.cdp.focusElement(resolved.cdpRef)
-      window.webContents.sendInputEvent({
-        type: 'keyDown',
-        keyCode: request.key,
-        modifiers: toInputModifiers(request.modifiers),
-      })
-      window.webContents.sendInputEvent({
-        type: 'keyUp',
-        keyCode: request.key,
-        modifiers: toInputModifiers(request.modifiers),
-      })
+      for (const event of physicalKeyInputEvents(request)) window.webContents.sendInputEvent(event)
     }
     }
 

@@ -60,7 +60,6 @@ export type {
   RecoveryAction,
   ErrorCode,
   TypedError,
-  PermissionRequest,
   AgentEvent,
 } from './message.ts';
 export { generateMessageId } from './message.ts';

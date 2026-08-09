@@ -2,7 +2,7 @@
  * Tests for BaseAgent abstract class
  *
  * Uses TestAgent (concrete implementation) to verify BaseAgent functionality.
- * Tests model/thinking configuration, permission mode, and lifecycle management.
+ * Tests model/thinking configuration and lifecycle management.
  */
 import { describe, it, expect, beforeEach } from 'bun:test';
 import { AbortReason } from '../backend/types.ts';
@@ -40,40 +40,6 @@ describe('BaseAgent', () => {
       expect(agent.getThinkingLevel()).toBe('xhigh');
     });
 
-  });
-
-  describe('Permission Mode', () => {
-    it('should have a permission mode', () => {
-      const mode = agent.getPermissionMode();
-      expect(['safe', 'ask', 'allow-all']).toContain(mode);
-    });
-
-    it('should allow setting permission mode', () => {
-      agent.setPermissionMode('safe');
-      expect(agent.getPermissionMode()).toBe('safe');
-    });
-
-    it('should notify on permission mode change', () => {
-      let notifiedMode = '';
-      agent.onPermissionModeChange = (mode) => { notifiedMode = mode; };
-
-      agent.setPermissionMode('allow-all');
-      expect(notifiedMode).toBe('allow-all');
-    });
-
-    it('should cycle permission modes', () => {
-      const initialMode = agent.getPermissionMode();
-      const newMode = agent.cyclePermissionMode();
-      expect(newMode).not.toBe(initialMode);
-    });
-
-    it('should report safe mode correctly', () => {
-      agent.setPermissionMode('safe');
-      expect(agent.isInSafeMode()).toBe(true);
-
-      agent.setPermissionMode('ask');
-      expect(agent.isInSafeMode()).toBe(false);
-    });
   });
 
   describe('Workspace & Session', () => {
@@ -115,11 +81,6 @@ describe('BaseAgent', () => {
   });
 
   describe('Manager Accessors', () => {
-    it('should provide access to PermissionManager', () => {
-      const manager = agent.getPermissionManager();
-      expect(manager).toBeTruthy();
-    });
-
     it('should provide access to PromptBuilder', () => {
       const builder = agent.getPromptBuilder();
       expect(builder).toBeTruthy();
@@ -148,16 +109,6 @@ describe('BaseAgent', () => {
       expect(agent.abortCalls[0]?.reason).toBe('test reason');
     });
 
-    it('should track respondToPermission calls', () => {
-      agent.respondToPermission('req-1', true, false);
-      expect(agent.respondToPermissionCalls).toHaveLength(1);
-      expect(agent.respondToPermissionCalls[0]).toEqual({
-        requestId: 'req-1',
-        allowed: true,
-        alwaysAllow: false,
-      });
-    });
-
     it('should cleanup on destroy', () => {
       // Should not throw
       agent.destroy();
@@ -179,13 +130,6 @@ describe('BaseAgent', () => {
       expect(message).toContain('Thinking level');
     });
 
-    it('should support permission mode change callback', () => {
-      let mode = '';
-      agent.onPermissionModeChange = (m) => { mode = m; };
-
-      agent.setPermissionMode('allow-all');
-      expect(mode).toBe('allow-all');
-    });
   });
 
   describe('Config Watcher', () => {

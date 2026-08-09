@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { useTheme } from '@/hooks/useTheme'
 import type { ThemeOverrides } from '@config/theme'
 import { useSetAtom, useStore, useAtomValue, useAtom } from 'jotai'
-import type { Session, WorkspaceInfo, SessionEvent, Message, FileAttachment, StoredAttachment, NewChatActionParams, ContentBadge, PermissionModeState } from '../shared/types'
+import type { Session, WorkspaceInfo, SessionEvent, Message, FileAttachment, StoredAttachment, NewChatActionParams, ContentBadge } from '../shared/types'
 import type { SessionDraft, DraftAttachmentRef } from '@mortise/shared/config'
 import type { MidStreamSendIntent } from '@mortise/shared/protocol'
 import type { SessionOptions, SessionOptionUpdates } from './hooks/useSessionOptions'
@@ -361,7 +361,6 @@ export default function App() {
 
   // Splash screen state - tracks when app is fully ready (all data loaded)
   const [sessionsLoaded, setSessionsLoaded] = useState(false)
-  const [draftsLoaded, setDraftsLoaded] = useState(false)
   const [sessionLoadError, setSessionLoadError] = useState<string | null>(null)
   const sessionLoadGenerationRef = useRef(0)
   const sessionLoadFlightRef = useRef<{ workspaceId: string; promise: Promise<void> } | null>(null)
@@ -402,65 +401,6 @@ export default function App() {
   // theme for dark-only themes in light system mode
   const { shikiTheme, isDark } = useTheme({ appTheme })
 
-  // Ref for sessionOptions to access current value in event handlers without re-registering
-  const sessionOptionsRef = useRef(sessionOptions)
-  // Keep ref in sync with state
-  useEffect(() => {
-    sessionOptionsRef.current = sessionOptions
-  }, [sessionOptions])
-
-  const applyPermissionModeState = useCallback((sessionId: string, state: PermissionModeState, source: 'event' | 'reconcile') => {
-    setSessionOptions(prev => {
-      const next = new Map(prev)
-      const current = next.get(sessionId) ?? defaultSessionOptions
-      const currentVersion = current.permissionModeVersion ?? -1
-
-      if (state.modeVersion < currentVersion) {
-        window.electronAPI.debugLog(
-          '[ModeSync] Ignoring stale permission mode update',
-          { sessionId, source, incoming: state.modeVersion, current: currentVersion }
-        )
-        return prev
-      }
-
-      if (
-        state.modeVersion === currentVersion &&
-        current.permissionMode !== state.permissionMode
-      ) {
-        window.electronAPI.debugLog(
-          '[ModeSync] Equal modeVersion with differing mode detected, applying and requesting reconciliation',
-          {
-            sessionId,
-            source,
-            modeVersion: state.modeVersion,
-            currentMode: current.permissionMode,
-            incomingMode: state.permissionMode,
-          }
-        )
-      }
-
-      next.set(sessionId, {
-        ...current,
-        permissionMode: state.permissionMode,
-        permissionModeVersion: state.modeVersion,
-      })
-      return next
-    })
-  }, [])
-
-  const reconcilePermissionModeState = useCallback(async (sessionId: string) => {
-    try {
-      const state = await window.electronAPI.getSessionPermissionModeState(sessionId)
-      if (!state) return
-      applyPermissionModeState(sessionId, state, 'reconcile')
-    } catch (error) {
-      window.electronAPI.debugLog('[ModeSync] Failed to reconcile permission mode', {
-        sessionId,
-        error: error instanceof Error ? error.message : String(error),
-      })
-    }
-  }, [applyPermissionModeState])
-
   // Event processor hook - handles all agent events through pure functions
   const { processAgentEvent, clearStreamingState } = useEventProcessor()
 
@@ -471,14 +411,12 @@ export default function App() {
       const merged = {
         ...defaultSessionOptions,
         ...current,
-        permissionMode: session.permissionMode ?? defaultSessionOptions.permissionMode,
         thinkingLevel: session.thinkingLevel ?? DEFAULT_THINKING_LEVEL,
       }
 
-      const hasNonDefaultMode = merged.permissionMode !== defaultSessionOptions.permissionMode
       const hasNonDefaultThinking = merged.thinkingLevel !== DEFAULT_THINKING_LEVEL
 
-      if (!hasNonDefaultMode && !hasNonDefaultThinking && merged.permissionModeVersion == null) {
+      if (!hasNonDefaultThinking) {
         next.delete(session.id)
       } else {
         next.set(session.id, merged)
@@ -502,13 +440,12 @@ export default function App() {
       clearStreamingState(sessionId)
       replaceLoadedSession(nextSession)
       syncSessionOptionsFromSession(nextSession)
-      void reconcilePermissionModeState(sessionId)
       return preservedStaleMessages ? 'preserved_stale_messages' : 'refreshed'
     } catch (err) {
       console.error(`[App] Failed to refresh session ${sessionId}:`, err)
       return 'failed'
     }
-  }, [clearStreamingState, replaceLoadedSession, syncSessionOptionsFromSession, reconcilePermissionModeState, store])
+  }, [clearStreamingState, replaceLoadedSession, syncSessionOptionsFromSession, store])
 
   const loadSessionsFromServer = useCallback((expectedWorkspaceId = windowWorkspaceIdRef.current): Promise<void> => {
     if (!expectedWorkspaceId) return Promise.resolve()
@@ -547,11 +484,9 @@ export default function App() {
 
         const optionsMap = new Map<string, SessionOptions>()
         for (const s of loadedSessions) {
-          const hasNonDefaultMode = s.permissionMode && s.permissionMode !== 'ask'
           const hasNonDefaultThinking = s.thinkingLevel && s.thinkingLevel !== DEFAULT_THINKING_LEVEL
-          if (hasNonDefaultMode || hasNonDefaultThinking) {
+          if (hasNonDefaultThinking) {
             optionsMap.set(s.id, {
-              permissionMode: s.permissionMode ?? 'ask',
               thinkingLevel: s.thinkingLevel ?? DEFAULT_THINKING_LEVEL,
             })
           }
@@ -745,15 +680,6 @@ export default function App() {
 
   usePiProjectionSync(sessionSelection.selected, handlePiProjectionEventApplied)
 
-  // Permission diagnostics are only needed for the session the user can act
-  // on. Reconciling every sidebar item turns workspace loading into N extra
-  // RPCs and can force every transcript to be read from disk.
-  useEffect(() => {
-    if (sessionSelection.selected) {
-      void reconcilePermissionModeState(sessionSelection.selected)
-    }
-  }, [sessionSelection.selected, reconcilePermissionModeState])
-
   // Load workspaces, sessions, model, notifications setting, and drafts when app is ready
   useEffect(() => {
     if (appState !== 'ready') return
@@ -781,6 +707,14 @@ export default function App() {
           duration: Infinity,
         })
       }
+      if (warnings.automationInitializationFailures.length > 0) {
+        toast.error(t('automations.unavailable'), {
+          description: warnings.automationInitializationFailures
+            .map(failure => `${failure.workspaceName}: ${failure.message}`)
+            .join('\n'),
+          duration: Infinity,
+        })
+      }
     }).catch(() => { /* non-fatal startup check */ })
     if (windowWorkspaceId) {
       void loadSessionsFromServer(windowWorkspaceId)
@@ -804,7 +738,6 @@ export default function App() {
         .catch((error) => {
           console.warn('[App] Failed to load persisted drafts:', error)
         })
-        .finally(() => setDraftsLoaded(true))
     }
     // Load app-level theme
     window.electronAPI.getAppTheme().then(setAppTheme)
@@ -840,26 +773,6 @@ export default function App() {
     const handleEffects = (effects: Effect[], sessionId: string, eventType: string) => {
       for (const effect of effects) {
         switch (effect.type) {
-          case 'permission_mode_changed': {
-            if (typeof effect.modeVersion === 'number' && effect.changedAt && effect.changedBy) {
-              applyPermissionModeState(effect.sessionId, {
-                permissionMode: effect.permissionMode,
-                modeVersion: effect.modeVersion,
-                changedAt: effect.changedAt,
-                changedBy: effect.changedBy,
-              }, 'event')
-            } else {
-              // Backward compatibility: apply mode optimistically then reconcile authoritative state.
-              setSessionOptions(prevOpts => {
-                const next = new Map(prevOpts)
-                const current = next.get(effect.sessionId) ?? defaultSessionOptions
-                next.set(effect.sessionId, { ...current, permissionMode: effect.permissionMode })
-                return next
-              })
-              void reconcilePermissionModeState(effect.sessionId)
-            }
-            break
-          }
           case 'restore_input': {
             // Queued messages were removed from chat on abort — restore their text to the input field.
             // Append to existing draft (user may have started typing) rather than overwrite.
@@ -1017,8 +930,6 @@ export default function App() {
     addSession,
     removeSession,
     syncSessionOptionsFromSession,
-    applyPermissionModeState,
-    reconcilePermissionModeState,
   ])
 
   // Transport reconnect recovery — refresh session metadata plus active/processing
@@ -1106,20 +1017,13 @@ export default function App() {
   // Deep link navigation is initialized later after handleInputChange is defined
 
   const handleDeleteSession = useCallback(async (sessionId: string, skipConfirmation = false): Promise<boolean> => {
-    // Show confirmation dialog before deleting (unless skipped or session is empty)
+    // Every published Session requires an explicit confirmation. Ordinary empty
+    // conversations stay as local drafts and never reach this deletion path.
     if (!skipConfirmation) {
-      // Check if session has any messages using session metadata from Jotai store
-      // We use store.get() instead of closing over sessions to prevent memory leaks
-      // (closures would retain the full sessions array with all messages)
       const metaMap = store.get(sessionMetaMapAtom)
       const meta = metaMap.get(sessionId)
-      // Session is empty if it has no lastFinalMessageId (no assistant responses) and no name (set on first user message)
-      const isEmpty = !meta || (!meta.lastFinalMessageId && !meta.name)
-
-      if (!isEmpty) {
-        const confirmed = await window.electronAPI.showDeleteSessionConfirmation(meta?.name || 'Untitled')
-        if (!confirmed) return false
-      }
+      const confirmed = await window.electronAPI.showDeleteSessionConfirmation(meta?.name || 'Untitled')
+      if (!confirmed) return false
     }
 
     await window.electronAPI.deleteSession(sessionId)
@@ -1127,12 +1031,6 @@ export default function App() {
     removeSession(sessionId)
     return true
   }, [store, removeSession])
-
-  // Auto-delete handler for empty sessions (fire-and-forget, no confirmation)
-  const handleAutoDeleteEmptySession = useCallback((sessionId: string) => {
-    window.electronAPI.deleteSession(sessionId)
-    removeSession(sessionId)
-  }, [removeSession])
 
   /**
    * Set which session user is actively viewing (for unread state machine).
@@ -1430,10 +1328,6 @@ export default function App() {
     })
 
     // Handle persistence/backend for specific options
-    if (updates.permissionMode !== undefined) {
-      // Sync permission mode change with backend
-      window.electronAPI.sessionCommand(sessionId, { type: 'setPermissionMode', mode: updates.permissionMode })
-    }
     if (updates.thinkingLevel !== undefined) {
       // Sync thinking level change with backend (session-level, persisted)
       window.electronAPI.sessionCommand(sessionId, { type: 'setThinkingLevel', level: updates.thinkingLevel })
@@ -2029,13 +1923,10 @@ export default function App() {
           workspaceSlug={windowWorkspaceSlug}
           onSwitchWorkspaceBySlug={handleSwitchWorkspaceBySlug}
           onCreateAndSendFirstTurn={handleCreateAndSendFirstTurn}
+          onDeleteSession={handleDeleteSession}
           onInputChange={handleInputChange}
-          getDraft={getDraft}
-          hasDraft={hasDraft}
-          onAutoDeleteEmptySession={handleAutoDeleteEmptySession}
           isReady={appState === 'ready'}
           isSessionsReady={sessionsLoaded}
-          areDraftsReady={draftsLoaded}
           remoteWorkspaceId={windowPrimaryRemoteWorkspaceId}
           workspaceSwitchDestination={workspaceSwitchDestination}
           onWorkspaceSwitchDestinationConsumed={() => setWorkspaceSwitchDestination(null)}

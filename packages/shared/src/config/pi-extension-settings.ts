@@ -2,19 +2,12 @@
  * Pi 扩展设置（mortise GUI 专属字段）
  *
  * Task 7 瘦身后：本文件只保留 mortise GUI 专属的开关类字段。
- * 以下字段位于 Mortise Agent root 的 `settings.json.extensionConfig.<id>.*` 命名空间：
- * - `extensionConfig.<id>.enabled`（扩展启停）
- * - `extensionConfig.trace-audit.model` / `extensionConfig.trace-audit.concurrency`
- * - `extensionConfig.yourself.model`
- * - `extensionConfig.repo-memory.model`
- * - webSearch（pi 原生搜索配置）
- * - ambiguityDictionary（pi 原生歧义词典）
+ * 扩展专属设置位于 Mortise Agent root 的
+ * `settings.json.extensionConfig.<id>.*` 命名空间。
  *
  * 保留字段均为 mortise GUI 专属概念，pi settings.json 无对应项：
  * - `enabled`：控制 pi 扩展相关 UI 组件的可见性（不影响子进程扩展加载）
  * - `managedAgentDir`：测试覆盖用的 agentDir
- * - `traceAudit.showStatusBadge`：mortise GUI 状态展示
- * - `yourself.showStatusBadge` / `repoMemory.showStatusBadge`：mortise GUI 状态展示
  */
 
 export type PiExtensionCategory =
@@ -26,6 +19,20 @@ export type PiExtensionCategory =
   | 'memory'
   | 'search'
   | 'other';
+
+/** Bundled Pi extensions that only expose Mortise core capabilities to the model. */
+export const MORTISE_MODEL_CAPABILITY_BRIDGE_IDS = {
+  browser: 'mortise-browser',
+  messaging: 'mortise-messaging',
+  webSearch: 'mortise-web-search',
+} as const;
+
+export type MortiseModelCapabilityBridgeId =
+  (typeof MORTISE_MODEL_CAPABILITY_BRIDGE_IDS)[keyof typeof MORTISE_MODEL_CAPABILITY_BRIDGE_IDS];
+
+export function isMortiseModelCapabilityBridgeId(id: string): id is MortiseModelCapabilityBridgeId {
+  return Object.values(MORTISE_MODEL_CAPABILITY_BRIDGE_IDS).includes(id as MortiseModelCapabilityBridgeId);
+}
 
 export type PiExtensionSettingScalar = string | number | boolean;
 export const PI_MODEL_REFERENCE_CURRENT_SESSION = 'current-session' as const;
@@ -235,6 +242,15 @@ export interface PiExtensionCatalogError {
 export interface PiExtensionCatalogResult {
   extensions: PiExtensionCatalogEntry[];
   errors: PiExtensionCatalogError[];
+}
+
+/** Extensions applied to the currently loaded Workspace runtime snapshot. */
+export interface PiExtensionRuntimeState {
+  loaded: boolean;
+  extensionIds: string[];
+  /** Workspace Pi preparation lifecycle, when a Workspace is in scope. */
+  preparationStatus?: 'warming' | 'ready' | 'degraded';
+  preparationError?: string;
 }
 
 export interface PiExtensionSettingsWriteResult {

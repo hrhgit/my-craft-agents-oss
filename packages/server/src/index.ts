@@ -331,7 +331,11 @@ const instance = await (async () => {
             if (!host) return {
               schemaVersion: 1,
               status: 'unsupported',
-              error: { code: 'automation_host_unavailable', message: 'The workspace automation host is unavailable', retryable: true },
+              error: {
+                code: 'automation_host_unavailable',
+                message: sessionManager.getAutomationHostInitializationError(workspace.id) ?? 'The workspace automation host is unavailable',
+                retryable: !sessionManager.getAutomationHostInitializationError(workspace.id),
+              },
             }
             return executeAutomationWorkspaceOperationV1({
               workspaceId: workspace.id,

@@ -10,11 +10,10 @@ import {
   discoverWorkspacesInDefaultLocation,
   loadWorkspaceConfig,
   saveWorkspaceConfig,
-  createWorkspaceAtPath,
-  isValidWorkspace,
   closeWorkspaceStorage,
 } from '../workspaces/storage.ts';
 import { getDefaultWorkspaceTopologyStore } from '../workspaces/topology-storage.ts';
+import { initializeWorkspace } from '../workspaces/initialization.ts';
 import { findIconFile } from '../utils/icon.ts';
 import { extractWorkspaceSlugFromPath } from '../utils/workspace-slug.ts';
 import { initializeDocs } from '../docs/index.ts';
@@ -77,9 +76,14 @@ import {
   readPiMortiseBoolean,
   writePiMortiseBoolean,
   readPiShellGuiBoolean,
+  readPiExtensionEnabled,
+  readPiWebSearchMode,
+  writePiExtensionEnabled,
+  writePiWebSearchMode,
   writePiShellGuiBoolean,
   type PiGlobalModel,
   type PiGlobalProvider,
+  type WebSearchMode,
 } from './pi-global-config.ts';
 import {
   DEFAULT_MID_STREAM_BEHAVIOR,
@@ -115,7 +119,7 @@ export interface StoredConfig {
   allowRemoteEvaluate?: boolean;  // Allow remote agents to call `browser_tool evaluate` on local browser (default: true).
   // Mortise 扩展集成开关：控制 Mortise Agent 扩展加载与 prompt 自动化委托
   piExtensions?: StoredPiExtensionSettings;
-  // Pi 壳模式：Mortise 作为 Pi 的薄壳，完全透传 Pi 身份/会话/技能
+  // Pi 壳模式：默认透传 Pi 原生身份；保存 Mortise 自定义提示词后由 Mortise 覆盖
   piShell?: {
     fullPassthrough?: boolean;  // 完全 Pi 透传：使用 Pi 原生 system prompt，移除 Mortise 身份覆盖。默认 true。
   };
@@ -310,7 +314,7 @@ export function loadConfigDefaults(): ConfigDefaults {
 
 /**
  * Ensure config-defaults.json exists and is up-to-date.
- * Syncs from bundled assets on every launch (like docs, themes, permissions).
+ * Syncs from bundled assets on every launch.
  */
 export function ensureConfigDefaults(): void {
   syncConfigDefaults();
@@ -589,23 +593,43 @@ export async function setRtkEnabled(enabled: boolean): Promise<void> {
 /**
  * Get whether the built-in browser tool is enabled.
  * When disabled, browser_tool is not included in session tools.
- * Source of truth: Pi `~/.mortise/agent/settings.json.shellGui.mortise.browserToolEnabled`.
- * Defaults to true if not set.
+ * Source of truth: Pi `extensionConfig.mortise-browser.enabled`.
+ * The former shellGui value is used only as a migration fallback.
  */
 export function getBrowserToolEnabled(): boolean {
-  return readPiShellGuiBoolean('mortise', 'browserToolEnabled', true);
+  return readPiExtensionEnabled(
+    'mortise-browser',
+    readPiShellGuiBoolean('mortise', 'browserToolEnabled', true),
+  );
 }
 
 /**
  * Set whether the built-in browser tool is enabled.
- * Persists to Pi `~/.mortise/agent/settings.json.shellGui.mortise.browserToolEnabled`.
+ * Persists the desired state for the next Agent runtime load. The browser
+ * service and existing runtimes are not changed.
  */
 export async function setBrowserToolEnabled(enabled: boolean): Promise<void> {
-  await writePiShellGuiBoolean('mortise', 'browserToolEnabled', enabled);
+  await writePiExtensionEnabled('mortise-browser', enabled);
+}
 
-  // Clear session tool caches so all sessions pick up the change immediately.
-  // Lazy import to avoid circular dependency (storage ← session-scoped-tools ← storage).
-  import('../agent/session-scoped-tools.ts').then(m => m.invalidateAllSessionToolsCaches()).catch(() => {});
+/** Whether a newly loaded Agent runtime exposes Mortise messaging tools. */
+export function getMessagingToolEnabled(): boolean {
+  return readPiExtensionEnabled('mortise-messaging', true);
+}
+
+/** Save the desired messaging-tool registration state for the next runtime load. */
+export async function setMessagingToolEnabled(enabled: boolean): Promise<void> {
+  await writePiExtensionEnabled('mortise-messaging', enabled);
+}
+
+/** Search policy applied when a new Agent runtime is loaded. */
+export function getWebSearchMode(): WebSearchMode {
+  return readPiWebSearchMode();
+}
+
+/** Persist both the new policy and the legacy boolean through Pi SettingsManager. */
+export async function setWebSearchMode(mode: WebSearchMode): Promise<void> {
+  await writePiWebSearchMode(mode);
 }
 
 /**
@@ -683,8 +707,8 @@ export function updatePiExtensionSettings(patch: StoredPiExtensionSettings): PiE
 
 /**
  * 是否启用完全 Pi 透传（壳模式）。
- * 默认 true。为 true 时使用 Pi 原生 system prompt，移除 Mortise 身份覆盖；
- * 为 false 时回退到 Mortise 独立身份模式（应用 applySystemPromptOverride）。
+ * 默认 true。没有 Mortise 自定义提示词时使用 Pi 原生 system prompt；
+ * 保存 Mortise 自定义提示词后，即使保持默认值也会由 Mortise 覆盖 Pi 原生提示词。
  * Source of truth: Pi `~/.mortise/agent/settings.json.shellGui.mortise.piShellFullPassthrough`.
  */
 export function getPiShellFullPassthrough(): boolean {
@@ -738,9 +762,6 @@ export function clearGitBashPath(): void {
 // Note: getDefaultWorkingDirectory/setDefaultWorkingDirectory removed.
 // Workspace root is the only cwd; the retired defaults.workingDirectory field
 // is unsupported and does not participate in storage or execution routing.
-// Note: getDefaultPermissionMode/getEnabledPermissionModes removed.
-// Permission mode is owned by Session state and its Extension surface.
-
 /**
  * Clear all configuration and credentials (for logout).
  * Deletes the current SQLite state and credentials. Retired JSON files are left untouched.
@@ -924,12 +945,11 @@ export function addWorkspace(workspace: Omit<Workspace, 'id' | 'createdAt' | 'sl
     createdAt: Date.now(),
   };
 
-  // Create workspace folder structure if it doesn't exist
-  if (primary.endpoint.kind === 'local' && !isValidWorkspace(primary.endpoint.rootPath)) {
-    createWorkspaceAtPath(primary.endpoint.rootPath, newWorkspace.name);
-  }
-
-  topologyStore.create(newWorkspace);
+  // One entry point owns local files, identity markers, SQLite workspace
+  // config, plugin metadata, and topology registration.  Retrying this call
+  // after a partial failure repairs the missing pieces without duplicating
+  // the Workspace record.
+  const initialized = initializeWorkspace(newWorkspace, { topologyStore });
 
   // If this is the only workspace, make it active
   if (topologyStore.list().length === 1) {
@@ -937,7 +957,7 @@ export function addWorkspace(workspace: Omit<Workspace, 'id' | 'createdAt' | 'sl
   }
 
   saveConfig(config);
-  return newWorkspace;
+  return initialized;
 }
 
 /**
@@ -980,7 +1000,10 @@ export function syncWorkspaces(): void {
       createdAt: wsConfig.createdAt || Date.now(),
     };
 
-    topologyStore.create(newWorkspace, `workspace-discovery-${newWorkspace.id}`);
+    initializeWorkspace(newWorkspace, {
+      topologyStore,
+      operationId: `workspace-discovery-${newWorkspace.id}`,
+    });
     added = true;
   }
 

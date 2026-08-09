@@ -16,7 +16,54 @@ mock.module('electron', () => ({
   shell: { openExternal: async () => {} },
 }))
 
-const { ElectronUiSurfaceDriver } = await import('../electron-surface-driver')
+const { ElectronUiSurfaceDriver, physicalKeyInputEvents } = await import('../electron-surface-driver')
+
+describe('ElectronUiSurfaceDriver physical key events', () => {
+  it('commits printable keys between keyDown and keyUp', () => {
+    expect(physicalKeyInputEvents({ action: 'press', key: 'a' })).toEqual([
+      { type: 'keyDown', keyCode: 'a', modifiers: [] },
+      { type: 'char', keyCode: 'a', modifiers: [] },
+      { type: 'keyUp', keyCode: 'a', modifiers: [] },
+    ])
+    expect(physicalKeyInputEvents({ action: 'press', key: 'a', modifiers: ['shift'] })).toEqual([
+      { type: 'keyDown', keyCode: 'a', modifiers: ['shift'] },
+      { type: 'char', keyCode: 'A', modifiers: ['shift'] },
+      { type: 'keyUp', keyCode: 'a', modifiers: ['shift'] },
+    ])
+    expect(physicalKeyInputEvents({ action: 'press', key: 'Space' })).toEqual([
+      { type: 'keyDown', keyCode: 'Space', modifiers: [] },
+      { type: 'char', keyCode: ' ', modifiers: [] },
+      { type: 'keyUp', keyCode: 'Space', modifiers: [] },
+    ])
+  })
+
+  it('keeps shortcuts and function keys free of text commits', () => {
+    expect(physicalKeyInputEvents({ action: 'shortcut', key: 'a', modifiers: ['control'] }))
+      .toEqual([
+        { type: 'keyDown', keyCode: 'a', modifiers: ['control'] },
+        { type: 'keyUp', keyCode: 'a', modifiers: ['control'] },
+      ])
+    expect(physicalKeyInputEvents({ action: 'press', key: 'Enter' })).toEqual([
+      { type: 'keyDown', keyCode: 'Enter', modifiers: [] },
+      { type: 'keyUp', keyCode: 'Enter', modifiers: [] },
+    ])
+  })
+
+  it('allows an explicit committed character for keyboard-layout combinations', () => {
+    expect(physicalKeyInputEvents({
+      action: 'press',
+      key: 'q',
+      value: '@',
+      modifiers: ['control', 'alt'],
+    })).toEqual([
+      { type: 'keyDown', keyCode: 'q', modifiers: ['control', 'alt'] },
+      { type: 'char', keyCode: '@', modifiers: ['control', 'alt'] },
+      { type: 'keyUp', keyCode: 'q', modifiers: ['control', 'alt'] },
+    ])
+    expect(() => physicalKeyInputEvents({ action: 'press', key: 'a', value: 'ab' }))
+      .toThrow('physical press value must be one printable character or an empty string.')
+  })
+})
 
 describe('ElectronUiSurfaceDriver window actions', () => {
   it('does not acknowledge close until Electron emits closed', async () => {

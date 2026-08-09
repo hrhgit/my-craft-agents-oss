@@ -28,7 +28,7 @@ On Windows, double-click [`Mortise-Desktop-Tool.cmd`](./Mortise-Desktop-Tool.cmd
 - **Multiple LLM Connections**: Add multiple AI providers with app defaults and per-session overrides
 - **Multi-Provider Support**: Run sessions with Google AI Studio, ChatGPT Plus, GitHub Copilot, or OpenAI API keys alongside Anthropic
 - **MCP Integration**: Connect local and remote Model Context Protocol servers
-- **Permission Modes**: Three-level system (Explore, Ask to Edit, Auto) with customizable rules
+- **Bundled Extensions**: Precompiled extensions can own session controls, approvals, and rich conversation UI
 - **Background Tasks**: Run long-running operations with progress tracking
 - **Dynamic Status System**: Customizable session workflow states (Todo, In Progress, Done, etc.)
 - **Theme System**: Cascading themes at app and workspace levels
@@ -54,16 +54,6 @@ On Windows, double-click [`Mortise-Desktop-Tool.cmd`](./Mortise-Desktop-Tool.cmd
 - **Session Naming**: AI-generated titles or manual naming
 - **Session Persistence**: Full conversation history saved to disk
 
-### Permission Modes
-
-| Mode | Display | Behavior |
-|------|---------|----------|
-| `safe` | Explore | Read-only, blocks all write operations |
-| `ask` | Ask to Edit | Prompts for approval (default) |
-| `allow-all` | Auto | Auto-approves all commands |
-
-Use **SHIFT+TAB** to cycle through modes in the chat interface.
-
 ### Keyboard Shortcuts
 
 | Shortcut | Action |
@@ -71,7 +61,6 @@ Use **SHIFT+TAB** to cycle through modes in the chat interface.
 | `Cmd+N` | New chat |
 | `Cmd+1/2/3` | Focus sidebar/list/chat |
 | `Cmd+/` | Keyboard shortcuts dialog |
-| `SHIFT+TAB` | Cycle permission modes |
 | `Enter` | Send message |
 | `Shift+Enter` | New line |
 
@@ -223,7 +212,6 @@ For TLS connections (`wss://`), use `--tls-ca <path>` for self-signed certificat
 |------|---------|-------------|
 | `--workspace-dir <path>` | — | Register a workspace directory before running |
 | `--output-format <fmt>` | `text` | Output format: `text` or `stream-json` |
-| `--mode <mode>` | `allow-all` | Permission mode for the session |
 | `--no-cleanup` | `false` | Skip session deletion on exit |
 | `--server-entry <path>` | — | Custom server entry point |
 | `--provider <name>` | `anthropic` | LLM provider (`anthropic`, `openai`, `google`, `openrouter`, `groq`, `mistral`, `xai`, etc.) |
@@ -365,7 +353,7 @@ Automations let you automate workflows by triggering actions when events happen 
 **Just ask the agent:**
 - "Set up a daily standup briefing every weekday at 9am"
 - "Notify me when a session is labelled urgent"
-- "Track permission mode changes and summarise them"
+- "Notify me when a long-running automation finishes"
 - "Every Friday at 5pm, summarise this week's completed tasks"
 
 You can also create and manage definitions from the Automations interface. Prompt actions use normal Session semantics: they create a new Session by default, or explicitly deliver to an existing or event Session with `followUp` or `steer`.

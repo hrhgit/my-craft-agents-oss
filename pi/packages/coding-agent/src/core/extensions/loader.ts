@@ -431,6 +431,16 @@ async function loadExtension(
 	activation?: ExtensionActivation,
 ): Promise<{ extension: Extension | null; error: string | null }> {
 	const resolvedPath = resolvePath(extensionPath, cwd, { normalizeUnicodeSpaces: true });
+	const installedRoot = path.resolve(metadata.agentDir, "extensions");
+	const installedRelative = path.relative(installedRoot, resolvedPath);
+	const isInstalledExtension =
+		installedRelative !== "" && !installedRelative.startsWith("..") && !path.isAbsolute(installedRelative);
+	if (isBunBinary && isInstalledExtension && /\.[cm]?tsx?$/i.test(resolvedPath)) {
+		return {
+			extension: null,
+			error: `Production runtime refuses installed TypeScript extension entry: ${extensionPath}`,
+		};
+	}
 
 	try {
 		const factory = await loadExtensionModule(resolvedPath);

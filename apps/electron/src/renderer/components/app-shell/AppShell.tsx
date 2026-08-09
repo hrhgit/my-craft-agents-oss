@@ -97,7 +97,7 @@ import { sessionMetaMapAtom, sendToWorkspaceAtom, type SessionMeta } from "@/ato
 import { piProjectionIsProcessingAtomFamily } from "@/atoms/pi-projection"
 import { skillsAtom } from "@/atoms/skills"
 import { managementEditorAtom } from "@/atoms/management-editor"
-import { activeDockTabIdAtom, activeDockTabProtectionAtom, activeDockTabTypeAtom, emptyDockPageSessionRequestAtom, enterCompactDockDetailAtom, exitCompactDockDetailAtom, isEmptyDockPageTabId, panelStackAtom, panelCountAtom, focusedSessionIdAtom, focusNextPanelAtom, focusPrevPanelAtom, resetCompactDockViewIntentAtom, shouldReplaceActiveTabWithSession } from "@/atoms/panel-stack"
+import { activeDockTabIdAtom, activeDockTabTypeAtom, emptyDockPageSessionRequestAtom, enterCompactDockDetailAtom, exitCompactDockDetailAtom, isEmptyDockPageTabId, panelStackAtom, panelCountAtom, focusedSessionIdAtom, focusNextPanelAtom, focusPrevPanelAtom, resetCompactDockViewIntentAtom, shouldReplaceActiveTabWithSession } from "@/atoms/panel-stack"
 import { useContainerWidth } from "@/hooks/useContainerWidth"
 import { resolveEntityColor } from "@mortise/shared/colors"
 import * as storage from "@/lib/local-storage"
@@ -293,8 +293,9 @@ function AppShellContent({
   const panelCount = useAtomValue(panelCountAtom)
   const focusedSessionId = useAtomValue(focusedSessionIdAtom)
 
-  // Replace only an actively selected session tab. Every other tab type keeps
-  // its content and receives the requested session in a new tab.
+  // Replace the actively selected conversation page. Session runtime state is
+  // preserved in the background, so it must not implicitly split the dock.
+  // Other content types retain their page and receive the session in a new tab.
   const navigateToSessionInPanel = useCallback((sessionId: string) => {
     enterCompactDockDetail()
     const activeTabId = store.get(activeDockTabIdAtom)
@@ -302,10 +303,7 @@ function AppShellContent({
       requestEmptyDockPageSession({ tabId: activeTabId, sessionId })
       return
     }
-    if (shouldReplaceActiveTabWithSession(
-      store.get(activeDockTabTypeAtom),
-      store.get(activeDockTabProtectionAtom),
-    )) {
+    if (shouldReplaceActiveTabWithSession(store.get(activeDockTabTypeAtom))) {
       navigateToSession(sessionId)
       return
     }

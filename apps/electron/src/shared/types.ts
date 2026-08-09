@@ -16,6 +16,7 @@ import type {
   WorkspaceTransferRequestV1,
   WorkspaceTransferResultV1,
 } from '@mortise/shared/protocol'
+import type { AutomationInitializationWarning } from './system-warnings'
 
 // =============================================================================
 // Package re-exports (convenience for renderer imports)
@@ -34,11 +35,6 @@ import type {
   ToolDisplayMeta,
   AnnotationV1,
 } from '@mortise/core/types';
-
-// Mode types from dedicated subpath export (avoids pulling in SDK)
-import type { PermissionMode } from '@mortise/shared/agent/modes';
-export type { PermissionMode };
-export { PERMISSION_MODE_CONFIG } from '@mortise/shared/agent/modes';
 
 // Thinking level types
 import type { ThinkingLevel } from '@mortise/shared/agent/thinking-levels';
@@ -189,8 +185,6 @@ import type {
   OAuthResult,
   GitBashStatus,
   UpdateInfo,
-  PermissionModeState,
-  PermissionResponseOptions,
   BrowserInstanceInfo,
   BrowserEmbedBounds,
   FileTextWriteResult,
@@ -228,7 +222,6 @@ export interface ElectronAPI {
   sendMessage(sessionId: string, message: string, attachments?: FileAttachment[], storedAttachments?: StoredAttachmentType[], options?: SendMessageOptions): Promise<void>
   cancelProcessing(sessionId: string, silent?: boolean): Promise<void>
   killShell(sessionId: string, shellId: string): Promise<{ success: boolean; error?: string }>
-  respondToPermission(sessionId: string, requestId: string, allowed: boolean, alwaysAllow: boolean, options?: PermissionResponseOptions): Promise<boolean>
   getTaskOutput(taskId: string): Promise<string | null>
 
   // Consolidated session command handler
@@ -260,9 +253,6 @@ export interface ElectronAPI {
   importSession(targetWorkspaceId: string, bundle: unknown, mode: 'move' | 'fork'): Promise<{ sessionId: string; warnings?: string[] }>
   exportRemoteSessionTransfer(sessionId: string): Promise<RemoteSessionTransferPayload>
   importRemoteSessionTransfer(targetWorkspaceId: string, payload: RemoteSessionTransferPayload): Promise<ImportRemoteSessionTransferResult>
-
-  // Permission mode reconciliation
-  getSessionPermissionModeState(sessionId: string): Promise<PermissionModeState | null>
 
   // Workspace management
   getWorkspaces(): Promise<WorkspaceInfo[]>
@@ -405,6 +395,7 @@ export interface ElectronAPI {
     downloadUrl?: string
     workspaceRuntimeDegraded: boolean
     workspaceRuntimeDegradedReason?: string
+    automationInitializationFailures: AutomationInitializationWarning[]
   }>
 
   // Shell operations
@@ -534,6 +525,10 @@ export interface ElectronAPI {
   // Tools settings
   getBrowserToolEnabled(): Promise<boolean>
   setBrowserToolEnabled(enabled: boolean): Promise<void>
+  getMessagingToolEnabled(): Promise<boolean>
+  setMessagingToolEnabled(enabled: boolean): Promise<void>
+  getWebSearchMode(): Promise<'auto' | 'native' | 'extension' | 'disabled'>
+  setWebSearchMode(mode: 'auto' | 'native' | 'extension' | 'disabled'): Promise<void>
 
   // Agent settings
   getAgentSettings(): Promise<AgentSettingsSnapshot>
@@ -546,6 +541,7 @@ export interface ElectronAPI {
   setPiExtensionSettings(settings: StoredPiExtensionSettings): Promise<PiExtensionSettings>
   updatePiExtensionSettings(patch: StoredPiExtensionSettings): Promise<PiExtensionSettings>
   getPiExtensionCatalog(): Promise<PiExtensionCatalogResult>
+  getPiExtensionRuntimeState(workspaceId?: string): Promise<import('@mortise/shared/config').PiExtensionRuntimeState>
   patchPiExtensionConfig(patch: import('@mortise/shared/config').PiExtensionConfigPatch): Promise<import('@mortise/shared/config').PiExtensionConfigPatchResult>
   reloadPiExtensions(interruptRunning?: boolean): Promise<import('@mortise/shared/config').PiExtensionReloadResult>
   importPiExtension(sourcePath: string): Promise<import('@mortise/shared/config').PiExtensionImportResult>
@@ -558,6 +554,7 @@ export interface ElectronAPI {
   respondToExtensionInteraction(sessionId: string, requestId: string, response: import('@mortise/shared/protocol').ExtensionInteractionResponseV1): Promise<boolean>
   invokeExtensionCommand(sessionId: string, commandId: string, args?: string | Record<string, unknown>, ownerExtensionId?: string): Promise<import('@mortise/core/types').ExtensionCommandResult>
   getExtensionCommands(sessionId: string): Promise<import('@mortise/shared/agent/backend/types').PiExtensionCommand[]>
+  getExtensionFrontendStates(sessionId: string): Promise<Array<Extract<import('@mortise/shared/agent/backend/types').ExtensionBridgeEvent, { type: 'extension_frontend_state' }>>>
   getExtensionFileState(workspaceId: string, extensionId: string): Promise<import('@mortise/shared/protocol').ExtensionFileStateV1>
   setExtensionFileState(workspaceId: string, extensionId: string, state: import('@mortise/shared/protocol').ExtensionFileStateV1): Promise<boolean>
   sendExtensionFrontendMessage(sessionId: string, request: import('@mortise/shared/protocol').ExtensionFrontendMessageV2): Promise<unknown>

@@ -2,8 +2,8 @@
  * Pi Backend (Pi RpcClient)
  *
  * Thin host-side adapter for the Pi coding agent. Uses Pi's public RpcClient
- * API and keeps Mortise-specific scaffolding (permission gating and UI event
- * translation) on the host side.
+ * API and keeps Mortise-specific host bridges and UI event translation on the
+ * host side.
  *
  * Pi owns agent runtime, session storage, provider/model registry, and native
  * extension execution. Mortise talks to it through RpcClient only.
@@ -52,7 +52,6 @@ import {
   type ExtensionInteractionResponseV1,
 } from '../protocol/extension-interactions.ts';
 
-import type { PermissionMode } from './mode-manager.ts';
 import type { ThinkingLevel } from './thinking-levels.ts';
 
 // Import models from centralized registry
@@ -98,12 +97,11 @@ import {
   type TextContent,
 } from '@mortise/session-tools-core';
 import { createSessionToolContext, type SessionToolContext } from './session-tool-context.ts';
-import { getPermissionModeDiagnostics } from './mode-manager.ts';
 
 import { homedir } from 'os';
 
 // Session storage (plans folder path)
-import { getSessionDataPath, getSessionPath, getSessionPlansPath, getPiNativeSessionDir } from '../sessions/storage.ts';
+import { getSessionPath, getPiNativeSessionDir } from '../sessions/storage.ts';
 
 // Error typing
 import { parseError, type AgentError } from './errors.ts';
@@ -114,6 +112,7 @@ import { getRtkPath } from './core/rtk-detector.ts';
 import { getRtkEnabled, getPiShellFullPassthrough } from '../config/storage.ts';
 import {
   getCustomCompactionPrompt,
+  getCustomSystemPrompt,
   getDisabledAgentTools,
   resolveMainAgentSystemPrompt,
   type AgentRuntimeProfile,
@@ -172,7 +171,7 @@ const AWS_ENVIRONMENT_AUTH_VARS = [
   'AWS_EC2_METADATA_DISABLED',
 ] as const;
 
-type PiRpcToolPermissionRequest = Extract<PiRpcClientEvent, { type: 'tool_permission_request' }>;
+type PiRpcToolExecutionRequest = Extract<PiRpcClientEvent, { type: 'tool_execution_request' }>;
 type PiRpcToolExecuteRequest = Extract<PiRpcClientEvent, { type: 'tool_execute_request' }>;
 type PiSessionRpcClient = PiRuntimeHandle;
 interface PiCoordinationRpcClient {
@@ -229,7 +228,6 @@ export interface PiSpawnChildSessionOptions {
   prompt?: string;
   connection?: string;
   model?: string;
-  permissionMode?: PermissionMode;
   thinkingLevel?: ThinkingLevel;
   name?: string;
   attachments?: Array<{ path: string; name?: string }>;
@@ -270,7 +268,6 @@ export interface PiChildSessionInfo {
   spawnConfig?: {
     connection?: string;
     model?: string;
-    permissionMode?: string;
     thinkingLevel?: string;
     template?: string;
     systemPrompt?: string;
@@ -297,8 +294,8 @@ const MAX_PENDING_CHILD_INBOX_MESSAGES = 100;
 /**
  * Backend implementation using the Pi coding agent SDK via RpcClient.
  *
- * Extends BaseAgent for common functionality (permission mode, planning
- * heuristics, config watching, and usage tracking).
+ * Extends BaseAgent for common coordination, planning heuristics, config
+ * watching, and usage tracking.
  */
 export class PiAgent extends BaseAgent {
   protected backendName = 'Mortise Backend';
@@ -413,12 +410,6 @@ export class PiAgent extends BaseAgent {
       `RPC protocol does not advertise it. Upgrade Pi to a compatible version.`
     );
   }
-
-  // Pending permission requests (used by handlePreToolUseRequest for ask-mode prompting)
-  private pendingPermissions: Map<string, {
-    resolve: (allowed: boolean) => void;
-    toolName: string;
-  }> = new Map();
 
   /** Trusted interaction ownership captured from Pi, never accepted from the renderer. */
   private pendingExtensionInteractions = new Map<string, PendingExtensionInteractionOwner>();
@@ -566,6 +557,11 @@ export class PiAgent extends BaseAgent {
       .filter((value): value is string => Boolean(value && existsSync(value)));
   }
 
+  /** Start the Pi runtime and complete deferred resource preparation. */
+  async prepareRuntime(): Promise<void> {
+    await this.ensureRpcClient();
+  }
+
   private startRpcClient(): Promise<void> {
     if (this.rpcClientReady) return this.rpcClientReady;
 
@@ -659,6 +655,9 @@ export class PiAgent extends BaseAgent {
         sessionDir,
         sessionId: this.config.session?.mortiseId,
         forkFromSessionPath: this.config.session?.branchFromPiSessionFile,
+        spawnConfig: this.config.session?.extensionBootstrap
+          ? { extensionBootstrap: this.config.session.extensionBootstrap }
+          : undefined,
         uiCapabilities: createMortiseRpcUiCapabilities(),
       },
     });
@@ -695,9 +694,9 @@ export class PiAgent extends BaseAgent {
       this.debug(`Failed to configure PI auto-compaction (continuing): ${error instanceof Error ? error.message : String(error)}`);
     }
 
-    await rpcClient.setToolPermissionHandler(async (request) => {
+    await rpcClient.setToolExecutionHandler(async (request) => {
       const decision = await this.handleToolExecutionBoundary(request);
-      return this.getCoordinationBridge().afterPermission({
+      return this.getCoordinationBridge().beforeTool({
         toolName: request.toolName,
         toolCallId: request.toolCallId,
         input: request.input,
@@ -728,6 +727,23 @@ export class PiAgent extends BaseAgent {
     const disabledTools = new Set(getDisabledAgentTools());
     await rpcClient.setActiveTools(profile.activeTools.filter((name) => !disabledTools.has(name)));
     await rpcClient.setCompactionPrompt(getCustomCompactionPrompt());
+
+    const prepareStartedAt = Date.now();
+    try {
+      await rpcClient.prepareRuntime();
+      this.writePiRuntimeLog('info', 'runtime.prepare.ready', {
+        runtimeId: rpcClient.runtimeId,
+        durationMs: Date.now() - prepareStartedAt,
+      });
+    } catch (error) {
+      // Preparation is also guarded inside prompt(). Keep the runtime usable so
+      // one broken optional resource cannot disable the composer.
+      this.writePiRuntimeLog('warn', 'runtime.prepare.degraded', {
+        runtimeId: rpcClient.runtimeId,
+        durationMs: Date.now() - prepareStartedAt,
+        error,
+      });
+    }
   }
 
   async getAgentProfile(): Promise<AgentRuntimeProfile> {
@@ -1117,10 +1133,6 @@ export class PiAgent extends BaseAgent {
     this.handleRpcError(new Error(event.message));
     this.settleTurnForRuntimeReplacement();
 
-    for (const [, pending] of this.pendingPermissions) {
-      pending.resolve(false);
-    }
-    this.pendingPermissions.clear();
     this.cancelPendingExtensionInteractions('host-disconnected');
     this.preToolMetadataByCallId.clear();
 
@@ -1560,10 +1572,10 @@ export class PiAgent extends BaseAgent {
   }
 
   /**
-   * Runs host-owned coordination and neutral tool normalization after extensions.
-   * User approval is owned by the bundled permissions extension.
+   * Runs host-owned coordination and neutral tool normalization after Extension
+   * handlers have made their policy decisions.
    */
-  private async handleToolExecutionBoundary(req: PiRpcToolPermissionRequest): Promise<
+  private async handleToolExecutionBoundary(req: PiRpcToolExecutionRequest): Promise<
     { action: 'allow' } | { action: 'block'; reason?: string } | { action: 'modify'; input: Record<string, unknown> }
   > {
     const { toolName, toolCallId, input } = req;
@@ -1600,13 +1612,6 @@ export class PiAgent extends BaseAgent {
     const rootPath = this.workspaceRoot;
     const workspaceSlug = extractWorkspaceSlug(rootPath, this.config.workspace.id);
     const sessionId = this.config.session?.mortiseId || this._sessionId;
-    const plansFolderPath = sessionId
-      ? getSessionPlansPath(this.config.workspace.id, sessionId)
-      : undefined;
-    const dataFolderPath = sessionId
-      ? getSessionDataPath(this.config.workspace.id, sessionId)
-      : undefined;
-
     // Build RTK context fresh per call so toggling the preference takes
     // effect without restart. `getRtkPath()` is cached per process.
     const rtkContext: RtkContext | undefined = getRtkEnabled()
@@ -1616,14 +1621,8 @@ export class PiAgent extends BaseAgent {
     const checkResult = runPreToolUseChecks({
       toolName,
       input,
-      sessionId,
-      permissionMode: 'allow-all',
-      skipPermissionGate: true,
       workspaceRootPath: rootPath,
       workspaceId: workspaceSlug,
-      plansFolderPath,
-      dataFolderPath,
-      permissionManager: this.permissionManager,
       prerequisiteManager: this.prerequisiteManager,
       rtkContext,
       onDebug: (msg) => this.debug(`PreToolUse(sessionId=${sessionId}): ${msg}`),
@@ -1645,14 +1644,6 @@ export class PiAgent extends BaseAgent {
         // These tools are proxy tools handled via tool_execute_request — just allow
         return { action: 'allow' };
 
-      case 'prompt': {
-        // skipPermissionGate makes this unreachable. Preserve the transform
-        // fallback so the neutral boundary remains fail-open for approvals.
-        if (checkResult.modifiedInput) {
-          return { action: 'modify', input: checkResult.modifiedInput };
-        }
-        return { action: 'allow' };
-      }
     }
   }
 
@@ -1709,6 +1700,7 @@ export class PiAgent extends BaseAgent {
     const workspacePath = this.workspaceRoot;
     this._sessionToolContext = createSessionToolContext({
       sessionId,
+      workspaceId: this.config.workspace.id,
       workspacePath,
       onPlanSubmitted: (planPath: string) => {
         setLastPlanFilePath(sessionId, planPath);
@@ -1843,7 +1835,6 @@ export class PiAgent extends BaseAgent {
     const spawnConfig = {
       connection: resolvedOptions.connection,
       model: resolvedOptions.model,
-      permissionMode: resolvedOptions.permissionMode,
       thinkingLevel: resolvedOptions.thinkingLevel,
       template: options.template,
       systemPrompt: options.systemPrompt,
@@ -1964,7 +1955,7 @@ export class PiAgent extends BaseAgent {
     const thinkingLevel = options.thinkingLevel ?? semanticModel?.thinkingLevel ?? parentState.thinkingLevel;
     if (thinkingLevel) await runtime.setThinkingLevel(thinkingLevel);
 
-    await runtime.setToolPermissionHandler(request => this.handleToolExecutionBoundary(request));
+    await runtime.setToolExecutionHandler(request => this.handleToolExecutionBoundary(request));
     await runtime.setToolResultHandler(result => this.handleCoordinatedToolResult(result));
     this.assertBackendSessionToolParity();
     const sessionToolDefs = getSessionHostToolDefs()
@@ -2002,7 +1993,6 @@ export class PiAgent extends BaseAgent {
       connection: semanticModel?.provider || options.connection || getBackendRuntime(this.config).piAuthProvider || parentState.model?.provider,
       model: semanticModel?.model ?? options.model ?? parentState.model?.id,
       thinkingLevel: options.thinkingLevel ?? semanticModel?.thinkingLevel ?? parentState.thinkingLevel,
-      permissionMode: options.permissionMode ?? this.permissionManager.getPermissionMode(),
     };
   }
 
@@ -2309,7 +2299,6 @@ export class PiAgent extends BaseAgent {
         await this.configureChildRuntime(lease.runtime, {
           connection: child.spawnConfig?.connection,
           model: child.spawnConfig?.model,
-          permissionMode: child.spawnConfig?.permissionMode as PermissionMode | undefined,
           thinkingLevel: child.spawnConfig?.thinkingLevel as ThinkingLevel | undefined,
           template: child.spawnConfig?.template,
           background: child.spawnConfig?.background,
@@ -2817,9 +2806,10 @@ export class PiAgent extends BaseAgent {
         return;
       }
 
-      // Build system prompt
-      // 壳模式（fullPassthrough）下跳过 Mortise system prompt，使用 Pi 原生 system prompt。
-      const piShellPassthrough = getPiShellFullPassthrough();
+      // Build system prompt. Pi remains the default source; a saved Mortise
+      // SYSTEM.md is an explicit host override and must win over passthrough.
+      const hasCustomSystemPrompt = getCustomSystemPrompt() !== undefined;
+      const piShellPassthrough = getPiShellFullPassthrough() && !hasCustomSystemPrompt;
       const systemPrompt = piShellPassthrough
         ? ''
         : resolveMainAgentSystemPrompt(
@@ -2860,7 +2850,7 @@ export class PiAgent extends BaseAgent {
       const fullSystemPrompt = piShellPassthrough ? '' : systemPrompt;
 
       // Keep the user's turn intact. Only explicit attachment references belong
-      // beside it; runtime state and permission mode are enforced out of band.
+      // beside it; runtime and Extension state stay out of the user message.
       const userParts = [
         ...attachmentParts,
         message,
@@ -2910,22 +2900,6 @@ export class PiAgent extends BaseAgent {
       yield { type: 'complete' };
     } finally {
       this._isProcessing = false;
-    }
-  }
-
-  // ============================================================
-  // Permission Handling
-  // ============================================================
-
-  /**
-   * Respond to a pending permission request.
-   * Permission checking now happens in the main process, so this resolves locally.
-   */
-  respondToPermission(requestId: string, allowed: boolean, _alwaysAllow?: boolean): void {
-    const pending = this.pendingPermissions.get(requestId);
-    if (pending) {
-      this.pendingPermissions.delete(requestId);
-      pending.resolve(allowed);
     }
   }
 
@@ -3003,12 +2977,6 @@ export class PiAgent extends BaseAgent {
     // Fire Stop hook event (fire-and-forget)
     this.emitAutomationEvent('Stop', { hook_event_name: 'Stop' });
 
-    // Deny all pending permissions
-    for (const [, pending] of this.pendingPermissions) {
-      pending.resolve(false);
-    }
-    this.pendingPermissions.clear();
-
     this.abortReason = Object.values(AbortReason).includes(reason as AbortReason)
       ? reason as AbortReason
       : AbortReason.UserStop;
@@ -3054,12 +3022,6 @@ export class PiAgent extends BaseAgent {
     this.abortReason = reason;
     this._isProcessing = false;
     this.suppressAbortedTurnEvents = true;
-
-    // Reject all pending permissions
-    for (const [, pending] of this.pendingPermissions) {
-      pending.resolve(false);
-    }
-    this.pendingPermissions.clear();
 
     // Clear bridge cache for aborted turn.
     this.preToolMetadataByCallId.clear();
@@ -3396,12 +3358,12 @@ export class PiAgent extends BaseAgent {
       const thinkingLevel = request.thinkingLevel ?? this._thinkingLevel;
       if (thinkingLevel) await runtime.setThinkingLevel(thinkingLevel);
 
-      await runtime.setToolPermissionHandler(async permissionRequest => {
-        const decision = await this.handleToolExecutionBoundary(permissionRequest);
-        return this.getCoordinationBridge().afterPermission({
-          toolName: permissionRequest.toolName,
-          toolCallId: permissionRequest.toolCallId,
-          input: permissionRequest.input,
+      await runtime.setToolExecutionHandler(async executionRequest => {
+        const decision = await this.handleToolExecutionBoundary(executionRequest);
+		return this.getCoordinationBridge().beforeTool({
+		  toolName: executionRequest.toolName,
+		  toolCallId: executionRequest.toolCallId,
+		  input: executionRequest.input,
           assistantTimestamp: Date.now(),
         }, decision);
       });

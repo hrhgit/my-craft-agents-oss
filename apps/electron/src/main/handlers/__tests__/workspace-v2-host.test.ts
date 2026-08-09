@@ -14,6 +14,10 @@ mock.module('@mortise/shared/config', () => ({
 }))
 
 mock.module('@mortise/shared/workspaces', () => ({
+  initializeWorkspace: (workspace: Workspace) => {
+    topologyWorkspace ??= workspace
+    return topologyWorkspace
+  },
   getDefaultWorkspaceTopologyStore: () => ({
     get: (workspaceId: string) => topologyWorkspace?.id === workspaceId ? topologyWorkspace : null,
     create: (workspace: Workspace) => {

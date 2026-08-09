@@ -1,7 +1,7 @@
 /**
  * Session Event Handlers
  *
- * Handles complete, error, permission changes, and session metadata events.
+ * Handles complete, error, and session metadata events.
  * Pure functions that return new state - no side effects.
  */
 
@@ -13,7 +13,6 @@ import type {
   SessionFailureEvent,
   TypedErrorEvent,
   NameChangedEvent,
-  PermissionRequestEvent,
   PlanSubmittedEvent,
   PlanArtifactChangedEvent,
   PlanModeStateChangedEvent,
@@ -22,7 +21,6 @@ import type {
   InterruptedEvent,
   TitleGeneratedEvent,
   AsyncOperationEvent,
-  PermissionModeChangedEvent,
   SessionModelChangedEvent,
   ProviderChangedEvent,
   UserMessageEvent,
@@ -110,11 +108,12 @@ export function handleSessionFailure(
   state: SessionState,
   event: SessionFailureEvent,
 ): ProcessResult {
+  const isUnpublished = event.error.data.outcome === 'unpublished'
   return {
     state: {
       session: {
         ...state.session,
-        isProcessing: true,
+        isProcessing: !isUnpublished,
         currentStatus: undefined,
         pendingFailure: event.error,
       },
@@ -398,28 +397,6 @@ export function handleAsyncOperation(
 }
 
 /**
- * Handle permission_mode_changed - return effect for parent to handle session options
- */
-export function handlePermissionModeChanged(
-  state: SessionState,
-  event: PermissionModeChangedEvent
-): ProcessResult {
-  return {
-    state,
-    effects: [{
-      type: 'permission_mode_changed',
-      sessionId: event.sessionId,
-      permissionMode: event.permissionMode,
-      previousPermissionMode: event.previousPermissionMode,
-      transitionDisplay: event.transitionDisplay,
-      modeVersion: event.modeVersion,
-      changedAt: event.changedAt,
-      changedBy: event.changedBy,
-    }],
-  }
-}
-
-/**
  * Handle session_model_changed - update session model
  */
 export function handleSessionModelChanged(
@@ -592,22 +569,6 @@ export function handleNameChanged(
       streaming,
     },
     effects: [],
-  }
-}
-
-/**
- * Handle permission_request - return effect for parent to handle
- */
-export function handlePermissionRequest(
-  state: SessionState,
-  event: PermissionRequestEvent
-): ProcessResult {
-  return {
-    state,
-    effects: [{
-      type: 'permission_request',
-      request: event.request,
-    }]
   }
 }
 

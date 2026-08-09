@@ -285,6 +285,73 @@ describe('buildPiTurns', () => {
     ])
   })
 
+  it('orders thinking and tools by projection sequence while retaining wall-clock tool timing', () => {
+    const turns = buildPiTurns([
+      entity({
+        entityId: 'turn:ordered', entityType: 'turn', createdSeq: 7, lastSeq: 7,
+        turnId: 'turn-ordered', kind: 'turn_end', payload: { status: 'completed' },
+      }),
+      entity({
+        entityId: 'content:thinking:ordered-1:0', createdSeq: 2, turnId: 'turn-ordered',
+        kind: 'thinking_end',
+        payload: {
+          role: 'assistant', messageId: 'ordered-thinking-1', contentKind: 'thinking',
+          contentIndex: 0, text: 'First reasoning', streaming: false,
+          timestamp: 1_900_000_000_000,
+        },
+      }),
+      entity({
+        entityId: 'tool:ordered-1', entityType: 'tool_run', createdSeq: 3,
+        createdAt: 1_700_000_000_000, updatedAt: 1_700_000_000_250,
+        turnId: 'turn-ordered', kind: 'tool_execution_end',
+        payload: {
+          toolCallId: 'ordered-1', toolName: 'Read', result: 'first tool', status: 'completed',
+          timestamp: 1_700_000_000_000, startedAt: 1_700_000_000_000, completedAt: 1_700_000_000_250,
+        },
+      }),
+      entity({
+        entityId: 'content:thinking:ordered-2:0', createdSeq: 4, turnId: 'turn-ordered',
+        kind: 'thinking_end',
+        payload: {
+          role: 'assistant', messageId: 'ordered-thinking-2', contentKind: 'thinking',
+          contentIndex: 0, text: 'Second reasoning', streaming: false,
+          timestamp: 1_800_000_000_000,
+        },
+      }),
+      entity({
+        entityId: 'tool:ordered-2', entityType: 'tool_run', createdSeq: 5,
+        createdAt: 1_600_000_000_000, updatedAt: 1_600_000_000_400,
+        turnId: 'turn-ordered', kind: 'tool_execution_end',
+        payload: {
+          toolCallId: 'ordered-2', toolName: 'Write', result: 'second tool', status: 'completed',
+        },
+      }),
+      entity({
+        entityId: 'content:text:ordered-final:0', createdSeq: 6, turnId: 'turn-ordered',
+        payload: {
+          role: 'assistant', messageId: 'ordered-final', contentIndex: 0,
+          text: 'Final answer', streaming: false, isFinal: true,
+        },
+      }),
+    ])
+
+    expect(turns).toHaveLength(1)
+    if (turns[0]?.type !== 'assistant') throw new Error('Expected assistant turn')
+    expect(turns[0].activities.map(activity => ({
+      id: activity.id,
+      order: activity.order,
+      timestamp: activity.timestamp,
+      startedAt: activity.startedAt,
+      completedAt: activity.completedAt,
+    }))).toEqual([
+      { id: 'content:thinking:ordered-1:0', order: 2, timestamp: 1_900_000_000_000, startedAt: undefined, completedAt: undefined },
+      { id: 'tool:ordered-1', order: 3, timestamp: 1_700_000_000_000, startedAt: 1_700_000_000_000, completedAt: 1_700_000_000_250 },
+      { id: 'content:thinking:ordered-2:0', order: 4, timestamp: 1_800_000_000_000, startedAt: undefined, completedAt: undefined },
+      { id: 'tool:ordered-2', order: 5, timestamp: 1_600_000_000_000, startedAt: 1_600_000_000_000, completedAt: 1_600_000_000_400 },
+    ])
+    expect(turns[0].response).toMatchObject({ text: 'Final answer', messageId: 'ordered-final' })
+  })
+
   it('promotes the last terminal thinking block to the response without duplicating it', () => {
     const turns = buildPiTurns([
       entity({

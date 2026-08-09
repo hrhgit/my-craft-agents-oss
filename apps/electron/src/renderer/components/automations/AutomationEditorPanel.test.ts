@@ -14,7 +14,7 @@ const existing: AutomationDefinitionV3UI = {
     { id: 'trg_extra', type: 'event', source: 'external', eventType: 'external.extra' },
   ],
   actions: [
-    { id: 'act_primary', type: 'prompt', prompt: 'Before', target: { kind: 'new-session', permissionMode: 'ask' } },
+    { id: 'act_primary', type: 'prompt', prompt: 'Before', target: { kind: 'new-session', thinkingLevel: 'medium' } },
     { id: 'act_extra', type: 'webhook', url: 'https://example.com/hook', method: 'POST' },
   ],
 }
@@ -34,7 +34,7 @@ describe('AutomationEditorPanel definition mapping', () => {
     const draft = { ...draftFromDefinition(existing), name: ' Updated ', actionValue: 'After' }
     const updated = buildAutomationDefinition(draft, existing, '2026-02-01T00:00:00.000Z')
     expect(updated.name).toBe('Updated')
-    expect(updated.actions[0]).toMatchObject({ id: 'act_primary', type: 'prompt', prompt: 'After', target: { permissionMode: 'ask' } })
+    expect(updated.actions[0]).toMatchObject({ id: 'act_primary', type: 'prompt', prompt: 'After', target: { thinkingLevel: 'medium' } })
     expect(updated.triggers[1]).toEqual(existing.triggers[1])
     expect(updated.actions[1]).toEqual(existing.actions[1])
     expect(updated.createdAt).toBe(existing.createdAt)

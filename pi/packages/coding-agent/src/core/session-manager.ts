@@ -55,8 +55,8 @@ export interface SessionHeader {
 		connection?: string;
 		model?: string;
 		enabledSources?: string[];
-		permissionMode?: string;
 		thinkingLevel?: string;
+		extensionBootstrap?: Record<string, Record<string, unknown>>;
 		template?: string;
 		systemPrompt?: string;
 		tools?: string[];

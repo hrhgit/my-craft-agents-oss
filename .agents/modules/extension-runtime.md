@@ -48,9 +48,15 @@ Own host process startup, extension discovery and configuration, RPC capabilitie
 
 Shared agent backends manage Pi hosts; server-core bridges extension contributions and interactions to connected clients.
 
+Application startup imports the global Extension blueprint once. Attaching a Workspace then loads its project Extension snapshot and starts one independent warm runtime that keeps the shared Pi host and compiled module caches available; concrete Session runtimes still create isolated Extension instances and bind their own Session context.
+
 # Invariants
 
 Extension manifests have one Mortise runtime contract and do not accept `targets` or `engines`; Mortise GlobalHost discovery and child processes are pinned to the runtime's explicit Mortise Agent root rather than inherited Pi defaults; global and `<workspace>/.mortise/extensions` are accepted default-trusted sources and load when a backend opens or attaches the Workspace; file changes take effect after an explicit runtime reload or the next backend/Workspace load; capability negotiation precedes use; parent runtime teardown owns its foreground and background child-task leases. Extension authoring documentation follows Pi's runnable, API-oriented guide style, keeps constraints beside the relevant API, includes complete examples and an examples index, and leaves architecture rationale in separate architecture documents.
+
+Tool approval modes, policy decisions, persisted approval state, and approval GUI are owned by the bundled `mortise-permissions` Extension. Core discovery and runtime code may expose only generic configuration snapshots, frontend channels, lifecycle events, and neutral tool execution interception; it must not interpret permission modes or inject permission state into model context.
+
+Unopened Workspaces must not scan or execute project Extensions during application boot. Concurrent Workspace opens and first Session creation join the same preparation Promise; a failed warmup remains a Workspace-scoped degraded state and cannot block Session input or other Workspaces.
 
 # Change Impact
 

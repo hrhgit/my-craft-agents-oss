@@ -203,7 +203,7 @@ Manage and inspect browser window ownership and visibility.
 
 ## Secondary helper: `browser-tool parse-url`
 
-Use this for safe URL debugging in Explore mode without running a generic interpreter snippet:
+Use this for deterministic URL debugging without running a generic interpreter snippet:
 
 ```bash
 bun run browser-tool parse-url https://example.com/path?q=1#hash

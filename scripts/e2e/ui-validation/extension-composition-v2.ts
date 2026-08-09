@@ -9,7 +9,7 @@ interface Snapshot { revision: number; regions?: Record<string, SnapshotNode[]>;
 const surface = process.env.MORTISE_UI_SURFACE === 'webui' ? 'webui' as const : 'electron' as const
 const workspaceId = 'ui-extension-composition-workspace'
 const sessionId = 'ui-extension-composition-session'
-const extensionBase = join(process.cwd(), 'apps', 'electron', 'resources', 'pi-extensions')
+const extensionBase = join(process.cwd(), 'scripts', 'e2e', 'ui-validation', 'fixtures', 'extension-composition-v2')
 const extensionRoots = ['mortise-ui-kit', 'mortise-ui-kit-compact', 'conversation-board', 'conversation-board-replace', 'conversation-board-tweak']
   .map(id => join(extensionBase, id))
 for (const root of extensionRoots) if (!existsSync(join(root, 'package.json'))) throw new Error(`Composition extension is missing: ${root}`)

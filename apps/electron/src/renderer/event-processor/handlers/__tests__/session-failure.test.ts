@@ -14,6 +14,18 @@ const settlementFailure = {
   },
 }
 
+const publicationFailure = {
+  code: 'SESSION_PUBLICATION_DURABILITY_FAILED' as const,
+  message: 'The provisional Session could not be published',
+  data: {
+    sessionId: 'session-1',
+    stage: 'projection' as const,
+    retryable: true,
+    terminal: true as const,
+    outcome: 'unpublished' as const,
+  },
+}
+
 describe('Session settlement failure', () => {
   test('keeps the accepted turn processing without adding a resendable error message', () => {
     const session = createEmptySession('session-1', 'workspace-1')
@@ -60,5 +72,19 @@ describe('Session settlement failure', () => {
     expect(failed.state.session.pendingFailure).toEqual(settlementFailure)
     expect(completed.state.session.isProcessing).toBe(false)
     expect(completed.state.session.pendingFailure).toBeUndefined()
+  })
+
+  test('keeps an accepted unpublished Session retryable without showing it as processing', () => {
+    const session = createEmptySession('session-1', 'workspace-1')
+    const result = processEvent({ session, streaming: { content: 'draft' } }, {
+      type: 'session_failure',
+      sessionId: session.id,
+      error: publicationFailure,
+    })
+
+    expect(result.state.session.isProcessing).toBe(false)
+    expect(result.state.session.pendingFailure).toEqual(publicationFailure)
+    expect(result.state.streaming).toBeNull()
+    expect(result.state.session.messages).toEqual(session.messages)
   })
 })

@@ -1,4 +1,5 @@
 import type { SessionDraft } from '@mortise/shared/config'
+import { recordComposerPerformance } from './composer-performance'
 
 export type PersistDraft = (draftId: string, draft: SessionDraft) => Promise<void>
 
@@ -13,9 +14,13 @@ export class DraftWriteQueue {
 
   write(draftId: string, draft: SessionDraft): Promise<void> {
     const snapshot = cloneDraft(draft)
+    const queuedAt = typeof performance === 'undefined' ? 0 : performance.now()
     const operation = this.tail
       .catch(() => undefined)
       .then(() => this.persist(draftId, snapshot))
+      .finally(() => {
+        if (queuedAt > 0) recordComposerPerformance('draft-persist-queue', performance.now() - queuedAt)
+      })
 
     // Keep the queue live after an individual persistence failure while still
     // returning that failure to the caller that initiated the write.

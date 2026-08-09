@@ -24,6 +24,7 @@ import type { SettingsSubpage } from '../../../shared/types'
 import { SETTINGS_ITEMS } from '../../../shared/menu-schema'
 import { SETTINGS_ICONS, getExtensionSettingsIcon } from '@/components/icons/SettingsIcons'
 import { createExtensionSettingsSubpage } from '../../../shared/settings-registry'
+import { selectRuntimeExtensions } from '@/components/extensions/extension-runtime-catalog'
 import type { PiExtensionCatalogEntry } from '@mortise/shared/config'
 
 interface ExtensionPageItem {
@@ -164,9 +165,11 @@ export default function SettingsNavigator({
   const [extensionPages, setExtensionPages] = useState<ExtensionPageItem[]>([])
 
   const loadExtensionPages = useCallback(async () => {
-    const catalog = await window.electronAPI.getPiExtensionCatalog()
-    const nextPages = catalog.extensions.flatMap<ExtensionPageItem>((extension) => {
-      if (!extension.enabled) return []
+    const [catalog, runtimeState] = await Promise.all([
+      window.electronAPI.getPiExtensionCatalog(),
+      window.electronAPI.getPiExtensionRuntimeState(),
+    ])
+    const nextPages = selectRuntimeExtensions(catalog.extensions, runtimeState).flatMap<ExtensionPageItem>((extension) => {
       if (extension.ui?.schemaVersion === 1 && extension.ui.settings?.page) {
         return [{ extension, page: extension.ui.settings.page }]
       }

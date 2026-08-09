@@ -18,6 +18,26 @@ class TestRpcServer implements RpcServer {
 }
 
 describe('Extension settings load boundary', () => {
+  it('exposes the applied runtime state separately from configured enabled state', async () => {
+    const server = new TestRpcServer()
+    registerSettingsHandlers(server, {
+      sessionManager: {
+        getExtensionRuntimeState: (workspaceId?: string) => ({
+          loaded: workspaceId === 'workspace-1',
+          extensionIds: workspaceId === 'workspace-1' ? ['mortise-permissions'] : [],
+        }),
+      } as ISessionManager,
+      platform: {} as HandlerDeps['platform'],
+    })
+
+    const handler = server.handlers.get(RPC_CHANNELS.piExtensions.GET_RUNTIME_STATE)
+    expect(handler).toBeDefined()
+    await expect(handler!({} as never, 'workspace-1')).resolves.toEqual({
+      loaded: true,
+      extensionIds: ['mortise-permissions'],
+    })
+  })
+
   it('exposes runtime reload with the explicit interruption boundary', async () => {
     const server = new TestRpcServer()
     let interruptRunning: boolean | undefined
