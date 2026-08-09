@@ -177,6 +177,8 @@ export type RpcCommand = RpcEnvelope &
 				streamingBehavior?: "steer" | "followUp";
 				/** Host-generated identity preserved on the persisted user message. */
 				clientMutationId?: string;
+				/** Append Pi's hidden interruption context before the user message. */
+				interruptedAttempt?: boolean;
 				/** Sanitized display metadata only; paths and attachment contents are forbidden. */
 				attachments?: UserAttachmentMetadata[];
 				/** Host system-prompt override for this turn onward (see PromptOptions.systemPrompt). */

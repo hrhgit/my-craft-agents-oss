@@ -6,14 +6,14 @@ import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import type { AddressInfo } from 'node:net'
 import { requestMortiseUiHost } from '../../mortise-ui/client.ts'
-import { restartMortiseUiRun, startMortiseUiRun, stopMortiseUiRun, stopMortiseUiRunDetailed } from '../../mortise-ui/controller.ts'
+import { MORTISE_UI_MAX_START_WAIT_MS, restartMortiseUiRun, startMortiseUiRun, stopMortiseUiRun, stopMortiseUiRunDetailed } from '../../mortise-ui/controller.ts'
 import type { MortiseUiFixtureMessage, MortiseUiFixtureSpec } from '../../mortise-ui/fixture.ts'
 import type { MortiseUiRunManifest } from '../../mortise-ui/protocol.ts'
 
 type TimelineName = 'normal' | 'abort' | 'compaction' | 'retry' | 'replacement'
-interface Node { ref: string; semanticId?: string; actions: string[]; state?: { disabled?: boolean; busy?: boolean } }
+interface Node { ref: string; semanticId?: string; name?: string; actions: string[]; state?: { disabled?: boolean; busy?: boolean } }
 interface Snapshot { revision: number; regions: Record<string, Node[]> }
-interface FileStamp { path: string; sha256: string; size: number; mtimeMs: number }
+interface FileStamp { path: string; sha256: string; restartSha256: string; size: number; mtimeMs: number }
 interface ProjectionEntity { kind?: string; createdSeq?: number; lastSeq?: number; payload?: Record<string, unknown> }
 interface ProjectionSnapshot { sessionId?: string; entities?: ProjectionEntity[] }
 interface ProviderReceipt { at: string; timeline: TimelineName; request: number; status: number; bodySha256: string }
@@ -22,6 +22,8 @@ const workspaceId = 'settlement-workspace'
 const sessionId = 'settlement-session'
 const providerKey = 'opt005-scripted'
 const modelId = 'opt005-model'
+const interruptedAttemptContext = 'The previous attempt was interrupted. Some tools or commands may still be running or may have partially executed. Check the current state before retrying.'
+const recoveryMessage = 'Resume after the interrupted attempt.'
 const allTimelines: TimelineName[] = ['normal', 'abort', 'compaction', 'retry', 'replacement']
 const timelines = selectedTimelines()
 const activeRuns: MortiseUiRunManifest[] = []
@@ -46,7 +48,7 @@ const provider = createServer(async (request, response) => {
     response.end(JSON.stringify({ error: { type: 'server_error', code: 'overloaded_error', message: 'overloaded_error' } }))
     return
   }
-  if (providerTimeline === 'abort') {
+  if (providerTimeline === 'abort' && requestNumber === 1) {
     providerReceipts.push(receipt(providerTimeline, requestNumber, 200, body))
     response.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' })
     heldRequest = { request, response }
@@ -101,9 +103,9 @@ async function runTimeline(timeline: TimelineName) {
   let run: MortiseUiRunManifest | undefined
   try {
     run = await startMortiseUiRun({
-      surface: 'electron', profileMode: 'fixture', fixtureSpec, waitMs: 600_000,
+      surface: 'electron', profileMode: 'fixture', fixtureSpec, waitMs: MORTISE_UI_MAX_START_WAIT_MS,
       label: `opt005-${timeline}`,
-      profileSetup: profile => writeProviderConfig(profile.root),
+      profileSetup: profile => prepareProviderProfile(profile.root, timeline),
       ...(process.env.MORTISE_UI_SKIP_BUILD === '1' ? { extraEnv: { MORTISE_UI_SKIP_BUILD: '1' } } : {}),
     })
     activeRuns.push(run)
@@ -112,7 +114,10 @@ async function runTimeline(timeline: TimelineName) {
     const before = stamps(run, false)
     if (timeline === 'normal') await submitAndWait(run, 'Run the normal completion timeline.')
     if (timeline === 'abort') await runAbort(run)
-    if (timeline === 'compaction') await submitAndWait(run, '/compact Preserve the plan execution context.')
+    if (timeline === 'compaction') {
+      await submitAndWait(run, '/compact Preserve the plan execution context.')
+      assertCompactionUsageReset(run)
+    }
     if (timeline === 'retry') await submitAndWait(run, 'Trigger the automatic retry timeline.')
     if (timeline === 'replacement') await runReplacement(run)
 
@@ -127,11 +132,11 @@ async function runTimeline(timeline: TimelineName) {
     evidence.push((await ok<{ bundleDir: string }>(run, 'evidence.capture', { label: `opt005-${timeline}` })).bundleDir)
 
     const originalRunId = run.runId
-    run = await restartMortiseUiRun(run.runDir, { waitMs: 600_000 })
+    run = await restartMortiseUiRun(run.runDir, { waitMs: MORTISE_UI_MAX_START_WAIT_MS })
     activeRuns.push(run)
     await openSession(run)
     await settle(run)
-    assertSameStamps(stamps(run), complete, `${timeline}: canonical files changed after same-profile restart`)
+    assertSameRestartStamps(stamps(run), complete, `${timeline}: canonical files changed after same-profile restart`)
     evidence.push((await ok<{ bundleDir: string }>(run, 'evidence.capture', { label: `opt005-${timeline}-restart` })).bundleDir)
     await stopMortiseUiRun(run.runDir)
     return { timeline, runId: originalRunId, restartRunId: run.runId, evidence, tracePath }
@@ -219,6 +224,28 @@ function writeProviderConfig(profileDir: string): void {
   writeFileSync(join(dir, 'auth.json'), `${JSON.stringify({ [providerKey]: { type: 'api_key', key: 'opt005-local-key' } }, null, 2)}\n`, 'utf8')
 }
 
+function prepareProviderProfile(profileDir: string, timeline: TimelineName): void {
+  writeProviderConfig(profileDir)
+  if (timeline !== 'compaction') return
+
+  const sessionPath = findSessionJsonl(profileDir)
+  const lines = readFileSync(sessionPath, 'utf8').split(/\r?\n/)
+  const header = JSON.parse(lines[0]!) as { mortise?: Record<string, unknown> }
+  if (!header.mortise) throw new Error('compaction: fixture session header has no Mortise metadata')
+  header.mortise.tokenUsage = {
+    inputTokens: 30_000,
+    outputTokens: 200,
+    totalTokens: 30_200,
+    contextTokens: 30_000,
+    contextWindow: 32_768,
+    costUsd: 0,
+    cacheReadTokens: 0,
+    cacheCreationTokens: 0,
+  }
+  lines[0] = JSON.stringify(header)
+  writeFileSync(sessionPath, lines.join('\n'), 'utf8')
+}
+
 async function openSession(run: MortiseUiRunManifest): Promise<void> {
   await act(run, `navigation.session_${workspaceId}_${sessionId}`, 'click')
   await ok(run, 'ui.wait', { predicate: { kind: 'state', scope: 'session', entityId: sessionId, phase: 'ready' }, timeoutMs: 60_000 })
@@ -236,6 +263,46 @@ async function runAbort(run: MortiseUiRunManifest): Promise<void> {
   await waitForAction(run, `composer.${sessionId}.stop`, 'click')
   await act(run, `composer.${sessionId}.stop`, 'click')
   await ok(run, 'ui.wait', { predicate: { kind: 'state', scope: 'session', entityId: sessionId, phase: 'ready' }, stableForMs: 250, timeoutMs: 120_000 })
+  await submitAndWait(run, recoveryMessage)
+  assertInterruptedRecoveryPlacement(run)
+  const snapshot = await ok<Snapshot>(run, 'ui.snapshot')
+  if (nodes(snapshot).some(node => node.name?.includes(interruptedAttemptContext))) {
+    throw new Error('abort: hidden interruption context appeared in the visible semantic snapshot')
+  }
+}
+
+function assertInterruptedRecoveryPlacement(run: MortiseUiRunManifest): void {
+  const entries = readFileSync(findSessionJsonl(run.profileDir), 'utf8')
+    .trim()
+    .split(/\r?\n/)
+    .map(line => JSON.parse(line) as Record<string, any>)
+  const userIndex = entries.findIndex(entry => {
+    if (entry.type !== 'message' || entry.message?.role !== 'user' || !Array.isArray(entry.message.content)) return false
+    return entry.message.content.some((part: Record<string, unknown>) => part.type === 'text' && part.text === recoveryMessage)
+  })
+  if (userIndex < 1) throw new Error('abort: recovery user message was not persisted')
+  const recovery = entries[userIndex]!
+  const previous = entries[userIndex - 1]!
+  if (previous.type !== 'custom_message' || previous.customType !== 'attempt_interrupted' || previous.display !== false) {
+    throw new Error(`abort: hidden interruption context is not immediately before the recovery message: ${JSON.stringify(previous)}`)
+  }
+  const userText = (recovery.message.content as Array<Record<string, unknown>>)
+    .filter(part => part.type === 'text' && typeof part.text === 'string')
+    .map(part => part.text)
+    .join('\n')
+  if (userText !== recoveryMessage || userText.includes(interruptedAttemptContext)) {
+    throw new Error(`abort: recovery context leaked into the user message: ${JSON.stringify(userText)}`)
+  }
+}
+
+function assertCompactionUsageReset(run: MortiseUiRunManifest): void {
+  const header = JSON.parse(readFileSync(findSessionJsonl(run.profileDir), 'utf8').split(/\r?\n/, 1)[0]!) as {
+    mortise?: { tokenUsage?: { inputTokens?: number; contextTokens?: number } }
+  }
+  const tokenUsage = header.mortise?.tokenUsage
+  if (tokenUsage?.inputTokens !== 0 || tokenUsage?.contextTokens !== 0) {
+    throw new Error(`compaction: current context usage did not reset after compaction: ${JSON.stringify(tokenUsage)}`)
+  }
 }
 
 async function runReplacement(run: MortiseUiRunManifest): Promise<void> {
@@ -321,13 +388,34 @@ function stamps(run: MortiseUiRunManifest, requireProjection = true): FileStamp[
 function stamp(path: string): FileStamp {
   const data = readFileSync(path)
   const stat = statSync(path)
-  return { path, sha256: createHash('sha256').update(data).digest('hex'), size: stat.size, mtimeMs: stat.mtimeMs }
+  const restartData = path.endsWith('.jsonl') ? normalizeRestartJsonl(data.toString('utf8')) : data
+  return {
+    path,
+    sha256: createHash('sha256').update(data).digest('hex'),
+    restartSha256: createHash('sha256').update(restartData).digest('hex'),
+    size: stat.size,
+    mtimeMs: stat.mtimeMs,
+  }
 }
 
 function assertSameStamps(actual: FileStamp[], expected: FileStamp[], message: string): void {
   const stable = actual.map(item => ({ ...item, path: item.path.replace(/\\/g, '/') }))
   const baseline = expected.map(item => ({ ...item, path: item.path.replace(/\\/g, '/') }))
   if (JSON.stringify(stable) !== JSON.stringify(baseline)) throw new Error(`${message}: ${JSON.stringify({ expected: baseline, actual: stable })}`)
+}
+
+function assertSameRestartStamps(actual: FileStamp[], expected: FileStamp[], message: string): void {
+  const stable = actual.map(item => ({ path: item.path.replace(/\\/g, '/'), sha256: item.restartSha256 }))
+  const baseline = expected.map(item => ({ path: item.path.replace(/\\/g, '/'), sha256: item.restartSha256 }))
+  if (JSON.stringify(stable) !== JSON.stringify(baseline)) throw new Error(`${message}: ${JSON.stringify({ expected: baseline, actual: stable })}`)
+}
+
+function normalizeRestartJsonl(value: string): string {
+  const lines = value.split(/\r?\n/)
+  const header = JSON.parse(lines[0]!) as { mortise?: { lastUsedAt?: number } }
+  if (header.mortise) delete header.mortise.lastUsedAt
+  lines[0] = JSON.stringify(header)
+  return lines.join('\n')
 }
 
 function findSessionJsonl(profileDir: string): string {

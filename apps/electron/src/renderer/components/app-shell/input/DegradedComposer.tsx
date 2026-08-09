@@ -77,7 +77,7 @@ export const BasicComposerTextarea = React.forwardRef<RichTextInputHandle, Basic
             onValueChange(nextValue)
           }}
           onKeyDown={event => {
-            if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return
+            if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent?.isComposing) return
             event.preventDefault()
             onSubmit?.()
           }}

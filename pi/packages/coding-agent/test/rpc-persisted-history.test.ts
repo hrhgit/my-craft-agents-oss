@@ -222,7 +222,14 @@ describe("RPC persisted history compatibility", () => {
 					entry.message?.role === "assistant" &&
 					entry.message?.content?.[0]?.text === "resumed",
 			);
-			expect(resumed?.parentId).toBe(interrupted?.parentId);
+			const recoveryContext = persisted.find(
+				(entry) => entry.type === "custom_message" && entry.customType === "attempt_interrupted",
+			);
+			expect(recoveryContext).toMatchObject({
+				parentId: interrupted?.parentId,
+				display: false,
+			});
+			expect(resumed?.parentId).toBe(recoveryContext?.id);
 			await runtime.close();
 		} finally {
 			provider.close();

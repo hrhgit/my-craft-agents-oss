@@ -44,6 +44,7 @@ import type {
 
 export interface NewConversationPageProps {
   draftId: string
+  tabId?: string
 }
 
 export interface FirstTurnPublicationAttempt {
@@ -213,7 +214,7 @@ function WorkspaceDraftSwitcher() {
   )
 }
 
-const NewConversationPage = React.memo(function NewConversationPage({ draftId }: NewConversationPageProps) {
+const NewConversationPage = React.memo(function NewConversationPage({ draftId, tabId }: NewConversationPageProps) {
   const { t } = useTranslation()
   const appShell = useAppShellContext()
   const {
@@ -321,7 +322,11 @@ const NewConversationPage = React.memo(function NewConversationPage({ draftId }:
               console.error('[NewConversationPage] Failed to clear published draft:', error)
               toast.error(t('toast.failedToClearDraft', 'Session created, but the draft could not be cleared.'))
             }
-            navigate(routes.view.allSessions(session.id))
+            navigate(routes.view.allSessions(session.id), {
+              intent: 'replace-current',
+              ...(tabId ? { targetTabId: tabId } : {}),
+              expectedRoute: routes.view.newConversation(draftId),
+            })
           },
           () => {
             setInputValue(attempt.message)
@@ -343,7 +348,7 @@ const NewConversationPage = React.memo(function NewConversationPage({ draftId }:
         setSubmitting(false)
       }
     })()
-  }, [clearDraft, draftStorageKey, onAttachmentsChange, onCreateAndSendFirstTurn, onInputChange, t, workspaceId])
+  }, [clearDraft, draftId, draftStorageKey, onAttachmentsChange, onCreateAndSendFirstTurn, onInputChange, t, tabId, workspaceId])
 
   const handleSubmit = React.useCallback(async (attempt: import('@/components/app-shell/input/composer-submission').ComposerSubmissionAttempt) => {
     submitFirstTurnAttempt(snapshotFirstTurnPublicationAttempt(

@@ -296,6 +296,8 @@ export type ToolResultHandler = (request: ToolResultRequest) => Promise<void>;
 export interface PromptOptions {
 	/** Host-generated identity preserved on the resulting user message. */
 	clientMutationId?: string;
+	/** Append Pi's hidden interruption context before the user message. */
+	interruptedAttempt?: boolean;
 	/** Sanitized host attachment metadata persisted on the user message. */
 	attachments?: UserAttachmentMetadata[];
 	/** Whether to expand file-based prompt templates (default: true) */
@@ -1578,8 +1580,20 @@ export class AgentSession {
 				}
 			}
 
-			// Build messages array (custom message if any, then user message)
+			// Build messages array (host recovery context first, then user message).
 			messages = [];
+			const promptTimestamp = Date.now();
+
+			if (options?.interruptedAttempt) {
+				messages.push({
+					role: "custom",
+					customType: "attempt_interrupted",
+					content: INTERRUPTED_ATTEMPT_CONTEXT,
+					display: false,
+					details: { status: "interrupted" },
+					timestamp: promptTimestamp,
+				});
+			}
 
 			// Add user message
 			const userContent: (TextContent | ImageContent)[] = [{ type: "text", text: expandedText }];
@@ -1589,7 +1603,7 @@ export class AgentSession {
 			messages.push({
 				role: "user",
 				content: userContent,
-				timestamp: Date.now(),
+				timestamp: promptTimestamp,
 				clientMutationId: options?.clientMutationId,
 				attachments: options?.attachments,
 			});
@@ -1710,9 +1724,14 @@ export class AgentSession {
 	 * @throws Error if text is an extension command
 	 */
 	async steer(text: string, images?: ImageContent[], options?: { clientMutationId?: string }): Promise<void> {
-		// Check for extension commands (cannot be queued)
+		// Check for extension commands (cannot be queued) before the streaming guard:
+		// extension commands must reject with their specific error even while idle.
 		if (text.startsWith("/")) {
 			this._throwIfExtensionCommand(text);
+		}
+
+		if (!this.isStreaming) {
+			throw new Error("Cannot steer because the agent is not streaming");
 		}
 
 		// Expand skill commands and prompt templates
@@ -1962,16 +1981,19 @@ export class AgentSession {
 		}
 
 		const previousModel = this.model;
+		const modelChanged = !modelsAreEqual(previousModel, model);
 		const thinkingLevel = this._getThinkingLevelForModelSwitch();
 		this.agent.state.model = model;
-		this.sessionManager.appendModelChange(model.provider, model.id);
-		this.settingsManager.setDefaultModelAndProvider(model.provider, model.id);
+		if (modelChanged) {
+			this.sessionManager.appendModelChange(model.provider, model.id);
+			this.settingsManager.setDefaultModelAndProvider(model.provider, model.id);
+		}
 
 		// Re-clamp thinking level for new model's capabilities
 		this.setThinkingLevel(thinkingLevel);
 		this.refreshSystemPrompt();
 
-		await this._emitModelSelect(model, previousModel, "set");
+		if (modelChanged) await this._emitModelSelect(model, previousModel, "set");
 	}
 
 	/**

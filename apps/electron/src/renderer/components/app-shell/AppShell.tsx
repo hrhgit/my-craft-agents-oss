@@ -1,7 +1,7 @@
 import * as React from "react"
 import { useTranslation, Trans } from "react-i18next"
 import { useRef, useState, useEffect, useCallback, useMemo } from "react"
-import { useAtom, useAtomValue, useStore } from "jotai"
+import { useAtom, useAtomValue } from "jotai"
 import {
   Archive,
   Settings,
@@ -97,7 +97,7 @@ import { sessionMetaMapAtom, sendToWorkspaceAtom, type SessionMeta } from "@/ato
 import { piProjectionIsProcessingAtomFamily } from "@/atoms/pi-projection"
 import { skillsAtom } from "@/atoms/skills"
 import { managementEditorAtom } from "@/atoms/management-editor"
-import { activeDockTabIdAtom, activeDockTabTypeAtom, emptyDockPageSessionRequestAtom, enterCompactDockDetailAtom, exitCompactDockDetailAtom, isEmptyDockPageTabId, panelStackAtom, panelCountAtom, focusedSessionIdAtom, focusNextPanelAtom, focusPrevPanelAtom, resetCompactDockViewIntentAtom, shouldReplaceActiveTabWithSession } from "@/atoms/panel-stack"
+import { enterCompactDockDetailAtom, exitCompactDockDetailAtom, panelStackAtom, panelCountAtom, focusedSessionIdAtom, focusNextPanelAtom, focusPrevPanelAtom, resetCompactDockViewIntentAtom } from "@/atoms/panel-stack"
 import { useContainerWidth } from "@/hooks/useContainerWidth"
 import { resolveEntityColor } from "@mortise/shared/colors"
 import * as storage from "@/lib/local-storage"
@@ -287,28 +287,15 @@ function AppShellContent({
   // Visible root-page or focused workspace navigation state.
   const navState = useNavigationState()
 
-  const store = useStore()
-  const requestEmptyDockPageSession = useSetAtom(emptyDockPageSessionRequestAtom)
   const panelStack = useAtomValue(panelStackAtom)
   const panelCount = useAtomValue(panelCountAtom)
   const focusedSessionId = useAtomValue(focusedSessionIdAtom)
 
-  // Replace the actively selected conversation page. Session runtime state is
-  // preserved in the background, so it must not implicitly split the dock.
-  // Other content types retain their page and receive the session in a new tab.
+  // The dock host resolves the active conversation tab from AppLayout.
   const navigateToSessionInPanel = useCallback((sessionId: string) => {
     enterCompactDockDetail()
-    const activeTabId = store.get(activeDockTabIdAtom)
-    if (isEmptyDockPageTabId(activeTabId)) {
-      requestEmptyDockPageSession({ tabId: activeTabId, sessionId })
-      return
-    }
-    if (shouldReplaceActiveTabWithSession(store.get(activeDockTabTypeAtom))) {
-      navigateToSession(sessionId)
-      return
-    }
-    navigate(routes.view.allSessions(sessionId), { newPanel: true })
-  }, [enterCompactDockDetail, requestEmptyDockPageSession, store, navigateToSession])
+    navigateToSession(sessionId)
+  }, [enterCompactDockDetail, navigateToSession])
 
   const sessionsContext = React.useMemo(() => {
     if (isSessionsNavigation(navState)) {
@@ -1147,7 +1134,7 @@ function AppShellContent({
     // Delegate to NavigationContext which handles session creation
     navigate(
       routes.action.newSession(),
-      newPanel ? { newPanel: true, targetLaneId: 'main' } : undefined
+      newPanel ? { intent: 'open-new', targetLaneId: 'main' } : undefined
     )
 
     // Focus the chat input after navigation completes

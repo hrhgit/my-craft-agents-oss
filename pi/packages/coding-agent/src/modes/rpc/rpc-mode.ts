@@ -1921,6 +1921,7 @@ export async function runRpcMode(
 						images: command.images,
 						streamingBehavior: command.streamingBehavior,
 						clientMutationId: command.clientMutationId,
+						interruptedAttempt: command.interruptedAttempt,
 						attachments: command.attachments,
 						systemPrompt: command.systemPrompt,
 						clearSystemPrompt: command.clearSystemPrompt,

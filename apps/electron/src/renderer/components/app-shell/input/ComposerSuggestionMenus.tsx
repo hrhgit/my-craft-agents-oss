@@ -10,6 +10,7 @@ import {
   useInlineMention,
   type MentionItem,
 } from '@/components/ui/mention-menu'
+import { getEventIsComposing } from './midstream-shortcuts'
 import type { RichTextInputHandle } from '@/components/ui/rich-text-input'
 import type { LoadedSkill } from '../../../../shared/types'
 
@@ -100,7 +101,8 @@ export const ComposerSuggestionMenus = React.memo(React.forwardRef<
       else inlineMention.close()
     },
     handleKeyDown: event => {
-      if (event.key === 'Escape' && event.nativeEvent.isComposing) return false
+      // The rich editor can deliver a raw DOM KeyboardEvent (no React `nativeEvent`).
+      if (event.key === 'Escape' && getEventIsComposing(event)) return false
 
       if (inlineMention.isOpen) {
         const hasVisibleContent = inlineMention.sections.some(section => section.items.length > 0)

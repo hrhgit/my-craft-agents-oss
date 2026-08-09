@@ -85,7 +85,7 @@ import {
   isContextWarning,
 } from './context-usage'
 import { useModelVisionToggle } from './useModelVisionToggle'
-import { resolveMidStreamSendIntent } from './midstream-shortcuts'
+import { getEventIsComposing, resolveMidStreamSendIntent } from './midstream-shortcuts'
 import {
   ComposerSuggestionMenus,
   type ComposerSuggestionMenusHandle,
@@ -1255,7 +1255,9 @@ export function FreeFormInput({
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     // During IME composition, ESC should cancel composition, not trigger app/menu ESC behavior.
-    if (e.key === 'Escape' && e.nativeEvent.isComposing) {
+    // handleDOMEvents (rich editor) delivers the raw DOM KeyboardEvent, which has no React
+    // `nativeEvent`; the raw event exposes `isComposing` directly.
+    if (e.key === 'Escape' && getEventIsComposing(e)) {
       return
     }
 
@@ -1266,7 +1268,7 @@ export function FreeFormInput({
       shiftKey: e.shiftKey,
       metaKey: e.metaKey,
       ctrlKey: e.ctrlKey,
-      isComposing: e.nativeEvent.isComposing,
+      isComposing: getEventIsComposing(e),
     })
     if (midStreamSendIntent) {
       e.preventDefault()

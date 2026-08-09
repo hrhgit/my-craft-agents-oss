@@ -1,6 +1,7 @@
 import { appendFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { immutableRuntimeRequiredAppPaths } from '@mortise/session-tools-core/runtime'
+import { ELECTRON_BUILD_INPUTS } from '../build-inputs.ts'
 import {
   acquireElectronBuild,
   releaseElectronBuild,
@@ -34,6 +35,12 @@ function seedBuildOutputs(root: string, content: string): void {
   const distDir = join(appDir, 'dist')
   mkdirSync(appDir, { recursive: true })
   writeFileSync(join(appDir, 'package.json'), JSON.stringify({ name: '@mortise/electron-test', main: 'dist/main.cjs', type: 'module' }), 'utf8')
+  for (const input of ELECTRON_BUILD_INPUTS) {
+    if (!input.required) continue
+    const target = join(root, ...input.path.split('/'), 'package.json')
+    mkdirSync(join(target, '..'), { recursive: true })
+    writeFileSync(target, JSON.stringify({ name: `@mortise/${input.path.replaceAll('/', '-')}` }), 'utf8')
+  }
   for (const path of immutableRuntimeRequiredAppPaths()) {
     const target = join(appDir, ...path.split('/'))
     mkdirSync(join(target, '..'), { recursive: true })

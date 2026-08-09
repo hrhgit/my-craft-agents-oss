@@ -31,6 +31,8 @@ import { getPlatformKey, publishVerifiedUvToolchain, resolveCachedUvToolchain, U
 import { withFileLock } from './file-lock.ts'
 import { writeJsonAtomic } from './files.ts'
 import { getProcessStartTime, matchesProcessIdentity } from './process-identity.ts'
+import { ELECTRON_BUILD_BLOCK_SPECS, ELECTRON_BUILD_INPUTS } from './build-inputs.ts'
+import { runBuildBlock, type BuildBlockContext, type BuildBlockManifest } from './build-block-cache.ts'
 
 export const ELECTRON_BUILD_SCHEMA_VERSION = 5
 export const ELECTRON_BUILD_PRODUCER_VERSION = 'electron-production-v4'
@@ -177,7 +179,7 @@ export function captureElectronBuildSource(options: {
     // Bundled extension packages may ship generated frontend artifacts under
     // ignored dist/ directories. Freeze the complete package tree so the
     // immutable Electron capsule serves the same resources as the checkout.
-    extraPaths: ['apps/electron/resources/pi-extensions'],
+    extraPaths: ELECTRON_BUILD_INPUTS.filter(input => input.required).map(input => input.path),
   })
 }
 
@@ -867,13 +869,44 @@ function runElectronBuild(
   prepareDependencies: boolean,
   bunExecutable: string,
 ): void {
+  const blockContext: BuildBlockContext = {
+    sourceRoot: repoRoot,
+    buildRoot,
+    mode,
+    toolchain: `${process.versions.bun ?? process.version}:${buildToolchainExecutableSha256(bunExecutable)}`,
+    inputHashCache: new Map(),
+    verify: process.env.MORTISE_BUILD_VERIFY === '1' ? 'strict' : 'fast',
+  }
+  const builtBlocks = new Map<string, BuildBlockManifest>()
+  const runBlock = (name: string, build: () => void): void => {
+    const spec = ELECTRON_BUILD_BLOCK_SPECS[name]
+    if (!spec) throw new Error(`Unknown Electron build block: ${name}`)
+    const dependencies = spec.dependencyIds.map(dependency => builtBlocks.get(dependency)?.blockId)
+    if (dependencies.some(id => !id)) throw new Error(`Build block ${name} has an unavailable dependency.`)
+    const result = runBuildBlock({ context: blockContext, spec, dependencyIds: dependencies as string[], build })
+    builtBlocks.set(name, result.manifest)
+    process.stdout.write(`[electron-build] ${name} ${result.reused ? 'reused' : 'built'} (${result.manifest.blockId.slice(0, 12)}).\n`)
+  }
+
   executeElectronBuildStages(prepareDependencies, {
     preparePiDependencies: () => prepareFrozenPiDependencies(repoRoot, join(buildRoot, 'sources')),
-    buildPiWorkspace: () => runBuildCommand(repoRoot, ['run', 'pi:build'], 'Pi workspace build', mode, sourceId, buildRoot, bunExecutable),
-    buildPiBinary: () => runBuildCommand(repoRoot, ['run', 'pi:build:binary'], 'Pi binary build', mode, sourceId, buildRoot, bunExecutable),
+    buildPiWorkspace: () => runBlock('pi-workspace', () => runBuildCommand(repoRoot, ['run', 'pi:build'], 'Pi workspace build', mode, sourceId, buildRoot, bunExecutable)),
+    buildPiBinary: () => runBlock('pi-binary', () => runBuildCommand(repoRoot, ['run', 'pi:build:binary'], 'Pi binary build', mode, sourceId, buildRoot, bunExecutable)),
     prepareRootDependencies: () => prepareFrozenRootDependencies(repoRoot, bunExecutable),
     assertDependencyViews: () => assertFrozenDependencyViewsContained(repoRoot),
-    buildElectronSource: () => runBuildCommand(repoRoot, ['run', 'electron:build:source'], 'Electron source build', mode, sourceId, buildRoot, bunExecutable),
+    buildElectronSource: () => {
+      runBlock('electron-main', () => runBuildCommand(repoRoot, ['run', 'electron:build:main'], 'Electron main build', mode, sourceId, buildRoot, bunExecutable))
+      runBlock('electron-preload', () => runBuildCommand(repoRoot, ['run', 'electron:build:preload'], 'Electron preload build', mode, sourceId, buildRoot, bunExecutable))
+      runBlock('electron-renderer', () => runBuildCommand(repoRoot, ['run', 'electron:build:renderer'], 'Electron renderer build', mode, sourceId, buildRoot, bunExecutable))
+      runBlock('electron-resources', () => runBuildCommand(repoRoot, ['run', 'electron:build:resources'], 'Electron resources build', mode, sourceId, buildRoot, bunExecutable))
+      runBlock('electron-packaging-inputs', () => runBuildCommand(repoRoot, ['run', 'electron:build:packaging-inputs'], 'Electron packaging inputs build', mode, sourceId, buildRoot, bunExecutable))
+    },
+  })
+  runBlock('electron-capsule-assembly', () => {
+    // The immutable capsule publisher still owns the final copy and manifest;
+    // this block closes the dependency graph and verifies every staged output
+    // before that short publication step begins.
+    assertSourceBuildOutputs(join(repoRoot, 'apps', 'electron'))
   })
 }
 

@@ -8,6 +8,18 @@ interface EnterShortcutEvent {
   isComposing: boolean
 }
 
+/**
+ * Read the IME-composition flag from a keydown event regardless of whether it
+ * is a React synthetic event (exposes `nativeEvent`) or a raw DOM KeyboardEvent
+ * from the rich editor's `handleDOMEvents` (exposes `isComposing` directly).
+ */
+export function getEventIsComposing<T extends {
+  nativeEvent?: { isComposing?: boolean }
+  isComposing?: boolean
+}>(event: T): boolean {
+  return event.nativeEvent?.isComposing ?? event.isComposing ?? false
+}
+
 export function resolveMidStreamSendIntent(
   sendMessageKey: 'enter' | 'cmd-enter',
   event: EnterShortcutEvent,

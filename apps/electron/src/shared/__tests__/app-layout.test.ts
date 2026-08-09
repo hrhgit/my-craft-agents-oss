@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test'
 import {
   canReplaceContentTab,
   createDefaultAppLayout,
-  focusConversationRoute,
+  navigateConversationRoute,
   detachContentTab,
   detachPanelGroup,
   moveContentTab,
@@ -57,7 +57,7 @@ describe('app layout domain', () => {
       sessionId: 'old-session',
       route: 'allSessions/session/old-session',
     }))
-    const focused = focusConversationRoute(initial, 'allSessions/new/default')
+    const focused = navigateConversationRoute(initial, 'allSessions/new/default', { intent: 'replace-current' })
 
     expect(Object.keys(focused.tabs)).toHaveLength(Object.keys(initial.tabs).length)
     expect(focused.tabs['content:main']?.ref).toEqual({
@@ -68,7 +68,7 @@ describe('app layout domain', () => {
     expect(focused.focusedTabId).toBe('content:main')
   })
 
-  it('opens a separate draft instead of replacing a protected conversation', () => {
+  it('replaces the active conversation even when it is protected', () => {
     const initial = createDefaultAppLayout({
       workspaceId: 'ws-a',
       sessionId: 'running-session',
@@ -79,12 +79,62 @@ describe('app layout domain', () => {
       protection: { ...initial.tabs['content:main'].protection, pinned: true, running: true },
     }
 
-    const focused = focusConversationRoute(initial, 'allSessions/new/default')
+    const focused = navigateConversationRoute(initial, 'allSessions/new/default', { intent: 'replace-current' })
 
-    expect(focused.tabs['content:main'].ref.sessionId).toBe('running-session')
+    expect(Object.keys(focused.tabs)).toEqual(['content:main'])
+    expect(focused.tabs['content:main'].ref).toEqual({
+      kind: 'conversation',
+      workspaceId: 'ws-a',
+      resourceId: 'allSessions/new/default',
+    })
     expect(focused.tabs['content:main'].protection).toMatchObject({ pinned: true, running: true })
-    expect(focused.focusedTabId).not.toBe('content:main')
-    expect(focused.tabs[focused.focusedTabId!].ref.resourceId).toBe('allSessions/new/default')
+    expect(focused.focusedTabId).toBe('content:main')
+  })
+
+  it('opens another conversation tab only for an explicit open-new intent', () => {
+    const initial = createDefaultAppLayout({
+      workspaceId: 'ws-a',
+      sessionId: 's1',
+      route: 'allSessions/session/s1',
+    })
+    const opened = navigateConversationRoute(initial, 'allSessions/session/s2', {
+      intent: 'open-new',
+      newTabId: 'conversation:s2',
+    })
+
+    expect(opened.groups['group:main'].tabIds).toEqual(['content:main', 'conversation:s2'])
+    expect(opened.focusedTabId).toBe('conversation:s2')
+    expect(opened.tabs['content:main'].ref.resourceId).toBe('allSessions/session/s1')
+  })
+
+  it('publishes a draft only while its owning tab still renders the expected route', () => {
+    const draft = navigateConversationRoute(
+      createDefaultAppLayout({ workspaceId: 'ws-a', route: 'allSessions/session/s1' }),
+      'allSessions/new/default',
+      { intent: 'replace-current' },
+    )
+    const switched = navigateConversationRoute(draft, 'allSessions/session/s2', { intent: 'replace-current' })
+
+    const stalePublication = navigateConversationRoute(switched, 'allSessions/session/published', {
+      intent: 'replace-current',
+      targetTabId: 'content:main',
+      expectedRoute: 'allSessions/new/default',
+    })
+    expect(stalePublication).toBe(switched)
+
+    const closedOwnerPublication = navigateConversationRoute(draft, 'allSessions/session/published', {
+      intent: 'replace-current',
+      targetTabId: 'missing-tab',
+      expectedRoute: 'allSessions/new/default',
+    })
+    expect(closedOwnerPublication).toBe(draft)
+
+    const published = navigateConversationRoute(draft, 'allSessions/session/published', {
+      intent: 'replace-current',
+      targetTabId: 'content:main',
+      expectedRoute: 'allSessions/new/default',
+    })
+    expect(published.tabs['content:main'].ref.resourceId).toBe('allSessions/session/published')
   })
 
   it('creates one main group and defers extra splits until content is opened', () => {

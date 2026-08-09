@@ -314,6 +314,60 @@ describe("RPC prompt response semantics", () => {
 		}
 	});
 
+	it("persists hidden interruption context immediately before the original user message", async () => {
+		const clientMutationId = "mutation-interrupted-attempt";
+		const { lineHandler, getSessionFile, cleanup } = await startRpcMode({
+			withAuth: true,
+			responseDelayMs: 100,
+			persistSession: true,
+		});
+
+		try {
+			lineHandler(
+				JSON.stringify({
+					id: "interrupted-attempt",
+					type: "prompt",
+					message: "actual user text",
+					clientMutationId,
+					interruptedAttempt: true,
+				}),
+			);
+
+			await vi.waitFor(() => {
+				const records = parseOutputLines(rpcIo.outputLines);
+				expect(
+					records.some(
+						(record) => record.type === "pi_user_message_persisted" && record.clientMutationId === clientMutationId,
+					),
+				).toBe(true);
+
+				const entries = readFileSync(getSessionFile()!, "utf8")
+					.trim()
+					.split("\n")
+					.map((line) => JSON.parse(line) as Record<string, any>);
+				const userIndex = entries.findIndex(
+					(entry) => entry.type === "message" && entry.message?.clientMutationId === clientMutationId,
+				);
+				expect(userIndex).toBeGreaterThan(0);
+				expect(entries[userIndex - 1]).toMatchObject({
+					type: "custom_message",
+					customType: "attempt_interrupted",
+					display: false,
+				});
+				expect(entries[userIndex]).toMatchObject({
+					type: "message",
+					message: {
+						role: "user",
+						content: [{ type: "text", text: "actual user text" }],
+						clientMutationId,
+					},
+				});
+			});
+		} finally {
+			await cleanup();
+		}
+	});
+
 	it("emits persistence immediately when appending a user message to a published session", async () => {
 		const { lineHandler, getSessionFile, cleanup } = await startRpcMode({
 			withAuth: true,

@@ -4,6 +4,7 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdir
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { immutableRuntimeRequiredAppPaths } from '@mortise/session-tools-core/runtime'
+import { ELECTRON_BUILD_INPUTS } from '../build-inputs.ts'
 import {
   acquireElectronBuild,
   cleanupElectronBuildCache,
@@ -617,6 +618,7 @@ function initGitRepo(repoRoot: string): void {
   if (result.exitCode !== 0) throw new Error(new TextDecoder().decode(result.stderr))
   write(repoRoot, 'package.json', '{}\n')
   write(repoRoot, 'apps/electron/src/main.ts', 'export const value = 1\n')
+  seedRequiredBuildInputs(repoRoot)
 }
 
 async function waitFor(predicate: () => boolean, timeoutMs: number): Promise<void> {
@@ -633,6 +635,13 @@ function seedBuildOutputs(repoRoot: string, content = 'fixture'): void {
     write(repoRoot, `apps/electron/${path}`, `// ${content}: ${path}\n`)
   }
   write(repoRoot, 'apps/electron/dist/resources/fixture.txt', content)
+}
+
+function seedRequiredBuildInputs(repoRoot: string): void {
+  for (const input of ELECTRON_BUILD_INPUTS) {
+    if (!input.required) continue
+    write(repoRoot, `${input.path}/package.json`, JSON.stringify({ name: `@mortise/${input.path.replaceAll('/', '-')}` }))
+  }
 }
 
 function write(root: string, path: string, content: string): void {

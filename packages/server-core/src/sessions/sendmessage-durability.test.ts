@@ -1153,6 +1153,63 @@ describe('sendMessage durability', () => {
     expect(stopped).toHaveBeenCalledWith(sessionId, 'interrupted')
   })
 
+  it('keeps interruption recovery out of the canonical user text', async () => {
+    const sessionId = 'durability-hidden-interruption-context'
+    const managed = buildSession(sessionId)
+    managed.wasInterrupted = true
+    let receivedMessage = ''
+    let receivedOptions: Parameters<AgentBackend['chat']>[2]
+    const fakeAgent = createInjectedAgent(sessionId, async function* (message, _attachments, options) {
+      receivedMessage = message
+      receivedOptions = options
+      yield { type: 'pi_user_message_persisted', clientMutationId: options?.clientMutationId }
+      yield { type: 'complete' }
+    })
+    managed.agent = fakeAgent
+
+    await sm.sendMessage(sessionId, 'actual user text')
+
+    expect(receivedMessage).toBe('actual user text')
+    expect(receivedOptions).toMatchObject({ interruptedAttempt: true })
+    expect(managed.wasInterrupted).toBe(false)
+  })
+
+  it('clears stale current usage when compaction completes', async () => {
+    const sessionId = 'durability-compaction-usage-reset'
+    const managed = buildSession(sessionId)
+    managed.tokenUsage = {
+      inputTokens: 307_583,
+      outputTokens: 163,
+      totalTokens: 307_746,
+      contextTokens: 307_583,
+      contextWindow: 400_000,
+      costUsd: 0,
+    }
+    const events: unknown[] = []
+    sm.setEventSink((_channel, _target, event) => events.push(event))
+    const internals = sm as unknown as {
+      processEvent: (session: typeof managed, event: { type: 'info'; message: string }) => Promise<void>
+    }
+
+    await internals.processEvent(managed, {
+      type: 'info',
+      message: 'Compacted context to fit within limits',
+    })
+
+    expect(managed.tokenUsage).toMatchObject({
+      inputTokens: 0,
+      outputTokens: 163,
+      totalTokens: 163,
+      contextTokens: 0,
+      contextWindow: 400_000,
+    })
+    expect(events).toContainEqual(expect.objectContaining({
+      type: 'usage_update',
+      sessionId,
+      tokenUsage: { inputTokens: 0, contextWindow: 400_000 },
+    }))
+  })
+
   it('awaits metadata and projection durability before exposing turn completion', async () => {
     const sessionId = 'durability-settlement-order'
     const managed = buildSession(sessionId)

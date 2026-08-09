@@ -106,6 +106,52 @@ describe("AgentSession continueFromHistory", () => {
 		]);
 	});
 
+	it("places hidden interruption context before a new user message", async () => {
+		const harness = await createHarness();
+		harnesses.push(harness);
+		seedHistory(harness, [userMessage("previous turn"), fauxAssistantMessage("previous answer")]);
+		let providerContext: Message[] = [];
+		harness.setResponses([
+			(context) => {
+				providerContext = structuredClone(context.messages);
+				return fauxAssistantMessage("next answer");
+			},
+		]);
+
+		await harness.session.prompt("actual user text", { interruptedAttempt: true });
+
+		const branch = harness.sessionManager.getBranch();
+		const customIndex = branch.findIndex(
+			(entry) => entry.type === "custom_message" && entry.customType === "attempt_interrupted",
+		);
+		const userIndex = branch.findIndex(
+			(entry, index) => index > customIndex && entry.type === "message" && entry.message.role === "user",
+		);
+		expect(customIndex).toBeGreaterThan(-1);
+		expect(userIndex).toBe(customIndex + 1);
+		expect(branch[customIndex]).toMatchObject({
+			type: "custom_message",
+			customType: "attempt_interrupted",
+			content: INTERRUPTION_CONTEXT,
+			display: false,
+		});
+		expect(providerContext.at(-2)).toMatchObject({
+			role: "user",
+			content: [{ type: "text", text: INTERRUPTION_CONTEXT }],
+		});
+		expect(providerContext.at(-1)).toMatchObject({
+			role: "user",
+			content: [{ type: "text", text: "actual user text" }],
+		});
+	});
+
+	it("rejects a steer after the streaming turn has already ended", async () => {
+		const harness = await createHarness();
+		harnesses.push(harness);
+
+		await expect(harness.session.steer("late steer")).rejects.toThrow("not streaming");
+	});
+
 	it.each(["aborted", "error"] as const)(
 		"drops an incomplete %s assistant branch before resuming",
 		async (stopReason) => {

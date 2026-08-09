@@ -83,7 +83,7 @@ export function useSessionMenuActions({
   }, [electronApi, sessionId, t])
 
   const openInNewPanel = React.useCallback(() => {
-    navigate(routes.view.allSessions(sessionId), { newPanel: true })
+    navigate(routes.view.allSessions(sessionId), { intent: 'open-new' })
   }, [sessionId])
 
   const openSharedInBrowser = React.useCallback(() => {

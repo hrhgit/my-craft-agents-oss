@@ -13,6 +13,7 @@
  */
 
 import { routes, type Route } from '../../shared/routes'
+import type { ConversationNavigationIntent } from '../../shared/app-layout'
 
 // Re-export routes for convenience
 export { routes }
@@ -22,8 +23,12 @@ export type { Route }
 export const NAVIGATE_EVENT = 'mortise-navigate'
 
 export interface NavigateOptions {
-  /** Open the target in a new panel instead of navigating the current one */
-  newPanel?: boolean
+  /** Conversation routes replace the current tab unless explicitly opened. */
+  intent?: ConversationNavigationIntent
+  /** Stable owner for async draft publication. */
+  targetTabId?: string
+  /** Replace only if the target still renders this route. */
+  expectedRoute?: Route
   /**
    * Optional explicit lane target for new-panel opens.
    *

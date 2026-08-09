@@ -332,6 +332,8 @@ export interface ChatOptions {
   thinkingOverride?: ThinkingLevel;
   /** Frontend identity forwarded to Pi for optimistic projection reconciliation. */
   clientMutationId?: string;
+  /** Ask Pi to append hidden interruption context before this user message. */
+  interruptedAttempt?: boolean;
   /** Sanitized display metadata forwarded to Pi; never include paths or contents. */
   attachmentRefs?: Array<{ id: string; name: string; mediaType?: string; size?: number }>;
 }

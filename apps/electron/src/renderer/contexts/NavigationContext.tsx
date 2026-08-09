@@ -78,14 +78,13 @@ import {
 } from '../../shared/types'
 import { sessionMetaMapAtom, updateSessionMetaAtom, type SessionMeta } from '@/atoms/sessions'
 import { skillsAtom } from '@/atoms/skills'
+import { requestConversationNavigationAtom } from '@/atoms/layout-navigation'
 import {
   panelStackAtom,
-  pushPanelAtom,
   reconcilePanelStackAtom,
   focusedPanelIdAtom,
   focusedPanelRouteAtom,
   focusedPanelIndexAtom,
-  updateFocusedPanelRouteAtom,
 } from '@/atoms/panel-stack'
 
 // Re-export routes for convenience
@@ -170,7 +169,7 @@ export function NavigationProvider({
   const sessionMetas = useMemo(() => Array.from(sessionMetaMap.values()), [sessionMetaMap])
   const updateSessionMeta = useSetAtom(updateSessionMetaAtom)
 
-  const pushPanel = useSetAtom(pushPanelAtom)
+  const requestConversationNavigation = useSetAtom(requestConversationNavigationAtom)
 
   // Store reference for reading fresh atom values in callbacks (avoids stale closures)
   const store = useStore()
@@ -214,8 +213,7 @@ export function NavigationProvider({
   // Suppress pushState in atom subscriptions during restore/reconciliation
   const suppressPushRef = useRef(false)
 
-  // Coalesce compound atom writes (e.g. pushPanelAtom sets both panelStackAtom
-  // and focusedPanelIdAtom) into a single pushState via microtask debounce
+  // Coalesce compound layout mirror writes into one history entry.
   const pendingPushRef = useRef(false)
 
   // Flag: workspace switch was triggered by popstate (URL already correct)
@@ -612,23 +610,22 @@ export function NavigationProvider({
   // =========================================================================
 
   const handleActionNavigation = useCallback(
-    async (parsed: ParsedRoute, options?: { newPanel?: boolean; targetLaneId?: 'main' }) => {
+    async (parsed: ParsedRoute, options?: NavigateOptions) => {
       if (!workspaceId) return
 
       switch (parsed.name) {
         case 'new-session': {
-          const draftId = options?.newPanel ? createNewConversationDraftId() : 'default'
+          const intent = options?.intent ?? 'replace-current'
+          const draftId = intent === 'open-new' ? createNewConversationDraftId() : 'default'
           const draftRoute = routes.view.newConversation(draftId) as ViewRoute
           setPageSurfaceRoute(null)
-
-          if (options?.newPanel) {
-            pushPanel({
-              route: draftRoute,
-              intent: 'explicit',
-            })
-          } else {
-            store.set(updateFocusedPanelRouteAtom, draftRoute)
-          }
+          const draftTargetTabId = options?.targetTabId
+          requestConversationNavigation({
+            workspaceId,
+            route: draftRoute,
+            intent,
+            ...(draftTargetTabId ? { targetTabId: draftTargetTabId } : {}),
+          })
 
           const draftStorageKey = getNewConversationDraftStorageKey(workspaceId, draftId)
 
@@ -661,7 +658,13 @@ export function NavigationProvider({
                   sendOptions: badges ? { badges } : undefined,
                 })
                 onInputChange?.(draftStorageKey, '')
-                store.set(updateFocusedPanelRouteAtom, routes.view.allSessions(session.id) as ViewRoute)
+                requestConversationNavigation({
+                  workspaceId,
+                  route: routes.view.allSessions(session.id) as ViewRoute,
+                  intent: 'replace-current',
+                  ...(draftTargetTabId ? { targetTabId: draftTargetTabId } : {}),
+                  expectedRoute: draftRoute,
+                })
               } catch (error) {
                 console.error('[Navigation] Failed to create and send programmatic session:', error)
                 toast.error(t('toast.failedToCreateSession', 'Failed to create session'))
@@ -695,7 +698,7 @@ export function NavigationProvider({
           console.warn('[Navigation] Unknown action:', parsed.name)
       }
     },
-    [workspaceId, onCreateAndSendFirstTurn, onDeleteSession, onInputChange, pushPanel, setPageSurfaceRoute, store, t, updateSessionMeta]
+    [workspaceId, onCreateAndSendFirstTurn, onDeleteSession, onInputChange, requestConversationNavigation, setPageSurfaceRoute, store, t, updateSessionMeta]
   )
 
   // =========================================================================
@@ -752,17 +755,19 @@ export function NavigationProvider({
           return
         }
 
-        // Returning to workspace content restores the existing dock. Explicit
-        // new-panel opens are meaningful only for workspace-owned content.
+        // The dock host is the sole writer for conversation navigation. This
+        // layer resolves routes and submits an explicit layout intent only.
         setPageSurfaceRoute(null)
-        if (options?.newPanel) {
-          pushPanel({ route: finalRoute, intent: 'explicit' })
-        } else {
-          store.set(updateFocusedPanelRouteAtom, finalRoute)
-        }
+        requestConversationNavigation({
+          workspaceId: workspaceId ?? '',
+          route: finalRoute,
+          intent: options?.intent ?? 'replace-current',
+          ...(options?.targetTabId ? { targetTabId: options.targetTabId } : {}),
+          ...(options?.expectedRoute ? { expectedRoute: options.expectedRoute as ViewRoute } : {}),
+        })
       }
     },
-    [isReady, handleActionNavigation, resolveAutoSelection, setPageSurfaceRoute, store, pushPanel, workspaceId]
+    [isReady, handleActionNavigation, requestConversationNavigation, resolveAutoSelection, setPageSurfaceRoute, workspaceId]
   )
 
   // =========================================================================
@@ -966,10 +971,10 @@ export function NavigationProvider({
 
   useEffect(() => {
     const handleNavigateEvent = (event: Event) => {
-      const customEvent = event as CustomEvent<{ route: Route; newPanel?: boolean; targetLaneId?: 'main' }>
+      const customEvent = event as CustomEvent<{ route: Route } & NavigateOptions>
       if (customEvent.detail?.route) {
-        const { route: r, newPanel, targetLaneId } = customEvent.detail
-        navigate(r, newPanel ? { newPanel, targetLaneId } : undefined)
+        const { route: targetRoute, ...options } = customEvent.detail
+        navigate(targetRoute, options)
       }
     }
 

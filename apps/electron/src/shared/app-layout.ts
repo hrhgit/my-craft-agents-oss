@@ -102,6 +102,18 @@ export interface CreateDefaultLayoutOptions extends WorkspaceRoute {
   route?: string
 }
 
+export type ConversationNavigationIntent = 'replace-current' | 'open-new'
+
+export interface ConversationNavigationOptions {
+  intent: ConversationNavigationIntent
+  /** Stable owner for async draft publication. */
+  targetTabId?: string
+  /** Replace only while the target still renders this route. */
+  expectedRoute?: string
+  /** Host-provided identity for an explicit new tab. */
+  newTabId?: string
+}
+
 const DEFAULT_PROTECTION: ContentProtection = {
   pinned: false,
   dirty: false,
@@ -155,61 +167,70 @@ export function createDefaultAppLayout(options: CreateDefaultLayoutOptions): App
   }
 }
 
-/** Focus an empty/new conversation without discarding the workspace's saved dock layout. */
-export function focusConversationRoute(layout: AppLayout, route: string): AppLayout {
+/**
+ * Apply conversation navigation to the Mortise-owned layout model.
+ *
+ * Ordinary navigation replaces the active conversation tab regardless of its
+ * runtime protection. Protection controls destructive lifecycle operations;
+ * it is not an implicit split request. Only `open-new` appends a tab.
+ */
+export function navigateConversationRoute(
+  layout: AppLayout,
+  route: string,
+  options: ConversationNavigationOptions,
+): AppLayout {
   const primary = layout.windows[PRIMARY_LAYOUT_WINDOW_ID]
   if (!primary) return layout
 
   const primaryTabIds = primary.groupIds.flatMap(groupId => layout.groups[groupId]?.tabIds ?? [])
-  const focused = layout.focusedTabId ? layout.tabs[layout.focusedTabId] : undefined
-  const primaryTabs = primaryTabIds.map(tabId => layout.tabs[tabId]).filter(Boolean)
-  const existingRoute = primaryTabs.find(tab => (
-    tab.ref.kind === 'conversation' && tab.ref.resourceId === route
-  ))
-  const conversation = existingRoute
-    ?? (focused?.ref.kind === 'conversation' && primaryTabIds.includes(focused.id) && canReplaceContentTab(focused)
-      ? focused
-      : primaryTabs.find(tab => tab.ref.kind === 'conversation' && canReplaceContentTab(tab)))
+  const primaryTabs = primaryTabIds
+    .map(tabId => layout.tabs[tabId])
+    .filter((tab): tab is ContentTab => !!tab)
 
-  if (conversation) {
-    const group = layout.groups[conversation.groupId]
-    return {
-      ...layout,
-      tabs: {
-        ...layout.tabs,
-        [conversation.id]: {
-          ...conversation,
-          title: 'Conversation',
-          ref: {
-            kind: 'conversation',
-            workspaceId: conversation.ref.workspaceId,
-            ...(conversation.ref.locationId ? { locationId: conversation.ref.locationId } : {}),
-            resourceId: route,
-          },
-        },
-      },
-      groups: group ? {
-        ...layout.groups,
-        [group.id]: { ...group, activeTabId: conversation.id },
-      } : layout.groups,
-      focusedTabId: conversation.id,
+  if (options.intent === 'replace-current') {
+    const requested = options.targetTabId ? layout.tabs[options.targetTabId] : undefined
+    if (
+      options.targetTabId
+      && (!requested || requested.ref.kind !== 'conversation' || !primaryTabIds.includes(requested.id))
+    ) return layout
+    const expected = options.expectedRoute
+      ? primaryTabs.find(tab => tab.ref.kind === 'conversation' && tab.ref.resourceId === options.expectedRoute)
+      : undefined
+    const focused = layout.focusedTabId ? layout.tabs[layout.focusedTabId] : undefined
+    const active = primary.groupIds
+      .map(groupId => layout.groups[groupId]?.activeTabId)
+      .map(tabId => tabId ? layout.tabs[tabId] : undefined)
+      .find(tab => tab?.ref.kind === 'conversation')
+    const conversation = requested
+      ?? expected
+      ?? (focused?.ref.kind === 'conversation' && primaryTabIds.includes(focused.id) ? focused : undefined)
+      ?? active
+      ?? primaryTabs.find(tab => tab.ref.kind === 'conversation')
+
+    if (options.expectedRoute) {
+      if (!conversation || conversation.ref.resourceId !== options.expectedRoute) return layout
     }
+    if (conversation) return replaceConversationRoute(layout, conversation, route)
   }
 
-  const groupId = primary.groupIds[0]
+  const focused = layout.focusedTabId ? layout.tabs[layout.focusedTabId] : undefined
+  const groupId = focused && primaryTabIds.includes(focused.id)
+    ? focused.groupId
+    : primary.groupIds[0]
   const group = groupId ? layout.groups[groupId] : undefined
   if (!group) return layout
-  let tabId = 'content:new-conversation'
+  let tabId = options.newTabId ?? 'content:conversation'
   let suffix = 1
-  while (layout.tabs[tabId]) tabId = `content:new-conversation-${suffix++}`
-  const locationId = primaryTabIds.map(id => layout.tabs[id]?.ref.locationId).find(Boolean)
+  const tabIdBase = tabId
+  while (layout.tabs[tabId]) tabId = `${tabIdBase}-${suffix++}`
+  const routeOwner = focused && primaryTabIds.includes(focused.id) ? focused : primaryTabs[0]
   const tab: ContentTab = {
     id: tabId,
     title: 'Conversation',
     ref: {
       kind: 'conversation',
       workspaceId: layout.workspaceId,
-      ...(locationId ? { locationId } : {}),
+      ...(routeOwner?.ref.locationId ? { locationId: routeOwner.ref.locationId } : {}),
       resourceId: route,
     },
     groupId,
@@ -217,15 +238,44 @@ export function focusConversationRoute(layout: AppLayout, route: string): AppLay
     instancePolicy: 'multiple',
     allowDetach: true,
   }
-  return {
-    ...layout,
+  return bump(layout, {
     tabs: { ...layout.tabs, [tabId]: tab },
     groups: {
       ...layout.groups,
       [groupId]: { ...group, tabIds: [...group.tabIds, tabId], activeTabId: tabId },
     },
     focusedTabId: tabId,
-  }
+  })
+}
+
+function replaceConversationRoute(layout: AppLayout, conversation: ContentTab, route: string): AppLayout {
+  const group = layout.groups[conversation.groupId]
+  if (!group) return layout
+  if (
+    conversation.ref.resourceId === route
+    && layout.focusedTabId === conversation.id
+    && group.activeTabId === conversation.id
+  ) return layout
+  return bump(layout, {
+    tabs: {
+      ...layout.tabs,
+      [conversation.id]: {
+        ...conversation,
+        title: 'Conversation',
+        ref: {
+          kind: 'conversation',
+          workspaceId: conversation.ref.workspaceId,
+          ...(conversation.ref.locationId ? { locationId: conversation.ref.locationId } : {}),
+          resourceId: route,
+        },
+      },
+    },
+    groups: {
+      ...layout.groups,
+      [group.id]: { ...group, activeTabId: conversation.id },
+    },
+    focusedTabId: conversation.id,
+  })
 }
 
 export function canReplaceContentTab(tab: ContentTab | undefined): boolean {

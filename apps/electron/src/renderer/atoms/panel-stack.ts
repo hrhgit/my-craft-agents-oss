@@ -25,7 +25,6 @@ export function isEmptyDockPageTabId(tabId: string | null | undefined): tabId is
 }
 
 export type PanelType = 'session' | 'settings' | 'skills' | 'other'
-export type OpenIntent = 'implicit' | 'explicit'
 
 export interface PanelStackEntry {
   id: string
@@ -74,11 +73,6 @@ export const acknowledgeDockTabCloseRequestAtom = atom(null, (get, set, requestI
     set(dockTabCloseRequestAtom, null)
   }
 })
-export const emptyDockPageSessionRequestAtom = atom<{
-  tabId: string
-  sessionId: string
-} | null>(null)
-
 export interface DockTabProtection {
   pinned: boolean
   dirty: boolean
@@ -101,25 +95,6 @@ export const activeDockTabProtectionAtom = atom((get) => {
 
 export function isDockTabProtected(protection: DockTabProtection): boolean {
   return protection.pinned || protection.dirty || protection.running || protection.awaitingInput
-}
-
-export const activeDockTabTypeAtom = atom<PanelType>((get) => {
-  const stack = get(panelStackAtom)
-  const activeId = get(activeDockTabIdAtom)
-  if (activeId) return stack.find(entry => entry.id === activeId)?.panelType ?? 'other'
-
-  const focusedId = get(focusedPanelIdAtom)
-  return (stack.find(entry => entry.id === focusedId) ?? stack[0])?.panelType ?? 'other'
-})
-
-export function shouldReplaceActiveTabWithSession(
-  activeTabType: PanelType,
-): boolean {
-  // A normal session selection replaces the current conversation page even
-  // while that session is running, pinned, or has a local draft. Those states
-  // keep the session alive; they are not an implicit request to split the dock.
-  // Explicit new-panel actions remain responsible for opening another page.
-  return activeTabType === 'session'
 }
 
 export const panelCountAtom = atom((get) => get(panelStackAtom).length)
@@ -189,33 +164,6 @@ export const focusedSessionIdAtom = atom((get) => {
   if (!route) return null
   return parseSessionIdFromRoute(route)
 })
-
-export const pushPanelAtom = atom(
-  null,
-  (get, set, { route, afterIndex }: {
-    route: ViewRoute
-    afterIndex?: number
-    intent?: OpenIntent
-  }) => {
-    if (getPanelTypeFromRoute(route) !== 'session') return
-    const stack = get(panelStackAtom)
-    let insertAt = stack.length
-    if (afterIndex !== undefined && afterIndex >= 0 && afterIndex < stack.length) {
-      insertAt = afterIndex + 1
-    }
-
-    const newEntry = createPanelStackEntry(route, 0)
-    const newStack = [
-      ...stack.slice(0, insertAt),
-      newEntry,
-      ...stack.slice(insertAt),
-    ]
-
-    const normalized = normalizeProportions(newStack)
-    set(panelStackAtom, normalized)
-    set(focusedPanelIdAtom, newEntry.id)
-  }
-)
 
 export const closePanelAtom = atom(
   null,
@@ -331,33 +279,6 @@ export const resizePanelsAtom = atom(
       return p
     })
     set(panelStackAtom, newStack)
-  }
-)
-
-export const updateFocusedPanelRouteAtom = atom(
-  null,
-  (get, set, route: ViewRoute) => {
-    if (getPanelTypeFromRoute(route) !== 'session') return
-    const stack = get(panelStackAtom)
-
-    if (stack.length === 0) {
-      const newEntry = createPanelStackEntry(route, 1)
-      set(panelStackAtom, [newEntry])
-      set(focusedPanelIdAtom, newEntry.id)
-      return
-    }
-
-    const focusedId = get(focusedPanelIdAtom)
-    const focused = stack.find(p => p.id === focusedId) ?? stack[0]
-
-    const updated = stack.map((p) =>
-      p.id === focused.id
-        ? { ...createPanelStackEntry(route, p.proportion, p.id), proportion: p.proportion }
-        : p
-    )
-
-    set(panelStackAtom, updated)
-    set(focusedPanelIdAtom, focused.id)
   }
 )
 

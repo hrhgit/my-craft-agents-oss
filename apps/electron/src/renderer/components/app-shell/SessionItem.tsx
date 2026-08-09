@@ -80,7 +80,7 @@ export function SessionItem({
     if (e.button === 1 || e.metaKey || e.ctrlKey) {
       // Modifier click and middle click always open a durable new tab.
       e.preventDefault()
-      navigate(routes.view.allSessions(item.id), { newPanel: true })
+      navigate(routes.view.allSessions(item.id), { intent: 'open-new' })
       return
     }
     if (e.shiftKey && onRangeSelect) {

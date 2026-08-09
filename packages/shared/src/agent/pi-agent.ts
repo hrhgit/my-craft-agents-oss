@@ -2872,6 +2872,7 @@ export class PiAgent extends BaseAgent {
           // Clear any suffix retained by a runtime that handled an earlier turn.
           appendSystemPrompt: '',
           clientMutationId: options?.clientMutationId,
+          interruptedAttempt: options?.interruptedAttempt,
           attachments: options?.attachmentRefs,
         },
       );

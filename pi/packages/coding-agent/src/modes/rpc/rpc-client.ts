@@ -470,6 +470,7 @@ export class RpcClient {
 			clearSystemPrompt?: boolean;
 			appendSystemPrompt?: string;
 			clientMutationId?: string;
+			interruptedAttempt?: boolean;
 			attachments?: import("@mortise/pi-ai/types").UserAttachmentMetadata[];
 		},
 	): Promise<void> {
@@ -481,6 +482,7 @@ export class RpcClient {
 			clearSystemPrompt: options?.clearSystemPrompt,
 			appendSystemPrompt: options?.appendSystemPrompt,
 			clientMutationId: options?.clientMutationId,
+			interruptedAttempt: options?.interruptedAttempt,
 			attachments: options?.attachments,
 		});
 	}
@@ -1526,6 +1528,7 @@ export class PiRuntimeHandle {
 			clearSystemPrompt?: boolean;
 			appendSystemPrompt?: string;
 			clientMutationId?: string;
+			interruptedAttempt?: boolean;
 			attachments?: import("@mortise/pi-ai/types").UserAttachmentMetadata[];
 		},
 	): Promise<void> {
@@ -1537,6 +1540,7 @@ export class PiRuntimeHandle {
 			clearSystemPrompt: options?.clearSystemPrompt,
 			appendSystemPrompt: options?.appendSystemPrompt,
 			clientMutationId: options?.clientMutationId,
+			interruptedAttempt: options?.interruptedAttempt,
 			attachments: options?.attachments,
 		});
 	}

@@ -6062,12 +6062,9 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
       // in the rawText, and canUseTool in mortise.ts provides a fallback
       // to qualify short names. No transformation needed here.
 
-      // Inject interruption context for the next message without assuming why it happened.
-      let effectiveMessage = message
-      if (managed.wasInterrupted) {
-        effectiveMessage = `${message}\n\n<system-reminder>The previous attempt was interrupted. Some tools or commands may still be running or may have partially executed. Check the current state before retrying.</system-reminder>`
-        managed.wasInterrupted = false
-      }
+      // Pi persists interruption recovery as a hidden custom entry immediately
+      // before the canonical user message. Keep the user's text unchanged.
+      const interruptedAttempt = managed.wasInterrupted
 
       const messageBackendContext = resolveBackendContext({
         sessionProvider: managed.provider,
@@ -6090,8 +6087,9 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
       }
 
       sendSpan.mark('chat.starting')
-      const chatIterator = agent.chat(effectiveMessage, modelInputAttachments.attachments, {
+      const chatIterator = agent.chat(message, modelInputAttachments.attachments, {
         clientMutationId: messageId,
+        interruptedAttempt,
         attachmentRefs: storedAttachments?.map(attachment => ({
           id: attachment.id,
           name: attachment.name,
@@ -6161,6 +6159,7 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
           })
           if (!event.clientMutationId || event.clientMutationId === messageId) {
             canonicalUserPersisted = true
+            if (interruptedAttempt) managed.wasInterrupted = false
             const persistedMutationId = event.clientMutationId ?? messageId
             this.messageOutbox.update(persistedMutationId, {
               status: 'pi_persisted',
@@ -7644,6 +7643,11 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
             }
           }
           if (managed.tokenUsage) {
+            // Pi cannot know the new context size until the next model request.
+            // Never keep displaying the pre-compaction value as current usage.
+            managed.tokenUsage.inputTokens = 0
+            managed.tokenUsage.contextTokens = 0
+            managed.tokenUsage.totalTokens = managed.tokenUsage.outputTokens
             this.sendEvent({
               type: 'usage_update',
               sessionId,

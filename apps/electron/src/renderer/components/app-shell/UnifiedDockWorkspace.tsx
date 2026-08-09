@@ -67,7 +67,6 @@ import {
   createPanelStackEntry,
   dockTabProtectionsAtom,
   dockTabCloseRequestAtom,
-  emptyDockPageSessionRequestAtom,
   enterCompactDockDetailAtom,
   exitCompactDockDetailAtom,
   focusedPanelIdAtom,
@@ -79,6 +78,10 @@ import {
   type DockTabProtection,
   type PanelStackEntry,
 } from '@/atoms/panel-stack'
+import {
+  acknowledgeConversationNavigationAtom,
+  conversationNavigationRequestsAtom,
+} from '@/atoms/layout-navigation'
 import { sessionMetaMapAtom } from '@/atoms/sessions'
 import { parseRouteToNavigationState } from '../../../shared/route-parser'
 import { routes } from '../../../shared/routes'
@@ -107,7 +110,7 @@ import {
   APP_LAYOUT_VERSION,
   PRIMARY_LAYOUT_WINDOW_ID,
   createDefaultAppLayout,
-  focusConversationRoute,
+  navigateConversationRoute,
   type AppLayout,
   type ContentKind,
   type ContentTab,
@@ -163,7 +166,7 @@ export function UnifiedDockWorkspace({
   const panelStack = useAtomValue(panelStackAtom)
   const focusedPanelId = useAtomValue(focusedPanelIdAtom)
   const sessionMetaMap = useAtomValue(sessionMetaMapAtom)
-  const emptyPageSessionRequest = useAtomValue(emptyDockPageSessionRequestAtom)
+  const conversationNavigationRequests = useAtomValue(conversationNavigationRequestsAtom)
   const dockTabCloseRequest = useAtomValue(dockTabCloseRequestAtom)
   const setPanelStack = useSetAtom(panelStackAtom)
   const setFocusedPanelId = useSetAtom(focusedPanelIdAtom)
@@ -171,7 +174,7 @@ export function UnifiedDockWorkspace({
   const enterCompactDockDetail = useSetAtom(enterCompactDockDetailAtom)
   const exitCompactDockDetail = useSetAtom(exitCompactDockDetailAtom)
   const setDockTabProtections = useSetAtom(dockTabProtectionsAtom)
-  const setEmptyPageSessionRequest = useSetAtom(emptyDockPageSessionRequestAtom)
+  const acknowledgeConversationNavigation = useSetAtom(acknowledgeConversationNavigationAtom)
   const acknowledgeDockTabCloseRequest = useSetAtom(acknowledgeDockTabCloseRequestAtom)
   const nativeBrowserPanesAvailable = canUseNativeBrowserPanes()
   const allWorkbenchTools = useWorkbenchTools(sessionId, activeWorkspaceId, {
@@ -248,9 +251,17 @@ export function UnifiedDockWorkspace({
     const focusedRoute = initialConversationRoute.current.consume()
       ?? resolveLivePanelRoute(currentPanelStack, currentActiveDockTabId, currentFocusedPanelId)
     const focusedState = focusedRoute ? parseRouteToNavigationState(focusedRoute) : null
-    const effectiveSnapshot = focusedState?.navigator === 'sessions' && focusedState.details?.type === 'new'
-      ? focusConversationRoute(snapshot, focusedRoute!)
+    const focusedSnapshot = focusedState?.navigator === 'sessions' && focusedState.details?.type === 'new'
+      ? navigateConversationRoute(snapshot, focusedRoute!, {
+          intent: 'replace-current',
+          ...(currentActiveDockTabId && snapshot.tabs[currentActiveDockTabId]
+            ? { targetTabId: currentActiveDockTabId }
+            : {}),
+        })
       : snapshot
+    const effectiveSnapshot = focusedSnapshot === snapshot
+      ? snapshot
+      : { ...focusedSnapshot, revision: snapshot.revision }
     coordinatorRevision.current = effectiveSnapshot.revision
     coordinatorReady.current = true
     const nextEntries = panelEntriesForWindow(effectiveSnapshot, layoutWindowId)
@@ -391,7 +402,7 @@ export function UnifiedDockWorkspace({
     const parent = node.getParent()
     if (!(parent instanceof TabSetNode)) return false
 
-    const entry = createPanelStackEntry(route, 1)
+    const entry = createPanelStackEntry(route, 1, tabId)
     const index = parent.getChildren().indexOf(node)
     model.doAction(Actions.deleteTab(tabId))
     model.doAction(Actions.addTab(
@@ -405,15 +416,83 @@ export function UnifiedDockWorkspace({
     return true
   }, [activeWorkspaceId, enterCompactDockDetail, locationId, model, serverId, sessionMetaMap, setActiveDockTabId, t])
 
-  const replaceEmptyPageWithSession = React.useCallback((tabId: string, sessionId: string): boolean => (
-    replaceEmptyPageWithRoute(tabId, routes.view.allSessions(sessionId) as PanelStackEntry['route'])
-  ), [replaceEmptyPageWithRoute])
-
   React.useEffect(() => {
-    if (!emptyPageSessionRequest) return
-    replaceEmptyPageWithSession(emptyPageSessionRequest.tabId, emptyPageSessionRequest.sessionId)
-    setEmptyPageSessionRequest(null)
-  }, [emptyPageSessionRequest, replaceEmptyPageWithSession, setEmptyPageSessionRequest])
+    const request = conversationNavigationRequests[0]
+    if (!request || workspaceLayoutTransitioning) return
+    if (!activeWorkspaceId) return
+    if (request.workspaceId !== activeWorkspaceId) {
+      acknowledgeConversationNavigation(request.requestId)
+      return
+    }
+
+    const selected = model.getActiveTabset()?.getSelectedNode()
+    const selectedConfig = selected instanceof TabNode ? selected.getConfig() as DockTabConfig : undefined
+    if (
+      request.intent === 'replace-current'
+      && !request.expectedRoute
+      && selected instanceof TabNode
+      && selectedConfig?.source === 'content-picker'
+      && (!request.targetTabId || request.targetTabId === selected.getId())
+    ) {
+      replaceEmptyPageWithRoute(selected.getId(), request.route)
+      acknowledgeConversationNavigation(request.requestId)
+      return
+    }
+
+    const protections = buildDockTabProtections(model, sessionMetaMap, dynamicProtections)
+    const current = buildAppLayoutSnapshot(
+      model,
+      sessionMetaMap,
+      serverId,
+      activeWorkspaceId,
+      locationId,
+      coordinatorRevision.current ?? 0,
+      protections,
+    )
+    const next = navigateConversationRoute(current, request.route, {
+      intent: request.intent,
+      ...(request.targetTabId ? { targetTabId: request.targetTabId } : {}),
+      ...(request.expectedRoute ? { expectedRoute: request.expectedRoute } : {}),
+      ...(request.newTabId ? { newTabId: request.newTabId } : {}),
+    })
+    if (next === current || !next.focusedTabId) {
+      acknowledgeConversationNavigation(request.requestId)
+      return
+    }
+
+    const tab = next.tabs[next.focusedTabId]
+    const group = tab ? next.groups[tab.groupId] : undefined
+    if (!tab || !group) {
+      acknowledgeConversationNavigation(request.requestId)
+      return
+    }
+    const normalized = jsonTabFromContent(tab, serverId)
+    if (current.tabs[tab.id]) {
+      model.doAction(Actions.updateNodeAttributes(tab.id, {
+        name: normalized.name,
+        config: normalized.config,
+        enableClose: normalized.enableClose,
+      }))
+      model.doAction(Actions.selectTab(tab.id))
+    } else {
+      const index = Math.max(0, group.tabIds.indexOf(tab.id))
+      model.doAction(Actions.addTab(normalized, group.id, DockLocation.CENTER, index, true))
+    }
+    setActiveDockTabId(tab.id)
+    acknowledgeConversationNavigation(request.requestId)
+  }, [
+    acknowledgeConversationNavigation,
+    activeWorkspaceId,
+    conversationNavigationRequests,
+    dynamicProtections,
+    locationId,
+    model,
+    replaceEmptyPageWithRoute,
+    serverId,
+    sessionMetaMap,
+    setActiveDockTabId,
+    workspaceLayoutTransitioning,
+  ])
 
   // A topology change may keep the Workspace ID while changing its primary location.
   // Retarget every workspace-owned tab before its scoped API is used again.
@@ -939,6 +1018,7 @@ export function UnifiedDockWorkspace({
     }
     return (
       <DockedContentPanel
+        tabId={node.getId()}
         route={config.route}
         serverId={config.serverId || serverId}
         workspaceId={config.workspaceId}
@@ -1116,6 +1196,7 @@ function DockedToolPanel({
 }
 
 function DockedContentPanel({
+  tabId,
   route,
   serverId,
   workspaceId,
@@ -1124,6 +1205,7 @@ function DockedContentPanel({
   isLeadingChromeHidden,
   focused,
 }: {
+  tabId: string
   route?: string
   serverId: string
   workspaceId?: string
@@ -1137,6 +1219,7 @@ function DockedContentPanel({
   return (
     <WorkspaceElectronApiProvider route={{ workspaceId: tabWorkspaceId, locationId }}>
       <DockedContentRuntime
+        tabId={tabId}
         navState={navState}
         workspaceId={tabWorkspaceId}
         activeWorkspaceId={activeWorkspaceId}
@@ -1148,12 +1231,14 @@ function DockedContentPanel({
 }
 
 function DockedContentRuntime({
+  tabId,
   navState,
   workspaceId,
   activeWorkspaceId,
   isLeadingChromeHidden,
   focused,
 }: {
+  tabId: string
   navState: ReturnType<typeof parseRouteToNavigationState>
   workspaceId: string
   activeWorkspaceId: string | null
@@ -1185,6 +1270,7 @@ function DockedContentRuntime({
   return (
     <AppShellProvider value={context}>
       <MainContentPanel
+        tabId={tabId}
         navStateOverride={navState}
         isLeadingChromeHidden={isLeadingChromeHidden}
         className="rounded-none shadow-none"

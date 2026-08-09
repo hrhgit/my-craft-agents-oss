@@ -1850,7 +1850,9 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                                 model: session.model,
                               }
                             )
-                            navigate(routes.view.allSessions(child.id), { newPanel: resolveBranchNewPanelOption(options) })
+                            navigate(routes.view.allSessions(child.id), {
+                              intent: resolveBranchNewPanelOption(options) ? 'open-new' : 'replace-current',
+                            })
                           } catch (error) {
                             const rawMessage = error instanceof Error ? error.message : 'Failed to create branch'
                             const message = rawMessage.includes('source and target providers must match')

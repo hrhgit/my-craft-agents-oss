@@ -47,6 +47,8 @@ import { navigate, routes } from '@/lib/navigate'
 import { SendResourceToWorkspaceDialog, type SendResourceType } from './SendResourceToWorkspaceDialog'
 
 export interface MainContentPanelProps {
+  /** Stable dock identity for route-local asynchronous navigation. */
+  tabId?: string
   /** Whether both sidebar and navigator are hidden (focus mode / CMD+.) */
   isLeadingChromeHidden?: boolean
   /** Optional className for the container */
@@ -60,6 +62,7 @@ export interface MainContentPanelProps {
 }
 
 export function MainContentPanel({
+  tabId,
   isLeadingChromeHidden = false,
   className,
   navStateOverride,
@@ -322,7 +325,7 @@ export function MainContentPanel({
     if (navState.details?.type === 'new') {
       return wrapWithStoplight(
         <Panel variant="grow" className={className}>
-          <NewConversationPage draftId={navState.details.draftId} />
+          <NewConversationPage draftId={navState.details.draftId} tabId={tabId} />
         </Panel>
       )
     }

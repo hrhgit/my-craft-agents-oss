@@ -45,6 +45,10 @@ collect.sh
 # Local tool state
 .pi/settings.json
 .claude-plugin/
+
+# Mortise build provenance is generated alongside ignored build outputs.
+.mortise-build-workspace.json
+packages/coding-agent/dist/.mortise-build-binary.json
 config.json
 events.jsonl
 labels/

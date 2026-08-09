@@ -31,10 +31,13 @@ describe("AgentSession model and extension characterization", () => {
 		});
 		harnesses.push(harness);
 		const nextModel = harness.getModel("faux-2")!;
+		const refreshedModel = { ...nextModel, name: "Two refreshed" };
 
 		await harness.session.setModel(nextModel);
+		await harness.session.setModel(refreshedModel);
 
 		expect(harness.session.model?.id).toBe("faux-2");
+		expect(harness.session.model?.name).toBe("Two refreshed");
 		expect(modelEvents).toEqual(["faux-1->faux-2:set"]);
 		expect(
 			harness.sessionManager

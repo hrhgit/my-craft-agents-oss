@@ -54,6 +54,27 @@ describe('PiAgent control boundaries', () => {
     agent.destroy();
   });
 
+  it('forwards interruption recovery separately from the user text', async () => {
+    const agent = new PiAgent(createConfig());
+    const internals = agent as any;
+    const prompt = mock(async () => {
+      internals.eventQueue.enqueue({ type: 'complete' });
+      internals.eventQueue.complete();
+    });
+    internals.ensureRpcClient = async () => ({ prompt });
+
+    for await (const _event of internals.chatImpl('actual user text', undefined, { interruptedAttempt: true })) {
+      // Drain the mocked completion event.
+    }
+
+    expect(prompt).toHaveBeenCalledWith(
+      'actual user text',
+      undefined,
+      expect.objectContaining({ interruptedAttempt: true }),
+    );
+    agent.destroy();
+  });
+
   it('does not accept a steer until Pi acknowledges it', async () => {
     const agent = new PiAgent(createConfig());
     const steer = mock(async () => {
