@@ -6,3 +6,10 @@
 # `bun install --linker=hoisted` for the same reason.
 [install]
 linker = "hoisted"
+
+[test]
+preload = ["./scripts/test-process-lifecycle.ts"]
+pathIgnorePatterns = [
+  "apps/electron/release/**",
+  "output/**",
+]
