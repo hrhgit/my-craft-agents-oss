@@ -138,6 +138,7 @@ export function createExtensionUIBackend(options: {
         send: (message) => {
           const request: ExtensionFrontendMessageV2 = {
             schemaVersion: 2,
+            operationId: crypto.randomUUID(),
             extensionId: options.extensionId,
             channelId,
             scope,

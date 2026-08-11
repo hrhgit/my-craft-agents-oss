@@ -72,7 +72,7 @@ export interface AppShellContextType {
   // Session callbacks
   onCreateSession: (workspaceId: string, options?: import('../../shared/types').CreateSessionOptions) => Promise<Session>
   onCreateAndSendFirstTurn: (
-    input: Omit<CreateAndSendFirstTurnRequest, 'storedAttachments' | 'attachmentStagingId'>,
+    input: Omit<CreateAndSendFirstTurnRequest, 'operationId' | 'storedAttachments' | 'attachmentStagingId'>,
   ) => Promise<CreateAndSendFirstTurnResult>
   onSendMessage: (sessionId: string, message: string, attachments?: FileAttachment[], skillSlugs?: string[], badges?: import('@mortise/core').ContentBadge[], midStreamSendIntent?: MidStreamSendIntent, submissionAttemptId?: string) => Promise<boolean>
   onRenameSession: (sessionId: string, name: string) => void

@@ -8,7 +8,6 @@ type ProbePhase =
   | 'handlers-registered'
   | 'session-initializing'
   | 'runtime-initializing'
-  | 'model-refresh-starting'
   | 'listener-binding'
   | 'ready'
 
@@ -75,7 +74,6 @@ const instance = await bootstrapServer({
   initModelRefreshService: () => {
     pauseSync('lock-acquired')
     return {
-      startAll: () => pauseSync('model-refresh-starting'),
       stopAll: () => {},
     }
   },

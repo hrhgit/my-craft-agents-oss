@@ -278,6 +278,36 @@ function mergeCompat(
 	return merged as Model<Api>["compat"];
 }
 
+function normalizeBaseUrlForModelMatch(baseUrl: string | undefined): string | undefined {
+	if (!baseUrl) return undefined;
+	try {
+		const url = new URL(baseUrl);
+		url.pathname = url.pathname.replace(/\/+$/, "");
+		return url.toString().replace(/\/$/, "");
+	} catch {
+		return baseUrl.replace(/\/+$/, "");
+	}
+}
+
+function findBuiltInModelTemplate(
+	providerName: string,
+	modelId: string,
+	baseUrl: string | undefined,
+): Model<Api> | undefined {
+	const providerMatch = (getModels(providerName) as Model<Api>[]).find((model) => model.id === modelId);
+	if (providerMatch) return providerMatch;
+
+	const normalizedBaseUrl = normalizeBaseUrlForModelMatch(baseUrl);
+	if (!normalizedBaseUrl) return undefined;
+	for (const provider of getProviders()) {
+		const endpointMatch = (getModels(provider) as Model<Api>[]).find(
+			(model) => model.id === modelId && normalizeBaseUrlForModelMatch(model.baseUrl) === normalizedBaseUrl,
+		);
+		if (endpointMatch) return endpointMatch;
+	}
+	return undefined;
+}
+
 /** Clear the config value command cache. Exported for testing. */
 export const clearApiKeyCache = clearConfigValueCache;
 
@@ -492,33 +522,35 @@ export class ModelRegistry {
 		const models: Model<Api>[] = [];
 
 		for (const [providerName, providerConfig] of Object.entries(config.providers)) {
-			const builtInTemplate = getModels(providerName)[0] as Model<Api> | undefined;
+			const providerTemplate = getModels(providerName)[0] as Model<Api> | undefined;
 			const modelDefs = providerConfig.models ?? [];
 			if (modelDefs.length === 0) continue; // Override-only, no custom models
 
 			for (const modelDef of modelDefs) {
-				const api = modelDef.api ?? providerConfig.api ?? builtInTemplate?.api;
+				const configuredBaseUrl = modelDef.baseUrl ?? providerConfig.baseUrl ?? providerTemplate?.baseUrl;
+				const modelTemplate = findBuiltInModelTemplate(providerName, modelDef.id, configuredBaseUrl);
+				const api = modelDef.api ?? providerConfig.api ?? modelTemplate?.api ?? providerTemplate?.api;
 				if (!api) continue;
 
-				const baseUrl = modelDef.baseUrl ?? providerConfig.baseUrl ?? builtInTemplate?.baseUrl;
+				const baseUrl = configuredBaseUrl ?? modelTemplate?.baseUrl;
 				if (!baseUrl) continue;
 
-				const compat = mergeCompat(providerConfig.compat, modelDef.compat);
+				const compat = mergeCompat(mergeCompat(modelTemplate?.compat, providerConfig.compat), modelDef.compat);
 				this.storeModelHeaders(providerName, modelDef.id, modelDef.headers);
 
 				const defaultCost = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 				models.push({
 					id: modelDef.id,
-					name: modelDef.name ?? modelDef.id,
+					name: modelDef.name ?? modelTemplate?.name ?? modelDef.id,
 					api: api as Api,
 					provider: providerName,
 					baseUrl,
-					reasoning: modelDef.reasoning ?? false,
-					thinkingLevelMap: modelDef.thinkingLevelMap,
-					input: (modelDef.input ?? ["text"]) as ("text" | "image")[],
-					cost: modelDef.cost ?? defaultCost,
-					contextWindow: modelDef.contextWindow ?? 128000,
-					maxTokens: modelDef.maxTokens ?? 16384,
+					reasoning: modelDef.reasoning ?? modelTemplate?.reasoning ?? true,
+					thinkingLevelMap: modelDef.thinkingLevelMap ?? modelTemplate?.thinkingLevelMap,
+					input: (modelDef.input ?? modelTemplate?.input ?? ["text"]) as ("text" | "image")[],
+					cost: modelDef.cost ?? modelTemplate?.cost ?? defaultCost,
+					contextWindow: modelDef.contextWindow ?? modelTemplate?.contextWindow ?? 128000,
+					maxTokens: modelDef.maxTokens ?? modelTemplate?.maxTokens ?? 16384,
 					headers: undefined,
 					compat,
 				} as Model<Api>);
@@ -817,7 +849,7 @@ export class ModelRegistry {
 					api: api as Api,
 					provider: providerName,
 					baseUrl: modelDef.baseUrl ?? config.baseUrl!,
-					reasoning: modelDef.reasoning,
+					reasoning: modelDef.reasoning ?? true,
 					thinkingLevelMap: modelDef.thinkingLevelMap,
 					input: modelDef.input as ("text" | "image")[],
 					cost: modelDef.cost,

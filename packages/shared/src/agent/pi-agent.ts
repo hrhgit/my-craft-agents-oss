@@ -140,6 +140,7 @@ export const PI_BACKEND_SESSION_TOOL_NAMES = new Set<string>([
 ]);
 
 const PI_ABORT_ACK_TIMEOUT_MS = 5_000;
+const CHILD_RUNTIME_CLEANUP_SETTLEMENT_TIMEOUT_MS = 60_000;
 const SETTLED_EXTENSION_INTERACTION_TTL_MS = 5 * 60_000;
 const MAX_SETTLED_EXTENSION_INTERACTIONS = 512;
 const PI_AGENT_DIR = getPiAgentDir();
@@ -712,7 +713,7 @@ export class PiAgent extends BaseAgent {
     await coordinationClient.setToolResultHandler(request => this.handleCoordinatedToolResult(request));
 
     // Register canonical session-scoped host tools in Pi.
-    // These tools (config_validate, spawn_session, etc.)
+    // These tools (spawn_session, etc.)
     // are executed in the main process when the LLM calls them.
     this.assertBackendSessionToolParity();
     let sessionToolDefs = getSessionHostToolDefs();
@@ -1670,7 +1671,7 @@ export class PiAgent extends BaseAgent {
   /**
    * Route a proxy tool call to the appropriate handler based on tool name.
    *
-   * - Session tools (config_validate, etc.) -> session-tools-core handlers.
+   * - Session tools -> session-tools-core handlers.
    *
    * Returns text-result shorthand accepted by Pi's host-tool RPC protocol.
    */
@@ -2239,8 +2240,9 @@ export class PiAgent extends BaseAgent {
     }));
     try {
       this.assertChildRuntimeActive(epoch);
+      const settled = lease.runtime.waitForIdle();
       await lease.runtime.abort();
-      await lease.runtime.waitForIdle(60_000).catch(() => undefined);
+      await settled;
       return { sessionId: child.sessionId, sessionPath: child.sessionPath, status: 'interrupted' };
     } finally {
       await this.releaseChildRuntimeLease(lease);
@@ -3236,7 +3238,7 @@ export class PiAgent extends BaseAgent {
       const runtimes = new Map(leases.map(lease => [lease.runtime.runtimeId, lease.runtime]));
       const runtimeResults = await Promise.allSettled([...runtimes.values()].map(async (runtime) => {
         if (!(await runtime.getState()).isStreaming) return;
-        const settled = runtime.waitForIdle(60_000);
+        const settled = runtime.waitForIdle(CHILD_RUNTIME_CLEANUP_SETTLEMENT_TIMEOUT_MS);
         await runtime.abort();
         await settled;
       }));

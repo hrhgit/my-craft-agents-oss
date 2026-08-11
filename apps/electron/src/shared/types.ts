@@ -15,6 +15,9 @@ import type {
   WorkspaceTopologyResultV1,
   WorkspaceTransferRequestV1,
   WorkspaceTransferResultV1,
+  OperationAccepted,
+  OperationReceipt,
+  OperationUpdatedEvent,
 } from '@mortise/shared/protocol'
 import type { AutomationInitializationWarning } from './system-warnings'
 
@@ -209,6 +212,10 @@ export interface ElectronAPI {
   readonly platformCapabilities: PlatformCapabilitySnapshotV1
   /** Development-only agent UI validation bridge. Absent in production builds. */
   uiValidation?: import('./ui-validation-state-bridge').UiValidationRendererBridgeApi
+  getOperation(request: { operationId: string }): Promise<OperationReceipt | null>
+  cancelOperation(request: { operationId: string }): Promise<OperationReceipt>
+  subscribeOperation(request: { operationId: string }): Promise<OperationReceipt>
+  onOperationUpdated(callback: (event: OperationUpdatedEvent) => void): () => void
   // Session management
   getSessions(): Promise<Session[]>
   getUnreadSummary(): Promise<UnreadSummary>
@@ -216,10 +223,11 @@ export interface ElectronAPI {
   getSessionMessages(sessionId: string): Promise<Session | null>
   getPiProjectionSnapshot(sessionId: string): Promise<PiProjectionSnapshotV1 | null>
   createSession(workspaceId: string, options?: CreateSessionOptions): Promise<Session>
-  createAndSendFirstTurn(request: CreateAndSendFirstTurnRequest): Promise<CreateAndSendFirstTurnResult>
+  createAndSendFirstTurn(request: CreateAndSendFirstTurnRequest): Promise<OperationAccepted>
+  getFirstTurnResult(operationId: string): Promise<CreateAndSendFirstTurnResult>
   discardFirstTurnAttachmentStaging(workspaceId: string, stagingId: string): Promise<void>
   deleteSession(sessionId: string): Promise<void>
-  sendMessage(sessionId: string, message: string, attachments?: FileAttachment[], storedAttachments?: StoredAttachmentType[], options?: SendMessageOptions): Promise<void>
+  sendMessage(sessionId: string, message: string, attachments?: FileAttachment[], storedAttachments?: StoredAttachmentType[], options?: SendMessageOptions): Promise<OperationAccepted & { messageId: string }>
   cancelProcessing(sessionId: string, silent?: boolean): Promise<void>
   killShell(sessionId: string, shellId: string): Promise<{ success: boolean; error?: string }>
   getTaskOutput(taskId: string): Promise<string | null>
@@ -249,17 +257,19 @@ export interface ElectronAPI {
   ): () => void
 
   // Session export/import (cross-workspace transfer)
-  exportSession(sessionId: string): Promise<unknown>
-  importSession(targetWorkspaceId: string, bundle: unknown, mode: 'move' | 'fork'): Promise<{ sessionId: string; warnings?: string[] }>
-  exportRemoteSessionTransfer(sessionId: string): Promise<RemoteSessionTransferPayload>
-  importRemoteSessionTransfer(targetWorkspaceId: string, payload: RemoteSessionTransferPayload): Promise<ImportRemoteSessionTransferResult>
+  exportSession(sessionId: string, operationId: string): Promise<import('@mortise/shared/protocol').OperationAccepted>
+  getSessionExportResult(operationId: string): Promise<unknown>
+  importSession(targetWorkspaceId: string, bundle: unknown, mode: 'move' | 'fork', operationId: string): Promise<import('@mortise/shared/protocol').OperationAccepted>
+  exportRemoteSessionTransfer(sessionId: string, operationId: string): Promise<import('@mortise/shared/protocol').OperationAccepted>
+  getRemoteSessionTransferResult(operationId: string): Promise<RemoteSessionTransferPayload>
+  importRemoteSessionTransfer(targetWorkspaceId: string, payload: RemoteSessionTransferPayload, operationId: string): Promise<import('@mortise/shared/protocol').OperationAccepted>
 
   // Workspace management
   getWorkspaces(): Promise<WorkspaceInfo[]>
   getWorkspaceTopology(workspaceId?: string): Promise<WorkspaceInfo>
   workspaceTopologyCommand(command: WorkspaceTopologyCommandV1): Promise<WorkspaceTopologyResultV1>
   workspaceRemotePrimaryCommand(command: WorkspaceRemotePrimaryCommandV1): Promise<WorkspaceRemotePrimaryResultV1>
-  workspaceTransfer(request: WorkspaceTransferRequestV1): Promise<WorkspaceTransferResultV1>
+  workspaceTransfer(request: WorkspaceTransferRequestV1): Promise<import('@mortise/shared/protocol').OperationAccepted>
   onWorkspaceTopologyChanged(callback: (change: WorkspaceTopologyChangedV1) => void): () => void
   setWorkspaceRemoteCredential(input: { workspaceId: string; credentialRef: string; token: string }): Promise<void>
   deleteWorkspaceRemoteCredential(input: { workspaceId: string; credentialRef: string }): Promise<void>
@@ -543,21 +553,21 @@ export interface ElectronAPI {
   getPiExtensionCatalog(): Promise<PiExtensionCatalogResult>
   getPiExtensionRuntimeState(workspaceId?: string): Promise<import('@mortise/shared/config').PiExtensionRuntimeState>
   patchPiExtensionConfig(patch: import('@mortise/shared/config').PiExtensionConfigPatch): Promise<import('@mortise/shared/config').PiExtensionConfigPatchResult>
-  reloadPiExtensions(interruptRunning?: boolean): Promise<import('@mortise/shared/config').PiExtensionReloadResult>
-  importPiExtension(sourcePath: string): Promise<import('@mortise/shared/config').PiExtensionImportResult>
-  uninstallPiExtension(extensionId: string): Promise<import('@mortise/shared/config').PiExtensionUninstallResult>
+  reloadPiExtensions(payload?: { interruptRunning?: boolean; operationId?: string }): Promise<import('@mortise/shared/config').PiExtensionReloadResult>
+  importPiExtension(payload: { sourcePath: string; operationId: string }): Promise<{ status: 'accepted'; operation: import('@mortise/shared/protocol').OperationAccepted }>
+  uninstallPiExtension(payload: { extensionId: string; operationId: string }): Promise<{ status: 'accepted'; operation: import('@mortise/shared/protocol').OperationAccepted }>
   getPiExtensionStates(): Promise<Record<string, boolean>>
   setPiExtensionEnabled(name: string, enabled: boolean): Promise<import('@mortise/shared/config').PiExtensionSettingsWriteResult>
 
   // Pi extension event bridge for contributions, interactions, and lifecycle events.
   onExtensionEvent(callback: (event: import('@mortise/shared/agent/backend/types').ExtensionBridgeEvent) => void): () => void
   respondToExtensionInteraction(sessionId: string, requestId: string, response: import('@mortise/shared/protocol').ExtensionInteractionResponseV1): Promise<boolean>
-  invokeExtensionCommand(sessionId: string, commandId: string, args?: string | Record<string, unknown>, ownerExtensionId?: string): Promise<import('@mortise/core/types').ExtensionCommandResult>
+  invokeExtensionCommand(sessionId: string, commandId: string, args: string | Record<string, unknown> | undefined, ownerExtensionId: string | undefined, operationId: string): Promise<import('@mortise/shared/protocol').OperationAccepted>
   getExtensionCommands(sessionId: string): Promise<import('@mortise/shared/agent/backend/types').PiExtensionCommand[]>
   getExtensionFrontendStates(sessionId: string): Promise<Array<Extract<import('@mortise/shared/agent/backend/types').ExtensionBridgeEvent, { type: 'extension_frontend_state' }>>>
   getExtensionFileState(workspaceId: string, extensionId: string): Promise<import('@mortise/shared/protocol').ExtensionFileStateV1>
   setExtensionFileState(workspaceId: string, extensionId: string, state: import('@mortise/shared/protocol').ExtensionFileStateV1): Promise<boolean>
-  sendExtensionFrontendMessage(sessionId: string, request: import('@mortise/shared/protocol').ExtensionFrontendMessageV2): Promise<unknown>
+  sendExtensionFrontendMessage(sessionId: string, request: import('@mortise/shared/protocol').ExtensionFrontendMessageV2): Promise<import('@mortise/shared/protocol').OperationAccepted>
   /** Preload-authenticated, source-build-only capability. Never true in packaged/production builds. */
   uiValidationTestHost?: { readonly schemaVersion: 1; readonly enabled: true }
   // Pi session tree — list child sessions spawned from the given parent session

@@ -6,21 +6,6 @@
  */
 
 // ============================================================
-// Developer Feedback
-// ============================================================
-
-/**
- * Freeform feedback from the agent to the development team.
- * Persisted as individual JSON files for later review/batch-send.
- */
-export interface DeveloperFeedback {
-  id: string;
-  timestamp: string;
-  sessionId: string;
-  message: string;
-}
-
-// ============================================================
 // Callback Message (IPC)
 // ============================================================
 
@@ -58,26 +43,4 @@ export interface ToolResult {
 export function getResultText(result: ToolResult, index = 0): string {
   const block = result.content[index];
   return block?.type === 'text' ? block.text : '';
-}
-
-// ============================================================
-// Validation Result Types
-// ============================================================
-
-/**
- * Individual validation issue
- */
-export interface ValidationIssue {
-  path: string;
-  message: string;
-  suggestion?: string;
-}
-
-/**
- * Result of validation operations
- */
-export interface ValidationResult {
-  valid: boolean;
-  errors: ValidationIssue[];
-  warnings: ValidationIssue[];
 }

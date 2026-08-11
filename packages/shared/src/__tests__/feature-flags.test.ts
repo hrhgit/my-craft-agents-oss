@@ -1,10 +1,9 @@
 import { describe, it, expect, afterEach } from 'bun:test';
-import { isDevRuntime, isDeveloperFeedbackEnabled, isMortiseCliEnabled, isEmbeddedServerEnabled } from '../feature-flags.ts';
+import { isDevRuntime, isMortiseCliEnabled, isEmbeddedServerEnabled } from '../feature-flags.ts';
 
 const ORIGINAL_ENV = {
   NODE_ENV: process.env.NODE_ENV,
   MORTISE_DEBUG: process.env.MORTISE_DEBUG,
-  MORTISE_FEATURE_DEVELOPER_FEEDBACK: process.env.MORTISE_FEATURE_DEVELOPER_FEEDBACK,
   MORTISE_FEATURE_CLI: process.env.MORTISE_FEATURE_CLI,
   MORTISE_FEATURE_EMBEDDED_SERVER: process.env.MORTISE_FEATURE_EMBEDDED_SERVER,
 };
@@ -15,9 +14,6 @@ afterEach(() => {
 
   if (ORIGINAL_ENV.MORTISE_DEBUG === undefined) delete process.env.MORTISE_DEBUG;
   else process.env.MORTISE_DEBUG = ORIGINAL_ENV.MORTISE_DEBUG;
-
-  if (ORIGINAL_ENV.MORTISE_FEATURE_DEVELOPER_FEEDBACK === undefined) delete process.env.MORTISE_FEATURE_DEVELOPER_FEEDBACK;
-  else process.env.MORTISE_FEATURE_DEVELOPER_FEEDBACK = ORIGINAL_ENV.MORTISE_FEATURE_DEVELOPER_FEEDBACK;
 
   if (ORIGINAL_ENV.MORTISE_FEATURE_CLI === undefined) delete process.env.MORTISE_FEATURE_CLI;
   else process.env.MORTISE_FEATURE_CLI = ORIGINAL_ENV.MORTISE_FEATURE_CLI;
@@ -39,29 +35,6 @@ describe('feature-flags runtime helpers', () => {
     process.env.MORTISE_DEBUG = '1';
 
     expect(isDevRuntime()).toBe(true);
-  });
-
-  it('isDeveloperFeedbackEnabled honors explicit override false', () => {
-    process.env.NODE_ENV = 'development';
-    process.env.MORTISE_FEATURE_DEVELOPER_FEEDBACK = '0';
-
-    expect(isDeveloperFeedbackEnabled()).toBe(false);
-  });
-
-  it('isDeveloperFeedbackEnabled honors explicit override true', () => {
-    process.env.NODE_ENV = 'production';
-    delete process.env.MORTISE_DEBUG;
-    process.env.MORTISE_FEATURE_DEVELOPER_FEEDBACK = '1';
-
-    expect(isDeveloperFeedbackEnabled()).toBe(true);
-  });
-
-  it('isDeveloperFeedbackEnabled falls back to dev runtime when no override', () => {
-    process.env.NODE_ENV = 'production';
-    process.env.MORTISE_DEBUG = '1';
-    delete process.env.MORTISE_FEATURE_DEVELOPER_FEEDBACK;
-
-    expect(isDeveloperFeedbackEnabled()).toBe(true);
   });
 
   it('isMortiseCliEnabled defaults to false when no override is set', () => {

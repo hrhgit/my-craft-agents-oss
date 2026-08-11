@@ -12,6 +12,7 @@ import {
   type ExtensionInteractionResponseV1,
   type SessionSettlementFailure,
   type SessionPublicationFailure,
+  type OperationAccepted,
   isSessionSettlementFailure,
   isSessionPublicationFailure,
   isSerializableFrontendValue,
@@ -20,6 +21,7 @@ import {
 import type { StoredAttachment } from '@mortise/core/types'
 import { requirePrimaryLocalWorkspaceRoot, storedToMessage } from '@mortise/core/types'
 import { getWorkspaceByNameOrId } from '@mortise/shared/config'
+import { CONFIG_DIR } from '@mortise/shared/config/paths'
 import {
   findPiSessionProjectionById,
   projectTreeSessionProjectionAsStoredSession,
@@ -41,6 +43,7 @@ import { getWorkspaceOrNull, resolveWorkspaceId } from '../utils'
 import { setTransferableHandler } from './transfer'
 import { collectSessionSearchRoots, serializeExtensionCommandArgs } from './session-route-helpers'
 import { validateFilePath } from '../utils'
+import { OperationResultArtifactStore } from '../../operations'
 
 interface ClientSessionWatchState {
   watcher: import('fs').FSWatcher
@@ -226,12 +229,15 @@ export const HANDLED_CHANNELS = [
   RPC_CHANNELS.sessions.WATCH_FILES,
   RPC_CHANNELS.sessions.UNWATCH_FILES,
   RPC_CHANNELS.sessions.EXPORT,
+  RPC_CHANNELS.sessions.GET_EXPORT_RESULT,
   RPC_CHANNELS.sessions.IMPORT,
   RPC_CHANNELS.sessions.EXPORT_REMOTE_TRANSFER,
+  RPC_CHANNELS.sessions.GET_REMOTE_TRANSFER_RESULT,
   RPC_CHANNELS.sessions.IMPORT_REMOTE_TRANSFER,
 ] as const
 
 const SESSION_TEXT_FILE_LIMIT = 2 * 1024 * 1024
+const OPERATION_RESULT_DIR = join(CONFIG_DIR, 'operation-results')
 
 async function assertEditableSessionTextFile(path: string): Promise<void> {
   const fileStats = await stat(path)
@@ -244,6 +250,13 @@ async function assertEditableSessionTextFile(path: string): Promise<void> {
 export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): void {
   const { sessionManager, platform } = deps
   const log = platform.logger
+  const operationResults = new OperationResultArtifactStore(OPERATION_RESULT_DIR)
+  void operationResults.cleanupExpired().catch(error => log.warn('Failed to clean expired operation results:', error))
+  const operationResultCleanupTimer = setInterval(() => {
+    void operationResults.cleanupExpired().catch(error => log.warn('Failed to clean expired operation results:', error))
+  }, 6 * 60 * 60_000)
+  operationResultCleanupTimer.unref?.()
+  server.onClose?.(() => clearInterval(operationResultCleanupTimer))
 
   // Get all sessions for the calling window's workspace
   // Waits for initialization to complete so sessions are never returned empty during startup
@@ -373,31 +386,63 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
     request: CreateAndSendFirstTurnRequest,
   ) => {
     const workspaceId = resolveWorkspaceId(ctx.workspaceId, request.workspaceId)!
+    if (!request.operationId) throw new Error('First-turn submission requires operationId')
+    if (!deps.operationCoordinator) throw new Error('First-turn submission requires operation coordination')
     const end = perf.start('rpc.createAndSendFirstTurn', { workspaceId })
-    try {
-      const result = await sessionManager.createAndSendFirstTurn({
-        ...request,
-        workspaceId,
-        callerClientId: ctx.clientId,
-        signal: ctx.signal,
-      })
-      writeRuntimeLog('info', {
-        scope: 'session',
-        event: result.publication === 'pending' ? 'first_turn.accepted' : 'first_turn.published',
-        meta: { workspaceId, sessionId: result.session.id, callerClientId: ctx.clientId, publication: result.publication },
-      })
-      return result
-    } catch (error) {
-      writeRuntimeLog('error', {
-        scope: 'session',
-        event: 'first_turn.rejected',
-        meta: { workspaceId, callerClientId: ctx.clientId, error },
-      })
-      throw error
-    } finally {
-      end()
+    const accepted = deps.operationCoordinator.start(
+      request.operationId,
+      'session.createAndSendFirstTurn',
+      { workspaceId },
+      async () => {
+        try {
+          const result = await sessionManager.createAndSendFirstTurn({
+            ...request,
+            workspaceId,
+            // The domain message keeps its own mutation identity. It is
+            // deliberately derived only inside the accepted operation.
+            sendOptions: {
+              ...request.sendOptions,
+              operationId: request.operationId,
+              optimisticMessageId: request.sendOptions?.optimisticMessageId ?? request.operationId,
+            },
+            callerClientId: ctx.clientId,
+            signal: undefined,
+          })
+          await operationResults.write(request.operationId, 'first-turn', result)
+          writeRuntimeLog('info', {
+            scope: 'session',
+            event: result.publication === 'pending' ? 'first_turn.accepted' : 'first_turn.published',
+            meta: { workspaceId, sessionId: result.session.id, callerClientId: ctx.clientId, publication: result.publication },
+          })
+          return { resultRef: `first-turn:${request.operationId}` }
+        } catch (error) {
+          writeRuntimeLog('error', {
+            scope: 'session',
+            event: 'first_turn.rejected',
+            meta: { workspaceId, callerClientId: ctx.clientId, error },
+          })
+          throw error
+        } finally {
+          end()
+        }
+      },
+    )
+    return accepted
+  })
+
+  server.handle(RPC_CHANNELS.sessions.GET_FIRST_TURN_RESULT, async (ctx, operationId: string) => {
+    const receipt = deps.operationCoordinator?.get(operationId)
+    if (!receipt || receipt.operationType !== 'session.createAndSendFirstTurn') {
+      throw new Error(`Unknown first-turn operation ${operationId}`)
     }
-  }, { timeoutMs: 300_000 })
+    if (receipt.scope.workspaceId && receipt.scope.workspaceId !== ctx.workspaceId) {
+      throw new Error('Operation is outside the current Workspace')
+    }
+    if (receipt.status !== 'succeeded') {
+      throw new Error(`First-turn operation is not complete: ${receipt.status}`)
+    }
+    return operationResults.read(operationId, 'first-turn')
+  })
 
   server.handle(RPC_CHANNELS.sessions.DISCARD_FIRST_TURN_ATTACHMENT_STAGING, async (
     ctx,
@@ -430,15 +475,32 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
   const sendMessageHandler: HandlerFn = async (ctx, sessionId: string, message: string, attachments?: FileAttachment[], storedAttachments?: StoredAttachment[], options?: SendMessageOptions) => {
     await assertSessionWorkspace(sessionManager, ctx.workspaceId, sessionId)
 
+    const operationId = options?.operationId
+    if (!operationId) throw new Error('Message submission requires operationId')
+    const operation = deps.operationCoordinator
+    const operationType = /^\/compact(?:\s|$)/i.test(message.trim()) ? 'session.compact' : 'session.sendMessage'
+    const accepted: OperationAccepted = operation?.accept(operationId, operationType, {
+      ...(ctx.workspaceId ? { workspaceId: ctx.workspaceId } : {}),
+      sessionId,
+    }) ?? { accepted: true, operationId, status: 'accepted', revision: 1, duplicate: false }
+    if (accepted?.duplicate) {
+      return { ...accepted, messageId: operationId }
+    }
+
     // Capture the caller's clientId for error routing
     const callerClientId = ctx.clientId
+    const unregisterCancellation = operation?.registerCancellation?.(
+      operationId,
+      () => sessionManager.cancelProcessing(sessionId, false),
+    )
 
-    return await new Promise<{ accepted: true; messageId: string }>((resolve, reject) => {
+    return await new Promise<OperationAccepted & { messageId: string }>((resolve, reject) => {
       let acked = false
       const onAccepted = (messageId: string) => {
         if (!acked) {
           acked = true
-          resolve({ accepted: true, messageId })
+          if (operation) operation.update(operationId, 'running')
+          resolve({ ...accepted, messageId })
         }
       }
 
@@ -463,8 +525,15 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
           // Treat as a defensive failure rather than silently dropping.
           if (!acked) {
             acked = true
+            operation?.update(operationId, 'failed', { error: { code: 'MESSAGE_NOT_ACCEPTED', message: 'sendMessage completed without persisting a user message' } })
             reject(new Error('sendMessage completed without persisting a user message'))
+            return
           }
+          operation?.update(operationId, 'succeeded', {
+            resultRef: operationType === 'session.compact'
+              ? `session:${sessionId}:compaction`
+              : `session:${sessionId}:message:${operationId}`,
+          })
         })
         .catch(err => {
           log.error('Error in sendMessage:', err)
@@ -481,6 +550,7 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
               },
             })
             acked = true
+            operation?.update(operationId, 'failed', { error: { code: err?.code ?? 'SEND_MESSAGE_REJECTED', message: err?.message ?? String(err) } })
             reject(err)
             return
           }
@@ -497,6 +567,11 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
               error: err,
             },
           })
+          if (operation?.isCancellationRequested?.(operationId)) {
+            operation.update(operationId, 'cancelled')
+          } else {
+            operation?.update(operationId, 'failed', { error: { code: err?.code ?? 'SESSION_SETTLEMENT_FAILED', message: err?.message ?? String(err) } })
+          }
           if (isSessionSettlementFailure(err)) {
             const failure: SessionSettlementFailure = {
               code: err.code,
@@ -529,6 +604,7 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
             error: err instanceof Error ? err.message : 'Unknown error'
           } as SessionEvent)
         })
+        .finally(() => unregisterCancellation?.())
     })
   }
   server.handle(RPC_CHANNELS.sessions.SEND_MESSAGE, sendMessageHandler)
@@ -566,10 +642,21 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
 
   // 调用 pi 扩展注册的命令（extension_command_invoke）
   // 由 automation 委托路径触发，转发到对应会话的 PiAgent.sendExtensionCommandInvoke
-  server.handle(RPC_CHANNELS.extensions.COMMAND_INVOKE, async (ctx, sessionId: string, commandId: string, args?: string | Record<string, unknown> | null, ownerExtensionId?: string) => {
+  server.handle(RPC_CHANNELS.extensions.COMMAND_INVOKE, async (ctx, sessionId: string, commandId: string, args: string | Record<string, unknown> | null | undefined, ownerExtensionId: string | undefined, operationId: string) => {
     await assertSessionWorkspace(sessionManager, ctx.workspaceId, sessionId)
+    if (!operationId) throw new Error('Extension command invocation requires operationId')
+    if (!deps.operationCoordinator) throw new Error('Operation coordination is unavailable')
     const serializedArgs = serializeExtensionCommandArgs(args)
-    return sessionManager.invokeExtensionCommand(sessionId, commandId, serializedArgs, ownerExtensionId)
+    const operation = deps.operationCoordinator.start(operationId, 'extension.commandInvoke', {
+      ...(ctx.workspaceId ? { workspaceId: ctx.workspaceId } : {}),
+      sessionId,
+      ...(ownerExtensionId ? { extensionId: ownerExtensionId } : {}),
+    }, async () => {
+      const result = await sessionManager.invokeExtensionCommand(sessionId, commandId, serializedArgs, ownerExtensionId)
+      if (!result.invoked) throw Object.assign(new Error(result.error ?? 'Extension command was not invoked'), { code: 'EXTENSION_COMMAND_FAILED' })
+      return { resultRef: `session:${sessionId}` }
+    })
+    return operation
   })
 
   // 查询当前会话已注册的 Pi 扩展 slash commands，用于 renderer slash menu 初始快照
@@ -593,14 +680,23 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
   ) => {
     if (sessionId) await assertSessionWorkspace(sessionManager, ctx.workspaceId, sessionId)
     else if (!ctx.workspaceId) throw new Error('Extension frontend messages require a Workspace route')
-    if (!request || request.schemaVersion !== 2 || typeof request.channelId !== 'string' || typeof request.extensionId !== 'string'
+    if (!request || request.schemaVersion !== 2 || typeof request.operationId !== 'string' || !request.operationId
+      || typeof request.channelId !== 'string' || typeof request.extensionId !== 'string'
       || !request.route || !['session', 'workspace', 'global'].includes(request.scope)
       || !isSerializableFrontendValue(request.message)) {
       throw new TypeError('Invalid extension frontend channel message')
     }
     if (request.route.sessionId && request.route.sessionId !== sessionId) throw new Error('Frontend channel route mismatch')
     if (request.route.workspaceId && request.route.workspaceId !== ctx.workspaceId) throw new Error('Frontend channel workspace mismatch')
-    return sessionManager.sendExtensionFrontendMessage(sessionId, request.extensionId, request.channelId, request.message, ctx.workspaceId)
+    if (!deps.operationCoordinator) throw new Error('Operation coordination is unavailable')
+    return deps.operationCoordinator.start(request.operationId, 'extension.frontendMessage', {
+      ...(ctx.workspaceId ? { workspaceId: ctx.workspaceId } : {}),
+      ...(sessionId ? { sessionId } : {}),
+      extensionId: request.extensionId,
+    }, async () => {
+      await sessionManager.sendExtensionFrontendMessage(sessionId, request.extensionId, request.channelId, request.message, ctx.workspaceId)
+      return { resultRef: `extension:${request.extensionId}:frontend:${request.channelId}` }
+    })
   })
 
   server.handle(RPC_CHANNELS.extensions.GET_FILE_STATE, async (ctx, workspaceId: string, extensionId: string) => {
@@ -632,6 +728,20 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
     command: import('@mortise/shared/protocol').SessionCommand
   ) => {
     await assertSessionWorkspace(sessionManager, ctx.workspaceId, sessionId)
+    const startOperation = <T>(operationId: string, type: string, task: () => Promise<T>) => {
+      if (!deps.operationCoordinator) throw new Error('Operation coordination is unavailable')
+      return deps.operationCoordinator.start(operationId, type, {
+        ...(ctx.workspaceId ? { workspaceId: ctx.workspaceId } : {}),
+        sessionId,
+      }, async () => {
+        const result = await task()
+        if (result && typeof result === 'object' && 'success' in result && result.success === false) {
+          const message = 'error' in result && typeof result.error === 'string' ? result.error : `${type} failed`
+          throw new Error(message)
+        }
+        return { resultRef: `session:${sessionId}` }
+      })
+    }
     switch (command.type) {
       case 'rename':
         return sessionManager.renameSession(sessionId, command.name)
@@ -649,15 +759,15 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
         }
         return sessionManager.setSessionThinkingLevel(sessionId, command.level)
       case 'retrySettlement':
-        if (Object.keys(command).length !== 1) {
+        if (Object.keys(command).length !== 2) {
           throw new Error('retrySettlement does not accept a message or any other payload')
         }
-        return sessionManager.retryPendingSettlement(sessionId)
+        return startOperation(command.operationId, 'session.retrySettlement', () => sessionManager.retryPendingSettlement(sessionId))
       case 'retryAcceptedMessage':
-        if (Object.keys(command).length !== 1) {
+        if (Object.keys(command).length !== 2) {
           throw new Error('retryAcceptedMessage does not accept a message or any other payload')
         }
-        return sessionManager.retryAcceptedMessage(sessionId, ctx.clientId)
+        return startOperation(command.operationId, 'session.retryAcceptedMessage', () => sessionManager.retryAcceptedMessage(sessionId, ctx.clientId))
       case 'withdrawQueuedMessage':
         return sessionManager.withdrawQueuedMessage(sessionId, command.messageId)
       case 'showInFinder': {
@@ -682,14 +792,14 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
         return sessionPath ? { success: true, path: sessionPath } : { success: false }
       }
       case 'shareToViewer':
-        return sessionManager.shareTransferService.publish(sessionId)
+        return startOperation(command.operationId, 'session.shareToViewer', () => sessionManager.shareTransferService.publish(sessionId))
       case 'updateShare':
-        return sessionManager.shareTransferService.refresh(sessionId)
+        return startOperation(command.operationId, 'session.updateShare', () => sessionManager.shareTransferService.refresh(sessionId))
       case 'revokeShare':
-        return sessionManager.shareTransferService.revoke(sessionId)
+        return startOperation(command.operationId, 'session.revokeShare', () => sessionManager.shareTransferService.revoke(sessionId))
       case 'refreshTitle':
         log.info(`IPC: refreshTitle received for session ${sessionId}`)
-        return sessionManager.refreshTitle(sessionId)
+        return startOperation(command.operationId, 'session.refreshTitle', () => sessionManager.refreshTitle(sessionId))
       case 'setProvider':
         log.info(`IPC: setProvider received for session ${sessionId}, provider: ${command.provider}`)
         return sessionManager.setSessionProvider(sessionId, command.provider)
@@ -873,45 +983,75 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
   // ============================================
 
   // Export a session as a portable bundle
-  server.handle(RPC_CHANNELS.sessions.EXPORT, async (ctx, sessionId: string) => {
+  server.handle(RPC_CHANNELS.sessions.EXPORT, async (ctx, sessionId: string, operationId: string) => {
     await sessionManager.waitForInit()
     const workspaceId = ctx.workspaceId ?? deps.windowManager?.getWorkspaceForWindow(ctx.webContentsId!)
     if (!workspaceId) throw new Error('No workspace context')
 
-    const bundle = await sessionManager.exportSession(sessionId, workspaceId)
-    if (!bundle) throw new Error(`Failed to export session ${sessionId}`)
-    return bundle
+    if (!operationId || !deps.operationCoordinator) throw new Error('Export requires operation coordination and operationId')
+    return deps.operationCoordinator.start(operationId, 'session.export', { workspaceId, sessionId }, async () => {
+      const bundle = await sessionManager.exportSession(sessionId, workspaceId)
+      if (!bundle) throw new Error(`Failed to export session ${sessionId}`)
+      await operationResults.write(operationId, 'session-export', bundle)
+      return { resultRef: `session-export:${operationId}` }
+    })
+  }, { timeoutMs: null })
+
+  server.handle(RPC_CHANNELS.sessions.GET_EXPORT_RESULT, async (ctx, operationId: string) => {
+    const receipt = deps.operationCoordinator?.get(operationId)
+    if (!receipt || receipt.operationType !== 'session.export' || receipt.status !== 'succeeded') throw new Error('Export result is not available')
+    if (receipt.scope.workspaceId && receipt.scope.workspaceId !== ctx.workspaceId) throw new Error('Operation is outside the current Workspace')
+    return operationResults.read(operationId, 'session-export')
   })
 
   // Import a session bundle into a target workspace
   // targetWorkspaceId is passed explicitly (not from context) so the renderer
   // can import into any workspace the server manages, not just the active one.
-  const importHandler = async (_ctx: any, targetWorkspaceId: string, bundle: unknown, mode: string) => {
+  const importHandler = async (_ctx: any, targetWorkspaceId: string, bundle: unknown, mode: string, operationId: string) => {
     await sessionManager.waitForInit()
     if (!targetWorkspaceId || typeof targetWorkspaceId !== 'string') throw new Error('targetWorkspaceId is required')
     if (mode !== 'move' && mode !== 'fork') throw new Error(`Invalid dispatch mode: ${mode}`)
 
-    return sessionManager.importSession(targetWorkspaceId, bundle as import('@mortise/shared/sessions').SessionBundle, mode)
+    if (!operationId || !deps.operationCoordinator) throw new Error('Import requires operation coordination and operationId')
+    return deps.operationCoordinator.start(operationId, 'session.import', { workspaceId: targetWorkspaceId }, async () => {
+      const result = await sessionManager.importSession(targetWorkspaceId, bundle as import('@mortise/shared/sessions').SessionBundle, mode)
+      return { resultRef: `session:${result.sessionId}` }
+    })
   }
-  server.handle(RPC_CHANNELS.sessions.IMPORT, importHandler)
+  server.handle(RPC_CHANNELS.sessions.IMPORT, importHandler, { timeoutMs: null })
   // Also register as transferable so chunked transfer can invoke it on commit
   setTransferableHandler(RPC_CHANNELS.sessions.IMPORT, importHandler)
 
   // Export a session as a summarized remote-transfer payload.
-  server.handle(RPC_CHANNELS.sessions.EXPORT_REMOTE_TRANSFER, async (ctx, sessionId: string) => {
+  server.handle(RPC_CHANNELS.sessions.EXPORT_REMOTE_TRANSFER, async (ctx, sessionId: string, operationId: string) => {
     await sessionManager.waitForInit()
     const workspaceId = ctx.workspaceId ?? deps.windowManager?.getWorkspaceForWindow(ctx.webContentsId!)
     if (!workspaceId) throw new Error('No workspace context')
 
-    const payload = await sessionManager.shareTransferService.exportSummary(sessionId, workspaceId)
-    if (!payload) throw new Error(`Failed to export remote transfer for session ${sessionId}`)
-    return payload
+    if (!operationId || !deps.operationCoordinator) throw new Error('Remote export requires operation coordination and operationId')
+    return deps.operationCoordinator.start(operationId, 'session.remoteTransferExport', { workspaceId, sessionId }, async () => {
+      const payload = await sessionManager.shareTransferService.exportSummary(sessionId, workspaceId)
+      if (!payload) throw new Error(`Failed to export remote transfer for session ${sessionId}`)
+      await operationResults.write(operationId, 'remote-transfer', payload)
+      return { resultRef: `remote-transfer:${operationId}` }
+    })
+  }, { timeoutMs: null })
+
+  server.handle(RPC_CHANNELS.sessions.GET_REMOTE_TRANSFER_RESULT, async (ctx, operationId: string) => {
+    const receipt = deps.operationCoordinator?.get(operationId)
+    if (!receipt || receipt.operationType !== 'session.remoteTransferExport' || receipt.status !== 'succeeded') throw new Error('Remote transfer result is not available')
+    if (receipt.scope.workspaceId && receipt.scope.workspaceId !== ctx.workspaceId) throw new Error('Operation is outside the current Workspace')
+    return operationResults.read(operationId, 'remote-transfer')
   })
 
   // Import a summarized remote-transfer payload into a target workspace.
-  server.handle(RPC_CHANNELS.sessions.IMPORT_REMOTE_TRANSFER, async (_ctx, targetWorkspaceId: string, payload: import('@mortise/shared/protocol').RemoteSessionTransferPayload) => {
+  server.handle(RPC_CHANNELS.sessions.IMPORT_REMOTE_TRANSFER, async (_ctx, targetWorkspaceId: string, payload: import('@mortise/shared/protocol').RemoteSessionTransferPayload, operationId: string) => {
     await sessionManager.waitForInit()
     if (!targetWorkspaceId || typeof targetWorkspaceId !== 'string') throw new Error('targetWorkspaceId is required')
-    return sessionManager.shareTransferService.importSummary(targetWorkspaceId, payload)
-  })
+    if (!operationId || !deps.operationCoordinator) throw new Error('Remote import requires operation coordination and operationId')
+    return deps.operationCoordinator.start(operationId, 'session.remoteTransferImport', { workspaceId: targetWorkspaceId }, async () => {
+      const result = await sessionManager.shareTransferService.importSummary(targetWorkspaceId, payload)
+      return { resultRef: `session:${result.sessionId}` }
+    })
+  }, { timeoutMs: null })
 }

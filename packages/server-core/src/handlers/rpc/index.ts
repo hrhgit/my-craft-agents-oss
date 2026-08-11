@@ -20,6 +20,8 @@ import { registerTransferHandlers } from './transfer'
 import { registerWorkspaceCoreHandlers } from './workspace'
 import { registerWorkspaceCoordinationHandlers } from './workspace-coordination'
 import { registerMessagingHandlers } from './messaging'
+import { createDefaultOperationCoordinator } from '../../operations/operation-coordinator'
+import { registerOperationHandlers } from './operations'
 
 export function cleanupClientFileWatches(clientId: string): void {
   cleanupSessionFileWatchForClient(clientId)
@@ -31,18 +33,23 @@ export function registerCoreRpcHandlers(
   deps: HandlerDeps,
   serverCtx?: ServerHandlerContext,
 ): void {
-  registerAuthHandlers(server, deps)
-  registerFilesHandlers(server, deps)
-  registerPiProviderHandlers(server, deps)
-  registerOnboardingHandlers(server, deps)
-  registerResourcesHandlers(server, deps)
-  registerSessionsHandlers(server, deps)
-  if (serverCtx) registerServerHandlers(server, deps, serverCtx)
-  registerSettingsHandlers(server, deps)
-  registerSkillsHandlers(server, deps)
-  registerSystemCoreHandlers(server, deps)
+  const ownsOperationCoordinator = !deps.operationCoordinator
+  const operationCoordinator = deps.operationCoordinator ?? createDefaultOperationCoordinator()
+  if (ownsOperationCoordinator) server.onClose?.(() => operationCoordinator.close())
+  const handlerDeps = { ...deps, operationCoordinator } as typeof deps
+  registerOperationHandlers(server, operationCoordinator)
+  registerAuthHandlers(server, handlerDeps)
+  registerFilesHandlers(server, handlerDeps)
+  registerPiProviderHandlers(server, handlerDeps)
+  registerOnboardingHandlers(server, handlerDeps)
+  registerResourcesHandlers(server, handlerDeps)
+  registerSessionsHandlers(server, handlerDeps)
+  if (serverCtx) registerServerHandlers(server, handlerDeps, serverCtx)
+  registerSettingsHandlers(server, handlerDeps)
+  registerSkillsHandlers(server, handlerDeps)
+  registerSystemCoreHandlers(server, handlerDeps)
   registerTransferHandlers(server)
-  registerWorkspaceCoreHandlers(server, deps)
-  registerWorkspaceCoordinationHandlers(server, deps)
-  registerMessagingHandlers(server, deps)
+  registerWorkspaceCoreHandlers(server, handlerDeps)
+  registerWorkspaceCoordinationHandlers(server, handlerDeps)
+  registerMessagingHandlers(server, handlerDeps)
 }

@@ -266,7 +266,7 @@ export function registerTransferHandlers(server: RpcServer): void {
       console.error(`[Transfer:server] Handler ${transfer.channel} failed:`, err)
       throw err
     }
-  })
+  }, { timeoutMs: null })
 
   server.handle(RPC_CHANNELS.transfer.ABORT, async (ctx, opts: { transferId: string }) => {
     throwIfAborted(ctx.signal)

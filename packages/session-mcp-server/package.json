@@ -2,7 +2,7 @@
   "name": "@mortise/session-mcp-server",
   "version": "0.1.0",
   "license": "Apache-2.0",
-  "description": "MCP server that provides session-scoped tools (config_validate, skill_validate, etc.) to the agent via stdio transport",
+  "description": "MCP server that provides session-scoped tools to the agent via stdio transport",
   "type": "commonjs",
   "main": "dist/index.js",
   "bin": {

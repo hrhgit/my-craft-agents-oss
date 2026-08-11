@@ -67,9 +67,9 @@ describe('createManagedSession', () => {
   })
 
   it('does not render retired namespaced session tools as current internal tools', async () => {
-    await expect(resolveToolDisplayMeta('mcp__session__config_validate', {}, workspace.rootPath)).resolves.toBeUndefined()
-    await expect(resolveToolDisplayMeta('config_validate', {}, workspace.rootPath)).resolves.toMatchObject({
-      displayName: 'Validate Config',
+    await expect(resolveToolDisplayMeta('mcp__session__get_session_info', {}, workspace.rootPath)).resolves.toBeUndefined()
+    await expect(resolveToolDisplayMeta('get_session_info', {}, workspace.rootPath)).resolves.toMatchObject({
+      displayName: 'Session Info',
       category: 'native',
     })
   })

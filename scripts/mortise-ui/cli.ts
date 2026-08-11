@@ -11,7 +11,7 @@ import {
   type UiValidationErrorPayload,
   type UiValidationResponseEnvelope,
 } from '@mortise/shared/ui-validation'
-import { MortiseUiStartError, DEFAULT_MORTISE_UI_RUN_ROOT, DEFAULT_MORTISE_UI_START_WAIT_MS, MORTISE_UI_MAX_START_WAIT_MS, appendRunHistory, getMortiseUiRunStatus, isMortiseUiRunProcessAlive, listMortiseUiRuns, pruneMortiseUiRuns, readRunManifest, recordMortiseUiStartFailure, resolveRunDir, restartMortiseUiRun, startMortiseUiRun, stopMortiseUiRunDetailed, updateRunManifest } from './controller.ts'
+import { MortiseUiStartError, DEFAULT_MORTISE_UI_RUN_ROOT, DEFAULT_MORTISE_UI_START_WAIT_MS, MORTISE_UI_MAX_START_WAIT_MS, appendRunHistory, getDefaultAdapterCommand, getMortiseUiRunStatus, isMortiseUiRunProcessAlive, listMortiseUiRuns, pruneMortiseUiRuns, readPackagedDeveloperHostIdentity, readRunManifest, recordMortiseUiStartFailure, resolveRunDir, restartMortiseUiRun, startMortiseUiRun, stopMortiseUiRunDetailed, updateRunManifest } from './controller.ts'
 import { MortiseUiClientError, requestMortiseUiHost } from './client.ts'
 import { MORTISE_UI_PROTOCOL_VERSION, type MortiseUiArtifactManifest, type MortiseUiProfileMode, type MortiseUiRunManifest, type MortiseUiSurface, type MortiseUiWindowMode } from './protocol.ts'
 import { redactValue } from './redaction.ts'
@@ -20,6 +20,8 @@ import { MORTISE_UI_FIXTURE_SCHEMA, loadMortiseUiFixtureSpec } from './fixture.t
 import { readArtifactManifest } from './artifacts.ts'
 import { createActionObservation, createRunBriefing, createSnapshotBriefing, historyEntry, selectRelevantCapabilities } from './ai-assistant.ts'
 import { runWorkflowCommand } from './workflow.ts'
+import { MORTISE_UI_PREPARE_RESULT_PREFIX, type PreparedMortiseUiElectronBuild } from './prepare-electron-build.ts'
+import { listInteractionFlows, runInteractionFlowBatch } from './flow-batch.ts'
 
 function option(args: string[], name: string): string | undefined {
   const index = args.indexOf(name)
@@ -47,7 +49,9 @@ const MORTISE_UI_KNOWN_OPTIONS = new Set([
   '--file', '--execution',
   '--ui-dev-server', '--scenario', '--scenario-params', '--wait-ms', '--no-wait', '--full', '--full-observation',
   '--full-evidence', '--source-mortise-profile', '--skip-build', '--run-root', '--run', '--limit', '--all',
+  '--build-id',
   '--older-than-hours', '--keep', '--apply', '--kind', '--id', '--params', '--params-file', '--timeout-ms', '--ms',
+  '--module', '--flow',
   '--json', '--help', '-h',
 ])
 
@@ -101,9 +105,9 @@ export function parseUiDevServers(values: string[]): Record<string, string> {
 function output(value: unknown): void { process.stdout.write(`${JSON.stringify(value)}\n`) }
 
 function help(): void {
-  process.stdout.write('AI workflow additions:\n  mortise-ui workflow schema\n  mortise-ui workflow validate --file <workflow.json>\n  mortise-ui workflow run --file <workflow.json>\n  mortise-ui workflow resume --execution <id>\n  mortise-ui workflow inspect --execution <id>\n  mortise-ui capabilities relevant [--run <id-or-label>] [--json]\n  Default responses disclose only information needed for the current decision and point to exact detail commands. Pass --full-observation, --full-evidence, or inspect commands for raw details.\n\n')
-  process.stdout.write('Electron start also accepts --skip-build when validating an already-built host.\n')
-  process.stdout.write(`mortise-ui - AI-facing Mortise UI validation assistant\n\nUsage:\n  mortise-ui fixture schema [--json]\n  mortise-ui start [--label <semantic-label>] [--surface electron|webui] [--adapter-command-json '["bun","..."]'] [--profile fixture|isolated|clone]\n                 [--window-mode foreground|background] [--fixture <fixture.json>] [--extension <directory>]...\n                 [--ui-dev-server <extension-id=http://127.0.0.1:port/>]...\n                 [--scenario <id>] [--scenario-params <json>] [--wait-ms <1..900000>] [--no-wait] [--full]\n                 [--source-mortise-profile <path>] [--json]\n  mortise-ui runs list [--limit <count> | --all] [--run-root <path>] [--json]\n  mortise-ui runs inspect|resume|history --run <id-or-label> [--run-root <path>] [--json]\n  mortise-ui runs prune [--older-than-hours <hours>] [--keep <count>] [--apply] [--run-root <path>] [--json]\n  mortise-ui resume [--run <id-or-label>] [--run-root <path>] [--json]\n  mortise-ui status [--run <id-or-label>] [--run-root <path>] [--full] [--json]\n  mortise-ui capabilities list [--kind route|scenario|action] [--run <id-or-label>] [--json]\n  mortise-ui capabilities describe --kind route|scenario|action --id <id> [--run <id-or-label>] [--json]\n  mortise-ui open|snapshot|action|wait|assert|windows|screenshot|logs|resize|native|window|browser-key\n                 [--params <json> | --params-file <path>] [--run <id-or-label>] [--json]\n  mortise-ui scenario apply|reset [--id <id>] [--params <json>] [--run <id-or-label>] [--json]\n  mortise-ui clock advance --ms <milliseconds> [--run <id-or-label>] [--json]\n  mortise-ui fault set|clear|status [--params <json>] [--run <id-or-label>] [--json]\n  mortise-ui evidence [--params <json>] [--run <id-or-label>] [--json]\n  mortise-ui request <command> [--params <json>] [--run <id-or-label>] [--json]\n  mortise-ui stop [--run <id-or-label>] [--full] [--json]\n\nSnapshot and action commands include an AI briefing, immediately actionable targets, and contextual next actions. Action automatically observes the settled UI. Runs retain a bounded activity history so another AI context can resume the workflow. All commands emit one V1 JSON response envelope. Host requests accept --timeout-ms <1..600000>.\n`)
+  process.stdout.write('AI workflow additions:\n  mortise-ui workflow schema\n  mortise-ui workflow validate --file <workflow.json>\n  mortise-ui workflow run --file <workflow.json>\n  mortise-ui workflow resume --execution <id>\n  mortise-ui workflow inspect --execution <id>\n  mortise-ui flows list [--module <module-id>] [--flow <flow-id>]\n  mortise-ui flows run [--module <module-id>]... [--flow <flow-id>]... [--surface electron|webui] [--build-id <sha256> | --skip-build] [--keep]\n  mortise-ui capabilities relevant [--run <id-or-label>] [--json]\n  Default responses disclose only information needed for the current decision and point to exact detail commands. Pass --full-observation, --full-evidence, or inspect commands for raw details.\n\n')
+  process.stdout.write('Use prepare once and pass its --build-id to Electron starts that should share one immutable build. Electron start also accepts --skip-build for current-source cache checks.\n')
+  process.stdout.write(`mortise-ui - AI-facing Mortise UI validation assistant\n\nUsage:\n  mortise-ui fixture schema [--json]\n  mortise-ui prepare [--run-root <path>] [--json]\n  mortise-ui start [--label <semantic-label>] [--surface electron|webui] [--adapter-command-json '["bun","..."]'] [--profile fixture|isolated|clone]\n                 [--window-mode foreground|background] [--fixture <fixture.json>] [--extension <directory>]...\n                 [--ui-dev-server <extension-id=http://127.0.0.1:port/>]...\n                 [--scenario <id>] [--scenario-params <json>] [--wait-ms <1..900000>] [--no-wait] [--full]\n                 [--source-mortise-profile <path>] [--build-id <sha256> | --skip-build] [--json]\n  mortise-ui runs list [--limit <count> | --all] [--run-root <path>] [--json]\n  mortise-ui runs inspect|resume|history --run <id-or-label> [--run-root <path>] [--json]\n  mortise-ui runs prune [--older-than-hours <hours>] [--keep <count>] [--apply] [--run-root <path>] [--json]\n  mortise-ui resume [--run <id-or-label>] [--run-root <path>] [--json]\n  mortise-ui status [--run <id-or-label>] [--run-root <path>] [--full] [--json]\n  mortise-ui capabilities list [--kind route|scenario|action] [--run <id-or-label>] [--json]\n  mortise-ui capabilities describe --kind route|scenario|action --id <id> [--run <id-or-label>] [--json]\n  mortise-ui open|snapshot|action|wait|assert|windows|screenshot|logs|resize|native|window|browser-key\n                 [--params <json> | --params-file <path>] [--run <id-or-label>] [--json]\n  mortise-ui scenario apply|reset [--id <id>] [--params <json>] [--run <id-or-label>] [--json]\n  mortise-ui clock advance --ms <milliseconds> [--run <id-or-label>] [--json]\n  mortise-ui fault set|clear|status [--params <json>] [--run <id-or-label>] [--json]\n  mortise-ui evidence [--params <json>] [--run <id-or-label>] [--json]\n  mortise-ui request <command> [--params <json>] [--run <id-or-label>] [--json]\n  mortise-ui stop [--run <id-or-label>] [--full] [--json]\n\nSnapshot and action commands include an AI briefing, immediately actionable targets, and contextual next actions. Action automatically observes the settled UI. Runs retain a bounded activity history so another AI context can resume the workflow. All commands emit one V1 JSON response envelope. Host requests accept --timeout-ms <1..600000>.\n`)
 }
 
 function jsonOption(args: string[], name: string, fallback: Record<string, unknown> = {}): Record<string, unknown> {
@@ -129,9 +133,73 @@ export async function main(argv = process.argv): Promise<number> {
       output(localUnassignedSuccess(localRequestId, result))
       return result.status === 'failed' ? 2 : 0
     }
+    if (command === 'flows') {
+      const operation = args[1] ?? 'list'
+      if (!['list', 'run'].includes(operation)) throw new Error('flows requires list or run')
+      const moduleIds = options(args, '--module')
+      const flowIds = options(args, '--flow')
+      if (operation === 'list') {
+        const flows = listInteractionFlows({ moduleIds, flowIds })
+        output(localUnassignedSuccess(localRequestId, { flows, count: flows.length }))
+        return 0
+      }
+      const requestedSurface = option(args, '--surface') ?? 'electron'
+      const surface = (requestedSurface === 'web' ? 'webui' : requestedSurface) as MortiseUiSurface
+      const windowMode = (option(args, '--window-mode') ?? (surface === 'electron' ? 'background' : 'foreground')) as MortiseUiWindowMode
+      if (!['electron', 'webui'].includes(surface)) throw new Error('--surface must be electron or webui')
+      if (!['foreground', 'background'].includes(windowMode)) throw new Error('--window-mode must be foreground or background')
+      if (surface !== 'electron' && windowMode === 'background') throw new Error('--window-mode background requires --surface electron')
+      const expectedBuildId = option(args, '--build-id')
+      if (expectedBuildId !== undefined && !/^[0-9a-f]{64}$/.test(expectedBuildId)) throw new Error('--build-id must be a lowercase SHA-256 identity')
+      if (expectedBuildId !== undefined && surface !== 'electron') throw new Error('--build-id requires --surface electron')
+      if (expectedBuildId !== undefined && has(args, '--skip-build')) throw new Error('--build-id and --skip-build are mutually exclusive')
+      if (has(args, '--skip-build') && surface !== 'electron') throw new Error('--skip-build requires --surface electron')
+      const rawAdapter = option(args, '--adapter-command-json')
+      const adapterCommand = rawAdapter ? JSON.parse(rawAdapter) : undefined
+      if (adapterCommand !== undefined && (!Array.isArray(adapterCommand) || adapterCommand.some(part => typeof part !== 'string'))) throw new Error('--adapter-command-json must be a JSON string array')
+      const waitMs = Number(option(args, '--wait-ms') ?? DEFAULT_MORTISE_UI_START_WAIT_MS)
+      if (!Number.isSafeInteger(waitMs) || waitMs < 1 || waitMs > MORTISE_UI_MAX_START_WAIT_MS) throw new Error(`--wait-ms must be between 1 and ${MORTISE_UI_MAX_START_WAIT_MS}`)
+      const labels = options(args, '--label')
+      if (labels.length > 1) throw new Error('--label may be provided only once')
+      const batch = await runInteractionFlowBatch({
+        surface,
+        moduleIds,
+        flowIds,
+        label: labels[0],
+        windowMode,
+        runRoot,
+        adapterCommand,
+        waitMs,
+        expectedBuildId,
+        skipBuild: has(args, '--skip-build'),
+        keep: has(args, '--keep'),
+      })
+      activeManifest = batch.run
+      output(localSuccess(localRequestId, batch.run, {
+        run: compactRunIdentity(batch.run),
+        flows: batch.flows,
+        lifecycle: batch.lifecycle,
+      }))
+      return 0
+    }
     if (command === 'fixture') {
       if ((args[1] ?? 'schema') !== 'schema') throw new Error('fixture requires schema')
       output(localUnassignedSuccess(localRequestId, { schema: MORTISE_UI_FIXTURE_SCHEMA }))
+      return 0
+    }
+    if (command === 'prepare') {
+      const prepared = await prepareElectronBuildForCli(runRoot)
+      output(localUnassignedSuccess(localRequestId, {
+        ...prepared,
+        mode: 'ui-validation',
+        summary: `Immutable Electron build ${prepared.buildId.slice(0, 12)} is ready.`,
+        nextActions: [{
+          label: 'Start an isolated Electron run',
+          reason: 'Reuse the prepared immutable build without recapturing the current source tree.',
+          command: 'start',
+          argv: ['--surface', 'electron', '--build-id', prepared.buildId],
+        }],
+      }))
       return 0
     }
     if (command === 'runs' || command === 'resume') {
@@ -252,6 +320,12 @@ export async function main(argv = process.argv): Promise<number> {
       if (fixturePath && profileMode !== 'fixture') throw new Error('--fixture requires --profile fixture')
       const fixtureSpec = fixturePath ? loadMortiseUiFixtureSpec(fixturePath) : undefined
       const uiDevServers = parseUiDevServers(options(args, '--ui-dev-server'))
+      const expectedBuildId = option(args, '--build-id')
+      if (expectedBuildId !== undefined && !/^[0-9a-f]{64}$/.test(expectedBuildId)) {
+        throw new Error('--build-id must be a lowercase SHA-256 identity')
+      }
+      if (expectedBuildId !== undefined && surface !== 'electron') throw new Error('--build-id requires --surface electron')
+      if (expectedBuildId !== undefined && has(args, '--skip-build')) throw new Error('--build-id and --skip-build are mutually exclusive')
       if (has(args, '--skip-build') && surface !== 'electron') throw new Error('--skip-build requires --surface electron')
       const rawAdapter = option(args, '--adapter-command-json')
       const adapterCommand = rawAdapter ? JSON.parse(rawAdapter) : undefined
@@ -263,7 +337,7 @@ export async function main(argv = process.argv): Promise<number> {
         ? { ...jsonOption(args, '--scenario-params'), name: scenarioId }
         : undefined
       let manifest = await startMortiseUiRun({
-        surface, label, profileMode, windowMode, adapterCommand, runRoot,
+        surface, expectedBuildId, label, profileMode, windowMode, adapterCommand, runRoot,
         sourceMortiseConfigDir: option(args, '--source-mortise-profile'),
         extensionPaths: options(args, '--extension'),
         extraEnv: {
@@ -571,6 +645,45 @@ export async function main(argv = process.argv): Promise<number> {
   }
 }
 
+async function prepareElectronBuildForCli(runRoot: string): Promise<PreparedMortiseUiElectronBuild> {
+  const adapterCommand = getDefaultAdapterCommand('electron')
+  if (adapterCommand.length === 1) {
+    const startedAt = performance.now()
+    return {
+      ...readPackagedDeveloperHostIdentity(adapterCommand[0]!),
+      elapsedMs: Math.round(performance.now() - startedAt),
+    }
+  }
+
+  const child = Bun.spawn([
+    process.execPath,
+    resolve(import.meta.dir, 'prepare-electron-build.ts'),
+    resolve(runRoot),
+  ], {
+    cwd: process.cwd(),
+    stdout: 'pipe',
+    stderr: 'pipe',
+    windowsHide: true,
+  })
+  const [exitCode, stdout, stderr] = await Promise.all([
+    child.exited,
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+  ])
+  if (stderr) process.stderr.write(stderr)
+  const markerIndex = stdout.lastIndexOf(MORTISE_UI_PREPARE_RESULT_PREFIX)
+  if (markerIndex > 0) process.stderr.write(stdout.slice(0, markerIndex))
+  if (markerIndex < 0 && stdout) process.stderr.write(stdout)
+  if (exitCode !== 0 || markerIndex < 0) {
+    throw new Error(`Mortise UI Electron build preparation failed with exit code ${exitCode}.`)
+  }
+  const prepared = JSON.parse(stdout.slice(markerIndex + MORTISE_UI_PREPARE_RESULT_PREFIX.length).trim()) as PreparedMortiseUiElectronBuild
+  if (!/^[0-9a-f]{64}$/.test(prepared.buildId) || !/^[0-9a-f]{64}$/.test(prepared.sourceId)) {
+    throw new Error('Mortise UI Electron build preparation returned an invalid immutable identity.')
+  }
+  return prepared
+}
+
 function withResult(response: UiValidationResponseEnvelope, result: Record<string, unknown>): UiValidationResponseEnvelope {
   return response.ok ? { ...response, result } : response
 }
@@ -753,7 +866,7 @@ function cliErrorCode(error: unknown): UiValidationErrorCode {
     if (['HOST_UNREACHABLE', 'ENDPOINT_NOT_READY'].includes(error.code)) return 'DRIVER_DISCONNECTED'
     if (error.code === 'PROTOCOL_MISMATCH') return 'UNSUPPORTED_VERSION'
   }
-  return error instanceof SyntaxError || (error instanceof Error && /must|require(?:d|s)?|unknown|not found|escapes|provide --run|no active|ambiguous|may be provided/i.test(error.message))
+  return error instanceof SyntaxError || (error instanceof Error && /must|require(?:d|s)?|unknown|not found|escapes|provide --run|no active|ambiguous|may be provided|mutually exclusive|does not match/i.test(error.message))
     ? 'INVALID_REQUEST'
     : 'INTERNAL_ERROR'
 }

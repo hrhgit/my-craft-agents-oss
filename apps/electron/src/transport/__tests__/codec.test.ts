@@ -28,6 +28,10 @@ describe('validateEnvelopeShape', () => {
     expect(validateEnvelopeShape({ id: '1', type: 'request', channel: 'test' })).toBe(true)
   })
 
+  it('accepts explicit request cancellation', () => {
+    expect(validateEnvelopeShape({ id: '1', type: 'request_cancel' })).toBe(true)
+  })
+
   it('rejects request without channel', () => {
     expect(validateEnvelopeShape({ id: '1', type: 'request' })).toBe(false)
   })

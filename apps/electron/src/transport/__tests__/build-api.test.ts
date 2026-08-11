@@ -90,9 +90,9 @@ describe('buildClientApi chunked invokes', () => {
       type: 'invoke',
       channel: RPC_CHANNELS.sessions.SEND_MESSAGE,
       largeArgIndex: 2,
-      timeoutMs: 300_000,
       serializeByArgIndex: 0,
     })
+    expect('timeoutMs' in CHANNEL_MAP.sendMessage).toBe(false)
   })
 
   it('allows the first-turn transaction to carry large attachments through one request', () => {
@@ -100,8 +100,8 @@ describe('buildClientApi chunked invokes', () => {
       type: 'invoke',
       channel: RPC_CHANNELS.sessions.CREATE_AND_SEND_FIRST_TURN,
       largeArgIndex: 0,
-      timeoutMs: 300_000,
     })
+    expect('timeoutMs' in CHANNEL_MAP.createAndSendFirstTurn).toBe(false)
   })
 
   it('uses direct invoke for payloads below the threshold', async () => {

@@ -6,6 +6,7 @@ import { dirname, join, resolve } from 'node:path'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { chromium, type Browser, type Locator, type Page } from 'playwright-core'
 import WebSocket from 'ws'
+import { UI_VALIDATION_PROTOCOL_VERSION } from '@mortise/shared/ui-validation'
 import { readEndpointManifest } from '../../mortise-ui/client.ts'
 import { prepareProfile } from '../../mortise-ui/profile.ts'
 import {
@@ -101,7 +102,7 @@ try {
       MORTISE_UI_ARTIFACTS_DIR: artifactsDir,
       MORTISE_UI_ENDPOINT_MANIFEST: endpointManifestPath,
       MORTISE_UI_TOKEN: token,
-      MORTISE_UI_PROTOCOL_VERSION: '1',
+      MORTISE_UI_PROTOCOL_VERSION: String(UI_VALIDATION_PROTOCOL_VERSION),
       MORTISE_UI_ELECTRON_USER_DATA_DIR: profile.electronUserDataDir,
       MORTISE_UI_TEST_HOST: '1',
       ...createElectronBuildRuntimeEnvironment(buildLease, { uiValidation: true }),
@@ -297,7 +298,14 @@ async function rawHostRequest<T>(
       'Content-Type': 'application/json',
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
-    body: JSON.stringify({ v: 1, kind: 'request', id: requestId, runId, method, params }),
+    body: JSON.stringify({
+      v: UI_VALIDATION_PROTOCOL_VERSION,
+      kind: 'request',
+      id: requestId,
+      runId,
+      method,
+      params,
+    }),
     signal: AbortSignal.timeout(30_000),
   })
   return { status: response.status, body: await response.json() as RawResponse<T> }

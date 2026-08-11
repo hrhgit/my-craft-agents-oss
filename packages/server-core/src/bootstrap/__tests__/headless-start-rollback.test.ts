@@ -85,7 +85,6 @@ function createOptions(input: {
   port: number
   initialize?: () => Promise<void>
   initializeRuntime?: () => Promise<void>
-  startModelRefresh?: () => void
 }) {
   const calls = {
     createSessionManager: 0,
@@ -94,8 +93,6 @@ function createOptions(input: {
     initialize: 0,
     initializeRuntime: 0,
     cleanupRuntime: 0,
-    startModelRefresh: 0,
-    stopModelRefresh: 0,
     cleanupSessionManager: 0,
   }
   const sessionManager = { identity: Symbol('session-manager') }
@@ -124,13 +121,7 @@ function createOptions(input: {
       },
       cleanupRuntime: async () => { calls.cleanupRuntime++ },
       setSessionEventSink: () => { calls.setEventSink++ },
-      initModelRefreshService: () => ({
-        startAll: () => {
-          calls.startModelRefresh++
-          input.startModelRefresh?.()
-        },
-        stopAll: () => { calls.stopModelRefresh++ },
-      }),
+      initModelRefreshService: () => {},
       cleanupSessionManager: async () => { calls.cleanupSessionManager++ },
     },
   }
@@ -156,8 +147,6 @@ describe('headless bootstrap startup transaction', () => {
       initialize: 1,
       initializeRuntime: 0,
       cleanupRuntime: 0,
-      startModelRefresh: 0,
-      stopModelRefresh: 0,
       cleanupSessionManager: 1,
     })
     assertLockReleased(lockFile)
@@ -180,35 +169,12 @@ describe('headless bootstrap startup transaction', () => {
 
     expect(calls.initializeRuntime).toBe(1)
     expect(calls.cleanupRuntime).toBe(1)
-    expect(calls.startModelRefresh).toBe(0)
     expect(calls.cleanupSessionManager).toBe(1)
     assertLockReleased(lockFile)
     expect((await listenOn(port)).listening).toBe(true)
   })
 
-  it('stops a partially started model refresh service when startAll throws', async () => {
-    const port = await reservePort()
-    const lockFile = join(configDir, 'model-refresh-failure.lock')
-    const failure = new Error('model refresh start failed')
-    const { calls, options } = createOptions({
-      lockFile,
-      port,
-      startModelRefresh: () => { throw failure },
-    })
-
-    await expect(bootstrapServer(options)).rejects.toBe(failure)
-
-    expect(calls.startModelRefresh).toBe(1)
-    expect(calls.stopModelRefresh).toBe(1)
-    expect(calls.cleanupRuntime).toBe(1)
-    expect(calls.cleanupSessionManager).toBe(1)
-    assertLockReleased(lockFile)
-
-    const proof = await listenOn(port)
-    expect(proof.listening).toBe(true)
-  })
-
-  it('rolls back refresh, session, and lock when the readiness listener cannot bind', async () => {
+  it('rolls back the runtime, session, and lock when the readiness listener cannot bind', async () => {
     const occupied = await listenOn()
     const address = occupied.address()
     if (!address || typeof address === 'string') throw new Error('Expected a TCP address')
@@ -217,8 +183,6 @@ describe('headless bootstrap startup transaction', () => {
 
     await expect(bootstrapServer(options)).rejects.toMatchObject({ code: 'EADDRINUSE' })
 
-    expect(calls.startModelRefresh).toBe(1)
-    expect(calls.stopModelRefresh).toBe(1)
     expect(calls.cleanupRuntime).toBe(1)
     expect(calls.cleanupSessionManager).toBe(1)
     assertLockReleased(lockFile)
@@ -239,7 +203,6 @@ describe('headless bootstrap startup transaction', () => {
     instance.wsServer.push = (() => { throw new Error('no connected clients') }) as typeof instance.wsServer.push
     await Promise.all([instance.stop(), instance.stop()])
 
-    expect(calls.stopModelRefresh).toBe(1)
     expect(calls.cleanupRuntime).toBe(1)
     expect(calls.cleanupSessionManager).toBe(1)
     assertLockReleased(lockFile)

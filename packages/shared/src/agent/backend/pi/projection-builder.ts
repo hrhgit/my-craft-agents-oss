@@ -425,7 +425,7 @@ export class PiProjectionBuilder {
   private acceptMessageUpdate(event: Record<string, unknown>): PiProjectionEventV1[] {
     const update = event.assistantMessageEvent
     if (!update || typeof update !== 'object') return []
-    const value = update as { type?: unknown; contentIndex?: unknown; delta?: unknown; content?: unknown }
+    const value = update as { type?: unknown; contentIndex?: unknown; delta?: unknown; content?: unknown; summary?: unknown }
     const isWebSearch = value.type === 'websearch_start' || value.type === 'websearch_update' || value.type === 'websearch_end'
     if (isWebSearch) return this.acceptWebSearchUpdate(event, value as Record<string, unknown>)
     const isThinking = value.type === 'thinking_start' || value.type === 'thinking_delta' || value.type === 'thinking_end'
@@ -450,13 +450,32 @@ export class PiProjectionBuilder {
     const kind: string = isThinking
       ? String(value.type)
       : value.type === 'text_end' ? 'assistant_text' : 'assistant_text_delta'
-    return [this.createEvent(entityId, 'content_block', state.version, kind, {
+    const events: PiProjectionEventV1[] = [this.createEvent(entityId, 'content_block', state.version, kind, {
       role: 'assistant', contentKind, messageId, text: state.text ?? '',
       delta: value.type === 'thinking_delta' || value.type === 'text_delta' ? value.delta : undefined,
       streaming: value.type !== 'thinking_end' && value.type !== 'text_end',
       contentIndex: value.contentIndex,
       timestamp: this.messageTimestamp(message),
     }, this.activeTurnId ?? undefined, this.messageTimestamp(message))]
+    if (value.type === 'thinking_end' && typeof value.summary === 'string' && value.summary.trim()) {
+      const summaryEntityId = `content:thinkingSummary:${messageId}:${value.contentIndex}`
+      const summaryState = this.nextEntity(summaryEntityId)
+      summaryState.text = value.summary
+      events.push(this.createEvent(
+        summaryEntityId,
+        'content_block',
+        summaryState.version,
+        'thinking_summary_end',
+        {
+          role: 'assistant', contentKind: 'thinkingSummary', messageId,
+          text: value.summary, streaming: false, contentIndex: value.contentIndex,
+          timestamp: this.messageTimestamp(message),
+        },
+        this.activeTurnId ?? undefined,
+        this.messageTimestamp(message),
+      ))
+    }
+    return events
   }
 
   private acceptWebSearchUpdate(event: Record<string, unknown>, value: Record<string, unknown>): PiProjectionEventV1[] {
@@ -573,6 +592,25 @@ export class PiProjectionBuilder {
         this.activeTurnId ?? undefined,
         this.messageTimestamp(message),
       ))
+      if (contentKind === 'thinking' && typeof part.thinkingSummary === 'string' && part.thinkingSummary.trim()) {
+        const summaryEntityId = `content:thinkingSummary:${messageId}:${contentIndex}`
+        const summaryState = this.nextEntity(summaryEntityId)
+        summaryState.text = part.thinkingSummary
+        events.push(this.createEvent(
+          summaryEntityId,
+          'content_block',
+          summaryState.version,
+          'thinking_summary_end',
+          {
+            role: 'assistant', contentKind: 'thinkingSummary', messageId,
+            text: part.thinkingSummary, streaming: false, contentIndex,
+            stopReason, isIntermediate, isFinal: !isIntermediate, timestamp: this.messageTimestamp(message),
+            usage,
+          },
+          this.activeTurnId ?? undefined,
+          this.messageTimestamp(message),
+        ))
+      }
     }
 
     return events

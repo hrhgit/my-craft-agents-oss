@@ -222,6 +222,7 @@ export function resolveRunDir(runRoot = DEFAULT_MORTISE_UI_RUN_ROOT, runSelector
 
 export async function startMortiseUiRun(args: {
   surface: MortiseUiSurface
+  expectedBuildId?: string
   label?: string
   profileMode?: MortiseUiProfileMode
   windowMode?: MortiseUiWindowMode
@@ -244,6 +245,12 @@ export async function startMortiseUiRun(args: {
     mountedExtensions?: MortiseUiRunManifest['mountedExtensions']
   }
 }): Promise<MortiseUiRunManifest> {
+  if (args.expectedBuildId !== undefined && !/^[0-9a-f]{64}$/.test(args.expectedBuildId)) {
+    throw new Error('expectedBuildId must be a lowercase SHA-256 identity')
+  }
+  if (args.expectedBuildId !== undefined && args.surface !== 'electron') {
+    throw new Error('expectedBuildId requires the Electron surface')
+  }
   if (args.profileMode === 'clone' && !args.sourceMortiseConfigDir) {
     throw new Error('clone profile requires an explicit sourceMortiseConfigDir path')
   }
@@ -259,6 +266,9 @@ export async function startMortiseUiRun(args: {
   const packagedHostIdentity = args.surface === 'electron' && adapterCommand.length === 1
     ? readPackagedDeveloperHostIdentity(adapterCommand[0])
     : undefined
+  if (args.expectedBuildId && packagedHostIdentity && packagedHostIdentity.buildId !== args.expectedBuildId) {
+    throw new Error(`Requested Electron build ${args.expectedBuildId} does not match the packaged Developer Host build ${packagedHostIdentity.buildId}.`)
+  }
   const label = validateRunLabel(args.label)
   const runId = makeRunId()
   const runRoot = resolve(args.runRoot ?? DEFAULT_MORTISE_UI_RUN_ROOT)
@@ -298,6 +308,7 @@ export async function startMortiseUiRun(args: {
     stdoutPath,
     stderrPath,
     adapterCommand: adapterCommand.map(part => redactText(part, [token])),
+    ...(args.expectedBuildId ? { buildId: args.expectedBuildId } : {}),
     ...packagedHostIdentity,
     ...(typeof args.scenario?.name === 'string' ? {
       initialScenario: {
@@ -368,6 +379,7 @@ export async function startMortiseUiRun(args: {
         MORTISE_UI_WINDOW_MODE: windowMode,
         MORTISE_UI_VALIDATION_BUILD: '1',
         MORTISE_UI_TEST_HOST: '1',
+        ...(args.expectedBuildId ? { MORTISE_UI_EXPECTED_BUILD_ID: args.expectedBuildId } : {}),
         ...(manifest.buildId ? { MORTISE_UI_BUILD_ID: manifest.buildId } : {}),
         ...(manifest.sourceId ? { MORTISE_BUILD_SOURCE_ID: manifest.sourceId } : {}),
       },
@@ -606,6 +618,7 @@ export async function restartMortiseUiRun(runDir: string, options: {
   if (stopped.manifest.status !== 'stopped') throw new Error(`Run ${original.runId} could not stop cleanly for restart`)
   const restarted = await startMortiseUiRun({
     surface: original.surface,
+    expectedBuildId: original.buildId,
     label: options.label ?? original.label,
     windowMode: original.windowMode,
     adapterCommand: original.adapterCommand,

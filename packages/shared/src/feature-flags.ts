@@ -28,16 +28,6 @@ export function isDevRuntime(): boolean {
 }
 
 /**
- * Runtime-evaluated check for developer feedback feature.
- * Explicit env override has precedence over dev-runtime defaults.
- */
-export function isDeveloperFeedbackEnabled(): boolean {
-  const override = parseBooleanEnv(getEnv('MORTISE_FEATURE_DEVELOPER_FEEDBACK'));
-  if (override !== undefined) return override;
-  return isDevRuntime();
-}
-
-/**
  * Runtime-evaluated check for mortise-cli integration.
  *
  * Defaults to disabled. Override with MORTISE_FEATURE_CLI=1|0.
@@ -60,15 +50,6 @@ export function isEmbeddedServerEnabled(): boolean {
 }
 
 export const FEATURE_FLAGS = {
-  /**
-   * Enable agent developer feedback tool.
-   *
-   * Defaults to enabled in explicit development runtimes; disabled otherwise.
-   * Override with MORTISE_FEATURE_DEVELOPER_FEEDBACK=1|0.
-   */
-  get developerFeedback(): boolean {
-    return isDeveloperFeedbackEnabled();
-  },
   /**
    * Enable mortise CLI guidance and guardrails.
    *

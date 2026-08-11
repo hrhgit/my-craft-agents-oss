@@ -13,14 +13,16 @@ export type CapabilityExecutionTargetV1 =
   | { owner: 'location-backend'; workspaceId: string; locationId: string }
   | { owner: 'requesting-client'; clientId?: string }
 
-const REQUESTING_CLIENT_CAPABILITIES = new Set([
+export const REQUESTING_CLIENT_CAPABILITY_NAMES = [
   'browser.command',
   'browser.control',
   'browser.open',
   'browser.operate',
   'files.pick',
   'system.notification',
-])
+] as const
+
+const REQUESTING_CLIENT_CAPABILITIES = new Set<string>(REQUESTING_CLIENT_CAPABILITY_NAMES)
 
 export function isRequestingClientCapability(capability: string): boolean {
   return REQUESTING_CLIENT_CAPABILITIES.has(capability)

@@ -144,7 +144,7 @@ export function tokenLimitFor(contextWindow: number | undefined): number {
 export interface SaveResult {
   /** Absolute path for Read/Grep access */
   absolutePath: string;
-  /** Relative path from session dir (e.g. "long_responses/2026-02-09_gmail_users_me.txt") for transform_data */
+  /** Relative path from session dir (e.g. "long_responses/2026-02-09_gmail_users_me.txt") */
   relativePath: string;
 }
 
@@ -466,7 +466,7 @@ Provide a concise but comprehensive summary that captures the essential informat
 
 export interface FormatOptions {
   estimatedTokens: number;
-  /** Relative path from session dir (for transform_data reference) */
+  /** Relative path from session dir */
   relativePath: string;
   /** Absolute path (for Read/Grep reference) */
   absolutePath: string;
@@ -478,7 +478,7 @@ export interface FormatOptions {
 
 /**
  * Format the message the model sees for a large response.
- * Includes file references for both Read/Grep and transform_data access.
+ * Includes file references for Read/Grep access.
  */
 export function formatLargeResponseMessage(opts: FormatOptions): string {
   const { estimatedTokens, relativePath, absolutePath, summary, preview } = opts;
@@ -486,7 +486,6 @@ export function formatLargeResponseMessage(opts: FormatOptions): string {
   const fileRef = [
     `Full data saved to: ${absolutePath}`,
     `- Use Read/Grep to access specific content`,
-    `- Use transform_data with inputFiles: ["${relativePath}"] for data analysis`,
   ].join('\n');
 
   if (summary) {

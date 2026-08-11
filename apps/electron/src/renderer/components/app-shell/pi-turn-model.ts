@@ -79,7 +79,7 @@ interface AssistantUsageRecord {
 
 type AssistantActivityRecord = ActivityItem & {
   __seq: number
-  __contentKind?: 'thinking'
+  __contentKind?: 'thinking' | 'thinkingSummary'
   __disposition?: MessageDisposition
   __stopReason?: string
 }
@@ -166,7 +166,7 @@ function contentMessageId(entity: PiProjectionEntityV1, payload: Record<string, 
   if (entity.entityId.startsWith('content:user:')) {
     return entity.entityId.slice('content:user:'.length)
   }
-  for (const prefix of ['content:text:', 'content:thinking:', 'content:webSearch:']) {
+  for (const prefix of ['content:text:', 'content:thinking:', 'content:thinkingSummary:', 'content:webSearch:']) {
     if (!entity.entityId.startsWith(prefix)) continue
     const identity = entity.entityId.slice(prefix.length)
     const contentIndexSeparator = identity.lastIndexOf(':')
@@ -358,6 +358,15 @@ function buildAssistantTurn(
   const responseMessage = artifactTarget ?? explicitFinal ?? inferredFinal
   const terminalThinking = !artifact && !responseMessage && turnComplete
     ? [...recordValue.activities].reverse().find(activity =>
+        activity.__contentKind === 'thinkingSummary'
+        && activity.__disposition === 'final'
+        && (activity.__stopReason === 'stop' || activity.__stopReason === 'end_turn')
+        && activity.status === 'completed'
+        && Boolean(activity.content?.trim()),
+      )
+    : undefined
+  const terminalRawThinking = !artifact && !responseMessage && !terminalThinking && turnComplete
+    ? [...recordValue.activities].reverse().find(activity =>
         activity.__contentKind === 'thinking'
         && activity.__disposition === 'final'
         && (activity.__stopReason === 'stop' || activity.__stopReason === 'end_turn')
@@ -372,6 +381,8 @@ function buildAssistantTurn(
   const activities = recordValue.activities
     .filter(activity =>
       activity !== terminalThinking
+      && activity !== terminalRawThinking
+      && !(activity.__contentKind === 'thinking' && activity.status !== 'running')
       && !(activity.__contentKind === 'thinking' && !activity.content?.trim())
     )
     .map(({
@@ -401,11 +412,14 @@ function buildAssistantTurn(
   calculateDepths(activities)
 
   let response: AssistantTurn['response']
-  if (responseMessage || artifact || terminalThinking) {
+  if (responseMessage || artifact || terminalThinking || terminalRawThinking) {
     const blocks = responseMessage
       ? [...responseMessage.blocks].sort((a, b) => a.contentIndex - b.contentIndex || a.seq - b.seq)
       : []
-    const messageId = artifact?.messageId ?? responseMessage?.messageId ?? terminalThinking?.messageId
+    const messageId = artifact?.messageId
+      ?? responseMessage?.messageId
+      ?? terminalThinking?.messageId
+      ?? terminalRawThinking?.messageId
     const ui = messageId ? overlay.get(messageId) : undefined
     response = {
       text: artifact?.content
@@ -428,7 +442,7 @@ function buildAssistantTurn(
   const responseCompletedAt = responseMessage?.blocks.reduce<number | undefined>((latest, block) => {
     if (block.timestamp === undefined) return latest
     return latest === undefined || block.timestamp > latest ? block.timestamp : latest
-  }, undefined) ?? terminalThinking?.timestamp
+  }, undefined) ?? terminalThinking?.timestamp ?? terminalRawThinking?.timestamp
   const completedAt = turnComplete
     ? wallClockTimestamp(recordValue.turnEntity?.updatedAt)
       ?? completedAtOverride
@@ -665,7 +679,15 @@ export function buildPiTurns(
         })
         continue
       }
-      const contentKind = payload.contentKind === 'thinking' || entity.kind.startsWith('thinking') ? 'thinking' : 'text'
+      const contentKind = payload.contentKind === 'thinkingSummary'
+        || entity.kind.startsWith('thinking_summary')
+        || entity.entityId.startsWith('content:thinkingSummary:')
+        ? 'thinkingSummary'
+        : payload.contentKind === 'thinking'
+            || entity.kind.startsWith('thinking')
+            || entity.entityId.startsWith('content:thinking:')
+          ? 'thinking'
+          : 'text'
       const turnId = entity.turnId ?? `message:${messageId}`
       const assistant = getAssistantRecord(assistants, turnId, entity.createdSeq)
       const usage = tokenUsage(payload.usage, entity.createdSeq)
@@ -674,6 +696,25 @@ export function buildPiTurns(
         assistant.activities.push({
           __seq: entity.createdSeq,
           __contentKind: 'thinking',
+          __disposition: assistantDisposition(payload),
+          __stopReason: stringValue(payload.stopReason),
+          id: entity.entityId,
+          type: 'intermediate',
+          status: payload.streaming === true ? 'running' : 'completed',
+          content: typeof payload.text === 'string' ? payload.text : '',
+          messageId,
+          annotations: overlay.get(messageId)?.annotations,
+          order: entity.createdSeq,
+          timestamp: wallClockTimestamp(payload.timestamp)
+            ?? wallClockTimestamp(entity.createdAt)
+            ?? entity.createdSeq,
+        })
+        continue
+      }
+      if (contentKind === 'thinkingSummary') {
+        assistant.activities.push({
+          __seq: entity.createdSeq,
+          __contentKind: 'thinkingSummary',
           __disposition: assistantDisposition(payload),
           __stopReason: stringValue(payload.stopReason),
           id: entity.entityId,

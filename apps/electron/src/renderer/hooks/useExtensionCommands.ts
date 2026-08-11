@@ -25,6 +25,7 @@
 import * as React from 'react'
 import type { ExtensionBridgeEvent, PiExtensionCommand } from '@mortise/shared/agent/backend/types'
 import type { ExtensionCommandResult } from '@mortise/core/types'
+import { waitForOperation } from '../lib/operations'
 
 // ============================================================================
 // 类型定义
@@ -154,8 +155,10 @@ export function useExtensionCommands(sessionId: string | undefined): UseExtensio
         invokeExtensionCommand?: (
           sessionId: string,
           commandName: string,
-          args?: Record<string, unknown>,
-        ) => Promise<ExtensionCommandResult>
+          args: Record<string, unknown> | undefined,
+          ownerExtensionId: string | undefined,
+          operationId: string,
+        ) => Promise<import('@mortise/shared/protocol').OperationAccepted>
       }
     }
 
@@ -165,7 +168,11 @@ export function useExtensionCommands(sessionId: string | undefined): UseExtensio
     }
 
     try {
-      return await invoke(sessionId ?? '', name, args)
+      const accepted = await invoke(sessionId ?? '', name, args, undefined, crypto.randomUUID())
+      const receipt = await waitForOperation(window.electronAPI, accepted.operationId)
+      return receipt.status === 'succeeded'
+        ? { invoked: true }
+        : { invoked: false, error: receipt.error?.message ?? `Extension command ${receipt.status}` }
     } catch (error) {
       return { invoked: false, error: error instanceof Error ? error.message : String(error) }
     }

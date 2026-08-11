@@ -56,11 +56,13 @@ describe('Pi provider model fetching', () => {
     expect(addSelectedFetchedModel(state, fetchedModels, 'model-a')).toBe(state)
   })
 
-  it('preserves the reasoning capability enabled in the provider form', () => {
+  it('omits default reasoning metadata and preserves explicit false', () => {
     expect(normalizeModelsForSave([
       { id: 'reasoning-model', name: 'Reasoning Model', reasoning: true },
+      { id: 'plain-model', name: 'Plain Model', reasoning: false },
     ], 'reasoning-model')).toEqual([
-      { id: 'reasoning-model', name: 'Reasoning Model', reasoning: true },
+      { id: 'reasoning-model', name: 'Reasoning Model' },
+      { id: 'plain-model', name: 'Plain Model', reasoning: false },
     ])
   })
 })

@@ -54,6 +54,8 @@ export interface WorkspaceTransferRequestV1 {
   expectedSha256?: string
 }
 
+export const CLIENT_WORKSPACE_EXECUTE_TRANSFER = 'workspace:executeTransfer' as const
+
 export interface WorkspaceTransferResultV1 {
   schemaVersion: typeof WORKSPACE_TRANSFER_SCHEMA_VERSION
   operationId: string

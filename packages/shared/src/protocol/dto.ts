@@ -118,6 +118,8 @@ export interface CreateSessionOptions {
  * The staging identity is attachment-only storage and is never a Session.
  */
 export interface CreateAndSendFirstTurnRequest {
+  /** Client-generated idempotency identity for the whole first-turn operation. */
+  operationId: string
   workspaceId: string
   message: string
   attachments?: FileAttachment[]
@@ -188,6 +190,8 @@ export type SessionEvent =
 export type MidStreamSendIntent = 'default' | 'alternate'
 
 export interface SendMessageOptions {
+  /** Client-generated idempotency identity for the transport operation. */
+  operationId?: string
   skillSlugs?: string[]
   badges?: ContentBadge[]
   optimisticMessageId?: string
@@ -206,17 +210,17 @@ export type SessionCommand =
   | { type: 'setActiveViewing'; workspaceId: string }
   | { type: 'setThinkingLevel'; level: ThinkingLevel }
   /** Retries only an already-accepted turn's pending settlement; carries no user payload. */
-  | { type: 'retrySettlement' }
+  | { type: 'retrySettlement'; operationId: string }
   /** Replays a Mortise-accepted unpublished turn with its original mutation id. */
-  | { type: 'retryAcceptedMessage' }
+  | { type: 'retryAcceptedMessage'; operationId: string }
   /** Withdraw one queued follow-up without interrupting the active turn. */
   | { type: 'withdrawQueuedMessage'; messageId: string }
   | { type: 'showInFinder' }
   | { type: 'copyPath' }
-  | { type: 'shareToViewer' }
-  | { type: 'updateShare' }
-  | { type: 'revokeShare' }
-  | { type: 'refreshTitle' }
+  | { type: 'shareToViewer'; operationId: string }
+  | { type: 'updateShare'; operationId: string }
+  | { type: 'revokeShare'; operationId: string }
+  | { type: 'refreshTitle'; operationId: string }
   | { type: 'setProvider'; provider: string }
   | { type: 'setPendingPlanExecution'; planPath?: string; artifactId?: string; draftInputSnapshot?: string }
   | { type: 'markCompactionComplete' }

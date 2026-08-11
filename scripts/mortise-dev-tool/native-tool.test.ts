@@ -27,12 +27,13 @@ describe('Mortise Windows desktop tool', () => {
     expect(script).not.toContain('标准构建')
   })
 
-  it('routes start and restart through the existing Electron portmux project', () => {
+  it('reuses the Electron supervisor for start and restart, with a legacy cold-restart fallback', () => {
     expect(script).toContain('"start", "--project", electronProject')
     expect(script).toContain('"stop", "--project", electronProject')
-    expect(script).toContain('StopDesktopBeforeLaunch(false)')
+    expect(script).toContain('RunDesktopControl("start", false)')
+    expect(script).toContain('RunDesktopControl("restart", true)')
+    expect(script).toContain('scripts/electron-dev-control.ts')
     expect(script).toContain('StopDesktopBeforeLaunch(true)')
-    expect(script).toContain(String.raw`Starting Electron\\.\\.\\.\\s*$`)
     expect(script).toContain('IsSourceDesktopRunning()')
     expect(script).not.toContain('assigned_port_status')
   })
@@ -65,8 +66,9 @@ describe('Mortise Windows desktop tool', () => {
   })
 
   it('lets the tool return to idle after the source Electron window closes', () => {
-    expect(script).toContain('desktopState == "running" && !IsSourceDesktopRunning()')
-    expect(script).toContain('? "stopping" : "idle"')
+    expect(script).toContain('desktopState == "running" && !sourceDesktopRunning')
+    expect(script).toContain('SetDesktopState("idle")')
+    expect(script).toContain('(desktopState == "starting" || desktopState == "restarting") && sourceDesktopRunning')
     expect(script).toContain('statusText.Text = "正在关闭"')
   })
 

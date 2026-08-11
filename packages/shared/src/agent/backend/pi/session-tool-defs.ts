@@ -11,7 +11,6 @@ import {
   SESSION_TOOL_NAMES,
   type JsonSchemaToolDef,
 } from '@mortise/session-tools-core';
-import { FEATURE_FLAGS } from '../../../feature-flags.ts';
 
 export type SessionHostToolDef = JsonSchemaToolDef;
 
@@ -25,7 +24,5 @@ export const PI_EXTENSION_OWNED_SESSION_TOOL_NAMES = new Set<string>([
 ]);
 
 export function getSessionHostToolDefs(): SessionHostToolDef[] {
-  return getToolDefsAsJsonSchema({
-    includeDeveloperFeedback: FEATURE_FLAGS.developerFeedback,
-  });
+  return getToolDefsAsJsonSchema();
 }

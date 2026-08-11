@@ -280,7 +280,43 @@ describe("ModelRegistry", () => {
 
 			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
 			expect(registry.getError()).toBeUndefined();
-			expect(registry.find("my-custom-provider", "my-model")).toBeDefined();
+			expect(registry.find("my-custom-provider", "my-model")?.reasoning).toBe(false);
+		});
+
+		test("custom provider models default to reasoning when the field is omitted", () => {
+			authStorage.set("my-custom-provider", { type: "api_key", key: "stored-key" });
+			writeRawModelsJson({
+				"my-custom-provider": {
+					baseUrl: "https://example.com/v1",
+					api: "openai-completions",
+					models: [{ id: "my-model" }],
+				},
+			});
+
+			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+			expect(registry.getError()).toBeUndefined();
+			expect(registry.find("my-custom-provider", "my-model")?.reasoning).toBe(true);
+		});
+
+		test("custom provider aliases inherit built-in model metadata by endpoint and model id", () => {
+			authStorage.set("opencode-go-ds", { type: "api_key", key: "stored-key" });
+			writeRawModelsJson({
+				"opencode-go-ds": {
+					baseUrl: "https://opencode.ai/zen/go/v1",
+					api: "openai-completions",
+					models: [{ id: "deepseek-v4-flash" }],
+				},
+			});
+
+			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+			const model = registry.find("opencode-go-ds", "deepseek-v4-flash");
+			const compat = model?.compat as OpenAICompletionsCompat | undefined;
+
+			expect(registry.getError()).toBeUndefined();
+			expect(model?.reasoning).toBe(true);
+			expect(model?.thinkingLevelMap?.max).toBe("max");
+			expect(compat?.requiresReasoningContentOnAssistantMessages).toBe(true);
+			expect(compat?.thinkingFormat).toBe("deepseek");
 		});
 
 		test("custom provider with same name as built-in merges with built-in models", () => {

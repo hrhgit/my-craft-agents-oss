@@ -6,13 +6,16 @@ import { join } from 'node:path'
 import type { Workspace } from '@mortise/core/types'
 import {
   RPC_CHANNELS,
+  CLIENT_WORKSPACE_EXECUTE_TRANSFER,
   WORKSPACE_TRANSFER_CHUNK_BYTES,
   parseWorkspaceTransferEndpointOpenV1,
   parseWorkspaceTransferEndpointReadResultV1,
   type WorkspaceTransferRequestV1,
 } from '@mortise/shared/protocol'
 import { WorkspaceTopologyStore } from '@mortise/shared/workspaces'
+import { MultiWriterStore } from '@mortise/shared/storage'
 import type { HandlerFn, RpcServer } from '../../transport'
+import { OperationCoordinator } from '../../operations'
 import {
   registerWorkspaceTransferHandlers,
   transferWorkspaceFile,
@@ -207,6 +210,86 @@ describe('local Workspace transfer', () => {
       expect(await readFile(join(harness.attachedRoot, 'destination.txt'), 'utf-8')).toBe('rpc payload')
     } finally {
       harness.store.close()
+      await rm(harness.primaryRoot, { recursive: true, force: true })
+      await rm(harness.attachedRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('accepts before client orchestration and completes without a client request deadline', async () => {
+    const harness = await createHarness()
+    const operationRoot = await mkdtemp(join(tmpdir(), 'mortise-workspace-operation-'))
+    const coordinator = new OperationCoordinator(MultiWriterStore.openSync({
+      databasePath: join(operationRoot, 'state.sqlite'),
+      writerId: 'workspace-transfer-operation-test',
+      writerVersion: 1,
+    }))
+    try {
+      await writeFile(join(harness.primaryRoot, 'source.txt'), 'client orchestrated')
+      const handlers = new Map<string, HandlerFn>()
+      let invoked: { clientId: string; channel: string; options?: { timeoutMs?: number | null } } | null = null
+      let finishClient!: () => void
+      const clientFinished = new Promise<void>(resolve => { finishClient = resolve })
+      const request: WorkspaceTransferRequestV1 = {
+        schemaVersion: 1,
+        operationId: 'client-orchestrated-transfer',
+        workspaceId: 'workspace-1',
+        ...harness.request('copy'),
+      }
+      const result = {
+        schemaVersion: 1 as const,
+        operationId: request.operationId,
+        status: 'applied' as const,
+        workspaceId: request.workspaceId,
+        sourceLocationId: request.source.locationId,
+        destinationLocationId: request.destination.locationId,
+        revision: request.expectedRevision,
+        mode: request.mode,
+        sha256: createHash('sha256').update('client orchestrated').digest('hex'),
+        bytes: Buffer.byteLength('client orchestrated'),
+        sourceRemoved: false,
+      }
+      const server = {
+        handle(channel: string, handler: HandlerFn) { handlers.set(channel, handler) },
+        push() {},
+        async invokeClient() { throw new Error('unexpected legacy client invocation') },
+        async invokeClientWithOptions(clientId: string, channel: string, _args: unknown[], options?: { timeoutMs?: number | null }) {
+          invoked = { clientId, channel, options }
+          await clientFinished
+          harness.store.prepareTransfer(request, { bytes: result.bytes, sha256: result.sha256 })
+          harness.store.markTransferDestinationPublished(request)
+          harness.store.markTransferSourceResolved(request, false)
+          return harness.store.recordTransferResult(request, result)
+        },
+        hasClientCapability(_clientId: string, capability: string) { return capability === CLIENT_WORKSPACE_EXECUTE_TRANSFER },
+        findClientsWithCapability() { return [] },
+      } as RpcServer
+      registerWorkspaceTransferHandlers(server, harness.store, { operationCoordinator: coordinator })
+
+      const accepted = await handlers.get(RPC_CHANNELS.workspaces.TRANSFER)!({
+        clientId: 'electron-client', workspaceId: 'workspace-1', webContentsId: null,
+      }, request)
+      expect(accepted).toMatchObject({ accepted: true, operationId: request.operationId, status: 'accepted' })
+      await new Promise(resolve => setTimeout(resolve, 0))
+      expect(invoked as { clientId: string; channel: string; options?: { timeoutMs?: number | null } } | null).toEqual({
+        clientId: 'electron-client',
+        channel: CLIENT_WORKSPACE_EXECUTE_TRANSFER,
+        options: { timeoutMs: null },
+      })
+      expect(coordinator.get(request.operationId)).toMatchObject({ status: 'running' })
+
+      finishClient()
+      await new Promise(resolve => setTimeout(resolve, 10))
+      expect(coordinator.get(request.operationId)).toMatchObject({
+        status: 'succeeded',
+        resultRef: `workspace-transfer:${request.operationId}`,
+      })
+      await expect(handlers.get(RPC_CHANNELS.workspaces.TRANSFER_RECEIPT_GET)!({
+        clientId: 'electron-client', workspaceId: 'workspace-1', webContentsId: null,
+      }, request)).resolves.toMatchObject({ operationId: request.operationId, status: 'duplicate' })
+    } finally {
+      coordinator.close()
+      harness.store.close()
+      await rm(operationRoot, { recursive: true, force: true })
       await rm(harness.primaryRoot, { recursive: true, force: true })
       await rm(harness.attachedRoot, { recursive: true, force: true })
     }

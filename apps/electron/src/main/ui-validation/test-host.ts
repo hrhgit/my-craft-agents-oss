@@ -5,8 +5,17 @@ import { basename, dirname, join, resolve } from 'node:path'
 import { BrowserWindow, dialog, Menu } from 'electron'
 import type { ManagedWindowRole, WindowManager } from '../window-manager'
 import type { BrowserPaneManager } from '../browser-pane-manager'
-import { queryUiValidationCapabilities, UiValidationError, type UiValidationCapabilitiesQuery } from '@mortise/shared/ui-validation'
-import { extensionUIValidationEntityId } from '@mortise/shared/protocol'
+import {
+  UI_VALIDATION_PROTOCOL_VERSION,
+  queryUiValidationCapabilities,
+  UiValidationError,
+  type UiValidationCapabilitiesQuery,
+} from '@mortise/shared/ui-validation'
+import {
+  extensionUIValidationEntityId,
+  isRequestingClientCapability,
+  type CapabilityRequestV1,
+} from '@mortise/shared/protocol'
 import {
   ElectronUiDriverError,
   ElectronUiSurfaceDriver,
@@ -45,12 +54,13 @@ export interface UiTestHostOptions {
   windowManager: WindowManager
   browserPaneManager?: BrowserPaneManager
   runtimeLogPath: string
+  probeWorkspaceCapability?: (request: CapabilityRequestV1) => Promise<{ output: unknown; progress: unknown[] }>
   openRoute?: (params: Record<string, unknown>, target: { webContentsId: number; workspaceId: string | null }) => Promise<unknown>
   shutdown?: () => void
 }
 
 interface CommandRequest {
-  v: 1
+  v: typeof UI_VALIDATION_PROTOCOL_VERSION
   kind: 'request'
   id: string
   requestId: string
@@ -98,7 +108,9 @@ export async function startUiTestHost(options: UiTestHostOptions): Promise<UiTes
   const windowMode = parseElectronUiWindowMode(process.env.MORTISE_UI_WINDOW_MODE)
   if (surface !== 'electron') throw new Error(`Electron Test Host cannot serve surface ${surface ?? '(missing)'}.`)
   if (!/^[a-f0-9]{64}$/i.test(token)) throw new Error('MORTISE_UI_TOKEN must be 64 hexadecimal characters.')
-  if (process.env.MORTISE_UI_PROTOCOL_VERSION !== '1') throw new Error('Unsupported MORTISE_UI_PROTOCOL_VERSION.')
+  if (process.env.MORTISE_UI_PROTOCOL_VERSION !== String(UI_VALIDATION_PROTOCOL_VERSION)) {
+    throw new Error('Unsupported MORTISE_UI_PROTOCOL_VERSION.')
+  }
 
   await mkdir(artifactsDir, { recursive: true })
   const driver = new ElectronUiSurfaceDriver(options.windowManager)
@@ -246,7 +258,7 @@ export async function startUiTestHost(options: UiTestHostOptions): Promise<UiTes
       }
       revision = Math.max(revision, snapshotRevision(result), lastSnapshot?.revision ?? 0)
       const successResponse = {
-        v: 1,
+        v: UI_VALIDATION_PROTOCOL_VERSION,
         kind: 'response',
         id: body.id,
         requestId: body.requestId,
@@ -300,6 +312,35 @@ export async function startUiTestHost(options: UiTestHostOptions): Promise<UiTes
         kind: params.kind,
         id: params.id,
       } as UiValidationCapabilitiesQuery)
+    }
+    if (command === 'capability-probe') {
+      if (!options.probeWorkspaceCapability) {
+        throw new ElectronUiDriverError('UNSUPPORTED', 'Workspace capability probe is unavailable.')
+      }
+      const capability = requiredString(params.capability, 'capability')
+      if (!isRequestingClientCapability(capability)) {
+        throw new ElectronUiDriverError('UNSUPPORTED', `Capability is not owned by the requesting client: ${capability}`)
+      }
+      const timeoutMs = Math.min(numberOr(params.timeoutMs, 30_000), MAX_WAIT_MS)
+      const request: CapabilityRequestV1 = {
+        version: 1,
+        requestId: randomUUID(),
+        capability,
+        sessionId: requiredString(params.sessionId, 'sessionId'),
+        runtimeId: 'mortise-ui-validation',
+        extensionId: 'mortise-ui-validation',
+        operation: requiredString(params.operation, 'operation'),
+        input: params.input,
+        timeoutMs,
+        target: { owner: 'requesting-client' },
+      }
+      return {
+        capability,
+        operation: request.operation,
+        sessionId: request.sessionId,
+        ...await options.probeWorkspaceCapability(request),
+        verificationLevel: 'scenario-verified',
+      }
     }
     if (command === 'status') {
       const state = stateBridge.snapshot(selectedWindowId(options.windowManager, selector, false))
@@ -1232,7 +1273,7 @@ export async function startUiTestHost(options: UiTestHostOptions): Promise<UiTes
   if (!address || typeof address === 'string') throw new Error('UI Test Host did not bind a TCP address.')
   const url = `http://127.0.0.1:${address.port}`
   await atomicWriteJson(manifestPath, {
-    protocolVersion: 1,
+    protocolVersion: UI_VALIDATION_PROTOCOL_VERSION,
     runId,
     surface,
     transport: 'http',
@@ -1371,6 +1412,7 @@ function normalizeMethod(method: string): string {
     'app.shutdown': 'shutdown',
     'app.open': 'open',
     'ui.capabilities': 'capabilities',
+    'capability.probe': 'capability-probe',
     'scenario.apply': 'scenario',
     'ui.windows': 'windows',
     'ui.window': 'window',
@@ -1615,7 +1657,7 @@ function failureEnvelope(
   const knownProtocol = error instanceof UiValidationError
   const known = knownDriver || knownProtocol
   return {
-    v: 1,
+    v: UI_VALIDATION_PROTOCOL_VERSION,
     kind: 'response',
     id: requestId,
     requestId,

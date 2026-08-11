@@ -4,6 +4,7 @@ import type { ExtensionUINode } from '@mortise/shared/protocol'
 import { cn } from '@/lib/utils'
 import { extensionValidationStore } from './extension-validation-store'
 import { useOptionalAppShellContext } from '@/context/AppShellContext'
+import { waitForOperation } from '../../lib/operations'
 
 type SandboxNode = Extract<ExtensionUINode, { type: 'sandbox-app' }>
 
@@ -280,8 +281,11 @@ export function SandboxAppHost({ node, sessionId, extensionId, runtimeId, worksp
           return respond(requestId, false, undefined, 'Command arguments must be JSON serializable')
         }
         if (args.length > MAX_MESSAGE_BYTES) return respond(requestId, false, undefined, 'Command arguments are too large')
-        void window.electronAPI?.invokeExtensionCommand?.(sessionId, message.command, args, extensionId)
-          .then(result => respond(requestId, result.invoked, result, result.error))
+        void window.electronAPI?.invokeExtensionCommand?.(sessionId, message.command, args, extensionId, crypto.randomUUID())
+          .then(async accepted => {
+            const receipt = await waitForOperation(window.electronAPI, accepted.operationId)
+            respond(requestId, receipt.status === 'succeeded', receipt, receipt.error?.message)
+          })
           .catch(error => respond(requestId, false, undefined, error instanceof Error ? error.message : String(error)))
         return
       }

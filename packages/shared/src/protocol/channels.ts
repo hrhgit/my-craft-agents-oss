@@ -4,6 +4,12 @@
  * Key paths are internal and may be reorganized freely.
  */
 export const RPC_CHANNELS = {
+  operations: {
+    GET: 'operations:get',
+    CANCEL: 'operations:cancel',
+    SUBSCRIBE: 'operations:subscribe',
+    UPDATED: 'operation:updated',
+  },
   remote: {
     TEST_CONNECTION: 'remote:testConnection',
   },
@@ -20,6 +26,7 @@ export const RPC_CHANNELS = {
     UNREAD_SUMMARY_CHANGED: 'sessions:unreadSummaryChanged',
     CREATE: 'sessions:create',
     CREATE_AND_SEND_FIRST_TURN: 'sessions:createAndSendFirstTurn',
+    GET_FIRST_TURN_RESULT: 'sessions:getFirstTurnResult',
     DISCARD_FIRST_TURN_ATTACHMENT_STAGING: 'sessions:discardFirstTurnAttachmentStaging',
     DELETE: 'sessions:delete',
     GET_MESSAGES: 'sessions:getMessages',
@@ -41,8 +48,10 @@ export const RPC_CHANNELS = {
     FILES_CHANGED: 'sessions:filesChanged',
     SEARCH_CONTENT: 'sessions:searchContent',
     EXPORT: 'sessions:export',
+    GET_EXPORT_RESULT: 'sessions:getExportResult',
     IMPORT: 'sessions:import',
     EXPORT_REMOTE_TRANSFER: 'sessions:exportRemoteTransfer',
+    GET_REMOTE_TRANSFER_RESULT: 'sessions:getRemoteTransferResult',
     IMPORT_REMOTE_TRANSFER: 'sessions:importRemoteTransfer',
     LIST_CHILD_SESSIONS: 'sessions:listChildSessions',
   },

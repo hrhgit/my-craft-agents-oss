@@ -592,13 +592,6 @@ async function getBrowserToolIconDataUrl(): Promise<string | undefined> {
 }
 
 const SESSION_TOOL_DISPLAY_NAMES: Record<string, string> = {
-  config_validate: 'Validate Config',
-  skill_validate: 'Validate Skill',
-  mermaid_validate: 'Validate Mermaid',
-  update_user_preferences: 'Update Preferences',
-  transform_data: 'Transform Data',
-  script_sandbox: 'Run Script',
-  send_developer_feedback: 'Send Feedback',
   spawn_session: 'Spawn Session',
   browser_tool: 'Browser',
   get_session_info: 'Session Info',
@@ -4746,7 +4739,7 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
     }
   }
 
-  private getExtensionReloadActiveSessions(): PiExtensionReloadActiveSession[] {
+  getExtensionReloadActiveSessions(): PiExtensionReloadActiveSession[] {
     const active: PiExtensionReloadActiveSession[] = []
     for (const managed of this.sessions.values()) {
       if (!managed.isProcessing && !this.isPiProjectionProcessing(managed.id)) continue

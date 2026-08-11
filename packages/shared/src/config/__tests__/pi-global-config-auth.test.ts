@@ -145,7 +145,10 @@ describe('pi-global-config auth storage', () => {
       savePiGlobalProvider('my-provider', {
         baseUrl: 'https://two.example/v1',
         api: 'openai-completions',
-        models: [{ id: 'two' }],
+        models: [
+          { id: 'two', reasoning: true },
+          { id: 'plain', reasoning: false },
+        ],
       });
       savePiGlobalProvider('root-openai-provider', {
         baseUrl: 'https://root-openai.example',
@@ -177,6 +180,10 @@ describe('pi-global-config auth storage', () => {
 
     expect(output.models.providers['my-provider']!.apiKey).toBeUndefined()
     expect(output.models.providers['my-provider']!.baseUrl).toBe('https://two.example/v1')
+    expect(output.models.providers['my-provider']!.models).toEqual([
+      { id: 'two' },
+      { id: 'plain', reasoning: false },
+    ])
     expect(output.models.providers['root-openai-provider']!.baseUrl).toBe('https://root-openai.example/v1')
     expect(output.models.providers['anthropic-provider']!.baseUrl).toBe('https://api.anthropic.com')
     expect(output.models.providers['embedded-key-provider']!.apiKey).toBeUndefined()
@@ -188,7 +195,7 @@ describe('pi-global-config auth storage', () => {
     expect(output.longMask).toBe('sk-live...mnop')
   })
 
-  subprocessIt('enables model reasoning when a non-off default thinking level is saved', () => {
+  subprocessIt('defaults models to reasoning without rewriting omitted metadata', () => {
     const { piAgentDir, modelsPath, authPath } = setupPiAgentDir()
     writeJson(modelsPath, {
       providers: {
@@ -211,9 +218,16 @@ describe('pi-global-config auth storage', () => {
       plainModel: { reasoning?: boolean }
       registryReasoning?: boolean
       requestReasoning?: { effort?: string; summary?: string }
+      explicitFalseError?: string
     }>(piAgentDir, `
       await setPiGlobalDefault('my-provider', 'reasoning-model', 'high');
       await setPiGlobalDefault('my-provider', 'plain-model', 'off');
+      let explicitFalseError;
+      try {
+        await setPiGlobalDefault('my-provider', 'plain-model', 'high');
+      } catch (error) {
+        explicitFalseError = error instanceof Error ? error.message : String(error);
+      }
       const models = JSON.parse(readFileSync(join(piAgentDir, 'models.json'), 'utf-8'));
       const { AuthStorage } = await import(${JSON.stringify(PI_AUTH_STORAGE_MODULE_PATH)});
       const { ModelRegistry } = await import(${JSON.stringify(PI_MODEL_REGISTRY_MODULE_PATH)});
@@ -239,12 +253,14 @@ describe('pi-global-config auth storage', () => {
         plainModel: models.providers['my-provider'].models[1],
         registryReasoning: model?.reasoning,
         requestReasoning: capturedPayload?.reasoning,
+        explicitFalseError,
       }));
     `)
 
-    expect(output.reasoningModel.reasoning).toBe(true)
+    expect(output.reasoningModel.reasoning).toBeUndefined()
     expect(output.plainModel.reasoning).toBe(false)
     expect(output.registryReasoning).toBe(true)
     expect(output.requestReasoning).toEqual({ effort: 'high', summary: 'auto' })
+    expect(output.explicitFalseError).toContain('explicitly disables reasoning')
   })
 })

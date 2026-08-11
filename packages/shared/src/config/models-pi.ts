@@ -20,7 +20,7 @@ function piModelToDefinition(model: HostModelCatalogModel): ModelDefinition {
     description: `${model.provider} model via Pi`,
     provider: 'pi',
     contextWindow: model.contextWindow,
-    supportsThinking: model.reasoning,
+    supportsThinking: model.reasoning !== false,
     supportsImages: (model.input ?? []).includes('image') || undefined,
   };
 }
@@ -81,7 +81,7 @@ export function getPiProviderCatalogModels(provider: string): PiProviderCatalogM
     costInput: model.cost?.input ?? 0,
     costOutput: model.cost?.output ?? 0,
     contextWindow: model.contextWindow,
-    reasoning: model.reasoning,
+    reasoning: model.reasoning !== false,
   }));
 }
 

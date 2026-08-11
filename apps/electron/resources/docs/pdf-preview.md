@@ -13,7 +13,7 @@ The `pdf-preview` block renders PDF files inline in chat messages — showing th
 | **`image-preview` block** | Screenshots, captures, visual diffs | Inline fit-to-container + fullscreen viewer |
 | **`datatable`/`spreadsheet`** | Structured data, tables | Interactive sortable/filterable tables |
 
-**Key principle:** Unlike `html-preview` which needs `transform_data` to extract HTML, PDFs are already files on disk. Just reference the file path directly — no extraction step needed.
+**Key principle:** Unlike `html-preview` which needs HTML extraction, PDFs are already files on disk. Just reference the file path directly — no extraction step needed.
 
 ## When to Use
 
@@ -122,12 +122,12 @@ pdf.cell(text='Hello World')
 pdf.output(sys.argv[-1])
 ```
 
-Call via `transform_data`, then reference the output:
+Run this script via the shell, then reference the output file:
 
 ````
 ```pdf-preview
 {
-  "src": "/absolute/path/from/transform_data/report.pdf",
+  "src": "/absolute/path/to/report.pdf",
   "title": "Generated Report"
 }
 ```

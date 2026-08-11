@@ -16,6 +16,7 @@ export type ExtensionSessionBootstrapV1 = Record<string, Record<string, unknown>
 
 export interface ExtensionFrontendMessageV2 {
   schemaVersion: typeof EXTENSION_FRONTEND_CHANNEL_SCHEMA_VERSION
+  operationId: string
   extensionId: string
   channelId: string
   scope: ExtensionFrontendChannelScope

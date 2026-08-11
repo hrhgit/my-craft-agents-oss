@@ -2,10 +2,13 @@ import { afterEach, describe, expect, it } from 'bun:test'
 import { createHash } from 'node:crypto'
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { immutableRuntimeRequiredAppPaths } from '@mortise/session-tools-core/runtime'
 import { ELECTRON_BUILD_INPUTS } from '../build-inputs.ts'
+import { resolveCachedUvToolchain, type Arch, type Platform } from '../common.ts'
 import {
+  ELECTRON_BUILD_PRODUCER_VERSION,
+  ELECTRON_BUILD_SCHEMA_VERSION,
   acquireElectronBuild,
   cleanupElectronBuildCache,
   computeElectronBuildId,
@@ -14,6 +17,8 @@ import {
   publishBuildBunToolchain,
   releaseElectronBuild,
   resolveElectronBuildExecutable,
+  seedUvToolchainCacheFromCompletedBuild,
+  withElectronBuildForPackaging,
   withStagedElectronBuild,
   writeElectronBuildProvenance,
 } from '../electron-build-cache.ts'
@@ -69,6 +74,36 @@ describe('mortise-ui immutable Electron build cache', () => {
     expect(publishBuildBunToolchain(buildRoot, sourceExecutable)).toBe(binary)
     expect(createHash('sha256').update(readFileSync(binary)).digest('hex')).toBe(expectedSha256)
   }, 30_000)
+
+  it('copies a provenance-verified uv binary into an isolated toolchain cache', () => {
+    const root = tempRoot('mortise-uv-toolchain-cross-cache-')
+    const sourceBuildRoot = join(root, 'electron-builds')
+    const targetToolchainRoot = join(root, 'developer-kit-toolchains')
+    const buildId = 'a'.repeat(64)
+    const platform = process.platform as Platform
+    const arch = process.arch as Arch
+    const binaryName = platform === 'win32' ? 'uv.exe' : 'uv'
+    const relativeUv = `dist/resources/bin/${platform}-${arch}/${binaryName}`
+    const sourceBinary = join(sourceBuildRoot, 'builds', buildId, 'app', ...relativeUv.split('/'))
+    const content = Buffer.from('provenance-verified uv fixture')
+    const sha256 = createHash('sha256').update(content).digest('hex')
+    mkdirSync(dirname(sourceBinary), { recursive: true })
+    writeFileSync(sourceBinary, content)
+    writeFileSync(join(sourceBuildRoot, 'builds', buildId, 'build.json'), JSON.stringify({
+      schemaVersion: ELECTRON_BUILD_SCHEMA_VERSION,
+      producerVersion: ELECTRON_BUILD_PRODUCER_VERSION,
+      buildId,
+      platform,
+      arch,
+      createdAt: new Date(0).toISOString(),
+      artifacts: [{ path: relativeUv, sizeBytes: content.byteLength, sha256 }],
+    }))
+
+    expect(seedUvToolchainCacheFromCompletedBuild(sourceBuildRoot, targetToolchainRoot)).toBe(true)
+    const cached = resolveCachedUvToolchain(targetToolchainRoot, { platform, arch })
+    expect(cached).toBeDefined()
+    expect(readFileSync(cached!)).toEqual(content)
+  })
 
   it('keeps cross-identity publication staging visible to garbage collection', async () => {
     const root = tempRoot('mortise-bun-toolchain-cross-identity-')
@@ -167,6 +202,35 @@ describe('mortise-ui immutable Electron build cache', () => {
     })).toThrow('consumer failed')
     expect(existsSync(failedStage)).toBe(false)
     expect(readFileSync(join(repoRoot, 'apps/electron/dist/resources/fixture.txt'), 'utf8')).toBe('live-before')
+    releaseElectronBuild(lease)
+  }, 20_000)
+
+  it('packages directly from a leased immutable capsule and detects input mutation', () => {
+    const root = tempRoot('mortise-electron-build-direct-package-')
+    const repoRoot = join(root, 'repo')
+    const buildRoot = join(root, 'cache')
+    initGitRepo(repoRoot)
+    const lease = acquireElectronBuild({
+      repoRoot,
+      buildRoot,
+      runId: 'direct-package',
+      runDir: createRun(root, 'direct-package'),
+      build: sourceRoot => seedBuildOutputs(sourceRoot, 'immutable'),
+    })
+
+    expect(withElectronBuildForPackaging(lease, build => {
+      expect(build.appDir).toBe(lease.appDir)
+      expect(build.provenancePath).toBe(join(lease.runDir, 'electron-build-provenance.json'))
+      expect(JSON.parse(readFileSync(build.provenancePath, 'utf8'))).toMatchObject({
+        buildId: lease.buildId,
+        sourceId: lease.manifest.sourceId,
+      })
+      return readFileSync(join(build.distDir, 'resources', 'fixture.txt'), 'utf8')
+    })).toBe('immutable')
+
+    expect(() => withElectronBuildForPackaging(lease, build => {
+      writeFileSync(join(build.distDir, 'resources', 'fixture.txt'), 'mutated')
+    })).toThrow('changed while it was being packaged')
     releaseElectronBuild(lease)
   }, 20_000)
 
@@ -343,6 +407,58 @@ describe('mortise-ui immutable Electron build cache', () => {
     })).toThrow('pinned acquisition will not rebuild')
     expect(buildCount).toBe(1)
     expect(existsSync(join(lease.appDir, 'dist', 'main.cjs'))).toBe(false)
+  }, 30_000)
+
+  it('uses lightweight artifact verification for an explicitly pinned runtime build', () => {
+    const root = tempRoot('mortise-ui-build-fast-pinned-')
+    const repoRoot = join(root, 'repo')
+    const buildRoot = join(root, 'cache')
+    initGitRepo(repoRoot)
+    const original = acquireElectronBuild({
+      repoRoot,
+      buildRoot,
+      runId: 'fast-original',
+      runDir: createRun(root, 'fast-original'),
+      build: sourceRoot => seedBuildOutputs(sourceRoot, 'original'),
+    })
+    releaseElectronBuild(original)
+
+    const mainPath = join(original.appDir, 'dist', 'main.cjs')
+    const bytes = readFileSync(mainPath)
+    writeFileSync(mainPath, Buffer.alloc(bytes.length, 120))
+
+    const pinned = acquireElectronBuild({
+      repoRoot,
+      buildRoot,
+      runId: 'fast-pinned',
+      runDir: createRun(root, 'fast-pinned'),
+      expectedBuildId: original.buildId,
+      skipBuild: true,
+      verification: 'fast',
+    })
+    expect(pinned.buildId).toBe(original.buildId)
+    expect(() => withStagedElectronBuild(pinned, () => undefined)).toThrow('changed while it was being staged')
+    releaseElectronBuild(pinned)
+  }, 30_000)
+
+  it('defers cache pruning on ordinary lease release until cleanup is explicit', () => {
+    const root = tempRoot('mortise-ui-build-deferred-prune-')
+    const repoRoot = join(root, 'repo')
+    const buildRoot = join(root, 'cache')
+    initGitRepo(repoRoot)
+    const lease = acquireElectronBuild({
+      repoRoot,
+      buildRoot,
+      runId: 'deferred-prune',
+      runDir: createRun(root, 'deferred-prune'),
+      build: sourceRoot => seedBuildOutputs(sourceRoot),
+      retainCount: 0,
+      maxBytes: 1,
+    })
+
+    releaseElectronBuild(lease)
+    expect(existsSync(lease.buildDir)).toBe(true)
+    expect(cleanupElectronBuildCache({ buildRoot, retainCount: 0, maxBytes: 1 }).removedBuildIds).toContain(lease.buildId)
   }, 30_000)
 
   it('reuses one immutable build and removes it after the final lease is released', () => {

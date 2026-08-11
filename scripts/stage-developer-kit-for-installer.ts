@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process'
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs'
-import { dirname, join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import {
   artifactInventoriesEqual,
   artifactInventorySize,
@@ -12,13 +12,9 @@ import {
   computeDeveloperKitBuildId,
   readValidDeveloperKitBuildManifest,
   releaseDeveloperKitBuildLease,
+  type DeveloperKitBuildManifest,
 } from './build/developer-kit-build-manifest.ts'
 import { writeJsonAtomic } from './build/files.ts'
-
-if (process.platform !== 'win32') {
-  process.stdout.write('[Mortise] Skipping offline Developer Kit staging outside Windows.\n')
-  process.exit(0)
-}
 
 interface DeveloperKitManifest {
   hostVersion?: unknown
@@ -28,104 +24,249 @@ interface ElectronPackageManifest {
   version?: unknown
 }
 
-const repoRoot = resolve(import.meta.dir, '..')
-const args = process.argv.slice(2)
-const expectedSourceId = optionValue(args, '--source-id')
-if (!expectedSourceId || !/^[0-9a-f]{64}$/.test(expectedSourceId)) {
-  throw new Error('Developer Kit installer staging requires --source-id <canonical-source-id>.')
+export interface StageDeveloperKitOptions {
+  expectedSourceId: string
+  electronAppDir: string
+  electronBuildProvenancePath?: string
+  sourceRoot?: string
+  expectedBuildId?: string
+  developerKitBuildRoot?: string
+  bunExecutable?: string
+  runId?: string
+  provenanceOutputPath?: string
 }
-const electronAppDirValue = optionValue(args, '--electron-app-dir')
-if (!electronAppDirValue) {
-  throw new Error('Developer Kit installer staging requires --electron-app-dir <immutable-staging-app-dir>.')
+
+export interface StageDeveloperKitResult {
+  buildId: string
+  reused: boolean
+  stagedKitDirectory: string
+  artifactDirectory: string
+  provenancePath: string
+  timings: Record<string, number>
 }
-const electronAppDir = resolve(electronAppDirValue)
-const sourceRootValue = optionValue(args, '--source-root')
-if (!sourceRootValue) {
-  throw new Error('Developer Kit installer staging requires --source-root <materialized-source-root>.')
+
+interface StageDeveloperKitDependencies {
+  buildDeveloperKit?: (options: {
+    sourceRoot: string
+    expectedSourceId: string
+    bunExecutable: string
+  }) => void
 }
-const sourceRoot = resolve(sourceRootValue)
-const electronBuildProvenancePath = join(electronAppDir, 'dist', 'build-provenance.json')
-let electronBuildProvenance: { sourceId?: unknown }
-try {
-  electronBuildProvenance = JSON.parse(readFileSync(electronBuildProvenancePath, 'utf8')) as { sourceId?: unknown }
-} catch {
-  throw new Error(`Developer Kit installer staging requires an isolated Electron build stage: ${electronBuildProvenancePath}.`)
+
+export function stageDeveloperKitForInstaller(
+  options: StageDeveloperKitOptions,
+  dependencies: StageDeveloperKitDependencies = {},
+): StageDeveloperKitResult {
+  if (process.platform !== 'win32') {
+    throw new Error('Offline Developer Kit installer staging is supported on Windows only.')
+  }
+  if (!/^[0-9a-f]{64}$/.test(options.expectedSourceId)) {
+    throw new Error('Developer Kit installer staging requires a canonical source identity.')
+  }
+
+  const timings: Record<string, number> = {}
+  const electronAppDir = resolve(options.electronAppDir)
+  const repoRoot = resolve(import.meta.dir, '..')
+  const developerKitBuildRoot = resolve(
+    options.developerKitBuildRoot
+      ?? process.env.MORTISE_DEVELOPER_KIT_BUILD_ROOT
+      ?? join(repoRoot, 'output', 'developer-kit-builds'),
+  )
+  const bunExecutable = resolve(options.bunExecutable ?? process.execPath)
+  const bunExecutableSha256 = buildToolchainExecutableSha256(bunExecutable)
+  const buildId = computeDeveloperKitBuildId(options.expectedSourceId, true, bunExecutableSha256)
+  if (options.expectedBuildId !== undefined && options.expectedBuildId !== buildId) {
+    throw new Error(`Expected Developer Kit build ${options.expectedBuildId} does not match computed build ${buildId}.`)
+  }
+
+  const electronBuildProvenancePath = resolve(
+    options.electronBuildProvenancePath ?? join(electronAppDir, 'dist', 'build-provenance.json'),
+  )
+  const electronBuildProvenance = readJson<{ sourceId?: unknown }>(
+    electronBuildProvenancePath,
+    `Developer Kit installer staging requires an isolated Electron build stage: ${electronBuildProvenancePath}.`,
+  )
+  if (electronBuildProvenance.sourceId !== options.expectedSourceId) {
+    throw new Error('Electron build stage does not match the canonical source identity.')
+  }
+
+  const leaseStartedAt = performance.now()
+  const lease = acquireDeveloperKitBuildLease(
+    developerKitBuildRoot,
+    buildId,
+    options.runId ?? `installer-${process.pid}`,
+  )
+  timings.lease = elapsedMs(leaseStartedAt)
+  try {
+    const lookupStartedAt = performance.now()
+    let manifest = readInstallerManifest(developerKitBuildRoot, buildId, options.expectedSourceId)
+    timings.cacheLookup = elapsedMs(lookupStartedAt)
+    const reused = manifest !== undefined
+    if (!manifest) {
+      if (!options.sourceRoot) {
+        throw new Error(`Developer Kit build ${buildId.slice(0, 12)} is not cached; --source-root is required to build it.`)
+      }
+      const sourceRoot = resolve(options.sourceRoot)
+      const buildStartedAt = performance.now()
+      const buildDeveloperKit = dependencies.buildDeveloperKit ?? runDeveloperKitBuild
+      buildDeveloperKit({ sourceRoot, expectedSourceId: options.expectedSourceId, bunExecutable })
+      timings.build = elapsedMs(buildStartedAt)
+      manifest = readInstallerManifest(developerKitBuildRoot, buildId, options.expectedSourceId)
+      if (!manifest) throw new Error('Developer Kit build did not publish an artifact directory for the installer.')
+    }
+
+    const validationStartedAt = performance.now()
+    validateDeveloperKitForElectron(manifest, electronAppDir)
+    timings.validation = elapsedMs(validationStartedAt)
+
+    const sourceArtifacts = artifactDirectoryInventory(manifest)
+    const provenancePath = resolve(
+      options.provenanceOutputPath
+        ?? join(electronAppDir, 'dist', 'installer-developer-kit', 'build-provenance.json'),
+    )
+    const stagedKitDirectory = options.provenanceOutputPath
+      ? manifest.artifactDirectory
+      : join(electronAppDir, 'dist', 'installer-developer-kit')
+    const copyStartedAt = performance.now()
+    if (!options.provenanceOutputPath) {
+      rmSync(stagedKitDirectory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+      mkdirSync(stagedKitDirectory, { recursive: true })
+      cpSync(manifest.artifactDirectory, stagedKitDirectory, { recursive: true, force: true })
+      const stagedArtifacts = collectArtifactInventory(stagedKitDirectory)
+      if (!artifactInventoriesEqual(sourceArtifacts, stagedArtifacts)) {
+        throw new Error('Staged Developer Kit does not match the immutable build artifact.')
+      }
+    } else {
+      mkdirSync(dirname(provenancePath), { recursive: true })
+    }
+    writeJsonAtomic(provenancePath, {
+      schemaVersion: 1,
+      buildId: manifest.buildId,
+      sourceId: manifest.sourceId,
+      sizeBytes: artifactInventorySize(sourceArtifacts),
+      artifacts: sourceArtifacts,
+    })
+    timings.copyAndVerify = elapsedMs(copyStartedAt)
+    return {
+      buildId,
+      reused,
+      stagedKitDirectory,
+      artifactDirectory: manifest.artifactDirectory,
+      provenancePath,
+      timings,
+    }
+  } finally {
+    releaseDeveloperKitBuildLease(lease)
+  }
 }
-if (electronBuildProvenance.sourceId !== expectedSourceId) {
-  throw new Error('Electron build stage does not match the canonical source identity.')
+
+function readInstallerManifest(
+  developerKitBuildRoot: string,
+  buildId: string,
+  expectedSourceId: string,
+): DeveloperKitBuildManifest | undefined {
+  const manifest = readValidDeveloperKitBuildManifest(join(developerKitBuildRoot, 'builds', buildId), buildId)
+  if (
+    !manifest
+    || manifest.sourceId !== expectedSourceId
+    || !manifest.archiveDisabled
+    || !existsSync(manifest.artifactDirectory)
+  ) return undefined
+  return manifest
 }
-const stagedKitDirectory = join(electronAppDir, 'dist', 'installer-developer-kit')
-const developerKitBuildRoot = resolve(
-  process.env.MORTISE_DEVELOPER_KIT_BUILD_ROOT ?? join(repoRoot, 'output', 'developer-kit-builds'),
-)
-const bunExecutableSha256 = buildToolchainExecutableSha256()
-const buildId = computeDeveloperKitBuildId(expectedSourceId, true, bunExecutableSha256)
-const lease = acquireDeveloperKitBuildLease(
-  developerKitBuildRoot,
-  buildId,
-  `installer-${process.pid}`,
-)
-try {
-  const buildResult = spawnSync(process.execPath, [
+
+function validateDeveloperKitForElectron(manifest: DeveloperKitBuildManifest, electronAppDir: string): void {
+  const kitManifest = readJson<DeveloperKitManifest>(
+    join(manifest.artifactDirectory, 'developer-kit.json'),
+    'Developer Kit manifest is missing or invalid.',
+  )
+  const electronPackage = readJson<ElectronPackageManifest>(
+    join(electronAppDir, 'package.json'),
+    'Electron package manifest is missing or invalid.',
+  )
+  if (typeof kitManifest.hostVersion !== 'string' || kitManifest.hostVersion !== electronPackage.version) {
+    throw new Error(`Developer Kit host version ${String(kitManifest.hostVersion)} does not match Mortise ${String(electronPackage.version)}.`)
+  }
+}
+
+function artifactDirectoryInventory(manifest: DeveloperKitBuildManifest) {
+  const prefix = `${basename(manifest.artifactDirectory)}/`
+  const artifacts = manifest.artifacts
+    .filter(artifact => artifact.path.startsWith(prefix))
+    .map(artifact => ({ ...artifact, path: artifact.path.slice(prefix.length) }))
+  if (artifacts.length !== manifest.artifacts.length) {
+    throw new Error('Developer Kit artifact manifest contains files outside its immutable directory.')
+  }
+  return artifacts
+}
+
+function runDeveloperKitBuild(options: {
+  sourceRoot: string
+  expectedSourceId: string
+  bunExecutable: string
+}): void {
+  const buildResult = spawnSync(options.bunExecutable, [
     'run',
-    join(sourceRoot, 'scripts', 'build-developer-kit.ts'),
+    join(options.sourceRoot, 'scripts', 'build-developer-kit.ts'),
     '--no-archive',
     '--source-root',
-    sourceRoot,
+    options.sourceRoot,
     '--source-id',
-    expectedSourceId,
+    options.expectedSourceId,
   ], {
-    cwd: sourceRoot,
-    env: { ...process.env, MORTISE_BUILD_BUN_EXECUTABLE: process.execPath },
+    cwd: options.sourceRoot,
+    env: { ...process.env, MORTISE_BUILD_BUN_EXECUTABLE: options.bunExecutable },
     stdio: 'inherit',
     windowsHide: true,
   })
-
   if (buildResult.error) throw buildResult.error
   if (buildResult.status !== 0) {
     throw new Error(`Developer Kit build for installer failed with exit code ${buildResult.status ?? 'unknown'}.`)
   }
-
-const buildDir = join(developerKitBuildRoot, 'builds', buildId)
-const manifest = readValidDeveloperKitBuildManifest(buildDir, buildId)
-if (!manifest || manifest.sourceId !== expectedSourceId || !manifest.archiveDisabled || !existsSync(manifest.artifactDirectory)) {
-  throw new Error('Developer Kit build did not publish an artifact directory for the installer.')
-}
-const artifactsRoot = dirname(manifest.artifactDirectory)
-if (!artifactInventoriesEqual(
-  manifest.artifacts,
-  collectArtifactInventory(artifactsRoot),
-)) throw new Error('Developer Kit build artifacts do not match their immutable manifest.')
-
-const kitManifestPath = join(manifest.artifactDirectory, 'developer-kit.json')
-const electronPackagePath = join(electronAppDir, 'package.json')
-const kitManifest = JSON.parse(readFileSync(kitManifestPath, 'utf8')) as DeveloperKitManifest
-const electronPackage = JSON.parse(readFileSync(electronPackagePath, 'utf8')) as ElectronPackageManifest
-if (typeof kitManifest.hostVersion !== 'string' || kitManifest.hostVersion !== electronPackage.version) {
-  throw new Error(`Developer Kit host version ${String(kitManifest.hostVersion)} does not match Mortise ${String(electronPackage.version)}.`)
 }
 
-rmSync(stagedKitDirectory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
-mkdirSync(stagedKitDirectory, { recursive: true })
-cpSync(manifest.artifactDirectory, stagedKitDirectory, { recursive: true, force: true })
-const stagedArtifacts = collectArtifactInventory(stagedKitDirectory)
-const sourceArtifacts = collectArtifactInventory(manifest.artifactDirectory)
-if (!artifactInventoriesEqual(sourceArtifacts, stagedArtifacts)) {
-  throw new Error('Staged Developer Kit does not match the immutable build artifact.')
+function readJson<T>(path: string, errorMessage: string): T {
+  try {
+    return JSON.parse(readFileSync(path, 'utf8')) as T
+  } catch {
+    throw new Error(errorMessage)
+  }
 }
-writeJsonAtomic(join(stagedKitDirectory, 'build-provenance.json'), {
-  schemaVersion: 1,
-  buildId: manifest.buildId,
-  sourceId: manifest.sourceId,
-  sizeBytes: artifactInventorySize(sourceArtifacts),
-  artifacts: sourceArtifacts,
-})
-process.stdout.write(`[Mortise] Staged offline Developer Kit: ${stagedKitDirectory}\n`)
-} finally {
-  releaseDeveloperKitBuildLease(lease)
+
+function elapsedMs(startedAt: number): number {
+  return Number((performance.now() - startedAt).toFixed(2))
 }
 
 function optionValue(values: string[], name: string): string | undefined {
   const index = values.indexOf(name)
   return index >= 0 ? values[index + 1] : undefined
 }
+
+function runCli(args = process.argv.slice(2)): void {
+  if (process.platform !== 'win32') {
+    process.stdout.write('[Mortise] Skipping offline Developer Kit staging outside Windows.\n')
+    return
+  }
+  const expectedSourceId = optionValue(args, '--source-id')
+  if (!expectedSourceId) throw new Error('Developer Kit installer staging requires --source-id <canonical-source-id>.')
+  const electronAppDir = optionValue(args, '--electron-app-dir')
+  if (!electronAppDir) throw new Error('Developer Kit installer staging requires --electron-app-dir <immutable-staging-app-dir>.')
+  const result = stageDeveloperKitForInstaller({
+    expectedSourceId,
+    electronAppDir,
+    electronBuildProvenancePath: optionValue(args, '--electron-build-provenance'),
+    sourceRoot: optionValue(args, '--source-root'),
+    expectedBuildId: optionValue(args, '--expected-build-id'),
+    provenanceOutputPath: optionValue(args, '--provenance-output'),
+  })
+  process.stdout.write(`[Mortise] Prepared offline Developer Kit: ${result.artifactDirectory}\n`)
+  process.stdout.write(`[mortise-developer-kit:timings] ${JSON.stringify({
+    buildId: result.buildId,
+    reused: result.reused,
+    artifactDirectory: result.artifactDirectory,
+    provenancePath: result.provenancePath,
+    phases: result.timings,
+  })}\n`)
+}
+
+if (import.meta.main) runCli()

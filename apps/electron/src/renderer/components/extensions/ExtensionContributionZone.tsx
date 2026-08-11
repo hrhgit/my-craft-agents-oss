@@ -229,7 +229,7 @@ function ExtensionNode({ node, contributionId, sessionId, extensionId, runtimeId
       title={node.disabledReason ?? node.label}
       aria-label={accessibleLabel}
       data-mortise-semantic-id={semanticId ?? `extension.${extensionId}.command.${node.action.command}`}
-      onClick={() => void window.electronAPI?.invokeExtensionCommand?.(sessionId, node.action.command, node.action.args, extensionId)}
+      onClick={() => void window.electronAPI?.invokeExtensionCommand?.(sessionId, node.action.command, node.action.args, extensionId, crypto.randomUUID())}
     >
       {node.icon && <ExtensionIcon name={node.icon} />}
       <span className="truncate">{node.label}</span>
@@ -339,7 +339,7 @@ function ExtensionMenu({ node, semanticId, sessionId, extensionId }: {
             key={option.id}
             disabled={option.disabled}
             onSelect={() => {
-              if (!option.disabled) void window.electronAPI?.invokeExtensionCommand?.(sessionId, option.action.command, option.action.args, extensionId)
+              if (!option.disabled) void window.electronAPI?.invokeExtensionCommand?.(sessionId, option.action.command, option.action.args, extensionId, crypto.randomUUID())
               setOpen(false)
             }}
             className="flex items-center justify-between px-2 py-2 rounded-lg cursor-pointer"

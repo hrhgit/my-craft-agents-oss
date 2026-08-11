@@ -167,17 +167,13 @@ Every skill should have a visually relevant icon. This helps users quickly ident
 
 **IMPORTANT**: Always validate after creating or editing a skill:
 
-```
-skill_validate({ skillSlug: "my-skill" })
-```
-
-This validates:
-- Slug format (lowercase, alphanumeric, hyphens only)
+Check that:
+- Slug format is lowercase, alphanumeric, with hyphens only
 - SKILL.md exists and is readable
 - YAML frontmatter is valid
-- Required fields present (name, description)
+- Required fields are present (name, description)
 - Content is non-empty
-- Icon format (if present)
+- Icon format is supported (if present)
 
 ## Example Skills
 
@@ -247,7 +243,6 @@ To customize a global skill like `/commit`:
 1. Create `{projectRoot}/.mortise/skills/commit/SKILL.md`
 2. Write your custom instructions
 3. Add an icon
-4. Run `skill_validate({ skillSlug: "commit" })`
 
 Your project skill will be used instead of the global version.
 
@@ -263,14 +258,14 @@ This is useful for:
 3. **Set boundaries**: Explain what NOT to do
 4. **Keep focused**: One skill = one specific task or domain
 5. **Add a relevant icon**: Makes skills easily identifiable in the UI
-6. **Always validate**: Run `skill_validate` after creating or editing
+6. **Always validate**: Check slug format, frontmatter, and required fields after creating or editing
 
 ## Troubleshooting
 
 **Skill not loading:**
 - Check slug format (lowercase, alphanumeric, hyphens only)
 - Verify SKILL.md exists and is readable
-- Run `skill_validate` for detailed errors
+- Verify YAML frontmatter is valid and required fields (name, description) are present
 
 **Skill not triggering:**
 - Check glob patterns match your files

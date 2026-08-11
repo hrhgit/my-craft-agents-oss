@@ -52,6 +52,14 @@ export function piProviderModelSupportsImages(
   return Array.isArray(model?.input) && model.input.includes('image');
 }
 
+export function piProviderModelSupportsReasoning(
+  provider: PiGlobalProvider | null | undefined,
+  modelId: string,
+): boolean {
+  const model = provider?.models?.find(candidate => candidate.id === modelId);
+  return model?.reasoning !== false;
+}
+
 export function setPiProviderModelSupportsImages(
   provider: PiGlobalProvider,
   modelId: string,
@@ -82,8 +90,12 @@ export function setPiProviderModelSupportsReasoning(
   if (!provider.models?.some(model => model.id === modelId)) return provider;
   return {
     ...provider,
-    models: provider.models.map(model => model.id === modelId
-      ? { ...model, reasoning: enabled }
-      : model),
+    models: provider.models.map(model => {
+      if (model.id !== modelId) return model;
+      if (!enabled) return { ...model, reasoning: false };
+      const next = { ...model };
+      delete next.reasoning;
+      return next;
+    }),
   };
 }

@@ -27,8 +27,7 @@ import type { ToolResult } from '@mortise/session-tools-core';
  * distinguishable from successes, we prefix the output text with "[ERROR]".
  * The model can then parse this prefix to understand the tool call failed.
  *
- * This covers all session host-tool errors (config_validate,
- * skill_validate, browser_tool,
+ * This covers all session host-tool errors (browser_tool,
  * spawn_session, etc.).
  *
  * stripErrorTags() in packages/ui/src/components/chat/turn-utils.ts

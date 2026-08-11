@@ -275,6 +275,40 @@ sessionId: session-1
     expect(end.payload).toMatchObject({ contentKind: 'thinking', text: 'reasoning', streaming: false })
   })
 
+  it('projects thinking_end summaries as distinct content entities', () => {
+    const builder = new PiProjectionBuilder('session-1', 'runtime-1')
+    const base = { type: 'message_update', message: { id: 'assistant-1', role: 'assistant' } }
+    const start = builder.acceptRuntimeEvent({ ...base, assistantMessageEvent: { type: 'thinking_start', contentIndex: 0 } })[0]!
+    const delta = builder.acceptRuntimeEvent({ ...base, assistantMessageEvent: { type: 'thinking_delta', contentIndex: 0, delta: 'reason' } })[0]!
+    const completed = builder.acceptRuntimeEvent({
+      ...base,
+      assistantMessageEvent: { type: 'thinking_end', contentIndex: 0, content: 'reasoning', summary: 'Reasoning summary' },
+    })
+
+    expect(completed).toHaveLength(2)
+    expect(completed[0]).toMatchObject({
+      entityId: start.entityId,
+      entityVersion: delta.entityVersion + 1,
+      kind: 'thinking_end',
+      payload: { contentKind: 'thinking', messageId: 'assistant-1', text: 'reasoning', streaming: false },
+    })
+    expect(completed[1]).toMatchObject({
+      entityId: 'content:thinkingSummary:assistant-1:0',
+      entityType: 'content_block',
+      entityVersion: 1,
+      kind: 'thinking_summary_end',
+      payload: {
+        role: 'assistant',
+        contentKind: 'thinkingSummary',
+        messageId: 'assistant-1',
+        contentIndex: 0,
+        text: 'Reasoning summary',
+        streaming: false,
+      },
+    })
+    expect(completed.map(event => event.seq)).toEqual([completed[0]!.seq, completed[0]!.seq + 1])
+  })
+
   it('projects Pi-native turn lifecycle without copying transcript payloads', () => {
     const builder = new PiProjectionBuilder('session-1', 'runtime-1')
     const start = builder.acceptRuntimeEvent({ type: 'turn_start' })[0]!
@@ -438,6 +472,42 @@ sessionId: session-1
     expect(finalized[1]).toMatchObject({
       entityId: 'content:thinking:assistant-1:1', entityVersion: 1, kind: 'thinking_end',
       payload: { messageId: 'assistant-1', text: 'final reasoning', streaming: false },
+    })
+  })
+
+  it('projects final message thinking summaries as distinct replay entities', () => {
+    const builder = new PiProjectionBuilder('session-1', 'runtime-1')
+    builder.acceptRuntimeEvent({ type: 'turn_start' })
+    const finalized = builder.acceptRuntimeEvent({
+      type: 'message_end',
+      message: {
+        id: 'assistant-summary', role: 'assistant', timestamp: 10,
+        content: [
+          { type: 'text', text: 'final answer' },
+          { type: 'thinking', thinking: 'final reasoning', thinkingSummary: 'Final summary' },
+        ],
+      },
+    })
+
+    expect(finalized.map(event => event.entityId)).toEqual([
+      'content:text:assistant-summary:0',
+      'content:thinking:assistant-summary:1',
+      'content:thinkingSummary:assistant-summary:1',
+    ])
+    expect(finalized[1]).toMatchObject({
+      kind: 'thinking_end',
+      payload: { contentKind: 'thinking', text: 'final reasoning', contentIndex: 1, streaming: false },
+    })
+    expect(finalized[2]).toMatchObject({
+      entityType: 'content_block',
+      entityVersion: 1,
+      kind: 'thinking_summary_end',
+      payload: {
+        contentKind: 'thinkingSummary',
+        text: 'Final summary',
+        contentIndex: 1,
+        streaming: false,
+      },
     })
   })
 

@@ -73,7 +73,7 @@ export function registerWorkspaceCoreHandlers(
   const { sessionManager } = deps
   const windowManager = deps.windowManager
   registerWorkspaceTopologyHandlers(server, deps, topologyStore)
-  registerWorkspaceTransferHandlers(server, topologyStore)
+  registerWorkspaceTransferHandlers(server, topologyStore, { operationCoordinator: deps.operationCoordinator })
 
   const resolveWorkspace = (workspaceId: string): Workspace => {
     const current = topologyStore.get(workspaceId)

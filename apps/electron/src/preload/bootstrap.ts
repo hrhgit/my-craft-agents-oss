@@ -35,14 +35,13 @@ import {
   CLIENT_OPEN_FILE_DIALOG,
   CLIENT_BROWSER_INVOKE,
   CLIENT_ROUTE_WORKSPACE_MARKER_DETACH,
-  LOCAL_CLIENT_CAPABILITIES,
 } from '@mortise/server-core/transport'
 import type { ConfirmDialogSpec, FileDialogSpec, BrowserCapabilityRequest, WorkspaceMarkerDetachRouteRequest } from '@mortise/server-core/transport'
 import type { RpcClient } from '@mortise/server-core/transport'
 import type { WorkspaceInfo, WorkspaceLocationInfo } from '@mortise/core/types'
 import {
   RPC_CHANNELS,
-  BACKEND_TYPE_CAPABILITY,
+  CLIENT_WORKSPACE_EXECUTE_TRANSFER,
   parseWorkspaceTransferEndpointCommitResultV1,
   parseWorkspaceTransferEndpointAccessResultV1,
   parseWorkspaceTransferEndpointCompleteResultV1,
@@ -65,13 +64,10 @@ import { publishElectronPlatformCapabilities } from '../shared/platform-capabili
 import type { UiValidationRendererStateBatch } from '../shared/ui-validation-state-bridge'
 import type { WorkspaceLocationRuntimeConfig } from '../shared/workspace-runtime-config'
 import { allowsInsecureTlsFromEnvironment, shouldRejectUnauthorizedTls } from '../shared/remote-tls'
+import { getElectronClientCapabilities } from './client-capabilities'
 
 const isClientOnly = !!process.env.MORTISE_SERVER_URL
-const ELECTRON_CLIENT_CAPABILITIES = [
-  ...LOCAL_CLIENT_CAPABILITIES,
-  ...(!isClientOnly ? [CLIENT_ROUTE_WORKSPACE_MARKER_DETACH] : []),
-  BACKEND_TYPE_CAPABILITY.electron,
-]
+const ELECTRON_CLIENT_CAPABILITIES = getElectronClientCapabilities(isClientOnly)
 
 // ---------------------------------------------------------------------------
 // Client interface — common surface for both RoutedClient and WsRpcClient
@@ -688,6 +684,11 @@ if (isClientOnly) {
     })
   }
 
+  client.handleCapability(CLIENT_WORKSPACE_EXECUTE_TRANSFER, async (requestValue: unknown) => {
+    if (!orchestrateWorkspaceTransfer) throw new Error('Workspace transfer orchestrator is unavailable')
+    return await orchestrateWorkspaceTransfer(parseWorkspaceTransferRequestV1(requestValue))
+  })
+
   void initialWorkspaceReady.then(async () => {
     const pending = await localClient.invoke(
       RPC_CHANNELS.workspaces.TRANSFER_JOURNAL_LIST_PENDING_CLEANUP,
@@ -870,8 +871,7 @@ client.onConnectionStateChanged((state) => {
 ;(api as ElectronAPI).onWorkspaceApiEvent = (route: WorkspaceRoute, method: string, callback: (...args: any[]) => void) =>
   getWorkspaceMethod(route, method, 'listener')(callback)
 ;(api as ElectronAPI).workspaceTransfer = (request: WorkspaceTransferRequestV1) => {
-  if (orchestrateWorkspaceTransfer) return orchestrateWorkspaceTransfer(request)
-  return client.invoke(RPC_CHANNELS.workspaces.TRANSFER, request).then(parseWorkspaceTransferResultV1)
+  return client.invoke(RPC_CHANNELS.workspaces.TRANSFER, request)
 }
 
 // System warnings — expose env-based flags set during main process startup

@@ -201,11 +201,14 @@ function streamWithDeltas(stream: AssistantMessageEventStream, message: Assistan
 				(partial.content[i] as ThinkingContent).thinking += chunk;
 				stream.push(makeEvent("thinking_delta", i, chunk, partial));
 			}
+			const thinkingBlock = block as ThinkingContent;
+			(partial.content[i] as ThinkingContent).thinkingSummary = thinkingBlock.thinkingSummary;
 
 			stream.push({
 				type: "thinking_end",
 				contentIndex: i,
 				content: block.thinking,
+				...(thinkingBlock.thinkingSummary ? { summary: thinkingBlock.thinkingSummary } : {}),
 				partial: { ...partial },
 			});
 		} else if (block.type === "text") {

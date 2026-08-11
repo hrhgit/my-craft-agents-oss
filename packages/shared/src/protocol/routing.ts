@@ -242,6 +242,12 @@ export const LOCAL_ONLY_CHANNELS = new Set<string>([
 // ---------------------------------------------------------------------------
 
 export const REMOTE_ELIGIBLE_CHANNELS = new Set<string>([
+  // operations — workspace-owned long-running business operations
+  RPC_CHANNELS.operations.GET,
+  RPC_CHANNELS.operations.CANCEL,
+  RPC_CHANNELS.operations.SUBSCRIBE,
+  RPC_CHANNELS.operations.UPDATED,
+
   // server — server-level operations (no workspace context needed)
   RPC_CHANNELS.server.GET_WORKSPACES,
   RPC_CHANNELS.server.CREATE_WORKSPACE,
@@ -255,6 +261,7 @@ export const REMOTE_ELIGIBLE_CHANNELS = new Set<string>([
   RPC_CHANNELS.sessions.UNREAD_SUMMARY_CHANGED,
   RPC_CHANNELS.sessions.CREATE,
   RPC_CHANNELS.sessions.CREATE_AND_SEND_FIRST_TURN,
+  RPC_CHANNELS.sessions.GET_FIRST_TURN_RESULT,
   RPC_CHANNELS.sessions.DISCARD_FIRST_TURN_ATTACHMENT_STAGING,
   RPC_CHANNELS.sessions.DELETE,
   RPC_CHANNELS.sessions.GET_MESSAGES,
@@ -276,8 +283,10 @@ export const REMOTE_ELIGIBLE_CHANNELS = new Set<string>([
   RPC_CHANNELS.sessions.FILES_CHANGED,
   RPC_CHANNELS.sessions.SEARCH_CONTENT,
   RPC_CHANNELS.sessions.EXPORT,
+  RPC_CHANNELS.sessions.GET_EXPORT_RESULT,
   RPC_CHANNELS.sessions.IMPORT,
   RPC_CHANNELS.sessions.EXPORT_REMOTE_TRANSFER,
+  RPC_CHANNELS.sessions.GET_REMOTE_TRANSFER_RESULT,
   RPC_CHANNELS.sessions.IMPORT_REMOTE_TRANSFER,
   RPC_CHANNELS.sessions.LIST_CHILD_SESSIONS,
 

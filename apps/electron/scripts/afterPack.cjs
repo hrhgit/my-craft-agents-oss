@@ -430,7 +430,69 @@ function stopSmokeProcess(child) {
   try { child.kill('SIGTERM'); } catch { /* process already exited */ }
 }
 
-function probeWorkspaceHandshake(url, token) {
+function readWorkspaceProtocolContract(projectDir) {
+  const contractPath = path.join(projectDir, 'dist', 'packaging-inputs', 'workspace-rpc-protocol.json');
+  let contract;
+  try {
+    contract = JSON.parse(fs.readFileSync(contractPath, 'utf8'));
+  } catch (error) {
+    throw new Error(`Packaged workspace protocol contract is unreadable at ${contractPath}: ${error.message}`);
+  }
+  if (
+    contract?.schemaVersion !== 1
+    || typeof contract.protocolVersion !== 'string'
+    || contract.protocolVersion.length === 0
+    || !Array.isArray(contract.protocolCapabilities)
+    || contract.protocolCapabilities.some(capability => typeof capability !== 'string' || capability.length === 0)
+  ) {
+    throw new Error(`Packaged workspace protocol contract is invalid: ${contractPath}`);
+  }
+  return {
+    schemaVersion: 1,
+    protocolVersion: contract.protocolVersion,
+    protocolCapabilities: [...new Set(contract.protocolCapabilities)],
+  };
+}
+
+function createWorkspaceHandshakeEnvelope(id, token, protocolContract) {
+  return {
+    id,
+    type: 'handshake',
+    protocolVersion: protocolContract.protocolVersion,
+    protocolCapabilities: [...protocolContract.protocolCapabilities],
+    token,
+  };
+}
+
+function assertWorkspaceHandshakeAck(envelope, protocolContract) {
+  if (!envelope || envelope.type !== 'handshake_ack') {
+    const responseType = typeof envelope?.type === 'string' ? envelope.type : 'invalid';
+    const errorCode = typeof envelope?.error?.code === 'string' ? envelope.error.code : undefined;
+    const errorMessage = typeof envelope?.error?.message === 'string' ? envelope.error.message : undefined;
+    const detail = [errorCode, errorMessage].filter(Boolean).join(': ');
+    throw new Error(
+      `Packaged workspace handshake rejected (${responseType})${detail ? `: ${detail}` : ''}`,
+    );
+  }
+  if (envelope.protocolVersion !== protocolContract.protocolVersion) {
+    throw new Error(
+      `Packaged workspace handshake_ack protocol mismatch: expected ${protocolContract.protocolVersion}, received ${envelope.protocolVersion ?? '(missing)'}`,
+    );
+  }
+  const advertisedCapabilities = new Set(
+    Array.isArray(envelope.protocolCapabilities) ? envelope.protocolCapabilities : [],
+  );
+  const missingCapabilities = protocolContract.protocolCapabilities.filter(
+    capability => !advertisedCapabilities.has(capability),
+  );
+  if (missingCapabilities.length > 0) {
+    throw new Error(
+      `Packaged workspace handshake_ack is missing protocol capabilities: ${missingCapabilities.join(', ')}`,
+    );
+  }
+}
+
+function probeWorkspaceHandshake(url, token, protocolContract) {
   return new Promise((resolve, reject) => {
     const socket = new WebSocket(url);
     const timer = setTimeout(() => {
@@ -444,20 +506,12 @@ function probeWorkspaceHandshake(url, token) {
       else resolve();
     };
     socket.once('open', () => {
-      socket.send(JSON.stringify({
-        id: randomUUID(),
-        type: 'handshake',
-        protocolVersion: '1.0',
-        token,
-      }));
+      socket.send(JSON.stringify(createWorkspaceHandshakeEnvelope(randomUUID(), token, protocolContract)));
     });
     socket.once('message', raw => {
       try {
         const envelope = JSON.parse(raw.toString());
-        if (envelope.type !== 'handshake_ack') {
-          finish(new Error(`Packaged workspace returned ${envelope.type} instead of handshake_ack`));
-          return;
-        }
+        assertWorkspaceHandshakeAck(envelope, protocolContract);
         finish();
       } catch (error) {
         finish(error instanceof Error ? error : new Error(String(error)));
@@ -468,6 +522,7 @@ function probeWorkspaceHandshake(url, token) {
 }
 
 async function smokeWorkspaceServer(layout, context) {
+  const protocolContract = readWorkspaceProtocolContract(context.packager.projectDir);
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mortise-packaged-workspace-'));
   const cachedEntry = path.join(tempRoot, 'workspace-server.mjs');
   fs.copyFileSync(path.join(layout.appDist, 'workspace-server.mjs'), cachedEntry);
@@ -523,7 +578,7 @@ async function smokeWorkspaceServer(layout, context) {
         const readyMatch = stdout.match(/^MORTISE_SERVER_URL=(.+)$/m);
         if (readyMatch && !probing && !settled) {
           probing = true;
-          void probeWorkspaceHandshake(readyMatch[1].trim(), token)
+          void probeWorkspaceHandshake(readyMatch[1].trim(), token, protocolContract)
             .then(() => finish())
             .catch(finish);
         }
@@ -592,3 +647,6 @@ module.exports.assertPackagedArtifactMatches = assertPackagedArtifactMatches;
 module.exports.assertDeveloperKitProvenance = assertDeveloperKitProvenance;
 module.exports.smokeWorkspaceServer = smokeWorkspaceServer;
 module.exports.probeWorkspaceHandshake = probeWorkspaceHandshake;
+module.exports.readWorkspaceProtocolContract = readWorkspaceProtocolContract;
+module.exports.createWorkspaceHandshakeEnvelope = createWorkspaceHandshakeEnvelope;
+module.exports.assertWorkspaceHandshakeAck = assertWorkspaceHandshakeAck;

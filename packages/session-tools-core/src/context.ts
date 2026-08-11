@@ -60,23 +60,6 @@ export interface FileSystemInterface {
 }
 
 // ============================================================
-// Validator Interface
-// ============================================================
-
-/**
- * Config validation interface.
- * Claude uses full Zod validators from packages/shared.
- * Codex uses simplified validators from session-tools-core.
- */
-export interface ValidatorInterface {
-  validateConfig(): import('./types.js').ValidationResult;
-  validatePreferences(): import('./types.js').ValidationResult;
-  validateToolIcons(): import('./types.js').ValidationResult;
-  validateAll(workspaceRootPath: string): import('./types.js').ValidationResult;
-  validateSkill(workspaceRootPath: string, skillSlug: string): import('./types.js').ValidationResult;
-}
-
-// ============================================================
 // Session Tool Context
 // ============================================================
 
@@ -98,12 +81,6 @@ export interface SessionToolContext {
   /** Absolute path to workspace folder (~/.mortise/workspaces/{id}) */
   workspacePath: string;
 
-  /** Path to skills folder within workspace */
-  get skillsPath(): string;
-
-  /** Ordered Pi skill roots (global and optional project-level) */
-  skillPaths?: string[];
-
   /** Path to session's plans folder */
   plansFolderPath: string;
 
@@ -118,31 +95,6 @@ export interface SessionToolContext {
   // ============================================================
 
   fs: FileSystemInterface;
-
-  // ============================================================
-  // Validators (optional - may use basic or full)
-  // ============================================================
-
-  validators?: ValidatorInterface;
-
-  // ============================================================
-  // Preferences (for update_user_preferences)
-  // ============================================================
-
-  /**
-   * Submit developer feedback. Injected by each backend:
-   * - Claude: writes JSON files to ~/.mortise/feedback/
-   * - Codex/Pi: could send over IPC or write directly
-   */
-  submitFeedback?(feedback: import('./types.ts').DeveloperFeedback): void;
-
-  /**
-   * Update user preferences. Injected by each backend:
-   * - Claude: calls updatePreferences() from config/preferences.ts
-   * - Codex/session-mcp-server: writes directly to preferences.json
-   * - Pi: calls updatePreferences() from config/preferences.ts
-   */
-  updatePreferences?(updates: Record<string, unknown>): void;
 
   // ============================================================
   // Session Queries
@@ -177,22 +129,6 @@ export interface SessionToolContext {
 
   /** Unbind messaging channels from a session. Returns count of removed bindings. */
   unbindMessagingChannel?(sessionId: string, platform?: string): number;
-
-  // ============================================================
-  // Session Paths (for transform_data / render_template)
-  // ============================================================
-
-  /**
-   * Absolute path to the session directory.
-   * Used by transform_data for resolving input files.
-   */
-  sessionPath?: string;
-
-  /**
-   * Absolute path to the session's data directory.
-   * Used by transform_data and render_template for output files.
-   */
-  dataPath?: string;
 }
 
 // ============================================================

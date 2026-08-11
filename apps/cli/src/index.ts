@@ -9,7 +9,12 @@
 
 import { resolve } from 'path'
 import { resolveCustomEndpointSetup } from '@mortise/server-core/domain'
-import { RPC_CHANNELS } from '@mortise/shared/protocol'
+import {
+  RPC_CHANNELS,
+  type OperationAccepted,
+  type OperationReceipt,
+  type OperationUpdatedEvent,
+} from '@mortise/shared/protocol'
 import { CliRpcClient } from './client.ts'
 import { invokeAutomationIngressToken, invokeAutomationWorkspace } from './automation-client.ts'
 import { subscribeToConversationStream } from './conversation-stream.ts'
@@ -32,7 +37,6 @@ export interface CliArgs {
   timeout: number
   json: boolean
   tlsCa?: string
-  sendTimeout: number
   command: string
   rest: string[]
   // run-specific flags
@@ -59,7 +63,6 @@ export function parseArgs(argv: string[]): CliArgs {
   let timeout = 10_000
   let json = false
   let tlsCa: string | undefined
-  let sendTimeout = 300_000 // 5 min
   const rest: string[] = []
   let command = ''
   let outputFormat = 'text'
@@ -94,9 +97,6 @@ export function parseArgs(argv: string[]): CliArgs {
         break
       case '--tls-ca':
         tlsCa = args[++i]
-        break
-      case '--send-timeout':
-        sendTimeout = parseInt(args[++i] ?? '300000', 10)
         break
       case '--output-format':
         outputFormat = args[++i] ?? 'text'
@@ -161,7 +161,7 @@ export function parseArgs(argv: string[]): CliArgs {
   if (!apiKey) apiKey = process.env.LLM_API_KEY ?? ''
   if (!baseUrl) baseUrl = process.env.LLM_BASE_URL ?? ''
 
-  return { url, token, workspace, timeout, json, tlsCa, sendTimeout, command, rest, outputFormat, noCleanup, noSpinner, verbose, serverEntry, workspaceDir, provider, model, apiKey, baseUrl, interactive }
+  return { url, token, workspace, timeout, json, tlsCa, command, rest, outputFormat, noCleanup, noSpinner, verbose, serverEntry, workspaceDir, provider, model, apiKey, baseUrl, interactive }
 }
 
 // ---------------------------------------------------------------------------
@@ -352,12 +352,16 @@ async function cmdSessionCreate(client: CliRpcClient, args: CliArgs): Promise<vo
     process.exit(1)
   }
 
-  const result = await client.invoke('sessions:createAndSendFirstTurn', {
+  const operationId = crypto.randomUUID()
+  const accepted = await submitFirstTurn(client, {
+    operationId,
     workspaceId,
     message,
     createOptions: opts,
   })
-  out(result, args.json)
+  const receipt = await waitForOperation(client, accepted.operationId)
+  if (receipt.status !== 'succeeded') throw new Error(receipt.error?.message ?? `First turn ${receipt.status}`)
+  out(await client.invoke(RPC_CHANNELS.sessions.GET_FIRST_TURN_RESULT, accepted.operationId), args.json)
 }
 
 async function cmdSessionMessages(client: CliRpcClient, args: CliArgs): Promise<void> {
@@ -419,16 +423,14 @@ async function sendAndStream(
   args: CliArgs,
 ): Promise<number> {
   let exitCode = 0
-  let finished = false
   let emittedAssistantText = ''
   const streamJson = args.outputFormat === 'stream-json'
 
   const unsub = subscribeToConversationStream(client, sessionId, (event) => {
     // F24: Wrap the entire handler body in try/catch so a thrown error in
     // event processing (e.g. malformed payload, stdout write failure) cannot
-    // crash the streaming loop or leave `finished` unset, which would hang
-    // the CLI until the send timeout. Errors are surfaced to stderr but do
-    // not abort the subscription.
+    // crash the streaming loop. Errors are surfaced to stderr but do not
+    // abort the operation receipt reconciliation.
     try {
       const ev = event.payload
 
@@ -476,24 +478,20 @@ async function sendAndStream(
         case 'error':
           if (!streamJson) err(String(ev.message ?? ev.error ?? 'Agent runtime error'))
           exitCode = 1
-          finished = true
           break
         case 'agent_end': {
           const status = String(ev.status ?? 'completed')
           if (!streamJson && status === 'interrupted') process.stdout.write('\n[interrupted]\n')
           else if (!streamJson) process.stdout.write('\n')
           exitCode = status === 'interrupted' || status === 'cancelled' ? 130 : status === 'completed' ? exitCode : 1
-          finished = true
           break
         }
         case 'complete':
           if (!streamJson) process.stdout.write('\n')
-          finished = true
           break
         case 'interrupted':
           if (!streamJson) process.stdout.write('\n[interrupted]\n')
           exitCode = 130
-          finished = true
           break
       }
     } catch (e) {
@@ -501,21 +499,165 @@ async function sendAndStream(
     }
   })
 
-  await client.invoke('sessions:sendMessage', sessionId, message)
-
-  const deadline = Date.now() + args.sendTimeout
-  while (!finished && Date.now() < deadline) {
-    await new Promise((r) => setTimeout(r, 100))
+  const operationId = crypto.randomUUID()
+  try {
+    const accepted = await submitSessionMessage(client, sessionId, message, operationId)
+    const receipt = await waitForOperation(client, accepted.operationId)
+    if (receipt.status === 'failed') {
+      err(receipt.error?.message ?? `Operation failed: ${receipt.operationId}`)
+      return 1
+    }
+    if (receipt.status === 'cancelled') return 130
+    return exitCode
+  } finally {
+    unsub()
   }
+}
 
-  unsub()
+const TERMINAL_OPERATION_STATUSES = new Set<OperationReceipt['status']>(['succeeded', 'failed', 'cancelled'])
 
-  if (!finished) {
-    err('Send timeout — no completion event received')
-    exitCode = 1
+function mergeOperationReceipt(current: OperationReceipt | null, incoming: OperationReceipt): OperationReceipt {
+  return !current || incoming.revision > current.revision ? incoming : current
+}
+
+async function ensureCliConnected(client: CliRpcClient): Promise<void> {
+  while (!client.isConnected) {
+    try {
+      await client.connect()
+      return
+    } catch {
+      await new Promise(resolve => setTimeout(resolve, 1_000))
+    }
   }
+}
 
-  return exitCode
+export async function submitSessionMessage(
+  client: CliRpcClient,
+  sessionId: string,
+  message: string,
+  operationId: string,
+): Promise<OperationAccepted> {
+  while (true) {
+    await ensureCliConnected(client)
+    try {
+      return await client.invoke(
+        RPC_CHANNELS.sessions.SEND_MESSAGE,
+        sessionId,
+        message,
+        undefined,
+        undefined,
+        { operationId, optimisticMessageId: `message-${operationId}` },
+      ) as OperationAccepted
+    } catch {
+      // The response may be lost after server acceptance. Reconnect and retry
+      // the same operationId so the server returns the durable receipt.
+      await new Promise(resolve => setTimeout(resolve, 500))
+    }
+  }
+}
+
+export async function submitFirstTurn(
+  client: CliRpcClient,
+  request: Record<string, unknown>,
+): Promise<OperationAccepted> {
+  const operationId = request.operationId
+  if (typeof operationId !== 'string' || !operationId) throw new Error('First-turn submission requires operationId')
+  while (true) {
+    await ensureCliConnected(client)
+    try {
+      return await client.invoke(RPC_CHANNELS.sessions.CREATE_AND_SEND_FIRST_TURN, request) as OperationAccepted
+    } catch {
+      // Reconcile a response lost after durable acceptance before retrying the
+      // same request. The server's operation identity makes the retry safe.
+      await ensureCliConnected(client)
+      try {
+        const receipt = await client.invoke(RPC_CHANNELS.operations.GET, { operationId }) as OperationReceipt | null
+        if (receipt) return { accepted: true, operationId, status: receipt.status, revision: receipt.revision, duplicate: true }
+      } catch {
+        // The operation may not be visible until the reconnect completes.
+      }
+      await new Promise(resolve => setTimeout(resolve, 500))
+    }
+  }
+}
+
+export async function waitForOperation(
+  client: CliRpcClient,
+  operationId: string,
+  onUpdate?: (receipt: OperationReceipt) => void,
+): Promise<OperationReceipt> {
+  let current: OperationReceipt | null = null
+  let wake: (() => void) | null = null
+  let subscribedClientId: string | null = null
+  const apply = (receipt: OperationReceipt) => {
+    const next = mergeOperationReceipt(current, receipt)
+    if (next === current) return
+    current = next
+    onUpdate?.(next)
+    wake?.()
+    wake = null
+  }
+  const unsubscribe = client.on(RPC_CHANNELS.operations.UPDATED, (value: unknown) => {
+    const event = value as OperationUpdatedEvent
+    if (event?.receipt?.operationId === operationId) apply(event.receipt)
+  })
+
+  try {
+    while (true) {
+      const beforeQuery = current as OperationReceipt | null
+      if (beforeQuery && TERMINAL_OPERATION_STATUSES.has(beforeQuery.status)) return beforeQuery
+      await ensureCliConnected(client)
+      if (client.clientId && client.clientId !== subscribedClientId) {
+        try {
+          const subscribed = await client.invoke(RPC_CHANNELS.operations.SUBSCRIBE, { operationId }) as OperationReceipt
+          apply(subscribed)
+          subscribedClientId = client.clientId
+        } catch {
+          // The submit response may have been lost before the receipt becomes
+          // queryable. Keep reconciling by operationId.
+        }
+      }
+      try {
+        const receipt = await client.invoke(RPC_CHANNELS.operations.GET, { operationId }) as OperationReceipt | null
+        if (receipt) apply(receipt)
+      } catch {
+        // Communication uncertainty is reconciled by reconnecting and querying
+        // the durable receipt again; it is not a business failure.
+      }
+      const afterQuery = current as OperationReceipt | null
+      if (afterQuery && TERMINAL_OPERATION_STATUSES.has(afterQuery.status)) return afterQuery
+      await Promise.race([
+        new Promise<void>(resolve => { wake = resolve }),
+        new Promise<void>(resolve => setTimeout(resolve, 1_000)),
+      ])
+    }
+  } finally {
+    unsubscribe()
+  }
+}
+
+async function cmdOperation(client: CliRpcClient, args: CliArgs): Promise<void> {
+  const [subcommand, operationId] = args.rest
+  if (!operationId || !['get', 'wait', 'subscribe', 'cancel'].includes(subcommand ?? '')) {
+    err('Usage: operation get|wait|subscribe|cancel <operation-id>')
+    process.exit(1)
+  }
+  await client.connect()
+  await resolveWorkspace(client, args.workspace)
+  if (subcommand === 'get') {
+    out(await client.invoke(RPC_CHANNELS.operations.GET, { operationId }), args.json)
+    return
+  }
+  if (subcommand === 'cancel') {
+    out(await client.invoke(RPC_CHANNELS.operations.CANCEL, { operationId }), args.json)
+    return
+  }
+  const receipt = await waitForOperation(
+    client,
+    operationId,
+    subcommand === 'subscribe' ? update => out(update, true) : undefined,
+  )
+  if (subcommand === 'wait') out(receipt, args.json)
 }
 
 async function cmdSend(client: CliRpcClient, args: CliArgs): Promise<void> {
@@ -964,14 +1106,19 @@ async function cmdRun(args: CliArgs): Promise<void> {
       process.exit(1)
     }
 
-    const firstTurn = (await client.invoke('sessions:createAndSendFirstTurn', {
+    const firstTurnOperationId = crypto.randomUUID()
+    const accepted = await submitFirstTurn(client, {
+      operationId: firstTurnOperationId,
       workspaceId,
       message,
       createOptions: {
         ...(args.model ? { model: args.model } : {}),
         ...(selectedProvider ? { provider: selectedProvider } : {}),
       },
-    })) as { session: { id: string } }
+    })
+    const firstTurnReceipt = await waitForOperation(client, accepted.operationId)
+    if (firstTurnReceipt.status !== 'succeeded') throw new Error(firstTurnReceipt.error?.message ?? `First turn ${firstTurnReceipt.status}`)
+    const firstTurn = await client.invoke(RPC_CHANNELS.sessions.GET_FIRST_TURN_RESULT, accepted.operationId) as { session: { id: string } }
     sessionId = firstTurn.session.id
     out(firstTurn, args.json)
     await cleanup()
@@ -1267,11 +1414,16 @@ export function getValidateSteps(): ValidateStep[] {
       fn: async (client, ctx) => {
         if (!ctx.workspaceId) return 'skipped (no workspace)'
         const name = `__cli-validate-${Date.now()}`
-        const r = (await client.invoke('sessions:createAndSendFirstTurn', {
+        const operationId = crypto.randomUUID()
+        const accepted = await submitFirstTurn(client, {
+          operationId,
           workspaceId: ctx.workspaceId,
           message: 'Reply with exactly: SESSION_CREATED',
           createOptions: { name },
-        })) as any
+        })
+        const receipt = await waitForOperation(client, accepted.operationId)
+        if (receipt.status !== 'succeeded') throw new Error(receipt.error?.message ?? `First turn ${receipt.status}`)
+        const r = await client.invoke(RPC_CHANNELS.sessions.GET_FIRST_TURN_RESULT, accepted.operationId) as any
         ctx.createdSessionId = r?.session?.id
         return ctx.createdSessionId ?? 'created'
       },
@@ -1674,6 +1826,10 @@ Commands:
   session delete <id>    Delete a session
   send <id> <message>    Send message and stream AI response
   cancel <id>            Cancel in-progress processing
+  operation get <id>     Query a durable long-operation receipt
+  operation wait <id>    Reconnect/query until the operation reaches a terminal state
+  operation subscribe <id>  Print monotonic receipt updates through settlement
+  operation cancel <id>  Request explicit domain cancellation
   automation <command>   Manage canonical workspace automations
     describe | list | get <id> | validate <json|@file>
     create <json|@file> [--expected-revision <n|null>]
@@ -1802,6 +1958,9 @@ export async function main(argv: string[] = process.argv): Promise<void> {
         break // cmdSend calls process.exit
       case 'cancel':
         await cmdCancel(client, args)
+        break
+      case 'operation':
+        await cmdOperation(client, args)
         break
       case 'automation':
         await cmdAutomation(client, args)

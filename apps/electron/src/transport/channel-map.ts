@@ -8,8 +8,6 @@
 import { RPC_CHANNELS } from '../shared/types'
 import type { ChannelMap } from './build-api'
 
-const SEND_MESSAGE_RPC_TIMEOUT_MS = 300_000
-
 function invoke(
   channel: string,
   transform?: (result: any) => any,
@@ -32,6 +30,11 @@ function listener(channel: string) {
 }
 
 export const CHANNEL_MAP = {
+  getOperation: invoke(RPC_CHANNELS.operations.GET),
+  cancelOperation: invoke(RPC_CHANNELS.operations.CANCEL),
+  subscribeOperation: invoke(RPC_CHANNELS.operations.SUBSCRIBE),
+  onOperationUpdated: listener(RPC_CHANNELS.operations.UPDATED),
+
   // Session management
   getSessions: invoke(RPC_CHANNELS.sessions.GET),
   getUnreadSummary: invoke(RPC_CHANNELS.sessions.GET_UNREAD_SUMMARY),
@@ -43,18 +46,20 @@ export const CHANNEL_MAP = {
     RPC_CHANNELS.sessions.CREATE_AND_SEND_FIRST_TURN,
     undefined,
     0,
-    SEND_MESSAGE_RPC_TIMEOUT_MS,
   ),
+  getFirstTurnResult: invoke(RPC_CHANNELS.sessions.GET_FIRST_TURN_RESULT),
   discardFirstTurnAttachmentStaging: invoke(RPC_CHANNELS.sessions.DISCARD_FIRST_TURN_ATTACHMENT_STAGING),
   deleteSession: invoke(RPC_CHANNELS.sessions.DELETE),
-  sendMessage: invoke(RPC_CHANNELS.sessions.SEND_MESSAGE, undefined, 2, SEND_MESSAGE_RPC_TIMEOUT_MS, 0),
+  sendMessage: invoke(RPC_CHANNELS.sessions.SEND_MESSAGE, undefined, 2, undefined, 0),
   cancelProcessing: invoke(RPC_CHANNELS.sessions.CANCEL),
   killShell: invoke(RPC_CHANNELS.sessions.KILL_SHELL),
   getTaskOutput: invoke(RPC_CHANNELS.tasks.GET_OUTPUT),
   sessionCommand: invoke(RPC_CHANNELS.sessions.COMMAND),
   exportSession: invoke(RPC_CHANNELS.sessions.EXPORT),
+  getSessionExportResult: invoke(RPC_CHANNELS.sessions.GET_EXPORT_RESULT),
   importSession: invoke(RPC_CHANNELS.sessions.IMPORT, undefined, 1),
   exportRemoteSessionTransfer: invoke(RPC_CHANNELS.sessions.EXPORT_REMOTE_TRANSFER),
+  getRemoteSessionTransferResult: invoke(RPC_CHANNELS.sessions.GET_REMOTE_TRANSFER_RESULT),
   importRemoteSessionTransfer: invoke(RPC_CHANNELS.sessions.IMPORT_REMOTE_TRANSFER, undefined, 1),
 
   // Event listeners

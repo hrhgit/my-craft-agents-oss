@@ -76,6 +76,8 @@ describe('UI validation production bundle boundary', () => {
     expect(buildScript).toContain('mortise-logs.exe')
     expect(buildScript).toContain('mortise-logs\\cli.ts')
     expect(orchestrator).toContain('captureBuildSource')
+    expect(orchestrator).toContain('seedUvToolchainCacheFromCompletedBuild')
+    expect(orchestrator).toContain('MORTISE_BUILD_TOOLCHAIN_CACHE_DIR: toolchainCacheDir')
     expect(orchestrator).toContain("withFileLock(join(buildRoot, 'locks', buildId)")
     expect(orchestrator).toContain('renameDirectoryWithRetry(stagingDir, finalBuildDir)')
     expect(orchestrator).toContain("new Set(['EACCES', 'EBUSY', 'EPERM'])")

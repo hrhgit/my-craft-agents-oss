@@ -405,7 +405,7 @@ export const ComposerEditor = React.forwardRef<ComposerEditorHandle, ComposerEdi
   skills = [],
   workspaceId,
   disabled = false,
-  autoCapitalisation = true,
+  autoCapitalisation = false,
   semanticId,
   className,
   style,

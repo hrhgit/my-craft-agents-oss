@@ -11,6 +11,8 @@
 
 import {
   PROTOCOL_VERSION,
+  REQUIRED_PROTOCOL_CAPABILITIES,
+  missingRequiredProtocolCapabilities,
   REQUEST_TIMEOUT_MS,
   SEQUENCE_ACK_INTERVAL_MS,
   isTransportErrorCode,
@@ -27,7 +29,7 @@ import { serializeEnvelope, deserializeEnvelope } from './codec'
 interface PendingRequest {
   resolve: (value: any) => void
   reject: (error: Error) => void
-  timeout: ReturnType<typeof setTimeout>
+  timeout: ReturnType<typeof setTimeout> | null
 }
 
 // ---------------------------------------------------------------------------
@@ -181,7 +183,7 @@ export class WsRpcClient implements RpcClient {
   async invokeWithOptions(
     channel: string,
     args: any[],
-    options?: { timeoutMs?: number },
+    options?: { timeoutMs?: number | null },
   ): Promise<any> {
     await this.ensureConnected(channel)
 
@@ -192,10 +194,9 @@ export class WsRpcClient implements RpcClient {
       }
 
       const id = crypto.randomUUID()
-      const timeoutMs = options?.timeoutMs ?? this.requestTimeout
-      const timeout = setTimeout(() => {
+      const timeoutMs = options?.timeoutMs === null ? null : options?.timeoutMs ?? this.requestTimeout
+      const timeout = timeoutMs === null ? null : setTimeout(() => {
         this.pending.delete(id)
-        this.sendRequestCancel(id)
         reject(new Error(`Request timeout: ${channel} (${timeoutMs}ms)`))
       }, timeoutMs)
 
@@ -210,7 +211,7 @@ export class WsRpcClient implements RpcClient {
 
       if (!this.trySendEnvelope(this.ws, envelope)) {
         this.pending.delete(id)
-        clearTimeout(timeout)
+        if (timeout) clearTimeout(timeout)
         reject(new Error(`Not connected (channel: ${channel})`))
       }
     })
@@ -238,11 +239,10 @@ export class WsRpcClient implements RpcClient {
 
   /**
    * Check whether the server registered a handler for a given channel.
-   * Returns true if the server advertised the channel in handshake_ack,
-   * or if the server didn't advertise channels at all (backwards compat).
+   * Returns true only when the server advertised the channel in handshake_ack.
    */
   isChannelAvailable(channel: string): boolean {
-    if (!this.serverChannels) return true // server didn't advertise — assume available
+    if (!this.serverChannels) return false
     return this.serverChannels.has(channel)
   }
 
@@ -415,6 +415,7 @@ export class WsRpcClient implements RpcClient {
         id: crypto.randomUUID(),
         type: 'handshake',
         protocolVersion: PROTOCOL_VERSION,
+        protocolCapabilities: [...REQUIRED_PROTOCOL_CAPABILITIES],
         workspaceId: this.workspaceId,
         webContentsId: this.webContentsId,
         token: this.token,
@@ -518,6 +519,39 @@ export class WsRpcClient implements RpcClient {
 
     switch (envelope.type) {
       case 'handshake_ack': {
+        if (envelope.protocolVersion !== PROTOCOL_VERSION) {
+          const err = this.createConnectionError(
+            'protocol',
+            `Server protocol ${envelope.protocolVersion ?? '(missing)'}, client ${PROTOCOL_VERSION}`,
+            'PROTOCOL_VERSION_UNSUPPORTED',
+          )
+          this.connectError = err
+          this.setConnectionState({
+            status: 'failed',
+            lastError: this.toErrorState(err),
+            attempt: this.reconnectAttempt,
+          })
+          this.failReady(err)
+          this.ws?.close(4004, 'Protocol version unsupported')
+          return
+        }
+        const missingProtocolCapabilities = missingRequiredProtocolCapabilities(envelope.protocolCapabilities)
+        if (missingProtocolCapabilities.length > 0) {
+          const err = this.createConnectionError(
+            'protocol',
+            `Server is missing required protocol capabilities: ${missingProtocolCapabilities.join(', ')}`,
+            'PROTOCOL_CAPABILITY_UNSUPPORTED',
+          )
+          this.connectError = err
+          this.setConnectionState({
+            status: 'failed',
+            lastError: this.toErrorState(err),
+            attempt: this.reconnectAttempt,
+          })
+          this.failReady(err)
+          this.ws?.close(4004, 'Protocol capability unsupported')
+          return
+        }
         const wasReconnectAttempt = this.currentHandshakeWasReconnect
         const serverRecognizedReconnect = envelope.reconnected === true
 
@@ -576,7 +610,7 @@ export class WsRpcClient implements RpcClient {
         const req = this.pending.get(envelope.id)
         if (req) {
           this.pending.delete(envelope.id)
-          clearTimeout(req.timeout)
+          if (req.timeout) clearTimeout(req.timeout)
           if (envelope.error) {
             const err = new Error(envelope.error.message)
             ;(err as any).code = envelope.error.code
@@ -834,7 +868,7 @@ export class WsRpcClient implements RpcClient {
   private cancelPendingRequests(message: string, notifyServer: boolean): void {
     for (const [id, req] of this.pending) {
       if (notifyServer) this.sendRequestCancel(id)
-      clearTimeout(req.timeout)
+      if (req.timeout) clearTimeout(req.timeout)
       req.reject(new Error(message))
       this.pending.delete(id)
     }

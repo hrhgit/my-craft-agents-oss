@@ -69,6 +69,7 @@ import { SessionManager, setSessionPlatform, setSessionRuntimeHooks, type Sessio
 import { initModelRefreshService, setFetcherPlatform } from '@mortise/server-core/model-fetchers'
 import { setSearchPlatform, setImageProcessor } from '@mortise/server-core/services'
 import type { HandlerDeps } from '@mortise/server-core/handlers'
+import { registerWorkspaceCapabilityBridgeProviders } from './workspace-capability-bridge'
 
 process.env.MORTISE_IS_PACKAGED ??= 'false'
 process.env.MORTISE_PROCESS_ROLE ??= 'server'
@@ -273,9 +274,19 @@ const instance = await (async () => {
           oauthIdToken: oauth?.idToken,
         }
       }),
-      createSessionManager: () => new SessionManager(uiValidationSessionBackend
-        ? { createSessionBackend: uiValidationSessionBackend }
-        : {}),
+      createSessionManager: () => {
+        const sessionManager = new SessionManager(uiValidationSessionBackend
+          ? { createSessionBackend: uiValidationSessionBackend }
+          : {})
+        if (
+          process.env.MORTISE_ELECTRON_CAPABILITY_BRIDGE === '1'
+          && process.env.MORTISE_PROCESS_ROLE === 'workspace-server'
+          && process.connected === true
+        ) {
+          registerWorkspaceCapabilityBridgeProviders(sessionManager)
+        }
+        return sessionManager
+      },
       bindRpcServer: (sm, server) => sm.setRpcServer(server),
       createHandlerDeps: ({ sessionManager, platform }) => {
         messagingHandle = createMessagingBootstrap({

@@ -6,6 +6,7 @@ import { useSetAtom, useStore, useAtomValue, useAtom } from 'jotai'
 import type { Session, WorkspaceInfo, SessionEvent, Message, FileAttachment, StoredAttachment, NewChatActionParams, ContentBadge } from '../shared/types'
 import type { SessionDraft, DraftAttachmentRef } from '@mortise/shared/config'
 import type { MidStreamSendIntent } from '@mortise/shared/protocol'
+import { waitForOperation } from './lib/operations'
 import type { SessionOptions, SessionOptionUpdates } from './hooks/useSessionOptions'
 import { defaultSessionOptions, mergeSessionOptions } from './hooks/useSessionOptions'
 import { generateMessageId } from '../shared/types'
@@ -1190,6 +1191,7 @@ export default function App() {
 
   const handleSendMessage = useCallback(async (sessionId: string, message: string, attachments?: FileAttachment[], skillSlugs?: string[], externalBadges?: ContentBadge[], midStreamSendIntent?: MidStreamSendIntent, submissionAttemptId?: string) => {
     let optimisticMessageId: string | null = null
+    const operationId = crypto.randomUUID()
     try {
       // Capture pre-send processing state so we can flag mid-stream sends
       // for the queued badge (#616 follow-up — covers Pi steer path which
@@ -1243,12 +1245,29 @@ export default function App() {
       }))
 
       // Step 6: Send to Pi with model attachments plus UI metadata for persistence
-      await window.electronAPI.sendMessage(sessionId, message, processedAttachments, storedAttachments, {
-        skillSlugs,
-        badges: badges.length > 0 ? badges : undefined,
-        optimisticMessageId,
-        midStreamSendIntent,
-      })
+      try {
+        await window.electronAPI.sendMessage(sessionId, message, processedAttachments, storedAttachments, {
+          skillSlugs,
+          badges: badges.length > 0 ? badges : undefined,
+          operationId,
+          optimisticMessageId,
+          midStreamSendIntent,
+        })
+      } catch (error) {
+        // A lost response is communication uncertainty, not a failed send.
+        // Reconcile the durable operation before removing the optimistic row.
+        let receipt
+        try {
+          receipt = await waitForOperation(window.electronAPI, operationId)
+        } catch {
+          throw error
+        }
+        if (receipt.status !== 'succeeded') {
+          throw Object.assign(new Error(receipt.error?.message ?? `Message operation ${receipt.status}`), {
+            code: receipt.error?.code ?? 'MESSAGE_OPERATION_FAILED',
+          })
+        }
+      }
       updateSessionById(sessionId, (s) => ({
         messages: settlePiUserOverlayCarrier(s.messages, optimisticMessageId!),
       }))
@@ -1271,6 +1290,7 @@ export default function App() {
   }, [buildMessageBadges, prepareMessageAttachments, store, updateSessionById])
 
   const handleCreateAndSendFirstTurn: AppShellContextType['onCreateAndSendFirstTurn'] = useCallback(async input => {
+    const operationId = crypto.randomUUID()
     const attachmentStagingId = input.attachments?.length
       ? `draft-${crypto.randomUUID()}`
       : undefined
@@ -1280,10 +1300,12 @@ export default function App() {
       failedAttachmentNames,
     } = await prepareMessageAttachments(attachmentStagingId ?? 'unused-first-turn-staging', input.attachments)
     const badges = buildMessageBadges(input.message, input.sendOptions?.badges)
-    let result
+    let accepted = false
+    let operationReceipt: import('@mortise/shared/protocol').OperationAccepted | null = null
     try {
-      result = await window.electronAPI.createAndSendFirstTurn({
+      operationReceipt = await window.electronAPI.createAndSendFirstTurn({
         ...input,
+        operationId,
         attachments: processedAttachments,
         storedAttachments,
         attachmentStagingId,
@@ -1292,27 +1314,54 @@ export default function App() {
           badges: badges.length > 0 ? badges : undefined,
         },
       })
+      accepted = true
     } catch (error) {
-      if (attachmentStagingId) {
+      // The request may have been accepted before the response was lost.
+      // Reconcile by the client-generated operation identity before touching
+      // the draft or reporting a publication failure.
+      try {
+        await waitForOperation(window.electronAPI, operationId)
+        accepted = true
+        operationReceipt = {
+          accepted: true,
+          operationId,
+          status: 'accepted',
+          revision: 1,
+          duplicate: true,
+        }
+      } catch {
+        if (attachmentStagingId) {
+          await window.electronAPI.discardFirstTurnAttachmentStaging(input.workspaceId, attachmentStagingId).catch(() => undefined)
+        }
+        throw error
+      }
+    }
+
+    try {
+      if (!operationReceipt) throw new Error('First-turn operation was not accepted')
+      await waitForOperation(window.electronAPI, operationReceipt.operationId)
+      const result = await window.electronAPI.getFirstTurnResult(operationReceipt.operationId)
+
+      const session = failedAttachmentNames.length > 0
+        ? {
+            ...result.session,
+            messages: [...result.session.messages, {
+              id: generateMessageId(),
+              role: 'warning' as const,
+              content: `${failedAttachmentNames.length} attachment(s) could not be stored and will not be sent: ${failedAttachmentNames.join(', ')}`,
+              timestamp: Date.now(),
+            }],
+          }
+        : result.session
+      addSession(session)
+      syncSessionOptionsFromSession(session)
+      return { ...result, session }
+    } catch (error) {
+      if (attachmentStagingId && !accepted) {
         await window.electronAPI.discardFirstTurnAttachmentStaging(input.workspaceId, attachmentStagingId).catch(() => undefined)
       }
       throw error
     }
-
-    const session = failedAttachmentNames.length > 0
-      ? {
-          ...result.session,
-          messages: [...result.session.messages, {
-            id: generateMessageId(),
-            role: 'warning' as const,
-            content: `${failedAttachmentNames.length} attachment(s) could not be stored and will not be sent: ${failedAttachmentNames.join(', ')}`,
-            timestamp: Date.now(),
-          }],
-        }
-      : result.session
-    addSession(session)
-    syncSessionOptionsFromSession(session)
-    return { ...result, session }
   }, [addSession, buildMessageBadges, prepareMessageAttachments, syncSessionOptionsFromSession])
 
   /**

@@ -38,7 +38,6 @@ import { usePiGlobalConfig } from '@/hooks/usePiGlobalConfig'
 import { PiProviderFormDialog } from './PiProviderFormDialog'
 import type { PiCustomApi, PiGlobalProvider, PiGlobalProviderForDisplay, PiGlobalSettings } from '../../../shared/types'
 import type { PiGlobalDefaultSlot } from '@mortise/shared/config'
-import { setPiProviderModelSupportsReasoning } from '@mortise/shared/config/pi-provider-models'
 import {
   DEFAULT_THINKING_LEVEL,
   THINKING_LEVELS,
@@ -158,14 +157,6 @@ export function PiProvidersSection() {
     if (!result.success) {
       toast.error(result.error || t('settings.piProviders.switchFailed'))
       return false
-    }
-    if (next.thinkingLevel !== 'off') {
-      setProviders(current => current.map(entry => entry.key === next.provider
-        ? {
-            ...entry,
-            provider: setPiProviderModelSupportsReasoning(entry.provider, next.model, true),
-          }
-        : entry))
     }
     setSettings(current => {
       const defaultSlot = { slot, ...next }

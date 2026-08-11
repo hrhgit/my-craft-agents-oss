@@ -54,6 +54,7 @@ import { DEFAULT_THINKING_LEVEL, type ThinkingLevel } from '../agent/thinking-le
 
 export {
   piProviderModelSupportsImages,
+  piProviderModelSupportsReasoning,
   setPiProviderModelSupportsImages,
   setPiProviderModelSupportsReasoning,
 } from './pi-provider-models.ts';
@@ -416,7 +417,16 @@ function normalizeApiKeyInput(apiKey: string | undefined): string | undefined {
 
 export function sanitizePiGlobalProvider(provider: PiGlobalProvider): PiGlobalProvider {
   const { apiKey: _apiKey, ...rest } = provider as PiGlobalProvider & { apiKey?: unknown };
-  return rest;
+  if (!rest.models?.some(model => model.reasoning === true)) return rest;
+  return {
+    ...rest,
+    models: rest.models.map(model => {
+      if (model.reasoning !== true) return model;
+      const next = { ...model };
+      delete next.reasoning;
+      return next;
+    }),
+  };
 }
 
 function isVersionPathSegment(segment: string | undefined): boolean {
@@ -552,7 +562,7 @@ export function savePiGlobalProvider(key: string, provider: PiGlobalProvider, ap
   });
 }
 
-function ensurePiGlobalModelSupportsConfiguredThinking(
+function assertPiGlobalModelSupportsConfiguredThinking(
   providerKey: string,
   modelId: string,
   thinkingLevel: string | undefined,
@@ -563,14 +573,9 @@ function ensurePiGlobalModelSupportsConfiguredThinking(
   if (!provider) throw new Error(`Unknown provider: ${providerKey}`);
   const model = provider.models?.find(candidate => candidate.id === modelId);
   if (!model) throw new Error(`Unknown model: ${providerKey}/${modelId}`);
-  if (model.reasoning === true) return;
-
-  savePiGlobalProvider(providerKey, {
-    ...provider,
-    models: provider.models?.map(candidate => candidate.id === modelId
-      ? { ...candidate, reasoning: true }
-      : candidate),
-  });
+  if (model.reasoning === false) {
+    throw new Error(`Model ${providerKey}/${modelId} explicitly disables reasoning; thinking level must be off`);
+  }
 }
 
 export async function deletePiGlobalProvider(key: string): Promise<void> {
@@ -582,7 +587,7 @@ export async function setPiGlobalDefault(
   model: string,
   thinkingLevel?: string,
 ): Promise<void> {
-  ensurePiGlobalModelSupportsConfiguredThinking(provider, model, thinkingLevel);
+  assertPiGlobalModelSupportsConfiguredThinking(provider, model, thinkingLevel);
   await setPiHostGlobalDefault({
     provider,
     model,
@@ -597,7 +602,7 @@ export async function setPiGlobalDefaultSlot(
   model: string,
   thinkingLevel: string,
 ): Promise<void> {
-  ensurePiGlobalModelSupportsConfiguredThinking(provider, model, thinkingLevel);
+  assertPiGlobalModelSupportsConfiguredThinking(provider, model, thinkingLevel);
   await setPiHostGlobalModelDefaultSlot({
     slot,
     provider,

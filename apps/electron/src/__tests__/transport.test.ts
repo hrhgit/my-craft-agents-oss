@@ -8,7 +8,7 @@
 import { describe, test, expect, afterEach } from 'bun:test'
 import { randomUUID } from 'node:crypto'
 import { WebSocket } from 'ws'
-import { EVENT_BUFFER_MAX_SIZE, type MessageEnvelope } from '@mortise/shared/protocol'
+import { EVENT_BUFFER_MAX_SIZE, PROTOCOL_VERSION, type MessageEnvelope } from '@mortise/shared/protocol'
 import { WsRpcServer } from '@mortise/server-core/transport'
 import { WsRpcClient } from '@mortise/server-core/transport'
 import { serializeEnvelope } from '@mortise/server-core/transport'
@@ -127,6 +127,26 @@ describe('handshake', () => {
       ws.on('error', (error) => {
         reject(error)
       })
+    })
+
+    expect(result.code).toBe(4004)
+  })
+
+  test('handshake without required protocol capabilities is rejected', async () => {
+    const server = trackServer(new WsRpcServer({ host: '127.0.0.1', port: 0 }))
+    await server.listen()
+
+    const result = await new Promise<{ code: number; reason: string }>((resolve, reject) => {
+      const ws = new WebSocket(`ws://127.0.0.1:${server.port}`)
+      ws.on('open', () => {
+        ws.send(JSON.stringify({
+          id: 'missing-capability',
+          type: 'handshake',
+          protocolVersion: PROTOCOL_VERSION,
+        }))
+      })
+      ws.on('close', (code, reason) => resolve({ code, reason: reason.toString() }))
+      ws.on('error', reject)
     })
 
     expect(result.code).toBe(4004)
@@ -779,7 +799,7 @@ describe('edge cases', () => {
     expect(result).toBeNull()
   })
 
-  test('client request timeout cancels the server handler', async () => {
+  test('client request timeout leaves the server handler running until explicit client teardown', async () => {
     const { server, client } = await createPair({}, { requestTimeout: 50 })
     let aborted = false
 
@@ -793,7 +813,26 @@ describe('edge cases', () => {
     })
 
     await expect(client.invoke('slow:cancel')).rejects.toThrow(/Request timeout/)
+    await new Promise(resolve => setTimeout(resolve, 100))
+    expect(aborted).toBe(false)
+    client.destroy()
     await waitUntil(() => aborted)
+  })
+
+  test('explicit null request timeout keeps the RPC pending until the response arrives', async () => {
+    const { server, client } = await createPair({}, { requestTimeout: 10 })
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    server.handle('slow:uncertain', async () => {
+      await gate
+      return 'done'
+    })
+
+    const pending = client.invokeWithOptions('slow:uncertain', [], { timeoutMs: null })
+    await new Promise(resolve => setTimeout(resolve, 30))
+    release()
+
+    await expect(pending).resolves.toBe('done')
   })
 
   test('duplicate handler registration throws', async () => {

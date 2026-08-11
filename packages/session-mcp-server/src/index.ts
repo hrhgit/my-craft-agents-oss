@@ -29,15 +29,7 @@ import {
   ListToolsRequestSchema,
   type Tool,
 } from '@modelcontextprotocol/sdk/types.js';
-import { existsSync, readFileSync, readdirSync, statSync, writeFileSync, mkdirSync } from 'node:fs';
-import { join, dirname } from 'node:path';
-import { isDeveloperFeedbackEnabled } from '@mortise/shared/feature-flags';
-import {
-  CONFIG_DIR,
-  MORTISE_PROJECT_SKILLS_DIR,
-  MORTISE_SKILLS_DIR,
-} from '@mortise/shared/config/paths';
-import { validateSessionId } from '@mortise/shared/sessions/validation';
+import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 // Import from session-tools-core
 import {
   type SessionToolContext,
@@ -118,57 +110,13 @@ function createCodexContext(config: McpServerConfig): SessionToolContext {
     },
   };
 
-  // Session paths for transform_data / render_template. Shared storage helpers
-  // resolve the sidecar next to Pi's workspace-scoped session projection without
-  // scanning the global Pi session root from this subprocess.
-  validateSessionId(sessionId);
-  // The host already resolved this session's stable sidecar path. Derive it
-  // from the plans folder so this subprocess never re-encodes a cwd.
-  const sessionsDir = dirname(plansFolderPath);
-  const sessionDataDir = join(sessionsDir, 'data');
   // Build context
   return {
     sessionId,
     workspacePath: workspaceRootPath,
-    get skillPaths() {
-      return [MORTISE_SKILLS_DIR, join(workspaceRootPath, MORTISE_PROJECT_SKILLS_DIR)];
-    },
-    get skillsPath() { return this.skillPaths?.[0] ?? ''; },
     plansFolderPath,
-    sessionPath: sessionsDir,
-    dataPath: sessionDataDir,
     callbacks,
     fs,
-
-    // Preferences: write directly to preferences.json
-    updatePreferences: (updates: Record<string, unknown>) => {
-      const prefsPath = join(CONFIG_DIR, 'preferences.json');
-      try {
-        let current: Record<string, unknown> = {};
-        if (existsSync(prefsPath)) {
-          current = JSON.parse(readFileSync(prefsPath, 'utf-8'));
-        }
-        const merged = {
-          ...current,
-          ...updates,
-          location: updates.location
-            ? { ...(current.location as Record<string, unknown> || {}), ...(updates.location as Record<string, unknown>) }
-            : current.location,
-          updatedAt: Date.now(),
-        };
-        writeFileSync(prefsPath, JSON.stringify(merged, null, 2), 'utf-8');
-      } catch (err) {
-        console.error('Failed to update preferences:', err);
-      }
-    },
-
-    // Developer feedback: write one JSON file per entry to {configDir}/feedback/
-    submitFeedback: (feedback) => {
-      const feedbackDir = join(CONFIG_DIR, 'feedback');
-      mkdirSync(feedbackDir, { recursive: true });
-      const filePath = join(feedbackDir, `${feedback.id}.json`);
-      writeFileSync(filePath, JSON.stringify(feedback, null, 2), 'utf-8');
-    },
 
     // Note: validators and renderer-only capabilities
     // are not available in Codex context (require Electron internals)
@@ -179,10 +127,8 @@ function createCodexContext(config: McpServerConfig): SessionToolContext {
 // Tool Definitions (from canonical registry)
 // ============================================================
 
-function createSessionTools(includeDeveloperFeedback: boolean): Tool[] {
-  return getToolDefsAsJsonSchema({
-    includeDeveloperFeedback,
-  }).map(def => ({
+function createSessionTools(): Tool[] {
+  return getToolDefsAsJsonSchema().map(def => ({
     name: def.name,
     description: def.description,
     inputSchema: def.inputSchema as Tool['inputSchema'],
@@ -374,8 +320,7 @@ async function main() {
   // Create the Codex context
   const ctx = createCodexContext(config);
 
-  const includeDeveloperFeedback = isDeveloperFeedbackEnabled();
-  const sessionToolRegistry = getSessionToolRegistry({ includeDeveloperFeedback });
+  const sessionToolRegistry = getSessionToolRegistry();
 
   // Create MCP server
   const server = new Server(
@@ -395,7 +340,7 @@ async function main() {
 
   // Handle tool listing — session tools + docs upstream tools
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: [...createSessionTools(includeDeveloperFeedback), ...docsTools],
+    tools: [...createSessionTools(), ...docsTools],
   }));
 
   // Handle tool calls — route via canonical registry, spawn_session, or docs upstream
@@ -431,7 +376,7 @@ async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
 
-  console.error(`Session MCP Server started for session ${sessionId} (developerFeedback=${includeDeveloperFeedback})`);
+  console.error(`Session MCP Server started for session ${sessionId}`);
 }
 
 main().catch((error) => {

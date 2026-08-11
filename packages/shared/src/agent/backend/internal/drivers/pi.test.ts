@@ -119,3 +119,28 @@ describe('piDriver.buildRuntime custom endpoint models', () => {
     expect(runtime.customModels).toEqual([{ id: 'plain-model', contextWindow: 200_000 }]);
   });
 });
+
+describe('piDriver.fetchModels custom endpoint models', () => {
+  it('defaults omitted reasoning metadata to enabled and preserves explicit false', async () => {
+    const result = await piDriver.fetchModels!({
+      providerKey: 'custom-endpoint',
+      providerConfig: {
+        baseUrl: 'https://api.example.com/v1',
+        api: 'openai-completions',
+        models: [
+          { id: 'default-reasoning-model' },
+          { id: 'explicit-non-reasoning-model', reasoning: false },
+        ],
+      },
+      credentials: {},
+      timeoutMs: 1_000,
+      hostRuntime: {} as any,
+      resolvedPaths: { nodeRuntimePath: '/usr/bin/node' },
+    });
+
+    expect(result.models.map(model => [model.id, model.supportsThinking])).toEqual([
+      ['default-reasoning-model', true],
+      ['explicit-non-reasoning-model', false],
+    ]);
+  });
+});

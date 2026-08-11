@@ -252,6 +252,8 @@ export interface ThinkingContent {
 	type: "thinking";
 	thinking: string;
 	thinkingSignature?: string; // e.g., for OpenAI responses, the reasoning item ID
+	/** Provider-authored reasoning summary shown in history instead of raw thinking. */
+	thinkingSummary?: string;
 	/** When true, the thinking content was redacted by safety filters. The opaque
 	 *  encrypted payload is stored in `thinkingSignature` so it can be passed back
 	 *  to the API for multi-turn continuity. */
@@ -418,7 +420,7 @@ export type AssistantMessageEvent =
 	| { type: "text_end"; contentIndex: number; content: string; partial: AssistantMessage }
 	| { type: "thinking_start"; contentIndex: number; partial: AssistantMessage }
 	| { type: "thinking_delta"; contentIndex: number; delta: string; partial: AssistantMessage }
-	| { type: "thinking_end"; contentIndex: number; content: string; partial: AssistantMessage }
+	| { type: "thinking_end"; contentIndex: number; content: string; summary?: string; partial: AssistantMessage }
 	| {
 			type: "websearch_start";
 			contentIndex: number;

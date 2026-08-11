@@ -12,11 +12,6 @@ import type { EventSink, RpcServer, WorkspaceAuthorizationRequest } from '../tra
 import { createHeadlessPlatform } from '../runtime/platform-headless'
 import type { PlatformServices } from '../runtime/platform'
 
-interface ModelRefreshServiceLike {
-  startAll(): void
-  stopAll?(): void
-}
-
 export interface ServerRuntimeContext<TSessionManager, THandlerDeps> {
   sessionManager: TSessionManager
   deps: THandlerDeps
@@ -48,7 +43,7 @@ export interface ServerBootstrapOptions<TSessionManager, THandlerDeps> {
    * so the remote-bridge code path for `client:browser:invoke` activates.
    */
   bindRpcServer?: (sessionManager: TSessionManager, server: RpcServer) => void
-  initModelRefreshService: () => ModelRefreshServiceLike
+  initModelRefreshService: () => void
   cleanupSessionManager?: (sessionManager: TSessionManager) => Promise<void> | void
   cleanupClientResources?: (clientId: string) => void
   onClientConnected?: (info: { clientId: string; webContentsId: number | null; workspaceId: string | null; capabilities: string[] }) => void
@@ -96,7 +91,6 @@ type BootstrapPhase =
   | 'lock-acquired'
   | 'session-initializing'
   | 'runtime-initializing'
-  | 'model-refresh-starting'
   | 'listener-binding'
   | 'ready'
   | 'rolling-back'
@@ -405,12 +399,10 @@ export async function bootstrapServer<TSessionManager, THandlerDeps>(
   const serverLockFile = resolveServerLockFile(options.serverLockName)
   acquireServerLock(platform.logger, serverLockFile)
 
-  let modelRefreshService: ModelRefreshServiceLike | null = null
   let sessionManager: TSessionManager | null = null
   let wsServer: WsRpcServer | null = null
   let deps: THandlerDeps | null = null
   let serverHandlerContext: ServerHandlerContext | null = null
-  let modelRefreshStartAttempted = false
   let runtimeInitializationAttempted = false
   let phase: BootstrapPhase = 'lock-acquired'
   let teardownPromise: Promise<void> | null = null
@@ -431,12 +423,6 @@ export async function bootstrapServer<TSessionManager, THandlerDeps>(
         } catch (error) {
           platform.logger.error('[bootstrap] Failed to send shutdown notification:', error)
         }
-      }
-
-      try {
-        if (modelRefreshStartAttempted) modelRefreshService?.stopAll?.()
-      } catch (error) {
-        platform.logger.error(`[bootstrap] Failed to ${mode === 'rollback' ? 'roll back' : 'stop'} model refresh service:`, error)
       }
 
       try {
@@ -467,7 +453,7 @@ export async function bootstrapServer<TSessionManager, THandlerDeps>(
   }
 
   try {
-    modelRefreshService = options.initModelRefreshService()
+    options.initModelRefreshService()
     sessionManager = options.createSessionManager()
 
     wsServer = new WsRpcServer({
@@ -536,10 +522,6 @@ export async function bootstrapServer<TSessionManager, THandlerDeps>(
       server: wsServer,
       serverHandlerContext,
     })
-
-    modelRefreshStartAttempted = true
-    phase = 'model-refresh-starting'
-    modelRefreshService.startAll()
 
     // Listening is the readiness commit point. No client can observe a
     // partially registered RPC surface or an uninitialized SessionManager.

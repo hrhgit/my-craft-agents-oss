@@ -16,8 +16,10 @@ import type {
 } from './dto'
 import type { PiProjectionEventV1 } from './pi-projection'
 import type { WorkspaceTopologyChangedV1 } from './workspace-topology'
+import type { OperationUpdatedEvent } from './operations'
 
 export interface BroadcastEventMap {
+  [RPC_CHANNELS.operations.UPDATED]: [event: OperationUpdatedEvent]
   // Session events (workspace-scoped via broadcastToWorkspace)
   [RPC_CHANNELS.sessions.EVENT]: [event: SessionEvent]
   [RPC_CHANNELS.sessions.PI_PROJECTION_EVENT]: [event: PiProjectionEventV1]

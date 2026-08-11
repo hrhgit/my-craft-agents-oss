@@ -72,6 +72,13 @@ describe('mortise-ui controller', () => {
       .rejects.toThrow('explicit sourceMortiseConfigDir')
   })
 
+  it('requires canonical Electron identities for pinned builds', async () => {
+    await expect(startMortiseUiRun({ surface: 'electron', expectedBuildId: 'not-a-build' }))
+      .rejects.toThrow('lowercase SHA-256 identity')
+    await expect(startMortiseUiRun({ surface: 'webui', expectedBuildId: 'a'.repeat(64) }))
+      .rejects.toThrow('requires the Electron surface')
+  })
+
   it('enforces the shared maximum cold-start budget', async () => {
     await expect(startMortiseUiRun({ surface: 'electron', waitMs: MORTISE_UI_MAX_START_WAIT_MS + 1 }))
       .rejects.toThrow(`waitMs must be between 1 and ${MORTISE_UI_MAX_START_WAIT_MS}`)
@@ -195,6 +202,7 @@ describe('mortise-ui controller', () => {
     const root = mkdtempSync(join(tmpdir(), 'mortise-ui-restart-')); roots.push(root)
     const first = await startMortiseUiRun({
       surface: 'electron',
+      expectedBuildId: 'a'.repeat(64),
       label: 'restart-profile',
       adapterCommand: [process.execPath, join(import.meta.dir, '..', 'test-host.fixture.ts')],
       runRoot: root,
@@ -209,6 +217,7 @@ describe('mortise-ui controller', () => {
     runs.splice(0, 1, second)
 
     expect(second.runId).not.toBe(first.runId)
+    expect(second.buildId).toBe(first.buildId)
     expect(second.profileDir).toBe(first.profileDir)
     expect(second.restartedFromRunId).toBe(first.runId)
     expect(second.profileOwnerRunId).toBe(second.runId)

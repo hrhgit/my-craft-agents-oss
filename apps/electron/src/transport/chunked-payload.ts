@@ -78,7 +78,7 @@ export async function invokeChunked(
   largeArgIndex: number,
   onProgress?: (sent: number, total: number) => void,
   prepared?: PreparedChunkedPayload,
-  options?: { finalTimeoutMs?: number },
+  options?: { finalTimeoutMs?: number | null },
 ): Promise<any> {
   const payload = prepared ?? await prepareChunkedPayload(args[largeArgIndex])
 

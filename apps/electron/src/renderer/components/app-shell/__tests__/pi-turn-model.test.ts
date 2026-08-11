@@ -243,7 +243,7 @@ describe('buildPiTurns', () => {
     expect(turns[1]).toMatchObject({ type: 'assistant', isStreaming: true, timestamp: 3 })
   })
 
-  it('groups thinking, tool work, commentary, and the final response into one TurnCard model', () => {
+  it('groups reasoning summary, tool work, commentary, and the final response into one TurnCard model', () => {
     const responseAnnotation = annotation('assistant-final')
     const overlay = buildPiTurnOverlay([{
       id: 'assistant-final', role: 'assistant', content: 'ignored', timestamp: 50,
@@ -259,15 +259,19 @@ describe('buildPiTurns', () => {
         payload: { role: 'assistant', messageId: 'assistant-thinking', contentKind: 'thinking', contentIndex: 0, text: 'Reasoning', streaming: false },
       }),
       entity({
-        entityId: 'content:text:assistant-comment:0', createdSeq: 4,
+        entityId: 'content:thinkingSummary:assistant-thinking:0', createdSeq: 4, kind: 'thinking_summary_end',
+        payload: { role: 'assistant', messageId: 'assistant-thinking', contentKind: 'thinkingSummary', contentIndex: 0, text: 'Reasoning summary', streaming: false },
+      }),
+      entity({
+        entityId: 'content:text:assistant-comment:0', createdSeq: 5,
         payload: { role: 'assistant', messageId: 'assistant-comment', contentIndex: 0, text: 'I will inspect it.', streaming: false, isIntermediate: true },
       }),
       entity({
-        entityId: 'tool:read-1', entityType: 'tool_run', createdSeq: 5, kind: 'tool_execution_end',
+        entityId: 'tool:read-1', entityType: 'tool_run', createdSeq: 6, kind: 'tool_execution_end',
         payload: { toolCallId: 'read-1', toolName: 'Read', input: { path: 'a.ts' }, result: 'source', status: 'completed' },
       }),
       entity({
-        entityId: 'content:text:assistant-final:0', createdSeq: 6,
+        entityId: 'content:text:assistant-final:0', createdSeq: 7,
         payload: { role: 'assistant', messageId: 'assistant-final', contentIndex: 0, text: 'Done.', streaming: false, isIntermediate: false },
       }),
     ], overlay)
@@ -279,23 +283,23 @@ describe('buildPiTurns', () => {
     })
     if (turns[0]?.type !== 'assistant') throw new Error('Expected assistant turn')
     expect(turns[0].activities.map(activity => [activity.type, activity.content])).toEqual([
-      ['intermediate', 'Reasoning'],
+      ['intermediate', 'Reasoning summary'],
       ['intermediate', 'I will inspect it.'],
       ['tool', 'source'],
     ])
   })
 
-  it('orders thinking and tools by projection sequence while retaining wall-clock tool timing', () => {
+  it('orders reasoning summaries and tools by projection sequence while retaining wall-clock tool timing', () => {
     const turns = buildPiTurns([
       entity({
         entityId: 'turn:ordered', entityType: 'turn', createdSeq: 7, lastSeq: 7,
         turnId: 'turn-ordered', kind: 'turn_end', payload: { status: 'completed' },
       }),
       entity({
-        entityId: 'content:thinking:ordered-1:0', createdSeq: 2, turnId: 'turn-ordered',
-        kind: 'thinking_end',
+        entityId: 'content:thinkingSummary:ordered-1:0', createdSeq: 2, turnId: 'turn-ordered',
+        kind: 'thinking_summary_end',
         payload: {
-          role: 'assistant', messageId: 'ordered-thinking-1', contentKind: 'thinking',
+          role: 'assistant', messageId: 'ordered-thinking-1', contentKind: 'thinkingSummary',
           contentIndex: 0, text: 'First reasoning', streaming: false,
           timestamp: 1_900_000_000_000,
         },
@@ -310,10 +314,10 @@ describe('buildPiTurns', () => {
         },
       }),
       entity({
-        entityId: 'content:thinking:ordered-2:0', createdSeq: 4, turnId: 'turn-ordered',
-        kind: 'thinking_end',
+        entityId: 'content:thinkingSummary:ordered-2:0', createdSeq: 4, turnId: 'turn-ordered',
+        kind: 'thinking_summary_end',
         payload: {
-          role: 'assistant', messageId: 'ordered-thinking-2', contentKind: 'thinking',
+          role: 'assistant', messageId: 'ordered-thinking-2', contentKind: 'thinkingSummary',
           contentIndex: 0, text: 'Second reasoning', streaming: false,
           timestamp: 1_800_000_000_000,
         },
@@ -344,15 +348,15 @@ describe('buildPiTurns', () => {
       startedAt: activity.startedAt,
       completedAt: activity.completedAt,
     }))).toEqual([
-      { id: 'content:thinking:ordered-1:0', order: 2, timestamp: 1_900_000_000_000, startedAt: undefined, completedAt: undefined },
+      { id: 'content:thinkingSummary:ordered-1:0', order: 2, timestamp: 1_900_000_000_000, startedAt: undefined, completedAt: undefined },
       { id: 'tool:ordered-1', order: 3, timestamp: 1_700_000_000_000, startedAt: 1_700_000_000_000, completedAt: 1_700_000_000_250 },
-      { id: 'content:thinking:ordered-2:0', order: 4, timestamp: 1_800_000_000_000, startedAt: undefined, completedAt: undefined },
+      { id: 'content:thinkingSummary:ordered-2:0', order: 4, timestamp: 1_800_000_000_000, startedAt: undefined, completedAt: undefined },
       { id: 'tool:ordered-2', order: 5, timestamp: 1_600_000_000_000, startedAt: 1_600_000_000_000, completedAt: 1_600_000_000_400 },
     ])
     expect(turns[0].response).toMatchObject({ text: 'Final answer', messageId: 'ordered-final' })
   })
 
-  it('promotes the last terminal thinking block to the response without duplicating it', () => {
+  it('promotes the last terminal reasoning summary to the response without duplicating it', () => {
     const turns = buildPiTurns([
       entity({
         entityId: 'content:user:user-thinking-fallback', createdSeq: 1,
@@ -384,11 +388,11 @@ describe('buildPiTurns', () => {
         payload: { status: 'completed', stopReason: 'stop' },
       }),
       entity({
-        entityId: 'content:thinking:assistant-terminal:0', createdSeq: 5,
-        turnId: 'turn-thinking-fallback', kind: 'thinking_end',
+        entityId: 'content:thinkingSummary:assistant-terminal:0', createdSeq: 5,
+        turnId: 'turn-thinking-fallback', kind: 'thinking_summary_end',
         payload: {
-          role: 'assistant', contentKind: 'thinking', messageId: 'assistant-terminal',
-          contentIndex: 0, text: 'This is the terminal answer.', streaming: false,
+          role: 'assistant', contentKind: 'thinkingSummary', messageId: 'assistant-terminal',
+          contentIndex: 0, text: 'This is the terminal summary.', streaming: false,
           isIntermediate: false, isFinal: true, stopReason: 'stop', timestamp: 1_783_861_204_200,
         },
       }),
@@ -397,13 +401,13 @@ describe('buildPiTurns', () => {
     expect(turns).toHaveLength(2)
     expect(turns[1]).toMatchObject({
       type: 'assistant', isComplete: true,
-      response: { messageId: 'assistant-terminal', text: 'This is the terminal answer.' },
+      response: { messageId: 'assistant-terminal', text: 'This is the terminal summary.' },
     })
     if (turns[1]?.type !== 'assistant') throw new Error('Expected assistant turn')
-    expect(turns[1].activities.map(activity => activity.content)).toEqual(['I will inspect it.'])
+    expect(turns[1].activities.map(activity => activity.content)).toEqual([])
   })
 
-  it('keeps tool-use thinking as activity instead of promoting it to a response', () => {
+  it('does not keep completed raw thinking without a summary in the history activity stream', () => {
     const turns = buildPiTurns([
       entity({
         entityId: 'turn:turn-tool-thinking', entityType: 'turn', createdSeq: 1, lastSeq: 3,
@@ -421,11 +425,7 @@ describe('buildPiTurns', () => {
       }),
     ])
 
-    expect(turns).toHaveLength(1)
-    expect(turns[0]).toMatchObject({
-      type: 'assistant', isComplete: true, response: undefined,
-      activities: [{ type: 'intermediate', content: 'I need a tool.' }],
-    })
+    expect(turns).toEqual([])
   })
 
   it('omits a withdrawn queued message from the transcript model', () => {
@@ -521,6 +521,93 @@ describe('buildPiTurns', () => {
       activities: [{
         type: 'intermediate', status: 'running', content: 'Inspecting the current state.',
       }],
+    })
+  })
+
+  it('shows raw thinking while streaming, then keeps only the reasoning summary after completion', () => {
+    const streaming = buildPiTurns([
+      entity({
+        entityId: 'content:thinking:assistant-stream-summary:0', createdSeq: 1,
+        turnId: 'turn-stream-summary', kind: 'thinking_delta',
+        payload: {
+          role: 'assistant', contentKind: 'thinking', messageId: 'assistant-stream-summary',
+          contentIndex: 0, text: 'Raw reasoning stream', streaming: true,
+        },
+      }),
+    ])
+    expect(streaming[0]).toMatchObject({
+      type: 'assistant', isStreaming: true,
+      activities: [{ type: 'intermediate', status: 'running', content: 'Raw reasoning stream' }],
+    })
+
+    const completed = buildPiTurns([
+      entity({
+        entityId: 'content:thinking:assistant-stream-summary:0', createdSeq: 1,
+        turnId: 'turn-stream-summary', kind: 'thinking_end',
+        payload: {
+          role: 'assistant', contentKind: 'thinking', messageId: 'assistant-stream-summary',
+          contentIndex: 0, text: 'Raw reasoning stream', streaming: false,
+        },
+      }),
+      entity({
+        entityId: 'content:thinkingSummary:assistant-stream-summary:0', createdSeq: 2,
+        turnId: 'turn-stream-summary', kind: 'thinking_summary_end',
+        payload: {
+          role: 'assistant', contentKind: 'thinkingSummary', messageId: 'assistant-stream-summary',
+          contentIndex: 0, text: 'Reasoning summary', streaming: false,
+        },
+      }),
+    ])
+    expect(completed[0]).toMatchObject({
+      type: 'assistant',
+      activities: [{ type: 'intermediate', status: 'completed', content: 'Reasoning summary' }],
+    })
+  })
+
+  it('classifies summary entities by kind even when payload omits contentKind', () => {
+    const turns = buildPiTurns([entity({
+      entityId: 'content:thinkingSummary:assistant-legacy:0', createdSeq: 1,
+      turnId: 'turn-legacy-summary', kind: 'thinking_summary_end',
+      payload: {
+        role: 'assistant', messageId: 'assistant-legacy', contentIndex: 0,
+        text: 'Legacy summary', streaming: false,
+      },
+    })])
+
+    expect(turns[0]).toMatchObject({
+      type: 'assistant',
+      activities: [{ type: 'intermediate', content: 'Legacy summary' }],
+    })
+  })
+
+  it('does not promote terminal raw thinking without a summary to the response', () => {
+    const turns = buildPiTurns([
+      entity({
+        entityId: 'content:user:user-raw-terminal', createdSeq: 1,
+        turnId: 'turn-raw-terminal', kind: 'user_text',
+        payload: { role: 'user', messageId: 'user-raw-terminal', text: 'answer', streaming: false },
+      }),
+      entity({
+        entityId: 'turn:turn-raw-terminal', entityType: 'turn', createdSeq: 2, lastSeq: 3,
+        turnId: 'turn-raw-terminal', kind: 'turn_end',
+        payload: { status: 'completed', stopReason: 'stop' },
+      }),
+      entity({
+        entityId: 'content:thinking:assistant-raw-terminal:0', createdSeq: 3,
+        turnId: 'turn-raw-terminal', kind: 'thinking_end',
+        payload: {
+          role: 'assistant', contentKind: 'thinking', messageId: 'assistant-raw-terminal',
+          contentIndex: 0, text: 'Raw terminal reasoning', streaming: false,
+          isIntermediate: false, isFinal: true, stopReason: 'stop',
+        },
+      }),
+    ])
+
+    expect(turns).toHaveLength(2)
+    expect(turns[1]).toMatchObject({
+      type: 'assistant', isComplete: true,
+      response: { text: '', messageId: 'assistant-raw-terminal' },
+      activities: [],
     })
   })
 

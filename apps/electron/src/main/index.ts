@@ -81,23 +81,12 @@ if (persistedUiLanguage) {
 const machineId = createHash('sha256').update(hostname() + homedir()).digest('hex').slice(0, 16)
 Sentry.setUser({ id: machineId })
 
-function redactBrowserUrl(value: string): string {
-  try {
-    const url = new URL(value)
-    url.search = ''
-    url.hash = ''
-    return url.toString()
-  } catch {
-    return ''
-  }
-}
-
 import { join, delimiter } from 'path'
 import { existsSync, readFileSync } from 'fs'
 import { RPC_CHANNELS, parseWorkspaceTransferRequestV1 } from '@mortise/shared/protocol'
 import { clearRuntimeLayoutProcessEnvironment } from '@mortise/session-tools-core/runtime'
 import { SessionManager, setSessionPlatform, setSessionRuntimeHooks, type SessionBackendFactory } from '@mortise/server-core/sessions'
-import { createAutomationWorkspaceCapabilityProvider, createBrowserCommandProvider, createBrowserControlProvider, createBrowserOperationsProvider, createBrowserProvider, createFilePreviewProvider, createFilesProvider, createMessagingSessionCapabilityProvider, createSessionShareCapabilityProvider, createSessionTransferCapabilityProvider, createSystemNotificationProvider, getWorkspaceAllowedDirs, validateFilePath } from '@mortise/server-core'
+import { createAutomationWorkspaceCapabilityProvider, createFilePreviewProvider, createMessagingSessionCapabilityProvider, createSessionShareCapabilityProvider, createSessionTransferCapabilityProvider, getWorkspaceAllowedDirs, validateFilePath } from '@mortise/server-core'
 import { executeAutomationWorkspaceOperationV1 } from '@mortise/server-core/handlers/rpc/automations'
 import { registerAutomationWorkspaceRpcHandlers } from '@mortise/server-core/handlers'
 import { AutomationIngressTokenRegistry, createAutomationIngressHandler } from '@mortise/server-core/services'
@@ -138,7 +127,10 @@ import { errorMessage, flushRuntimeLogs, flushRuntimeLogsSync, setBundledAssetsR
 import { initializeBackendHostRuntime } from '@mortise/shared/agent/backend'
 import { handleDeepLink } from './deep-link'
 import { BrowserPaneManager } from './browser-pane-manager'
-import { createBrowserCapabilityAdapter } from './browser-capability-adapter'
+import {
+  createElectronCapabilityExecutor,
+  registerElectronCapabilityProviders,
+} from './electron-capability-providers'
 import { registerThumbnailScheme, registerThumbnailHandler } from './thumbnail-protocol'
 import { registerExtensionScheme, registerExtensionHandler } from './extension-protocol'
 import { isDebugMode, mainLog, getLogFilePath, getMessagingGatewayLogFilePath, messagingGatewayLog, autoUpdateLog, flushDedicatedLogs, flushDedicatedLogsSync, initializeRendererLoggingBridge, rootLog } from './logger'
@@ -812,20 +804,22 @@ app.whenReady().then(async () => {
             })
             return result.response === 1
           })
-          sm.registerCapabilityProvider(createSystemNotificationProvider(async ({ title, body }, route) => {
-            const session = await sm.getSession(route.sessionId)
-            showNotification(title, body, session?.workspaceId ?? '', route.sessionId)
-          }))
-          sm.registerCapabilityProvider(createFilesProvider(async ({ title, mode = 'file', multiple = false, extensions }) => {
-            const properties: Array<'openFile' | 'openDirectory' | 'multiSelections'> = [mode === 'directory' ? 'openDirectory' : 'openFile']
-            if (multiple) properties.push('multiSelections')
-            const result = await dialog.showOpenDialog({
-              title,
-              properties,
-              ...(extensions?.length ? { filters: [{ name: 'Allowed files', extensions }] } : {}),
-            })
-            return { cancelled: result.canceled, paths: result.filePaths }
-          }))
+          registerElectronCapabilityProviders(
+            provider => { sm.registerCapabilityProvider(provider) },
+            {
+              browserPaneManager: browserPaneManager!,
+              dialog,
+              showNotification,
+              resolveSession: async sessionId => {
+                const session = await sm.getSession(sessionId)
+                if (!session) return undefined
+                return {
+                  workspaceId: session.workspaceId,
+                  sessionPath: sm.getSessionPath(sessionId) ?? undefined,
+                }
+              },
+            },
+          )
           sm.registerCapabilityProvider(createFilePreviewProvider(async ({ path, maxBytes }, route) => {
             const session = await sm.getSession(route.sessionId)
             if (!session) throw new Error('Session not found')
@@ -842,76 +836,6 @@ app.whenReady().then(async () => {
             } as Record<string, string>)[ext] ?? 'application/octet-stream'
             const buffer = await readFile(safePath)
             return { mimeType, size: buffer.byteLength, dataUrl: `data:${mimeType};base64,${buffer.toString('base64')}` }
-          }))
-          sm.registerCapabilityProvider(createBrowserProvider(async ({ url, focus }, route) => {
-            const session = await sm.getSession(route.sessionId)
-            if (!session) throw new Error('Session not found')
-            const instanceId = await browserPaneManager!.getOrCreateForSessionAsync(route.sessionId, { workspaceId: session.workspaceId })
-            const navigated = await browserPaneManager!.navigate(instanceId, url)
-            if (focus) browserPaneManager!.focus(instanceId)
-            return { instanceId, ...navigated }
-          }))
-          sm.registerCapabilityProvider(createBrowserControlProvider(async (operation, { instanceId }, route) => {
-            const instance = await browserPaneManager!.getInstanceAsync(instanceId)
-            if (!instance || instance.ownerSessionId !== route.sessionId) {
-              throw new Error('Browser instance is not owned by this session')
-            }
-            switch (operation) {
-              case 'back': await browserPaneManager!.goBack(instanceId); break
-              case 'forward': await browserPaneManager!.goForward(instanceId); break
-              case 'focus': browserPaneManager!.focus(instanceId); break
-              case 'hide': browserPaneManager!.hide(instanceId); break
-              case 'close': browserPaneManager!.destroyInstance(instanceId); break
-            }
-          }))
-          sm.registerCapabilityProvider(createBrowserCommandProvider(
-            async ({ sessionId }) => {
-              const session = await sm.getSession(sessionId)
-              if (!session) return undefined
-              return createBrowserCapabilityAdapter(browserPaneManager!, sessionId, session.workspaceId)
-            },
-            async (image, { sessionId }) => {
-              const sessionPath = sm.getSessionPath(sessionId)
-              if (!sessionPath) throw new Error('Session not found')
-              const { mkdir, writeFile } = await import('fs/promises')
-              const artifactsDir = join(sessionPath, 'artifacts')
-              await mkdir(artifactsDir, { recursive: true })
-              const extension = image.mimeType === 'image/jpeg' ? 'jpg' : 'png'
-              const path = join(artifactsDir, `browser-${randomUUID()}.${extension}`)
-              await writeFile(path, Buffer.from(image.data, 'base64'))
-              return { path }
-            },
-          ))
-          sm.registerCapabilityProvider(createBrowserOperationsProvider(async (operation, input, route) => {
-            const instanceId = String(input.instanceId)
-            const instance = await browserPaneManager!.getInstanceAsync(instanceId)
-            if (!instance || instance.ownerSessionId !== route.sessionId) throw new Error('Browser instance is not owned by this session')
-            if (route.signal.aborted) throw route.signal.reason
-            switch (operation) {
-              case 'snapshot': return browserPaneManager!.getAccessibilitySnapshot(instanceId)
-              case 'click': await browserPaneManager!.clickElement(instanceId, String(input.ref), { waitFor: input.waitFor as 'none' | 'navigation' | 'network-idle' | undefined, timeoutMs: input.timeoutMs as number | undefined }); return { completed: true }
-              case 'click-at': await browserPaneManager!.clickAtCoordinates(instanceId, Number(input.x), Number(input.y)); return { completed: true }
-              case 'drag': await browserPaneManager!.drag(instanceId, Number(input.x1), Number(input.y1), Number(input.x2), Number(input.y2)); return { completed: true }
-              case 'fill': await browserPaneManager!.fillElement(instanceId, String(input.ref), String(input.value)); return { completed: true }
-              case 'type': await browserPaneManager!.typeText(instanceId, String(input.text)); return { completed: true }
-              case 'select': await browserPaneManager!.selectOption(instanceId, String(input.ref), String(input.value)); return { completed: true }
-              case 'screenshot': {
-                const result = await browserPaneManager!.screenshot(instanceId, { format: input.format as 'png' | 'jpeg' | undefined, jpegQuality: input.jpegQuality as number | undefined, annotate: input.annotate as boolean | undefined })
-                return { format: result.imageFormat, dataUrl: `data:image/${result.imageFormat};base64,${result.imageBuffer.toString('base64')}`, metadata: result.metadata }
-              }
-              case 'screenshot-region': {
-                const result = await browserPaneManager!.screenshotRegion(instanceId, input as never)
-                return { format: result.imageFormat, dataUrl: `data:image/${result.imageFormat};base64,${result.imageBuffer.toString('base64')}`, metadata: result.metadata }
-              }
-              case 'wait': return browserPaneManager!.waitFor(instanceId, { kind: input.kind as 'selector' | 'text' | 'url' | 'network-idle', value: input.value as string | undefined, timeoutMs: input.timeoutMs as number | undefined })
-              case 'key': await browserPaneManager!.sendKey(instanceId, { key: String(input.key), modifiers: input.modifiers as Array<'shift' | 'control' | 'alt' | 'meta'> | undefined }); return { completed: true }
-              case 'scroll': await browserPaneManager!.scroll(instanceId, input.direction as 'up' | 'down' | 'left' | 'right', input.amount as number | undefined); return { completed: true }
-              case 'console': return browserPaneManager!.getConsoleLogs(instanceId, { level: input.level as never, limit: input.limit as number | undefined }).map(entry => ({ timestamp: entry.timestamp, level: entry.level, message: entry.message.slice(0, 10_000) }))
-              case 'network': return browserPaneManager!.getNetworkLogs(instanceId, { status: input.status as never, method: input.method as string | undefined, resourceType: input.resourceType as string | undefined, limit: input.limit as number | undefined }).map(entry => ({ ...entry, url: redactBrowserUrl(entry.url) }))
-              case 'downloads': return (await browserPaneManager!.getDownloads(instanceId, { action: input.action as never, limit: input.limit as number | undefined, timeoutMs: input.timeoutMs as number | undefined })).map(({ savePath: _savePath, url, ...entry }) => ({ ...entry, url: redactBrowserUrl(url) }))
-              case 'resize': return browserPaneManager!.windowResize(instanceId, Number(input.width), Number(input.height))
-              case 'challenge': return browserPaneManager!.detectSecurityChallenge(instanceId)
-            }
           }))
           sm.registerCapabilityProvider(createSessionShareCapabilityProvider({
             async status(sessionId: string) {
@@ -1365,6 +1289,11 @@ app.whenReady().then(async () => {
             messagingWorkerPath: electronResourcePaths.messagingWorkerPath,
             immutableRuntime: electronRuntime.immutableRuntime,
             startupTimeoutMs: Number.isFinite(timeoutMs) ? timeoutMs : undefined,
+            capabilityExecutor: createElectronCapabilityExecutor({
+              browserPaneManager: browserPaneManager!,
+              dialog,
+              showNotification,
+            }),
           })
 
           process.env.MORTISE_LOCAL_WORKSPACE_SERVER_URL = workspaceServer.url
@@ -1439,6 +1368,7 @@ app.whenReady().then(async () => {
         windowManager,
         browserPaneManager: browserPaneManager ?? undefined,
         runtimeLogPath: join(CONFIG_DIR, 'logs', 'runtime.log'),
+        probeWorkspaceCapability: workspaceServer?.probeCapability,
         shutdown: () => app.quit(),
         openRoute: async (params, target) => {
           const resolvedRoute = resolveUiValidationRoute(params, String(target.webContentsId))

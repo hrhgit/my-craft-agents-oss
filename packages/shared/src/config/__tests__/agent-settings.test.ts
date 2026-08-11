@@ -110,7 +110,7 @@ describe('agent settings storage', () => {
       systemSource: 'default',
       compactionSource: 'default',
       isPiNativePrompt: true,
-      tools: expect.arrayContaining(['read', 'edit', 'write', 'grep', 'find', 'ls', 'web_fetch', 'config_validate', 'spawn_session']),
+      tools: expect.arrayContaining(['read', 'edit', 'write', 'grep', 'find', 'ls', 'web_fetch', 'get_session_info', 'spawn_session']),
       browserSource: 'extension',
     })
     expect(existsSync(join(piAgentDir, 'SYSTEM.md'))).toBe(false)
@@ -149,14 +149,14 @@ describe('agent settings storage', () => {
         schemaVersion: 1,
         systemPrompt: null,
         compactionPrompt: null,
-        disabledTools: ['mcp__session__config_validate'],
+        disabledTools: ['mcp__session__get_session_info'],
       });
       const snapshot = await settings.getAgentSettingsSnapshot();
       console.log(JSON.stringify(snapshot.mainAgent.tools
         .filter((tool) => !tool.enabled)
         .map((tool) => tool.name)));
     `)
-    expect(JSON.parse(output)).toEqual(['mcp__session__config_validate'])
+    expect(JSON.parse(output)).toEqual(['mcp__session__get_session_info'])
   })
 
   it('uses the native Pi markdown format for subagents', () => {
@@ -197,13 +197,13 @@ describe('agent settings storage', () => {
           name: 'Legacy Tools',
           description: 'Migration fixture',
           systemPrompt: 'Use the configured tools.',
-          tools: ['read', 'mcp__session__config_validate'],
+          tools: ['read', 'mcp__session__get_session_info'],
         },
       });
       console.log(JSON.stringify(saved.tools));
     `)
-    expect(JSON.parse(output)).toEqual(['read', 'mcp__session__config_validate'])
-    expect(readFileSync(join(piAgentDir, 'agents', 'legacy-tools.md'), 'utf8')).toContain('tools: "read, mcp__session__config_validate"')
+    expect(JSON.parse(output)).toEqual(['read', 'mcp__session__get_session_info'])
+    expect(readFileSync(join(piAgentDir, 'agents', 'legacy-tools.md'), 'utf8')).toContain('tools: "read, mcp__session__get_session_info"')
   })
 
   it('rejects a rename that would overwrite another subagent', () => {

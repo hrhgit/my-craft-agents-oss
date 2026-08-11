@@ -26,6 +26,7 @@ import { rendererPerf } from '@/lib/perf'
 import { navigate, routes } from '@/lib/navigate'
 import { coerceInputText } from '@/lib/input-text'
 import { deriveSessionMessagesLoadState, formatSessionLoadFailure } from '@/lib/session-load'
+import { waitForOperation } from '@/lib/operations'
 import { ensureSessionMessagesLoadedAtom, sessionMetaMapAtom } from '@/atoms/sessions'
 import { piProjectionAtomFamily } from '@/atoms/pi-projection'
 import { getSessionTitle } from '@/utils/session'
@@ -145,25 +146,23 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
     }
   }, [sessionId, session])
 
-  // Track window focus state for marking session as read when app regains focus
-  const [isWindowFocused, setIsWindowFocused] = React.useState(true)
-  React.useEffect(() => {
-    electronApi.getWindowFocusState().then(setIsWindowFocused)
-    const cleanup = electronApi.onWindowFocusChange(setIsWindowFocused)
-    return cleanup
-  }, [electronApi])
-
   // Track which session user is viewing (for unread state machine).
   // This tells main process user is looking at this session, so:
   // 1. If not processing → clear hasUnread immediately
   // 2. If processing → when it completes, main process will clear hasUnread
   // The main process handles all the logic; we just report viewing state.
+  //
+  // Deliberately NOT gated on OS window focus: a session open in the focused
+  // panel counts as being viewed even while the window is in the background,
+  // so it must never be marked unread when its turn completes. Only sessions
+  // outside the focused panel (background tabs, other windows, closed) may
+  // carry the unread "completed" dot in the sidebar.
   React.useEffect(() => {
-    if (session && isWindowFocused && isFocusedPanel !== false) {
+    if (session && isFocusedPanel !== false) {
       onSetActiveViewingSession(session.id)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session?.id, isWindowFocused, isFocusedPanel, onSetActiveViewingSession])
+  }, [session?.id, isFocusedPanel, onSetActiveViewingSession])
 
   // Track draft value for this session
   const [inputValue, setInputValue] = React.useState(() => coerceInputText(getDraft(sessionId)))
@@ -383,15 +382,19 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
 
   // Share action handlers
   const handleShare = React.useCallback(async () => {
-    const result = await electronApi.sessionCommand(sessionId, { type: 'shareToViewer' }) as { success: boolean; url?: string; error?: string } | undefined
-    if (result?.success && result.url) {
-      await navigator.clipboard.writeText(result.url)
+    const operationId = crypto.randomUUID()
+    await electronApi.sessionCommand(sessionId, { type: 'shareToViewer', operationId })
+    const operation = await waitForOperation(electronApi, operationId)
+    const current = operation.status === 'succeeded' ? await electronApi.getSessionMessages(sessionId) : null
+    const url = current?.sharedUrl
+    if (url) {
+      await navigator.clipboard.writeText(url)
       toast.success(t('toast.linkCopied'), {
-        description: result.url,
-        action: { label: t('sendToWorkspace.open'), onClick: () => electronApi.openUrl(result.url!) },
+        description: url,
+        action: { label: t('sendToWorkspace.open'), onClick: () => electronApi.openUrl(url) },
       })
     } else {
-      toast.error(t('toast.failedToShare'), { description: result?.error || t('toast.unknownError') })
+      toast.error(t('toast.failedToShare'), { description: operation.error?.message || t('toast.unknownError') })
     }
   }, [sessionId, electronApi, t])
 
@@ -407,20 +410,24 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
   }, [sharedUrl, t])
 
   const handleUpdateShare = React.useCallback(async () => {
-    const result = await electronApi.sessionCommand(sessionId, { type: 'updateShare' }) as { success: boolean; error?: string } | undefined
-    if (result?.success) {
+    const operationId = crypto.randomUUID()
+    await electronApi.sessionCommand(sessionId, { type: 'updateShare', operationId })
+    const operation = await waitForOperation(electronApi, operationId)
+    if (operation.status === 'succeeded') {
       toast.success(t('chat.shareUpdated'))
     } else {
-      toast.error(t('chat.failedToUpdateShare'), { description: result?.error })
+      toast.error(t('chat.failedToUpdateShare'), { description: operation.error?.message })
     }
   }, [sessionId, electronApi, t])
 
   const handleRevokeShare = React.useCallback(async () => {
-    const result = await electronApi.sessionCommand(sessionId, { type: 'revokeShare' }) as { success: boolean; error?: string } | undefined
-    if (result?.success) {
+    const operationId = crypto.randomUUID()
+    await electronApi.sessionCommand(sessionId, { type: 'revokeShare', operationId })
+    const operation = await waitForOperation(electronApi, operationId)
+    if (operation.status === 'succeeded') {
       toast.success(t('chat.sharingStopped'))
     } else {
-      toast.error(t('chat.failedToStopSharing'), { description: result?.error })
+      toast.error(t('chat.failedToStopSharing'), { description: operation.error?.message })
     }
   }, [sessionId, electronApi, t])
 
@@ -645,10 +652,10 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
               )
               : Promise.resolve(false)}
             onRetrySettlement={() => electronApi
-              .sessionCommand(sessionId, { type: 'retrySettlement' })
+              .sessionCommand(sessionId, { type: 'retrySettlement', operationId: crypto.randomUUID() })
               .then(() => undefined)}
             onRetryAcceptedMessage={() => electronApi
-              .sessionCommand(sessionId, { type: 'retryAcceptedMessage' })
+              .sessionCommand(sessionId, { type: 'retryAcceptedMessage', operationId: crypto.randomUUID() })
               .then(() => undefined)}
             onOpenFile={handleOpenFile}
             onOpenUrl={handleOpenUrl}

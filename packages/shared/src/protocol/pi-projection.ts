@@ -27,7 +27,7 @@ export type PiProjectionContentPayloadV1 =
   | {
       role: 'assistant'
       messageId: string
-      contentKind: 'text' | 'thinking'
+      contentKind: 'text' | 'thinking' | 'thinkingSummary'
       text: string
       streaming: boolean
       contentIndex: number

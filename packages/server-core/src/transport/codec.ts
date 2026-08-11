@@ -8,6 +8,7 @@ const MESSAGE_TYPES = new Set([
   'handshake',
   'handshake_ack',
   'request',
+  'request_cancel',
   'response',
   'event',
   'error',

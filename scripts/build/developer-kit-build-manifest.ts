@@ -140,6 +140,7 @@ export function computeDeveloperKitBuildId(
 export function readValidDeveloperKitBuildManifest(
   buildDir: string,
   buildId: string,
+  verification: 'full' | 'fast' = 'full',
 ): DeveloperKitBuildManifest | undefined {
   try {
     const value = JSON.parse(readFileSync(join(buildDir, 'build.json'), 'utf8')) as DeveloperKitBuildManifest
@@ -163,7 +164,12 @@ export function readValidDeveloperKitBuildManifest(
           || resolve(dirname(value.archivePath)) !== resolve(artifactsRoot))
       || !Array.isArray(value.artifacts)
       || value.sizeBytes !== artifactInventorySize(value.artifacts)
-      || !artifactInventoriesEqual(value.artifacts, collectArtifactInventory(artifactsRoot))
+      || (verification === 'full'
+        ? !artifactInventoriesEqual(value.artifacts, collectArtifactInventory(artifactsRoot))
+        : !value.artifacts.every(artifact => {
+            const path = join(artifactsRoot, ...artifact.path.split('/'))
+            return existsSync(path) && statSync(path).isFile() && statSync(path).size === artifact.sizeBytes
+          }))
     ) return undefined
     return value
   } catch { return undefined }

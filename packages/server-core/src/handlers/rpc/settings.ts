@@ -342,23 +342,50 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
   })
 
   server.handle(RPC_CHANNELS.piExtensions.RELOAD, async (
-    _ctx,
-    payload?: boolean | { interruptRunning?: boolean },
+    ctx,
+    payload?: { interruptRunning?: boolean; operationId?: string },
   ) => {
-    const interruptRunning = typeof payload === 'boolean'
-      ? payload
-      : payload?.interruptRunning === true
-    return await deps.sessionManager.requestExtensionReload(interruptRunning)
+    const interruptRunning = payload?.interruptRunning === true
+    const operationId = payload?.operationId
+    if (!operationId) throw new Error('Extension reload requires operationId')
+    const activeSessions = deps.sessionManager.getExtensionReloadActiveSessions?.() ?? []
+    if (activeSessions.length > 0 && !interruptRunning) {
+      return { status: 'confirmation_required' as const, activeSessions }
+    }
+    if (!deps.operationCoordinator) throw new Error('Operation coordination is unavailable')
+    const operation = deps.operationCoordinator.start(
+      operationId,
+      'extension.reload',
+      {
+        ...(ctx.workspaceId ? { workspaceId: ctx.workspaceId } : {}),
+      },
+      async () => {
+        const result = await deps.sessionManager.requestExtensionReload(interruptRunning)
+        if (result.status !== 'reloaded') throw new Error('Extension reload did not complete')
+        return { resultRef: 'extension-runtime' }
+      },
+    )
+    return { status: 'accepted', operation }
   })
 
-  server.handle(RPC_CHANNELS.piExtensions.IMPORT, async (_ctx, sourcePath: string) => {
+  server.handle(RPC_CHANNELS.piExtensions.IMPORT, async (_ctx, payload: { sourcePath?: string; operationId?: string }) => {
     const { importPiExtension } = await import('@mortise/shared/config/pi-global-config')
-    return await importPiExtension(sourcePath)
+    if (!payload?.sourcePath || !payload.operationId || !deps.operationCoordinator) throw new Error('Extension import requires sourcePath and operationId')
+    const operation = deps.operationCoordinator.start(payload.operationId, 'extension.import', {}, async () => {
+      await importPiExtension(payload.sourcePath!)
+      return { resultRef: 'extension-catalog' }
+    })
+    return { status: 'accepted' as const, operation }
   })
 
-  server.handle(RPC_CHANNELS.piExtensions.UNINSTALL, async (_ctx, extensionId: string) => {
+  server.handle(RPC_CHANNELS.piExtensions.UNINSTALL, async (_ctx, payload: { extensionId?: string; operationId?: string }) => {
     const { uninstallPiExtension } = await import('@mortise/shared/config/pi-global-config')
-    return await uninstallPiExtension(extensionId)
+    if (!payload?.extensionId || !payload.operationId || !deps.operationCoordinator) throw new Error('Extension uninstall requires extensionId and operationId')
+    const operation = deps.operationCoordinator.start(payload.operationId, 'extension.uninstall', { extensionId: payload.extensionId }, async () => {
+      await uninstallPiExtension(payload.extensionId!)
+      return { resultRef: 'extension-catalog' }
+    })
+    return { status: 'accepted' as const, operation }
   })
 
   // 逐扩展启停：读写 Pi settings.json 的 extensionConfig.<name>.enabled

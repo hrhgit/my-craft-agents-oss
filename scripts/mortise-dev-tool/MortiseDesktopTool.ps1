@@ -152,6 +152,7 @@ namespace MortiseDevTool
         private bool restarting;
         private bool closing;
         private bool suppressNextWebuiExitError;
+        private string pendingDesktopControl;
         private string desktopState = "idle";
         private DateTime nextDesktopProbe = DateTime.MinValue;
 
@@ -338,14 +339,14 @@ namespace MortiseDevTool
         private void StartDesktop()
         {
             if (desktopState == "starting" || desktopState == "running" || desktopState == "restarting" || desktopState == "stopping") return;
-            StopDesktopBeforeLaunch(false);
+            RunDesktopControl("start", false);
         }
 
-        private void LaunchDesktop()
+        private void LaunchDesktop(bool restartLaunch = false)
         {
             desktopRunner?.Dispose();
             desktopRunner = new ProcessRunner();
-            SetDesktopState("starting");
+            SetDesktopState(restartLaunch ? "restarting" : "starting");
             AppendCommand("portmux", "start", "--project", electronProject);
             try
             {
@@ -361,12 +362,39 @@ namespace MortiseDevTool
         private void RestartDesktop()
         {
             if (restarting || (stopRunner != null && stopRunner.IsRunning)) return;
-            StopDesktopBeforeLaunch(true);
+            RunDesktopControl("restart", true);
+        }
+
+        private void RunDesktopControl(string command, bool explicitRestart)
+        {
+            restarting = explicitRestart;
+            pendingDesktopControl = command;
+            SetDesktopState(explicitRestart ? "restarting" : "starting");
+            stopRunner?.Dispose();
+            stopRunner = new ProcessRunner();
+            AppendCommand("bun", "run", "scripts/electron-dev-control.ts", command, "--repo-root", repoRoot);
+            try
+            {
+                stopRunner.Start(
+                    "bun",
+                    new[] { "run", "scripts/electron-dev-control.ts", command, "--repo-root", repoRoot },
+                    repoRoot,
+                    "desktop-control");
+            }
+            catch (Exception error)
+            {
+                AppendLog("tool", error.Message);
+                pendingDesktopControl = null;
+                restarting = false;
+                if (explicitRestart) StopDesktopBeforeLaunch(true);
+                else LaunchDesktop();
+            }
         }
 
         private void StopDesktopBeforeLaunch(bool explicitRestart)
         {
             restarting = true;
+            pendingDesktopControl = explicitRestart ? "legacy-restart-stop" : "legacy-start-stop";
             SetDesktopState(explicitRestart ? "restarting" : "starting");
             stopRunner?.Dispose();
             stopRunner = new ProcessRunner();
@@ -387,10 +415,6 @@ namespace MortiseDevTool
         {
             closing = true;
             restarting = false;
-            if ((desktopRunner == null || !desktopRunner.IsRunning)
-                && (stopRunner == null || !stopRunner.IsRunning)
-                && !IsSourceDesktopRunning()) return;
-
             SetDesktopState("stopping");
             stopRunner?.TerminateTree();
             try
@@ -556,9 +580,15 @@ namespace MortiseDevTool
         {
             if (DateTime.UtcNow < nextDesktopProbe) return;
             nextDesktopProbe = DateTime.UtcNow.AddSeconds(1);
-            if (desktopState == "running" && !IsSourceDesktopRunning())
+            var sourceDesktopRunning = IsSourceDesktopRunning();
+            if ((desktopState == "starting" || desktopState == "restarting") && sourceDesktopRunning)
             {
-                SetDesktopState(desktopRunner != null && desktopRunner.IsRunning ? "stopping" : "idle");
+                restarting = false;
+                SetDesktopState("running");
+            }
+            else if (desktopState == "running" && !sourceDesktopRunning)
+            {
+                SetDesktopState("idle");
             }
         }
 
@@ -590,10 +620,10 @@ namespace MortiseDevTool
                 if (!message.IsExit)
                 {
                     AppendLog(message.Source, message.Text);
-                    if (Regex.IsMatch(message.Text, "Starting Electron\\.\\.\\.\\s*$")) SetDesktopState("running");
+                    if (Regex.IsMatch(message.Text, "Electron exited with code")) SetDesktopState("idle");
                     continue;
                 }
-                if (!restarting) SetDesktopState(message.ExitCode == 0 ? "idle" : "error");
+                if (!closing && !IsSourceDesktopRunning()) SetDesktopState(message.ExitCode == 0 ? "idle" : "error");
                 if (message.ExitCode != 0) AppendLog("tool", "桌面启动进程退出，代码 " + message.ExitCode + "。");
             }
         }
@@ -610,10 +640,27 @@ namespace MortiseDevTool
                     AppendLog(message.Source, message.Text);
                     continue;
                 }
-                if (message.ExitCode != 0) AppendLog("tool", "停止返回代码 " + message.ExitCode + "，继续启动新实例。");
+                var command = pendingDesktopControl;
+                pendingDesktopControl = null;
+                var explicitRestart = command == "restart";
                 restarting = false;
                 if (closing) continue;
-                LaunchDesktop();
+                if (command == "legacy-restart-stop" || command == "legacy-start-stop")
+                {
+                    if (message.ExitCode != 0) AppendLog("tool", "停止返回代码 " + message.ExitCode + "，继续启动新实例。");
+                    LaunchDesktop(command == "legacy-restart-stop");
+                    continue;
+                }
+                if (message.ExitCode == 0) continue;
+                if (message.ExitCode == 2)
+                {
+                    AppendLog("tool", "开发监督进程尚未运行，启动完整开发环境。");
+                    if (explicitRestart) StopDesktopBeforeLaunch(true);
+                    else LaunchDesktop();
+                    continue;
+                }
+                AppendLog("tool", "桌面控制命令失败，代码 " + message.ExitCode + "。");
+                SetDesktopState("error");
             }
         }
 
@@ -756,7 +803,7 @@ namespace MortiseDevTool
             startButton.ForeColor = startButton.Enabled
                 ? Color.White
                 : Color.FromArgb(105, 106, 99);
-            restartButton.Enabled = state != "restarting" && state != "stopping";
+            restartButton.Enabled = state == "running";
         }
 
         private void AppendCommand(params string[] values)

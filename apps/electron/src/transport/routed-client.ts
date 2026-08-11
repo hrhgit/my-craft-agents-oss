@@ -164,7 +164,7 @@ export class RoutedClient implements RpcClient {
   async invokeWithOptions(
     channel: string,
     args: any[],
-    options?: { timeoutMs?: number },
+    options?: { timeoutMs?: number | null },
   ): Promise<any> {
     const isLocal = isLocalOnly(channel)
     if (!isLocal) await this.workspaceReady

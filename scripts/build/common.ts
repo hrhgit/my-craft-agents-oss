@@ -624,7 +624,7 @@ function readValidCachedUv(
 
 /**
  * Copy Session MCP Server to packaged app resources.
- * The session server provides session-scoped tools (config_validate, etc.) for agent sessions.
+ * The session server provides session-scoped tools for agent sessions.
  */
 export function copySessionServer(config: BuildConfig): void {
   const { rootDir, electronDir } = config;

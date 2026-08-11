@@ -18,10 +18,6 @@ directories:
 
 files:
   - dist/**/*
-  # The offline Developer Kit is staged under dist only as an intermediate
-  # source for the dedicated extraResources entry below. Do not embed it in
-  # resources/app/dist as a second copy.
-  - "!dist/installer-developer-kit/**/*"
   - "!dist/packaging-inputs/**/*"
   - "!dist/.*"
   - "!dist/renderer/src/**"
@@ -174,13 +170,6 @@ win:
     # WhatsApp worker subprocess (self-contained; Baileys bundled in).
     - from: dist/packaging-inputs/runtime/messaging-whatsapp-worker/worker.cjs
       to: messaging-whatsapp-worker/worker.cjs
-    # The offline installer carries a version-matched Developer Kit. The NSIS
-    # component page removes this directory when the optional component is off.
-    - from: dist/installer-developer-kit
-      to: developer-kit
-      filter:
-        - "**/*"
-
 nsis:
   # Assisted installer shows the directory picker; auto-updates still run
   # silently from the app via autoUpdater.quitAndInstall(true, true).

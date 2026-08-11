@@ -7,9 +7,16 @@ import { spawn, type Subprocess } from "bun";
 import { existsSync, rmSync, cpSync, readFileSync, statSync, mkdirSync, readdirSync } from "fs";
 import { homedir } from "os";
 import { join, basename } from "path";
+import { connect as connectTcp } from "node:net";
 import * as esbuild from "esbuild";
 import { downloadUv, type Platform, type Arch } from "./build/common";
 import { configureSharedBackend } from "./shared-backend-discovery";
+import {
+  startElectronDevControlServer,
+  type ElectronDevControlResponse,
+  type ElectronDevControlServer,
+  type ElectronDevControlStatus,
+} from "./electron-dev-control-protocol";
 
 const ROOT_DIR = join(import.meta.dir, "..");
 const ELECTRON_DIR = join(ROOT_DIR, "apps/electron");
@@ -47,7 +54,9 @@ const PI_RUNTIME_OUTPUT = join(PI_RUNTIME_DIR, `dist/pi${process.platform === "w
 const IS_WINDOWS = process.platform === "win32";
 const BIN_EXT = IS_WINDOWS ? ".exe" : "";
 const VITE_ENTRY = join(ROOT_DIR, "node_modules/vite/bin/vite.js");
-const ELECTRON_BIN = join(ROOT_DIR, `node_modules/.bin/electron${BIN_EXT}`);
+const ELECTRON_BIN = IS_WINDOWS
+  ? join(ROOT_DIR, "node_modules/electron/dist/electron.exe")
+  : join(ROOT_DIR, `node_modules/.bin/electron${BIN_EXT}`);
 
 function resolveBuildPlatform(): Platform {
   if (process.platform === "darwin") return "darwin";
@@ -234,8 +243,7 @@ async function buildWaWorker(): Promise<void> {
   });
   const exitCode = await proc.exited;
   if (exitCode !== 0) {
-    console.error("❌ WhatsApp worker build failed");
-    process.exit(1);
+    throw new Error(`WhatsApp worker build failed with exit code ${exitCode}`);
   }
 }
 
@@ -267,8 +275,7 @@ async function buildMcpServers(): Promise<void> {
   );
 
   if (!sessionResult.success) {
-    console.error("❌ Session MCP server build failed:", sessionResult.error);
-    process.exit(1);
+    throw new Error(`Session MCP server build failed: ${sessionResult.error}`);
   }
   console.log("✅ Session MCP server built");
 }
@@ -402,6 +409,7 @@ async function verifyJsFile(filePath: string): Promise<{ valid: boolean; error?:
 }
 
 async function main(): Promise<void> {
+  const startedAt = performance.now();
   console.log("🚀 Starting Electron dev environment...\n");
 
   // Setup
@@ -420,13 +428,6 @@ async function main(): Promise<void> {
     mkdirSync(DIST_DIR, { recursive: true });
   }
 
-  await ensureBundledUvForCurrentPlatform();
-
-  copyResources();
-
-  // These independent artifacts can be checked/built concurrently.
-  await Promise.all([buildPiRuntime(), buildMcpServers(), buildWaWorker()]);
-
   const vitePort = process.env.MORTISE_VITE_PORT || "5173";
   const mainCjsPath = join(DIST_DIR, "main.cjs");
   const preloadCjsPath = join(DIST_DIR, "bootstrap-preload.cjs");
@@ -435,107 +436,43 @@ async function main(): Promise<void> {
 
   const processes: Subprocess[] = [];
   const esbuildContexts: esbuild.BuildContext[] = [];
+  const sequentialStart = process.env.MORTISE_DEV_SEQUENTIAL_START === "1";
+  const parallelStart = process.env.MORTISE_DEV_PARALLEL_START === "1";
+  let viteProc: Subprocess | undefined;
+  let electronProc: Subprocess | undefined;
+  let electronState: ElectronDevControlStatus["state"] = "idle";
+  let controlServer: ElectronDevControlServer | undefined;
+  let restartPromise: Promise<void> | undefined;
+  let restartPreviousElectronPid: number | undefined;
+  let cleanupPromise: Promise<void> | undefined;
+  let shuttingDown = false;
 
-  // 1. Vite dev server (strictPort ensures we don't silently switch ports)
-  const viteProc = spawn({
+  function startVite(): Subprocess {
+    if (viteProc) return viteProc;
     // Run Vite in Bun directly. Windows package-manager shims can exit before
     // their node.exe child, leaving the dev port occupied after Electron quits.
-    cmd: [process.execPath, VITE_ENTRY, "dev", "--config", "apps/electron/vite.config.ts", "--port", vitePort, "--strictPort"],
-    cwd: ROOT_DIR,
-    stdin: "ignore",
-    stdout: "inherit",
-    stderr: "inherit",
-    env: process.env as Record<string, string>,
-  });
-  processes.push(viteProc);
-
-  // 2. Main process watcher (using esbuild watch API)
-  const mainContext = await esbuild.context({
-    entryPoints: [join(ROOT_DIR, "apps/electron/src/main/index.ts")],
-    bundle: true,
-    platform: "node",
-    format: "cjs",
-    outfile: join(ROOT_DIR, "apps/electron/dist/main.cjs"),
-    external: MAIN_BUNDLE_EXTERNALS,
-    alias: MAIN_PROCESS_ALIAS,
-    define: {
-      ...MAIN_PROCESS_IMPORT_META_DEFINES,
-      __MORTISE_UI_VALIDATION_BUILD__: "true",
-      __MORTISE_DEV_HOST_BUILD__: "false",
-    },
-    banner: { js: MAIN_PROCESS_IMPORT_META_BANNER },
-    logLevel: "info",
-  });
-  esbuildContexts.push(mainContext);
-
-  // 3. Preload watcher (using esbuild watch API)
-  const preloadContext = await esbuild.context({
-    entryPoints: [join(ROOT_DIR, "apps/electron/src/preload/bootstrap.ts")],
-    bundle: true,
-    platform: "node",
-    format: "cjs",
-    outfile: join(ROOT_DIR, "apps/electron/dist/bootstrap-preload.cjs"),
-    external: ["electron"],
-    define: { __MORTISE_UI_VALIDATION_BUILD__: "true", __MORTISE_DEV_HOST_BUILD__: "false" },
-    logLevel: "info",
-  });
-  esbuildContexts.push(preloadContext);
-
-  // 4. Browser toolbar preload watcher (dedicated browser window bridge)
-  const toolbarPreloadContext = await esbuild.context({
-    entryPoints: [join(ROOT_DIR, "apps/electron/src/preload/browser-toolbar.ts")],
-    bundle: true,
-    platform: "node",
-    format: "cjs",
-    outfile: join(ROOT_DIR, "apps/electron/dist/browser-toolbar-preload.cjs"),
-    external: ["electron"],
-    logLevel: "info",
-  });
-  esbuildContexts.push(toolbarPreloadContext);
-
-  // Produce a complete initial build before enabling watch mode. context.watch()
-  // returns before its first build finishes, which can exceed the readiness
-  // timeout for the main bundle on Windows.
-  for (const outputPath of [mainCjsPath, preloadCjsPath, toolbarPreloadCjsPath]) {
-    if (existsSync(outputPath)) rmSync(outputPath);
+    viteProc = spawn({
+      cmd: [
+        process.execPath,
+        VITE_ENTRY,
+        "dev",
+        "--config",
+        "apps/electron/vite.config.ts",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        vitePort,
+        "--strictPort",
+      ],
+      cwd: ROOT_DIR,
+      stdin: "ignore",
+      stdout: "inherit",
+      stderr: "inherit",
+      env: process.env as Record<string, string>,
+    });
+    processes.push(viteProc);
+    return viteProc;
   }
-
-  console.log("🔨 Building Electron process bundles...");
-  await Promise.all(esbuildContexts.map(context => context.rebuild()));
-
-  if (!await waitForFilesReady([mainCjsPath, preloadCjsPath, toolbarPreloadCjsPath])) {
-    console.error("❌ Electron process bundles were not produced in time");
-    process.exit(1);
-  }
-
-  if (process.env.MORTISE_DEV_VERIFY_BUILDS === "1") {
-    console.log("🔍 Verifying build output...");
-    const [mainValid, preloadValid, toolbarPreloadValid] = await Promise.all([
-      verifyJsFile(mainCjsPath),
-      verifyJsFile(preloadCjsPath),
-      verifyJsFile(toolbarPreloadCjsPath),
-    ]);
-    if (!mainValid.valid || !preloadValid.valid || !toolbarPreloadValid.valid) {
-      console.error("❌ Electron build verification failed", { mainValid, preloadValid, toolbarPreloadValid });
-      process.exit(1);
-    }
-  }
-
-  await Promise.all(esbuildContexts.map(context => context.watch()));
-  console.log("👀 Watching main process, preload, and browser toolbar preload...");
-
-  // 5. Start Electron (initial build completed above)
-  console.log("🚀 Starting Electron...\n");
-
-  const electronProc = spawn({
-    cmd: [ELECTRON_BIN, "apps/electron"],
-    cwd: ROOT_DIR,
-    stdin: "ignore",
-    stdout: "inherit",
-    stderr: "inherit",
-    env: getElectronEnv(),
-  });
-  processes.push(electronProc);
 
   async function terminateProcessTree(proc: Subprocess): Promise<void> {
     if (process.platform !== "win32" || !proc.pid) {
@@ -556,12 +493,94 @@ async function main(): Promise<void> {
     }
   }
 
-  // Handle cleanup on exit. Keep it single-flight because Electron exit and a
-  // terminal signal can arrive together on Windows.
-  let cleanupPromise: Promise<void> | undefined;
+  function controlStatus(): ElectronDevControlStatus {
+    return {
+      state: electronState,
+      supervisorPid: process.pid,
+      ...(viteProc?.pid ? { vitePid: viteProc.pid } : {}),
+      vitePort: Number(vitePort),
+      ...(electronProc?.pid ? { electronPid: electronProc.pid } : {}),
+    };
+  }
+
+  async function launchElectron(): Promise<ElectronDevControlResponse> {
+    const operationStartedAt = performance.now();
+    if (shuttingDown) {
+      return { ok: false, operationId: "", error: "Electron dev supervisor is shutting down", ...controlStatus() };
+    }
+    if (electronProc && electronProc.exitCode === null) {
+      return { ok: true, operationId: "", elapsedMs: 0, ...controlStatus() };
+    }
+
+    electronState = "starting";
+    console.log("🚀 Starting Electron...\n");
+    const child = spawn({
+      cmd: [ELECTRON_BIN, "apps/electron"],
+      cwd: ROOT_DIR,
+      stdin: "ignore",
+      stdout: "inherit",
+      stderr: "inherit",
+      env: getElectronEnv(),
+    });
+    electronProc = child;
+    electronState = "running";
+    void child.exited.then(exitCode => {
+      if (electronProc !== child) return;
+      electronProc = undefined;
+      electronState = "idle";
+      console.log(`\nℹ️  Electron exited with code ${exitCode}; dev servers remain available.`);
+    });
+    return {
+      ok: true,
+      operationId: "",
+      elapsedMs: Math.round(performance.now() - operationStartedAt),
+      ...controlStatus(),
+    };
+  }
+
+  function restartElectron(): Promise<ElectronDevControlResponse> {
+    const operationStartedAt = performance.now();
+    if (!restartPromise) {
+      const previous = electronProc;
+      restartPreviousElectronPid = previous?.pid;
+      electronState = "restarting";
+      electronProc = undefined;
+      restartPromise = (async () => {
+        const termination = previous ? terminateProcessTree(previous) : undefined;
+        if (previous) await waitForSubprocessExit(previous);
+        if (!shuttingDown) await launchElectron();
+        await termination;
+      })().catch(error => {
+        electronState = "idle";
+        console.error("❌ Electron restart failed:", error);
+      }).finally(() => {
+        restartPromise = undefined;
+        restartPreviousElectronPid = undefined;
+      });
+    }
+
+    return Promise.resolve({
+      ok: !shuttingDown,
+      operationId: "",
+      previousElectronPid: restartPreviousElectronPid,
+      elapsedMs: Math.round(performance.now() - operationStartedAt),
+      ...(shuttingDown ? { error: "Electron dev supervisor is shutting down" } : {}),
+      ...controlStatus(),
+    });
+  }
+
+  async function waitForSubprocessExit(proc: Subprocess, timeoutMs = 5000): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    while (proc.exitCode === null && Date.now() < deadline) await Bun.sleep(50);
+    if (proc.exitCode === null) throw new Error(`Process ${proc.pid ?? "unknown"} did not exit within ${timeoutMs}ms`);
+  }
+
   const cleanup = (): Promise<void> => cleanupPromise ??= (async () => {
     console.log("\n🛑 Shutting down...");
-    // Dispose esbuild contexts
+    shuttingDown = true;
+    electronState = "stopping";
+    if (controlServer) await controlServer.close();
+    if (restartPromise) await restartPromise.catch(() => undefined);
     for (const ctx of esbuildContexts) {
       try {
         await ctx.dispose();
@@ -569,21 +588,179 @@ async function main(): Promise<void> {
         // Context may already be disposed
       }
     }
-    await Promise.all(processes.map(terminateProcessTree));
-    process.exit(0);
+    await Promise.all([
+      ...processes.map(terminateProcessTree),
+      ...(electronProc ? [terminateProcessTree(electronProc)] : []),
+    ]);
   })();
 
-  process.on("SIGINT", () => cleanup());
-  process.on("SIGTERM", () => cleanup());
+  try {
+    for (const outputPath of [mainCjsPath, preloadCjsPath, toolbarPreloadCjsPath]) {
+      if (existsSync(outputPath)) rmSync(outputPath);
+    }
+
+    const contextOptions: esbuild.BuildOptions[] = [
+      {
+        entryPoints: [join(ROOT_DIR, "apps/electron/src/main/index.ts")],
+        bundle: true,
+        platform: "node",
+        format: "cjs",
+        outfile: mainCjsPath,
+        external: MAIN_BUNDLE_EXTERNALS,
+        alias: MAIN_PROCESS_ALIAS,
+        define: {
+          ...MAIN_PROCESS_IMPORT_META_DEFINES,
+          __MORTISE_UI_VALIDATION_BUILD__: "true",
+          __MORTISE_DEV_HOST_BUILD__: "false",
+        },
+        banner: { js: MAIN_PROCESS_IMPORT_META_BANNER },
+        logLevel: "info",
+      },
+      {
+        entryPoints: [join(ROOT_DIR, "apps/electron/src/preload/bootstrap.ts")],
+        bundle: true,
+        platform: "node",
+        format: "cjs",
+        outfile: preloadCjsPath,
+        external: ["electron"],
+        define: { __MORTISE_UI_VALIDATION_BUILD__: "true", __MORTISE_DEV_HOST_BUILD__: "false" },
+        logLevel: "info",
+      },
+      {
+        entryPoints: [join(ROOT_DIR, "apps/electron/src/preload/browser-toolbar.ts")],
+        bundle: true,
+        platform: "node",
+        format: "cjs",
+        outfile: toolbarPreloadCjsPath,
+        external: ["electron"],
+        logLevel: "info",
+      },
+    ];
+
+    const prepareElectronBundles = async (): Promise<void> => {
+      const contexts = await Promise.all(contextOptions.map(async options => {
+        const context = await esbuild.context(options);
+        esbuildContexts.push(context);
+        return context;
+      }));
+      console.log("🔨 Building Electron process bundles...");
+      await Promise.all(contexts.map(context => context.rebuild()));
+      if (!await waitForFilesReady([mainCjsPath, preloadCjsPath, toolbarPreloadCjsPath])) {
+        throw new Error("Electron process bundles were not produced in time");
+      }
+      if (process.env.MORTISE_DEV_VERIFY_BUILDS === "1") {
+        console.log("🔍 Verifying build output...");
+        const results = await Promise.all([
+          verifyJsFile(mainCjsPath),
+          verifyJsFile(preloadCjsPath),
+          verifyJsFile(toolbarPreloadCjsPath),
+        ]);
+        if (results.some(result => !result.valid)) {
+          throw new Error(`Electron build verification failed: ${JSON.stringify(results)}`);
+        }
+      }
+      await Promise.all(contexts.map(context => context.watch()));
+      console.log("👀 Watching main process, preload, and browser toolbar preload...");
+      logTiming("electron-bundles-ready", startedAt);
+    };
+
+    const prepareRuntimeArtifacts = async (includeUv: boolean): Promise<void> => {
+      await Promise.all([
+        ...(includeUv ? [ensureBundledUvForCurrentPlatform()] : []),
+        buildPiRuntime(),
+        buildMcpServers(),
+        buildWaWorker(),
+      ]);
+      logTiming("runtime-artifacts-ready", startedAt);
+    };
+
+    if (sequentialStart || !parallelStart) {
+      if (sequentialStart) console.log("⏱️  Sequential startup benchmark mode enabled");
+      else console.log("⚡ Cache-friendly sequential startup enabled");
+      await ensureBundledUvForCurrentPlatform();
+      copyResources();
+      await prepareRuntimeArtifacts(false);
+      const vite = startVite();
+      await waitForViteReady(vitePort, vite);
+      logTiming("vite-ready", startedAt);
+      await prepareElectronBundles();
+    } else {
+      const vite = startVite();
+      const runtimeArtifacts = prepareRuntimeArtifacts(true);
+      copyResources();
+      const viteReady = waitForViteReady(vitePort, vite)
+        .then(() => logTiming("vite-ready", startedAt));
+      // Vite and unchanged runtime artifacts can progress independently. Keep
+      // esbuild after Vite is ready because both compete for the same CPU and
+      // filesystem; in practice that makes the cold renderer path faster and
+      // more stable than three-way parallel startup.
+      await Promise.all([runtimeArtifacts, viteReady]);
+      await prepareElectronBundles();
+    }
+
+    controlServer = await startElectronDevControlServer(ROOT_DIR, {
+      status: controlStatus,
+      start: launchElectron,
+      restart: restartElectron,
+    });
+    console.log(`🎛️  Electron dev supervisor ready on 127.0.0.1:${controlServer.port}`);
+    await launchElectron();
+    logTiming("electron-spawned", startedAt);
+  } catch (error) {
+    await cleanup();
+    throw error;
+  }
+
+  const stopAndExit = () => { void cleanup().finally(() => process.exit(0)); };
+  process.on("SIGINT", stopAndExit);
+  process.on("SIGTERM", stopAndExit);
 
   // Windows doesn't have SIGINT/SIGTERM in the same way
   if (process.platform === "win32") {
-    process.on("SIGHUP", () => cleanup());
+    process.on("SIGHUP", stopAndExit);
   }
 
-  // Wait for electron to exit (main process)
-  await electronProc.exited;
-  await cleanup();
+  if (!viteProc) throw new Error("Vite was not started");
+  const viteExitCode = await viteProc.exited;
+  if (!cleanupPromise) {
+    console.error(`❌ Vite exited unexpectedly with code ${viteExitCode}`);
+    await cleanup();
+    throw new Error(`Vite exited unexpectedly with code ${viteExitCode}`);
+  }
+}
+
+async function waitForViteReady(port: string, viteProc: Subprocess, timeoutMs = 30_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (viteProc.exitCode !== null) throw new Error(`Vite exited before readiness with code ${viteProc.exitCode}`);
+    try {
+      const attemptTimeoutMs = Math.min(1000, Math.max(1, deadline - Date.now()));
+      await new Promise<void>((resolve, reject) => {
+        const socket = connectTcp({ host: "127.0.0.1", port: Number(port) });
+        const timer = setTimeout(() => {
+          socket.destroy();
+          reject(new Error("Vite readiness probe timed out"));
+        }, attemptTimeoutMs);
+        socket.once("connect", () => {
+          clearTimeout(timer);
+          socket.destroy();
+          resolve();
+        });
+        socket.once("error", error => {
+          clearTimeout(timer);
+          socket.destroy();
+          reject(error);
+        });
+      });
+      return;
+    } catch {}
+    await Bun.sleep(50);
+  }
+  throw new Error(`Vite did not start listening on 127.0.0.1:${port} within ${timeoutMs}ms`);
+}
+
+function logTiming(phase: string, startedAt: number): void {
+  console.log(`[mortise-dev-timing] ${JSON.stringify({ phase, elapsedMs: Math.round(performance.now() - startedAt) })}`);
 }
 
 main().catch((err) => {

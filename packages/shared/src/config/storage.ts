@@ -106,7 +106,7 @@ export interface StoredConfig {
   // Auto-update
   dismissedUpdateVersion?: string;  // Version that user dismissed (skip notifications for this version)
   // Input settings
-  autoCapitalisation?: boolean;  // Auto-capitalize first letter when typing (default: true)
+  autoCapitalisation?: boolean;  // Auto-capitalize first letter when typing (default: false)
   sendMessageKey?: 'enter' | 'cmd-enter';  // Key to send messages (default: 'enter')
   spellCheck?: boolean;  // Enable spell check in input (default: false)
   // Power settings
@@ -248,7 +248,7 @@ const FALLBACK_CONFIG_DEFAULTS: ConfigDefaults = {
   defaults: {
     notificationsEnabled: true,
     colorTheme: 'default',
-    autoCapitalisation: true,
+    autoCapitalisation: false,
     sendMessageKey: 'enter',
     spellCheck: false,
     keepAwakeWhileRunning: false,

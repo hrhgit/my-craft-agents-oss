@@ -37,7 +37,7 @@ export interface UserPreferences {
   /**
    * Internal: persisted UI language code (mirrors Appearance → Language).
    * Maintained only by the main-process `i18n:changeLanguage` IPC handler.
-   * Not user-editable; not exposed via the `update_user_preferences` tool.
+   * Not user-editable.
    */
   uiLanguage?: LanguageCode;
   // When the preferences were last updated
@@ -76,27 +76,6 @@ function savePreferencesUnlocked(prefs: UserPreferences): void {
 export function savePreferences(prefs: UserPreferences): void {
   ensureConfigDir();
   withFileLockSync(PREFERENCES_FILE, () => savePreferencesUnlocked(prefs));
-}
-
-export function updatePreferences(updates: Partial<UserPreferences>): UserPreferences {
-  ensureConfigDir();
-  return withFileLockSync(PREFERENCES_FILE, () => {
-    const current = loadPreferencesUnlocked();
-    const updated = {
-      ...current,
-      ...updates,
-      // Merge location if provided
-      location: updates.location
-        ? { ...current.location, ...updates.location }
-        : current.location,
-      // Merge diffViewer if provided
-      diffViewer: updates.diffViewer
-        ? { ...current.diffViewer, ...updates.diffViewer }
-        : current.diffViewer,
-    };
-    savePreferencesUnlocked(updated);
-    return updated;
-  });
 }
 
 export function getPreferencesPath(): string {

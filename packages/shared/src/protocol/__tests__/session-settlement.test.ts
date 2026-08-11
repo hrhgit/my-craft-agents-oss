@@ -56,11 +56,11 @@ describe('Session settlement protocol', () => {
     })).toBe(false)
   })
 
-  it('defines retry settlement as a payload-free Session-scoped command', () => {
-    const command = { type: 'retrySettlement' } satisfies SessionCommand
+  it('defines retry settlement as an operation-identified Session-scoped command', () => {
+    const command = { type: 'retrySettlement', operationId: 'retry-1' } satisfies SessionCommand
 
-    expect(command).toEqual({ type: 'retrySettlement' })
-    expect(Object.keys(command)).toEqual(['type'])
+    expect(command).toEqual({ type: 'retrySettlement', operationId: 'retry-1' })
+    expect(Object.keys(command)).toEqual(['type', 'operationId'])
   })
 
   it('defines unpublished first-turn failures as retryable without permitting a new payload', () => {
@@ -80,11 +80,11 @@ describe('Session settlement protocol', () => {
       sessionId: publicationFailure.data.sessionId,
       error: publicationFailure,
     } satisfies SessionEvent
-    const command = { type: 'retryAcceptedMessage' } satisfies SessionCommand
+    const command = { type: 'retryAcceptedMessage', operationId: 'retry-accepted-1' } satisfies SessionCommand
 
     expect(isSessionPublicationFailure(event.error)).toBe(true)
-    expect(command).toEqual({ type: 'retryAcceptedMessage' })
-    expect(Object.keys(command)).toEqual(['type'])
+    expect(command).toEqual({ type: 'retryAcceptedMessage', operationId: 'retry-accepted-1' })
+    expect(Object.keys(command)).toEqual(['type', 'operationId'])
     expect(isSessionPublicationFailure({ ...publicationFailure, data: { ...publicationFailure.data, stage: 'turn-settlement' } })).toBe(false)
   })
 })

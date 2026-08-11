@@ -200,6 +200,7 @@ function normalizeModelForSave(model: PiGlobalModel): PiGlobalModel | null {
   } else {
     delete next.name
   }
+  if (next.reasoning !== false) delete next.reasoning
   return next
 }
 
@@ -450,6 +451,15 @@ export function PiProviderFormDialog({
       currentInput.delete('image')
     }
     next[index] = { ...next[index], input: Array.from(currentInput) as ('text' | 'image')[] }
+    update('models', next)
+  }, [state.models, update])
+
+  const handleReasoningSupportChange = React.useCallback((index: number, checked: boolean) => {
+    const next = [...state.models]
+    const model = { ...next[index] }
+    if (checked) delete model.reasoning
+    else model.reasoning = false
+    next[index] = model
     update('models', next)
   }, [state.models, update])
 
@@ -800,8 +810,8 @@ export function PiProviderFormDialog({
                           </Label>
                           <Switch
                             id={`pi-model-reasoning-${index}`}
-                            checked={model.reasoning === true}
-                            onCheckedChange={v => handleModelChange(index, 'reasoning', v)}
+                            checked={model.reasoning !== false}
+                            onCheckedChange={v => handleReasoningSupportChange(index, v)}
                           />
                         </div>
                         <div className="flex items-center justify-between rounded-lg border border-border/50 px-3 py-2">

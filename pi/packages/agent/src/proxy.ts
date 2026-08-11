@@ -41,7 +41,7 @@ export type ProxyAssistantMessageEvent =
 	| { type: "text_end"; contentIndex: number; contentSignature?: string }
 	| { type: "thinking_start"; contentIndex: number }
 	| { type: "thinking_delta"; contentIndex: number; delta: string }
-	| { type: "thinking_end"; contentIndex: number; contentSignature?: string }
+	| { type: "thinking_end"; contentIndex: number; contentSignature?: string; summary?: string }
 	| { type: "toolcall_start"; contentIndex: number; id: string; toolName: string }
 	| { type: "toolcall_delta"; contentIndex: number; delta: string }
 	| { type: "toolcall_end"; contentIndex: number }
@@ -274,10 +274,12 @@ function processProxyEvent(
 			const content = partial.content[proxyEvent.contentIndex];
 			if (content?.type === "thinking") {
 				content.thinkingSignature = proxyEvent.contentSignature;
+				content.thinkingSummary = proxyEvent.summary;
 				return {
 					type: "thinking_end",
 					contentIndex: proxyEvent.contentIndex,
 					content: content.thinking,
+					...(proxyEvent.summary ? { summary: proxyEvent.summary } : {}),
 					partial,
 				};
 			}

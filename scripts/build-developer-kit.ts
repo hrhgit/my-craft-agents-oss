@@ -8,6 +8,7 @@ import {
   buildToolchainExecutableSha256,
   collectArtifactInventory,
   publishBuildBunToolchain,
+  seedUvToolchainCacheFromCompletedBuild,
 } from './build/electron-build-cache.ts'
 import {
   computeDeveloperKitBuildId,
@@ -43,6 +44,8 @@ const buildRoot = resolve(process.env.MORTISE_DEVELOPER_KIT_BUILD_ROOT ?? join(o
 for (const name of ['builds', 'locks', 'sources']) mkdirSync(join(buildRoot, name), { recursive: true })
 const bunExecutable = publishBuildBunToolchain(buildRoot)
 const bunExecutableSha256 = buildToolchainExecutableSha256(bunExecutable)
+const toolchainCacheDir = resolve(process.env.MORTISE_BUILD_TOOLCHAIN_CACHE_DIR ?? join(buildRoot, 'toolchains'))
+seedUvToolchainCacheFromCompletedBuild(join(outputRoot, 'electron-builds'), toolchainCacheDir)
 
 withFileLock(join(buildRoot, 'coordinator'), () => cleanupDeveloperKitBuildCacheLocked(
   buildRoot,
@@ -89,6 +92,7 @@ try {
           ...process.env,
           MORTISE_BUILD_SOURCE_ID: sourceId,
           MORTISE_BUILD_BUN_EXECUTABLE: bunExecutable,
+          MORTISE_BUILD_TOOLCHAIN_CACHE_DIR: toolchainCacheDir,
         },
         stdio: 'inherit',
         windowsHide: true,

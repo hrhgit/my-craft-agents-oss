@@ -3,24 +3,41 @@ import { createHash } from 'node:crypto'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { PROTOCOL_VERSION, REQUIRED_PROTOCOL_CAPABILITIES } from '@mortise/shared/protocol'
 
 const {
+  assertWorkspaceHandshakeAck,
   assertPackagedArtifactMatches,
   authenticodeContentSha256,
+  createWorkspaceHandshakeEnvelope,
+  readWorkspaceProtocolContract,
   restoreRuntimePackageManifest,
   validatePackagedLayout,
 } = require('./afterPack.cjs') as {
+  assertWorkspaceHandshakeAck: (envelope: unknown, protocolContract: WorkspaceProtocolContract) => void
   assertPackagedArtifactMatches: (
     artifact: { path: string; sizeBytes: number; sha256: string; authenticodeSha256?: string },
     path: string,
     options?: { getAuthenticodeStatus?: () => string },
   ) => void
   authenticodeContentSha256: (content: Uint8Array) => string | undefined
+  createWorkspaceHandshakeEnvelope: (
+    id: string,
+    token: string,
+    protocolContract: WorkspaceProtocolContract,
+  ) => Record<string, unknown>
+  readWorkspaceProtocolContract: (projectDir: string) => WorkspaceProtocolContract
   restoreRuntimePackageManifest: (
     layout: Record<string, string>,
     context: { packager: { projectDir: string } },
   ) => void
   validatePackagedLayout: (layout: Record<string, string>) => void
+}
+
+interface WorkspaceProtocolContract {
+  schemaVersion: 1
+  protocolVersion: string
+  protocolCapabilities: string[]
 }
 const roots: string[] = []
 const originalBinaryRuntimeOverride = process.env.MORTISE_PI_BINARY_RUNTIME
@@ -118,6 +135,52 @@ function createLayout() {
 }
 
 describe('packaged Electron layout', () => {
+  it('uses the staged shared protocol contract for the packaged workspace handshake', () => {
+    const projectDir = mkdtempSync(join(tmpdir(), 'mortise-workspace-protocol-'))
+    roots.push(projectDir)
+    const contractPath = join(projectDir, 'dist', 'packaging-inputs', 'workspace-rpc-protocol.json')
+    mkdirSync(dirname(contractPath), { recursive: true })
+    writeFileSync(contractPath, JSON.stringify({
+      schemaVersion: 1,
+      protocolVersion: PROTOCOL_VERSION,
+      protocolCapabilities: [...REQUIRED_PROTOCOL_CAPABILITIES],
+    }))
+
+    const contract = readWorkspaceProtocolContract(projectDir)
+    const envelope = createWorkspaceHandshakeEnvelope('request-id', 'secret-token', contract)
+
+    expect(envelope).toEqual({
+      id: 'request-id',
+      type: 'handshake',
+      protocolVersion: PROTOCOL_VERSION,
+      protocolCapabilities: [...REQUIRED_PROTOCOL_CAPABILITIES],
+      token: 'secret-token',
+    })
+    expect(() => assertWorkspaceHandshakeAck({
+      type: 'handshake_ack',
+      protocolVersion: PROTOCOL_VERSION,
+      protocolCapabilities: [...REQUIRED_PROTOCOL_CAPABILITIES],
+    }, contract)).not.toThrow()
+  })
+
+  it('preserves structured packaged workspace handshake errors', () => {
+    const contract: WorkspaceProtocolContract = {
+      schemaVersion: 1,
+      protocolVersion: PROTOCOL_VERSION,
+      protocolCapabilities: [...REQUIRED_PROTOCOL_CAPABILITIES],
+    }
+
+    expect(() => assertWorkspaceHandshakeAck({
+      type: 'error',
+      error: {
+        code: 'PROTOCOL_CAPABILITY_UNSUPPORTED',
+        message: 'Client is missing required protocol capabilities: long-operations/v1',
+      },
+    }, contract)).toThrow(
+      'Packaged workspace handshake rejected (error): PROTOCOL_CAPABILITY_UNSUPPORTED: Client is missing required protocol capabilities: long-operations/v1',
+    )
+  })
+
   it('accepts only a valid Authenticode transformation of a provenanced PE file', () => {
     const layout = createLayout()
     const source = createPortableExecutable()

@@ -5,7 +5,11 @@ import {
   deserializeEnvelope,
   WsRpcServer,
 } from '@mortise/server-core/transport'
-import type { MessageEnvelope } from '@mortise/shared/protocol'
+import {
+  PROTOCOL_VERSION,
+  REQUIRED_PROTOCOL_CAPABILITIES,
+  type MessageEnvelope,
+} from '@mortise/shared/protocol'
 
 // ---------------------------------------------------------------------------
 // Mock WS server helpers
@@ -23,6 +27,8 @@ function createMockServer(opts?: {
   rejectAuth?: boolean
   noAck?: boolean
   tls?: { cert: string; key: string }
+  omitProtocolCapabilities?: boolean
+  protocolVersion?: string
 }): MockServer {
   let lastMsg: MessageEnvelope | null = null
   const clients = new Set<any>()
@@ -58,7 +64,10 @@ function createMockServer(opts?: {
             id: crypto.randomUUID(),
             type: 'handshake_ack',
             clientId: 'test-client-001',
-            protocolVersion: '1.0',
+            protocolVersion: opts?.protocolVersion ?? PROTOCOL_VERSION,
+            protocolCapabilities: opts?.omitProtocolCapabilities
+              ? undefined
+              : [...REQUIRED_PROTOCOL_CAPABILITIES],
           }
           ws.send(serializeEnvelope(ack))
           return
@@ -126,6 +135,21 @@ describe('CliRpcClient', () => {
     const hs = server.lastMessage()
     expect(hs?.type).toBe('handshake')
     expect(hs?.token).toBe('my-secret')
+    expect(hs?.protocolCapabilities).toEqual([...REQUIRED_PROTOCOL_CAPABILITIES])
+    client.destroy()
+  })
+
+  it('rejects a server missing required protocol capabilities', async () => {
+    server = createMockServer({ omitProtocolCapabilities: true })
+    const client = new CliRpcClient(server.url)
+    await expect(client.connect()).rejects.toThrow('missing required protocol capabilities')
+    client.destroy()
+  })
+
+  it('rejects a server with a different protocol version', async () => {
+    server = createMockServer({ protocolVersion: '1.0' })
+    const client = new CliRpcClient(server.url)
+    await expect(client.connect()).rejects.toThrow(`client ${PROTOCOL_VERSION}`)
     client.destroy()
   })
 
@@ -205,7 +229,8 @@ describe('CliRpcClient', () => {
               id: crypto.randomUUID(),
               type: 'handshake_ack',
               clientId: 'silent-client',
-              protocolVersion: '1.0',
+              protocolVersion: PROTOCOL_VERSION,
+              protocolCapabilities: [...REQUIRED_PROTOCOL_CAPABILITIES],
             }
             ws.send(serializeEnvelope(ack))
           }
@@ -285,7 +310,8 @@ describe('CliRpcClient', () => {
               id: crypto.randomUUID(),
               type: 'handshake_ack',
               clientId: 'destroy-test',
-              protocolVersion: '1.0',
+              protocolVersion: PROTOCOL_VERSION,
+              protocolCapabilities: [...REQUIRED_PROTOCOL_CAPABILITIES],
             }))
           }
         },

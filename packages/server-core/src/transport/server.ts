@@ -12,6 +12,8 @@ import { createServer as createHttpServer, type Server as HttpServer, type Incom
 import { createServer as createHttpsServer, type Server as HttpsServer } from 'node:https'
 import { randomUUID } from 'node:crypto'
 import {
+  REQUIRED_PROTOCOL_CAPABILITIES,
+  missingRequiredProtocolCapabilities,
   PROTOCOL_VERSION,
   HEARTBEAT_INTERVAL_MS,
   HEARTBEAT_MAX_MISSED,
@@ -67,7 +69,7 @@ interface PendingInvoke {
   clientId: string
   resolve: (value: any) => void
   reject: (error: Error) => void
-  timeout: ReturnType<typeof setTimeout>
+  timeout: ReturnType<typeof setTimeout> | null
 }
 
 interface ActiveRequest {
@@ -232,6 +234,7 @@ export class WsRpcServer implements RpcServer {
   private pendingInvokes = new Map<string, PendingInvoke>()
   private activeRequests = new Map<string, ActiveRequest>()
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null
+  private readonly closeListeners = new Set<() => void>()
   private _port = 0
   private _protocol: 'ws' | 'wss' = 'ws'
 
@@ -283,6 +286,11 @@ export class WsRpcServer implements RpcServer {
     return this.clients.size
   }
 
+  onClose(listener: () => void): () => void {
+    this.closeListeners.add(listener)
+    return () => this.closeListeners.delete(listener)
+  }
+
   // -------------------------------------------------------------------------
   // RpcServer interface
   // -------------------------------------------------------------------------
@@ -325,6 +333,10 @@ export class WsRpcServer implements RpcServer {
   }
 
   invokeClient(clientId: string, channel: string, ...args: any[]): Promise<any> {
+    return this.invokeClientWithOptions(clientId, channel, args)
+  }
+
+  invokeClientWithOptions(clientId: string, channel: string, args: any[], options: { timeoutMs?: number | null } = {}): Promise<any> {
     return new Promise((resolve, reject) => {
       const client = this.clients.get(clientId)
 
@@ -345,12 +357,13 @@ export class WsRpcServer implements RpcServer {
       }
 
       const id = randomUUID()
-      const timeout = setTimeout(() => {
+      const timeoutMs = options.timeoutMs === undefined ? 30_000 : options.timeoutMs
+      const timeout = timeoutMs === null ? null : setTimeout(() => {
         this.pendingInvokes.delete(id)
-        const err = new Error(`Client request timeout: ${channel} (30000ms)`)
+        const err = new Error(`Client request timeout: ${channel} (${timeoutMs}ms)`)
         ;(err as any).code = 'CLIENT_REQUEST_TIMEOUT'
         reject(err)
-      }, 30_000)
+      }, timeoutMs)
 
       this.pendingInvokes.set(id, { clientId, resolve, reject, timeout })
 
@@ -368,7 +381,7 @@ export class WsRpcServer implements RpcServer {
         requestId: id,
       })) {
         this.pendingInvokes.delete(id)
-        clearTimeout(timeout)
+        if (timeout) clearTimeout(timeout)
         const err = new Error(`Client not connected: ${clientId}`)
         ;(err as any).code = 'CLIENT_DISCONNECTED'
         reject(err)
@@ -551,13 +564,17 @@ export class WsRpcServer implements RpcServer {
   }
 
   close(): void {
+    for (const listener of this.closeListeners) {
+      try { listener() } catch { /* cleanup must not prevent transport close */ }
+    }
+    this.closeListeners.clear()
     if (this.heartbeatTimer) {
       clearInterval(this.heartbeatTimer)
       this.heartbeatTimer = null
     }
     // Reject all pending invokes before tearing down connections
     for (const [id, pending] of this.pendingInvokes) {
-      clearTimeout(pending.timeout)
+      if (pending.timeout) clearTimeout(pending.timeout)
       const err = new Error('Server shutting down')
       ;(err as any).code = 'CLIENT_DISCONNECTED'
       pending.reject(err)
@@ -649,12 +666,18 @@ export class WsRpcServer implements RpcServer {
           return
         }
 
-        const clientMajor = parseInt(envelope.protocolVersion.split('.')[0] ?? '0', 10)
-        const serverMajor = parseInt(PROTOCOL_VERSION.split('.')[0] ?? '0', 10)
-        if (clientMajor !== serverMajor) {
+        if (envelope.protocolVersion !== PROTOCOL_VERSION) {
           this.sendError(ws, envelope.id, 'PROTOCOL_VERSION_UNSUPPORTED',
             `Server protocol ${PROTOCOL_VERSION}, client ${envelope.protocolVersion}`)
           ws.close(4004, 'Protocol version unsupported')
+          return
+        }
+
+        const missingProtocolCapabilities = missingRequiredProtocolCapabilities(envelope.protocolCapabilities)
+        if (missingProtocolCapabilities.length > 0) {
+          this.sendError(ws, envelope.id, 'PROTOCOL_CAPABILITY_UNSUPPORTED',
+            `Client is missing required protocol capabilities: ${missingProtocolCapabilities.join(', ')}`)
+          ws.close(4004, 'Protocol capability unsupported')
           return
         }
 
@@ -751,6 +774,7 @@ export class WsRpcServer implements RpcServer {
                   id: envelope.id,
                   type: 'handshake_ack',
                   protocolVersion: PROTOCOL_VERSION,
+                  protocolCapabilities: [...REQUIRED_PROTOCOL_CAPABILITIES],
                   serverVersion: this.serverVersion || undefined,
                   clientId: prevClient.id,
                   registeredChannels: [...this.handlers.keys()],
@@ -781,6 +805,7 @@ export class WsRpcServer implements RpcServer {
                   id: envelope.id,
                   type: 'handshake_ack',
                   protocolVersion: PROTOCOL_VERSION,
+                  protocolCapabilities: [...REQUIRED_PROTOCOL_CAPABILITIES],
                   serverVersion: this.serverVersion || undefined,
                   clientId: prevClient.id,
                   registeredChannels: [...this.handlers.keys()],
@@ -864,6 +889,7 @@ export class WsRpcServer implements RpcServer {
           id: envelope.id,
           type: 'handshake_ack',
           protocolVersion: PROTOCOL_VERSION,
+          protocolCapabilities: [...REQUIRED_PROTOCOL_CAPABILITIES],
           serverVersion: this.serverVersion || undefined,
           clientId,
           registeredChannels: [...this.handlers.keys()],
@@ -969,21 +995,21 @@ export class WsRpcServer implements RpcServer {
         reject(reason instanceof Error ? reason : new Error(`Request cancelled: ${channel}`))
       }, { once: true })
     })
-    const timeoutPromise = new Promise<never>((_, reject) => {
-      timeout = setTimeout(() => {
-        const err = new Error(`Handler timeout: ${channel} (${handlerTimeoutMs}ms)`)
-        ;(err as any).code = 'REQUEST_TIMEOUT'
-        controller.abort(err)
-        reject(err)
-      }, handlerTimeoutMs)
-    })
+    const timeoutPromise = handlerTimeoutMs === null
+      ? null
+      : new Promise<never>((_, reject) => {
+          timeout = setTimeout(() => {
+            const err = new Error(`Handler timeout: ${channel} (${handlerTimeoutMs}ms)`)
+            ;(err as any).code = 'REQUEST_TIMEOUT'
+            controller.abort(err)
+            reject(err)
+          }, handlerTimeoutMs)
+        })
 
     try {
-      const result = await Promise.race([
-        handler(ctx, ...(args ?? [])),
-        timeoutPromise,
-        abortPromise,
-      ])
+      const race = [handler(ctx, ...(args ?? [])), abortPromise]
+      if (timeoutPromise) race.push(timeoutPromise)
+      const result = await Promise.race(race)
       const response: MessageEnvelope = {
         id,
         type: 'response',
@@ -1210,7 +1236,7 @@ export class WsRpcServer implements RpcServer {
     if (!pending) return
 
     this.pendingInvokes.delete(envelope.id)
-    clearTimeout(pending.timeout)
+    if (pending.timeout) clearTimeout(pending.timeout)
 
     if (envelope.error) {
       const err = new Error(envelope.error.message)
@@ -1225,7 +1251,7 @@ export class WsRpcServer implements RpcServer {
   private rejectPendingInvokesForClient(clientId: string): void {
     for (const [id, pending] of this.pendingInvokes) {
       if (pending.clientId !== clientId) continue
-      clearTimeout(pending.timeout)
+      if (pending.timeout) clearTimeout(pending.timeout)
       const err = new Error(`Client disconnected: ${clientId}`)
       ;(err as any).code = 'CLIENT_DISCONNECTED'
       pending.reject(err)

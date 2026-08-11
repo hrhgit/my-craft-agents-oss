@@ -2,12 +2,16 @@ import { describe, expect, it, vi } from "vitest";
 import { PiRuntimeHandle, RpcClient } from "../src/modes/rpc/rpc-client.ts";
 
 type RpcClientPrivate = {
-	send: (command: { type: string }, timeoutMs?: number) => Promise<unknown>;
+	send: (command: { type: string }, timeoutMs?: number | null) => Promise<unknown>;
 	getData: <T>(response: unknown) => T;
 };
 
 type RpcClientInternals = {
-	process: { stdin: { destroyed: boolean; writable: boolean; write: (line: string) => void } };
+	process: {
+		exitCode?: number | null;
+		signalCode?: NodeJS.Signals | null;
+		stdin: { destroyed: boolean; writable: boolean; write: (line: string) => void };
+	};
 	toolExecutor: (request: unknown) => Promise<unknown>;
 	handleLine: (line: string) => void;
 };
@@ -76,7 +80,7 @@ describe("RpcClient clone", () => {
 
 		const result = await client.clone();
 
-		expect(send).toHaveBeenCalledWith({ type: "clone" });
+		expect(send).toHaveBeenCalledWith({ type: "clone" }, null);
 		expect(result).toEqual({ cancelled: false });
 	});
 });
@@ -184,6 +188,64 @@ describe("RpcClient Pi shell API methods", () => {
 		expect(send).toHaveBeenCalledWith({ type: "query_llm", request: { prompt: "hi", maxTokens: 64 } }, 120000);
 	});
 
+	it("sends compact without a fixed request timeout", async () => {
+		const { client, send } = mockClient({
+			type: "response",
+			command: "compact",
+			success: true,
+			data: { summary: "done", firstKeptEntryId: "entry-1", tokensBefore: 100 },
+		});
+
+		await expect(client.compact("keep decisions")).resolves.toMatchObject({ summary: "done" });
+		expect(send).toHaveBeenCalledWith(
+			{ type: "compact", customInstructions: "keep decisions" },
+			null,
+		);
+	});
+
+	it("keeps compact pending beyond the default request timeout", async () => {
+		vi.useFakeTimers();
+		try {
+			const client = new RpcClient();
+			const internals = client as unknown as RpcClientInternals;
+			const write = vi.fn();
+			internals.process = {
+				exitCode: null,
+				signalCode: null,
+				stdin: { destroyed: false, writable: true, write },
+			};
+			let state: "pending" | "resolved" | "rejected" = "pending";
+
+			const compacting = client.compact().then(
+				(result) => {
+					state = "resolved";
+					return result;
+				},
+				(error: unknown) => {
+					state = "rejected";
+					throw error;
+				},
+			);
+			const command = JSON.parse(write.mock.calls[0][0]) as { id: string };
+
+			await vi.advanceTimersByTimeAsync(60_000);
+			expect(state).toBe("pending");
+
+			internals.handleLine(
+				JSON.stringify({
+					type: "response",
+					id: command.id,
+					command: "compact",
+					success: true,
+					data: { summary: "done", firstKeptEntryId: "entry-1", tokensBefore: 100 },
+				}),
+			);
+			await expect(compacting).resolves.toMatchObject({ summary: "done" });
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
 	it("sends list_child_sessions and returns sessions", async () => {
 		const { client, send } = mockClient({
 			type: "response",
@@ -214,7 +276,7 @@ describe("RpcClient Pi shell API methods", () => {
 			type: "invoke_extension_command",
 			commandId: "prompt-automation",
 			args: "[{}]",
-		});
+		}, null);
 	});
 
 	it("routes contribution actions with an expected extension owner", async () => {
@@ -233,7 +295,7 @@ describe("RpcClient Pi shell API methods", () => {
 			commandId: "status-open",
 			args: undefined,
 			ownerExtensionId: "status-extension",
-		});
+		}, null);
 	});
 
 	it("forwards structured host tool results to the RPC subprocess", async () => {
@@ -277,6 +339,29 @@ describe("RpcClient Pi shell API methods", () => {
 });
 
 describe("PiRuntimeHandle", () => {
+	it("sends compact without a fixed request timeout", async () => {
+		const client = new RpcClient();
+		const requestRuntime = vi.spyOn(client, "requestRuntime").mockResolvedValue({
+			type: "response",
+			command: "compact",
+			success: true,
+			data: { summary: "done", firstKeptEntryId: "entry-1", tokensBefore: 100 },
+		});
+		const handle = new PiRuntimeHandle(client, {
+			runtimeId: "runtime-a",
+			cwd: "E:/project",
+			sessionId: "session-a",
+			isStreaming: false,
+		});
+
+		await expect(handle.compact()).resolves.toMatchObject({ summary: "done" });
+		expect(requestRuntime).toHaveBeenCalledWith(
+			"runtime-a",
+			{ type: "compact", customInstructions: undefined },
+			null,
+		);
+	});
+
 	it("sends resume as a control command with the persisted system prompt", async () => {
 		const client = new RpcClient();
 		const requestRuntime = vi.spyOn(client, "requestRuntime").mockResolvedValue({

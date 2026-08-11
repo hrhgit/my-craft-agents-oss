@@ -4,6 +4,7 @@ import type {
   ExtensionUIValidationScenarioV1,
 } from '@mortise/shared/protocol'
 import { extensionValidationStore, type RegisteredExtensionValidation } from './extension-validation-store'
+import { waitForOperation } from '../../lib/operations'
 
 export const EXTENSION_VALIDATION_TEST_BRIDGE_KEY = '__MORTISE_UI_VALIDATION_EXTENSION_BRIDGE_V1__'
 
@@ -190,7 +191,13 @@ export function installExtensionValidationTestBridge(): (() => void) | undefined
   const invoke = window.electronAPI.invokeExtensionCommand
   if (typeof invoke !== 'function') return undefined
   const target = window as unknown as Record<string, unknown>
-  const bridge = createExtensionValidationTestBridge((sessionId, command, args, owner) => invoke(sessionId, command, args, owner))
+  const bridge = createExtensionValidationTestBridge(async (sessionId, command, args, owner) => {
+    const accepted = await invoke(sessionId, command, args, owner, crypto.randomUUID())
+    const receipt = await waitForOperation(window.electronAPI, accepted.operationId)
+    return receipt.status === 'succeeded'
+      ? { invoked: true }
+      : { invoked: false, error: receipt.error?.message ?? `Extension command ${receipt.status}` }
+  })
   Object.defineProperty(target, EXTENSION_VALIDATION_TEST_BRIDGE_KEY, { configurable: true, enumerable: false, writable: false, value: bridge })
   return () => { delete target[EXTENSION_VALIDATION_TEST_BRIDGE_KEY] }
 }

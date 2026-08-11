@@ -588,7 +588,7 @@ export function ApiKeyInput({
                             >
                               <div className="flex items-center gap-2 min-w-0">
                                 <span className="truncate">{model.name}</span>
-                                {model.reasoning && (
+                                {model.reasoning !== false && (
                                   <span className="text-[10px] text-foreground/30 shrink-0">reasoning</span>
                                 )}
                               </div>

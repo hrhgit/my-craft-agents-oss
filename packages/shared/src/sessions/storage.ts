@@ -7,7 +7,7 @@
  * Mortise sidecar directories next to those flat Pi JSONL files contain:
  * - attachments/ (file attachments)
  * - plans/ (plan files for Safe Mode)
- * - data/ (transform_data tool output: JSON files for datatable/spreadsheet blocks)
+ * - data/ (session data dir for file-backed table/preview blocks)
  * - long_responses/ (full tool results that were summarized due to size limits)
  * - downloads/ (binary files downloaded during sessions)
  */
@@ -542,7 +542,7 @@ export function ensureSessionDir(workspaceRootPath: string, sessionId: string): 
   if (!existsSync(longResponsesDir)) {
     mkdirSync(longResponsesDir, { recursive: true });
   }
-  // Data directory for transform_data tool output (JSON files for datatable/spreadsheet)
+  // Data directory for file-backed datatable/spreadsheet blocks
   const dataDir = join(sessionDir, 'data');
   if (!existsSync(dataDir)) {
     mkdirSync(dataDir, { recursive: true });
@@ -570,7 +570,7 @@ export function getSessionPlansPath(workspaceRootPath: string, sessionId: string
 }
 
 /**
- * Get the data directory for a session (transform_data tool output)
+ * Get the data directory for a session (file-backed table/preview blocks)
  */
 export function getSessionDataPath(workspaceRootPath: string, sessionId: string): string {
   return join(getSessionPath(workspaceRootPath, sessionId), 'data');

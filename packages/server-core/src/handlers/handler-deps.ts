@@ -3,6 +3,7 @@ import type { ISessionManager } from './session-manager-interface'
 import type { IBrowserPaneManager } from './browser-pane-manager-interface'
 import type { IWindowManager } from './window-manager-interface'
 import type { IMessagingGatewayRegistry } from './messaging-registry-interface'
+import type { OperationCoordinator } from '../operations/operation-coordinator'
 
 /**
  * Generic handler dependency bag.
@@ -23,4 +24,5 @@ export interface HandlerDeps<
   windowManager?: TWindowManager
   browserPaneManager?: TBrowserPaneManager
   messagingRegistry?: IMessagingGatewayRegistry
+  operationCoordinator?: OperationCoordinator
 }

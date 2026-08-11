@@ -521,11 +521,10 @@ graph LR
 
 ### Validate Complex Diagrams
 
-Use the `mermaid_validate` tool to check syntax before outputting complex diagrams:
-
-```
-mermaid_validate({ code: "graph TD\n  A --> B" })
-```
+Before outputting a complex diagram, double-check the syntax manually:
+- Diagram type declaration matches one of the supported types
+- All `[`, `(`, `{` brackets are balanced
+- Arrows and node labels use valid Mermaid syntax
 
 ## Troubleshooting
 

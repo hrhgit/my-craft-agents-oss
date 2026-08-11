@@ -41,17 +41,6 @@ describe('parseArgs', () => {
     expect(args.tlsCa).toBe('/path/to/ca.pem')
   })
 
-  it('parses --send-timeout', () => {
-    const args = parseArgs([
-      'bun', 'index.ts',
-      '--send-timeout', '60000',
-      'send', 'session-1', 'hello',
-    ])
-    expect(args.sendTimeout).toBe(60000)
-    expect(args.command).toBe('send')
-    expect(args.rest).toEqual(['session-1', 'hello'])
-  })
-
   it('falls back to env vars for url and token', () => {
     const prevUrl = process.env.MORTISE_SERVER_URL
     const prevToken = process.env.MORTISE_SERVER_TOKEN
@@ -104,17 +93,6 @@ describe('parseArgs', () => {
     expect(args.command).toBe('validate')
   })
 
-  it('parses session subcommand with args', () => {
-    const args = parseArgs([
-      'bun', 'index.ts',
-      'session', 'create', '--name', 'test', '--mode', 'safe',
-    ])
-    expect(args.command).toBe('session')
-    // --mode is now a global flag, consumed at top level
-    expect(args.rest).toEqual(['create', '--name', 'test'])
-    expect(args.mode).toBe('safe')
-  })
-
   it('parses send with message text', () => {
     const args = parseArgs([
       'bun', 'index.ts',
@@ -143,11 +121,6 @@ describe('parseArgs', () => {
     expect(args.timeout).toBe(10000)
   })
 
-  it('defaults sendTimeout to 300000', () => {
-    const args = parseArgs(['bun', 'index.ts', 'send', 's1', 'hi'])
-    expect(args.sendTimeout).toBe(300000)
-  })
-
   it('defaults json to false', () => {
     const args = parseArgs(['bun', 'index.ts', 'ping'])
     expect(args.json).toBe(false)
@@ -159,16 +132,6 @@ describe('parseArgs', () => {
     const args = parseArgs(['bun', 'index.ts', 'run', 'hello', 'world'])
     expect(args.command).toBe('run')
     expect(args.rest).toEqual(['hello', 'world'])
-  })
-
-  it('--mode sets mode', () => {
-    const args = parseArgs(['bun', 'index.ts', '--mode', 'safe', 'run', 'hello'])
-    expect(args.mode).toBe('safe')
-  })
-
-  it('defaults mode to empty (run defaults to allow-all)', () => {
-    const args = parseArgs(['bun', 'index.ts', 'run', 'hello'])
-    expect(args.mode).toBe('')
   })
 
   it('--output-format sets outputFormat', () => {

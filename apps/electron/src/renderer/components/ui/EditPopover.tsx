@@ -111,7 +111,6 @@ const EDIT_CONFIGS: Record<EditContextKey, (location: string) => EditConfig> = {
         'The user is editing the notes field in their preferences (~/.mortise/preferences.json). ' +
         'This is a JSON file. Only modify the "notes" field unless explicitly asked otherwise. ' +
         'The notes field is free-form text that provides context about the user to the AI. ' +
-        'After editing, call config_validate with target "preferences" to verify the changes. ' +
         'Confirm clearly when done.',
     },
     example: 'Add coding style preferences',
@@ -134,7 +133,6 @@ const EDIT_CONFIGS: Record<EditContextKey, (location: string) => EditConfig> = {
         'Each tool has: id (unique slug), displayName (shown in UI), icon (filename like "git.ico"), commands (array of CLI command names). ' +
         'Supported icon formats: .png, .ico, .svg, .jpg. Icons display at 20x20px. ' +
         'Read ~/.mortise/docs/tool-icons.md for full format reference. ' +
-        'After editing, call config_validate with target "tool-icons" to verify the changes are valid. ' +
         'Confirm clearly when done.',
     },
     example: 'Add an icon for my custom CLI tool "deploy"',

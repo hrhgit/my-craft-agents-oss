@@ -13,7 +13,6 @@ const phases = [
   'handlers-registered',
   'session-initializing',
   'runtime-initializing',
-  'model-refresh-starting',
   'listener-binding',
   'ready',
 ] as const

@@ -17,13 +17,6 @@ import type { SessionToolContext } from './context.ts';
 import type { ToolResult } from './types.ts';
 
 // Handlers
-import { handleConfigValidate } from './handlers/config-validate.ts';
-import { handleSkillValidate } from './handlers/skill-validate.ts';
-import { handleMermaidValidate } from './handlers/mermaid-validate.ts';
-import { handleUpdatePreferences } from './handlers/update-preferences.ts';
-import { handleTransformData } from './handlers/transform-data.ts';
-import { handleScriptSandbox } from './handlers/script-sandbox.ts';
-import { handleSendDeveloperFeedback } from './handlers/send-developer-feedback.ts';
 import { handleGetSessionInfo } from './handlers/get-session-info.ts';
 import { handleListSessions } from './handlers/list-sessions.ts';
 import { handleSendAgentMessage } from './handlers/send-agent-message.ts';
@@ -33,50 +26,6 @@ import { handleListMessagingChannels, handleUnbindMessagingChannel } from './han
 // Canonical Zod Schemas
 // ============================================================
 
-export const ConfigValidateSchema = z.object({
-  target: z.enum(['config', 'preferences', 'tool-icons', 'all'])
-    .describe('Which config file(s) to validate'),
-});
-
-export const SkillValidateSchema = z.object({
-  skillSlug: z.string().describe('The slug of the skill to validate'),
-});
-
-export const MermaidValidateSchema = z.object({
-  code: z.string().describe('The mermaid diagram code to validate'),
-  render: z.boolean().optional().describe('Also attempt to render (catches layout errors)'),
-});
-
-export const UpdatePreferencesSchema = z.object({
-  name: z.string().optional().describe("The user's preferred name or how they'd like to be addressed"),
-  timezone: z.string().optional().describe("The user's timezone in IANA format (e.g., 'America/New_York', 'Europe/London')"),
-  city: z.string().optional().describe("The user's city"),
-  region: z.string().optional().describe("The user's state/region/province"),
-  country: z.string().optional().describe("The user's country"),
-  notes: z.string().optional().describe('Additional notes about the user that would be helpful to remember (preferences, context, etc.). Replaces any existing notes.'),
-  includeCoAuthoredBy: z.boolean().optional().describe("Whether to include 'Co-Authored-By: Mortise Agent' trailer on git commits. Defaults to true."),
-});
-
-export const TransformDataSchema = z.object({
-  language: z.enum(['python3', 'node', 'bun']).describe('Script runtime to use'),
-  script: z.string().describe('Transform script source code. Receives input file paths as command-line args (sys.argv[1:] or process.argv.slice(2)), last arg is the output file path.'),
-  inputFiles: z.array(z.string()).describe('Input file paths relative to session dir (e.g., "long_responses/stripe_txns.txt")'),
-  outputFile: z.string().describe('Output file name relative to session data/ dir (e.g., "transactions.json")'),
-});
-
-export const ScriptSandboxSchema = z.object({
-  language: z.enum(['python3', 'node', 'bun']).describe('Script runtime to use'),
-  script: z.string().describe('Inline script source to execute in a sandboxed subprocess.'),
-  inputFiles: z.array(z.string()).optional().describe('Optional input file paths relative to the session directory.'),
-  stdin: z.string().optional().describe('Optional stdin payload passed to the script process.'),
-  timeoutMs: z.number().min(1).max(15000).optional().describe('Optional timeout in milliseconds (default 5000, max 15000).'),
-});
-
-export const SendDeveloperFeedbackSchema = z.object({
-  message: z.string().describe('Freeform markdown feedback — be detailed, use headings, lists, code blocks. Include what happened, what you expected, what would help, or any ideas/suggestions.'),
-});
-
-// Browser tool schema (single CLI-like tool for all browser actions)
 export const BrowserToolSchema = z.object({
   command: z.union([
     z.string(),
@@ -136,71 +85,6 @@ export const UnbindMessagingChannelSchema = z.object({
 // ============================================================
 
 export const TOOL_DESCRIPTIONS = {
-  config_validate: `Validate Mortise Agent configuration files.
-
-Use this to check current Mortise configuration state before it takes effect.
-Returns structured validation results with errors, warnings, and suggestions.
-
-**Targets:**
-- \`config\`: Validates the canonical SQLite configuration record when the host provides that capability
-- \`preferences\`: Validates preferences.json
-- \`tool-icons\`: Validates tool-icons.json
-- \`all\`: Validates the canonical SQLite configuration record and all file-backed configuration`,
-
-  skill_validate: `Validate a skill's SKILL.md file.
-
-Checks:
-- Slug format (lowercase alphanumeric with hyphens)
-- SKILL.md exists and is readable
-- YAML frontmatter is valid with required fields (name, description)
-- Content is non-empty after frontmatter
-- Icon format if present (svg/png/jpg)`,
-
-  mermaid_validate: `Validate Mermaid diagram syntax before outputting.
-
-Use this when:
-- Creating complex diagrams with many nodes/relationships
-- Unsure about syntax for a specific diagram type
-- Debugging a diagram that failed to render
-
-Returns validation result with specific error messages if invalid.`,
-
-  update_user_preferences: `Update stored user preferences. Use this when you learn information about the user that would be helpful to remember for future conversations. This includes their name, timezone, location, or any other relevant notes. Only update fields you have confirmed information about - don't guess.`,
-
-  transform_data: `Transform data files using a script and write structured output for datatable/spreadsheet blocks, or extract HTML content for html-preview blocks.
-
-Use this tool when you need to transform large datasets (20+ rows) into structured JSON for display, or extract/decode content for rich previews. Write a transform script that reads the input file and produces an output file, then reference it via \`"src"\` in your datatable/spreadsheet/html-preview/pdf-preview/image-preview block.
-
-**Workflow:**
-1. Call \`transform_data\` with a script that reads input files and writes output
-2. Output a datatable/spreadsheet block with \`"src": "data/output.json"\`, an html-preview block with \`"src": "data/output.html"\`, a pdf-preview block with \`"src": "data/output.pdf"\`, or an image-preview block with \`"src": "data/output.png"\`
-
-**Script conventions:**
-- Input file paths are passed as command-line arguments (last arg = output file path)
-- Python: \`sys.argv[1:-1]\` = input files, \`sys.argv[-1]\` = output path
-- Node/Bun: \`process.argv.slice(2, -1)\` = input files, \`process.argv.at(-1)\` = output path
-- For datatable/spreadsheet: output must be valid JSON: \`{"title": "...", "columns": [...], "rows": [...]}\`
-- For html-preview: output is an HTML file (any valid HTML)
-
-**Security:** Runs in an isolated subprocess with no access to API keys or credentials. 30-second timeout.`,
-
-  script_sandbox: `Run quick inline diagnostics in a sandboxed subprocess with network isolation.
-
-Use this for short Python/Node/Bun snippets that need a tightly isolated runtime.
-
-**Behavior:**
-- Executes script source from \`script\` in a temporary file
-- Returns stdout/stderr, exit code, duration, and timeout status
-- Accepts optional input files and stdin
-- Requires enforced network and filesystem isolation; if unsupported or unusable, execution is blocked
-
-**Safety:**
-- Sensitive credential env vars are stripped
-- Input files are restricted to the current session directory
-- Filesystem writes are restricted to the current session directory
-- Timeout is capped (default 5000ms, max 15000ms)
-- Network/filesystem isolation is always required; if unavailable, execution is blocked`,
-
   browser_tool: `Run browser actions using a CLI-like command (string or array input).
 
 All browser interactions use this single tool with strict validation and actionable feedback.
@@ -259,10 +143,6 @@ Optional overrides: \`provider\`, \`model\`, and \`thinkingLevel\`. Omitted AI f
 
 Child tasks never appear in the ordinary Session list. Foreground execution returns the final text; use background=true for asynchronous work. Use action=list/message/resume/interrupt to inspect and control existing child tasks. Resume without a prompt is a control action and does not append a synthetic message.
 Attachments pass existing absolute file paths to the child task. The selected template must include the read tool so the child can read their contents.`,
-
-  send_developer_feedback: `Send freeform feedback to the Mortise Agent development team.
-
-Use this to share anything that would help improve the product — issues you hit, ideas for better tools, suggestions for improved workflows, or patterns you notice. Write in markdown with as much detail as possible. This is your direct line to the developers.`,
 
   get_session_info: `Get metadata about the current session or a specific session by ID.
 
@@ -326,13 +206,6 @@ export type SessionToolDef = RegistrySessionToolDef | BackendSessionToolDef;
 // ============================================================
 
 export const SESSION_TOOL_DEFS: SessionToolDef[] = [
-  { name: 'config_validate', description: TOOL_DESCRIPTIONS.config_validate, inputSchema: ConfigValidateSchema, executionMode: 'registry', readOnly: true, handler: handleConfigValidate },
-  { name: 'skill_validate', description: TOOL_DESCRIPTIONS.skill_validate, inputSchema: SkillValidateSchema, executionMode: 'registry', readOnly: true, handler: handleSkillValidate },
-  { name: 'mermaid_validate', description: TOOL_DESCRIPTIONS.mermaid_validate, inputSchema: MermaidValidateSchema, executionMode: 'registry', readOnly: true, handler: handleMermaidValidate },
-  { name: 'update_user_preferences', description: TOOL_DESCRIPTIONS.update_user_preferences, inputSchema: UpdatePreferencesSchema, executionMode: 'registry', handler: handleUpdatePreferences },
-  { name: 'transform_data', description: TOOL_DESCRIPTIONS.transform_data, inputSchema: TransformDataSchema, executionMode: 'registry', handler: handleTransformData },
-  { name: 'script_sandbox', description: TOOL_DESCRIPTIONS.script_sandbox, inputSchema: ScriptSandboxSchema, executionMode: 'registry', handler: handleScriptSandbox },
-  { name: 'send_developer_feedback', description: TOOL_DESCRIPTIONS.send_developer_feedback, inputSchema: SendDeveloperFeedbackSchema, executionMode: 'registry', handler: handleSendDeveloperFeedback },
   { name: 'spawn_session', description: TOOL_DESCRIPTIONS.spawn_session, inputSchema: SpawnSessionSchema, executionMode: 'backend', handler: null },
   // Browser tool (backend-specific — requires BrowserPaneManager in Electron)
   // Single CLI-like tool that handles all browser actions via command string.
@@ -347,47 +220,35 @@ export const SESSION_TOOL_DEFS: SessionToolDef[] = [
   { name: 'unbind_messaging_channel', description: TOOL_DESCRIPTIONS.unbind_messaging_channel, inputSchema: UnbindMessagingChannelSchema, executionMode: 'registry', handler: handleUnbindMessagingChannel },
 ];
 
-export interface SessionToolFilterOptions {
-  /** Include the experimental send_developer_feedback tool. */
-  includeDeveloperFeedback?: boolean;
-}
-
 /**
- * Return session tools with optional feature filtering.
+ * Return session tools.
  *
  * Callers should use this helper instead of filtering ad hoc so tool visibility
  * stays consistent across Claude, Pi, and session-mcp-server backends.
  */
-export function getSessionToolDefs(options?: SessionToolFilterOptions): SessionToolDef[] {
-  const includeDeveloperFeedback = options?.includeDeveloperFeedback ?? true;
-
-  return SESSION_TOOL_DEFS.filter(def => {
-    if (!includeDeveloperFeedback && def.name === 'send_developer_feedback') {
-      return false;
-    }
-    return true;
-  });
+export function getSessionToolDefs(): SessionToolDef[] {
+  return SESSION_TOOL_DEFS;
 }
 
 /**
- * Build a name->definition registry with optional feature filtering.
+ * Build a name->definition registry.
  */
-export function getSessionToolRegistry(options?: SessionToolFilterOptions): Map<string, SessionToolDef> {
-  return new Map(getSessionToolDefs(options).map(def => [def.name, def]));
+export function getSessionToolRegistry(): Map<string, SessionToolDef> {
+  return new Map(getSessionToolDefs().map(def => [def.name, def]));
 }
 
 /**
- * Return session tool names with optional feature filtering.
+ * Return session tool names.
  */
-export function getSessionToolNames(options?: SessionToolFilterOptions): Set<string> {
-  return new Set(getSessionToolDefs(options).map(def => def.name));
+export function getSessionToolNames(): Set<string> {
+  return new Set(getSessionToolDefs().map(def => def.name));
 }
 
 /**
- * Return backend-executed tool names with optional feature filtering.
+ * Return backend-executed tool names.
  */
-export function getSessionBackendToolNames(options?: SessionToolFilterOptions): Set<string> {
-  return new Set(getSessionToolDefs(options).filter(d => d.executionMode === 'backend').map(d => d.name));
+export function getSessionBackendToolNames(): Set<string> {
+  return new Set(getSessionToolDefs().filter(d => d.executionMode === 'backend').map(d => d.name));
 }
 
 // ============================================================
@@ -436,13 +297,10 @@ export interface JsonSchemaToolDef {
 /**
  * Convert session tool definitions to JSON Schema format.
  *
- * @param opts.includeDeveloperFeedback - Include experimental feedback tool in output
  * @returns Array of tool definitions with JSON Schema inputSchema
  */
-export function getToolDefsAsJsonSchema(opts?: {
-  includeDeveloperFeedback?: boolean;
-}): JsonSchemaToolDef[] {
-  const defs = getSessionToolDefs({ includeDeveloperFeedback: opts?.includeDeveloperFeedback });
+export function getToolDefsAsJsonSchema(): JsonSchemaToolDef[] {
+  const defs = getSessionToolDefs();
 
   return defs.map(def => {
     // Explicit `as any` avoids TS2589 ("type instantiation is excessively deep")

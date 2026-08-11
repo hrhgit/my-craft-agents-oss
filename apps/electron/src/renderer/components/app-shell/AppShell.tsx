@@ -1224,7 +1224,10 @@ function AppShellContent({
         accessory: (
           <>
             {summary.isProcessing && <Spinner className="text-[9px]" />}
-            {summary.hasUnread && (
+            {/* The session currently open in the focused panel is being viewed —
+                it must not carry the completed/unread dot; only sessions outside
+                the foreground need that reminder. */}
+            {summary.hasUnread && selectedSidebarSessionId !== summary.id && (
               <span
                 className="h-1.5 w-1.5 rounded-full bg-accent"
                 aria-label={t('sidebar.groupByUnread')}

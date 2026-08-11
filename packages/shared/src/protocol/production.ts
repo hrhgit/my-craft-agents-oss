@@ -15,6 +15,9 @@ export * from './workspace-creation'
 export * from './workspace-topology'
 export * from './workspace-transfer-endpoint'
 export * from './execution-routing'
+export * from './workspace-capability-bridge'
+export * from './operations'
+export * from './protocol-capabilities'
 export type * from './extension-ui-validation'
 
 /** Reject any unexpected validation event if an old extension sends one in production. */

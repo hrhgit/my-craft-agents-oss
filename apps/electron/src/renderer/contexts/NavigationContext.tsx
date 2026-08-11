@@ -130,7 +130,7 @@ interface NavigationProviderProps {
   onSwitchWorkspaceBySlug?: (slug: string) => void
   /** Ordinary first turn transaction; resolves only after the Session is published. */
   onCreateAndSendFirstTurn: (
-    input: import('@mortise/shared/protocol').CreateAndSendFirstTurnRequest,
+    input: Omit<import('@mortise/shared/protocol').CreateAndSendFirstTurnRequest, 'operationId' | 'storedAttachments' | 'attachmentStagingId'>,
   ) => Promise<import('@mortise/shared/protocol').CreateAndSendFirstTurnResult>
   /** Explicit, user-confirmed deletion for an already published Session. */
   onDeleteSession: (sessionId: string) => Promise<boolean>

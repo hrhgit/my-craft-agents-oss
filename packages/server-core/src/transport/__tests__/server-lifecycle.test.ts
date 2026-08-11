@@ -8,7 +8,7 @@
 import { describe, it, expect, afterEach } from 'bun:test'
 import WebSocket from 'ws'
 import { isBrowserSafeWebSocketPort, WsRpcServer } from '../server'
-import { PROTOCOL_VERSION } from '@mortise/shared/protocol'
+import { PROTOCOL_VERSION, REQUIRED_PROTOCOL_CAPABILITIES } from '@mortise/shared/protocol'
 
 const TEST_TOKEN = 'test-token-with-enough-entropy-to-pass'
 
@@ -41,6 +41,7 @@ function handshake(url: string, token: string): Promise<{ ws: WebSocket; clientI
         id: crypto.randomUUID(),
         type: 'handshake',
         protocolVersion: PROTOCOL_VERSION,
+        protocolCapabilities: [...REQUIRED_PROTOCOL_CAPABILITIES],
         token,
       }))
     })
@@ -155,6 +156,7 @@ describe('WsRpcServer lifecycle', () => {
           id: crypto.randomUUID(),
           type: 'handshake',
           protocolVersion: PROTOCOL_VERSION,
+          protocolCapabilities: [...REQUIRED_PROTOCOL_CAPABILITIES],
           // no token
         }))
       })

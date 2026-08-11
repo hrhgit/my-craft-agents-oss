@@ -283,7 +283,7 @@ function piGlobalModelsToModelDefinitions(
     description: '',
     provider: 'pi' as const,
     contextWindow: m.contextWindow ?? 200_000,
-    supportsThinking: !!m.reasoning,
+    supportsThinking: m.reasoning !== false,
     supportsImages: (m.input ?? []).includes('image') || undefined,
   }));
 }

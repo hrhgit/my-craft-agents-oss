@@ -14,10 +14,14 @@ import {
 } from '../validate-production-node-bundles'
 import { downloadUv, publishVerifiedUvToolchain, stageCompiledPiRuntime } from '../common'
 import {
+  createEffectiveElectronBuilderConfig,
+  materializeElectronBuilderConfigSources,
   publishElectronPackageArtifacts,
   reapAbandonedPackageRuns,
   recoverElectronPackagePublication,
   resolveExpectedPackageBuildId,
+  resolvePackageCacheVerification,
+  resolvePackageReleaseDir,
   resolvePackageTarget,
 } from '../package-electron'
 import { getProcessStartTime } from '../process-identity'
@@ -287,12 +291,14 @@ describe('production bundle validation composition', () => {
     expect(directBuilderCallers).toEqual([])
   })
 
-  test('packages only from an isolated immutable app staging directory', () => {
+  test('packages only from a leased immutable Electron build capsule', () => {
     const packageElectron = readSource(resolve(repositoryRoot, 'scripts/build/package-electron.ts'))
     const buildCache = readSource(resolve(repositoryRoot, 'scripts/build/electron-build-cache.ts'))
     expect(packageElectron).toContain("'--projectDir'")
     expect(packageElectron).toContain('staged.appDir')
     expect(packageElectron).toContain("'--config.directories.output'")
+    expect(packageElectron).toContain('createEffectiveElectronBuilderConfig')
+    expect(packageElectron).toContain('builderConfigPath')
     expect(packageElectron).toContain('captureElectronBuildSource')
     expect(packageElectron).toContain('capturedSource')
     expect(packageElectron).toContain('staged.appDir,\n        `Electron ${resolvedTarget.target} package`')
@@ -325,6 +331,63 @@ describe('production bundle validation composition', () => {
     expect(resolveExpectedPackageBuildId([])).toBeUndefined()
     expect(() => resolveExpectedPackageBuildId(['--expected-build-id', 'not-a-build'])).toThrow('lowercase SHA-256')
     expect(() => resolveExpectedPackageBuildId(['--expected-build-id'])).toThrow('lowercase SHA-256')
+  })
+
+  test('composes run-scoped package inputs without legacy staging directories', () => {
+    const config = createEffectiveElectronBuilderConfig(`
+files:
+  - dist/**/*
+  - "!dist/installer-developer-kit/**/*"
+extraResources:
+  - from: dist/resources/session-mcp-server
+    to: app/resources/session-mcp-server
+win:
+  extraResources:
+    - from: dist/installer-developer-kit
+      to: developer-kit
+`, 'win')
+    expect(config.files).toEqual(['dist/**/*'])
+    expect(config.extraResources).toContainEqual({
+      from: '${env.MORTISE_ELECTRON_BUILD_PROVENANCE_PATH}',
+      to: 'app/dist/build-provenance.json',
+    })
+    expect((config.win as { extraResources: unknown[] }).extraResources).toContainEqual({
+      from: '${env.MORTISE_DEVELOPER_KIT_ARTIFACT_DIR}',
+      to: 'developer-kit',
+      filter: ['**/*'],
+    })
+    expect(JSON.stringify(config)).not.toContain('dist/installer-developer-kit')
+    const materialized = materializeElectronBuilderConfigSources(config, {
+      electronBuildProvenancePath: join(repositoryRoot, 'output', 'run', 'electron.json'),
+      developerKitArtifactDirectory: join(repositoryRoot, 'output', 'kit'),
+      developerKitProvenancePath: join(repositoryRoot, 'output', 'run', 'kit.json'),
+    })
+    expect(JSON.stringify(materialized)).not.toContain('${env.MORTISE_')
+    expect((materialized.extraResources as Array<{ from: string }>).at(-1)?.from).toBe(
+      resolve(repositoryRoot, 'output', 'run', 'electron.json'),
+    )
+  })
+
+  test('allows a dedicated repository-local package publication directory', () => {
+    const electronDir = resolve(repositoryRoot, 'apps/electron')
+    expect(resolvePackageReleaseDir([], repositoryRoot, electronDir)).toBe(join(electronDir, 'release'))
+    expect(resolvePackageReleaseDir(
+      ['--release-dir', 'output/package-benchmark'],
+      repositoryRoot,
+      electronDir,
+    )).toBe(resolve(repositoryRoot, 'output/package-benchmark'))
+    expect(() => resolvePackageReleaseDir(['--release-dir'], repositoryRoot, electronDir)).toThrow('requires a path')
+    expect(() => resolvePackageReleaseDir(['--release-dir', '..'], repositoryRoot, electronDir)).toThrow('under output')
+    expect(() => resolvePackageReleaseDir(['--release-dir', '.'], repositoryRoot, electronDir)).toThrow('dedicated directory')
+    expect(() => resolvePackageReleaseDir(['--release-dir', 'packages/shared'], repositoryRoot, electronDir)).toThrow('under output')
+  })
+
+  test('uses fast package-cache validation by default and accepts explicit strict validation', () => {
+    expect(resolvePackageCacheVerification([])).toBe('fast')
+    expect(resolvePackageCacheVerification(['--package-cache-verification', 'strict'])).toBe('strict')
+    expect(resolvePackageCacheVerification(['--package-cache-verification', 'fast'])).toBe('fast')
+    expect(() => resolvePackageCacheVerification(['--package-cache-verification'])).toThrow('fast or strict')
+    expect(() => resolvePackageCacheVerification(['--package-cache-verification', 'deep'])).toThrow('fast or strict')
   })
 
   test('publishes isolated package output under a repository-global lock', () => {

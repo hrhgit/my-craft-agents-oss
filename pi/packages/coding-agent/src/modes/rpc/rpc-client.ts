@@ -72,6 +72,10 @@ type DistributiveOmit<T, K extends keyof T> = T extends unknown ? Omit<T, K> : n
 type RpcCommandBody = DistributiveOmit<RpcCommand, "id">;
 type RpcRuntimeCommandBody = DistributiveOmit<RpcCommand, "id" | "runtimeId" | "clientId">;
 type RpcWritable = NodeJS.WritableStream & { destroyed: boolean; writable: boolean };
+type RpcRequestTimeoutMs = number | null;
+
+const DEFAULT_RPC_REQUEST_TIMEOUT_MS = 30_000;
+const NO_RPC_REQUEST_TIMEOUT = null;
 
 export interface RpcClientOptions {
 	/** Discover and connect to an existing Mortise Agent runtime host before spawning. */
@@ -583,7 +587,7 @@ export class RpcClient {
 	 * @returns Object with `cancelled: true` if an extension cancelled the new session
 	 */
 	async newSession(parentSession?: string): Promise<{ cancelled: boolean }> {
-		const response = await this.send({ type: "new_session", parentSession });
+		const response = await this.send({ type: "new_session", parentSession }, NO_RPC_REQUEST_TIMEOUT);
 		return this.getData(response);
 	}
 
@@ -682,7 +686,7 @@ export class RpcClient {
 	 * Compact session context.
 	 */
 	async compact(customInstructions?: string): Promise<CompactionResult> {
-		const response = await this.send({ type: "compact", customInstructions });
+		const response = await this.send({ type: "compact", customInstructions }, NO_RPC_REQUEST_TIMEOUT);
 		return this.getData(response);
 	}
 
@@ -711,7 +715,7 @@ export class RpcClient {
 	 * Execute a bash command.
 	 */
 	async bash(command: string): Promise<BashResult> {
-		const response = await this.send({ type: "bash", command });
+		const response = await this.send({ type: "bash", command }, NO_RPC_REQUEST_TIMEOUT);
 		return this.getData(response);
 	}
 
@@ -735,7 +739,7 @@ export class RpcClient {
 	 * @returns Object with `cancelled: true` if an extension cancelled the switch
 	 */
 	async switchSession(sessionPath: string): Promise<{ cancelled: boolean }> {
-		const response = await this.send({ type: "switch_session", sessionPath });
+		const response = await this.send({ type: "switch_session", sessionPath }, NO_RPC_REQUEST_TIMEOUT);
 		return this.getData(response);
 	}
 
@@ -744,7 +748,7 @@ export class RpcClient {
 	 * @returns Object with `text` (the message text) and `cancelled` (if extension cancelled)
 	 */
 	async fork(entryId: string): Promise<{ text: string; cancelled: boolean }> {
-		const response = await this.send({ type: "fork", entryId });
+		const response = await this.send({ type: "fork", entryId }, NO_RPC_REQUEST_TIMEOUT);
 		return this.getData(response);
 	}
 
@@ -753,7 +757,7 @@ export class RpcClient {
 	 * @returns Object with `cancelled: true` if an extension cancelled the clone
 	 */
 	async clone(): Promise<{ cancelled: boolean }> {
-		const response = await this.send({ type: "clone" });
+		const response = await this.send({ type: "clone" }, NO_RPC_REQUEST_TIMEOUT);
 		return this.getData(response);
 	}
 
@@ -817,7 +821,7 @@ export class RpcClient {
 			commandId,
 			args,
 			...(ownerExtensionId !== undefined ? { ownerExtensionId } : {}),
-		});
+		}, NO_RPC_REQUEST_TIMEOUT);
 		return this.getData<RpcExtensionCommandResult>(response);
 	}
 
@@ -829,7 +833,10 @@ export class RpcClient {
 	}
 
 	async sendExtensionFrontendMessage(extensionId: string, channelId: string, message: unknown): Promise<unknown> {
-		const response = await this.send({ type: "send_extension_frontend_message", extensionId, channelId, message });
+		const response = await this.send(
+			{ type: "send_extension_frontend_message", extensionId, channelId, message },
+			NO_RPC_REQUEST_TIMEOUT,
+		);
 		return this.getData<{ result?: unknown }>(response).result;
 	}
 
@@ -903,7 +910,7 @@ export class RpcClient {
 			sessionDir: options.sessionDir,
 			idOverride: options.id,
 			parentSession: options.parentSession,
-		});
+		}, NO_RPC_REQUEST_TIMEOUT);
 		return this.getData<HostSessionProjection>(response);
 	}
 
@@ -916,7 +923,7 @@ export class RpcClient {
 			agentDir: options.agentDir,
 			projectConfigDir: options.projectConfigDir,
 			skillPaths: options.skillPaths,
-		});
+		}, NO_RPC_REQUEST_TIMEOUT);
 		return this.getData<HostSkillsResult>(response);
 	}
 
@@ -931,7 +938,7 @@ export class RpcClient {
 			agentDir: options.agentDir,
 			projectConfigDir: options.projectConfigDir,
 			skillPaths: options.skillPaths,
-		});
+		}, NO_RPC_REQUEST_TIMEOUT);
 		return this.getData<HostResolvedSkill | null>(response);
 	}
 
@@ -943,7 +950,7 @@ export class RpcClient {
 			cwd: options.cwd,
 			agentDir: options.agentDir,
 			projectConfigDir: options.projectConfigDir,
-		});
+		}, NO_RPC_REQUEST_TIMEOUT);
 		return this.getData<HostExtensionsResult>(response);
 	}
 
@@ -952,7 +959,7 @@ export class RpcClient {
 	}
 
 	async reloadExtensions(): Promise<{ reloaded: boolean; deferred: boolean }> {
-		const response = await this.send({ type: "reload_extensions" });
+		const response = await this.send({ type: "reload_extensions" }, NO_RPC_REQUEST_TIMEOUT);
 		return this.getData<{ reloaded: boolean; deferred: boolean }>(response);
 	}
 
@@ -966,7 +973,7 @@ export class RpcClient {
 	// =========================================================================
 
 	/** @internal Shared transport entry point used by PiRuntimeHandle. */
-	requestRuntime(runtimeId: string, command: RpcRuntimeCommandBody, timeoutMs?: number): Promise<RpcResponse> {
+	requestRuntime(runtimeId: string, command: RpcRuntimeCommandBody, timeoutMs?: RpcRequestTimeoutMs): Promise<RpcResponse> {
 		return this.send({ ...command, runtimeId } as RpcCommandBody, timeoutMs);
 	}
 
@@ -1025,16 +1032,16 @@ export class RpcClient {
 	/**
 	 * Wait for the full logical agent run to settle, including retry and compaction recovery.
 	 */
-	waitForIdle(timeout = 60000): Promise<void> {
+	waitForIdle(timeout?: number | null): Promise<void> {
 		return new Promise((resolve, reject) => {
-			const timer = setTimeout(() => {
+			const timer = timeout == null ? null : setTimeout(() => {
 				unsubscribe();
 				reject(new Error(`Timeout waiting for agent to become idle. Stderr: ${this.stderr}`));
 			}, timeout);
 
 			const unsubscribe = this.onEvent((event) => {
 				if (event.type === "agent_settled") {
-					clearTimeout(timer);
+					if (timer) clearTimeout(timer);
 					unsubscribe();
 					resolve();
 				}
@@ -1045,10 +1052,10 @@ export class RpcClient {
 	/**
 	 * Collect events through logical settlement, including intermediate retry runs.
 	 */
-	collectEvents(timeout = 60000): Promise<RpcAgentEvent[]> {
+	collectEvents(timeout?: number | null): Promise<RpcAgentEvent[]> {
 		return new Promise((resolve, reject) => {
 			const events: RpcAgentEvent[] = [];
-			const timer = setTimeout(() => {
+			const timer = timeout == null ? null : setTimeout(() => {
 				unsubscribe();
 				reject(new Error(`Timeout collecting events. Stderr: ${this.stderr}`));
 			}, timeout);
@@ -1056,7 +1063,7 @@ export class RpcClient {
 			const unsubscribe = this.onEvent((event) => {
 				events.push(event);
 				if (event.type === "agent_settled") {
-					clearTimeout(timer);
+					if (timer) clearTimeout(timer);
 					unsubscribe();
 					resolve(events);
 				}
@@ -1067,7 +1074,7 @@ export class RpcClient {
 	/**
 	 * Send prompt and wait for completion, returning all events.
 	 */
-	async promptAndWait(message: string, images?: ImageContent[], timeout = 60000): Promise<RpcAgentEvent[]> {
+	async promptAndWait(message: string, images?: ImageContent[], timeout?: number | null): Promise<RpcAgentEvent[]> {
 		const eventsPromise = this.collectEvents(timeout);
 		await this.prompt(message, images);
 		return eventsPromise;
@@ -1355,7 +1362,10 @@ export class RpcClient {
 		this.extensionUIOwners.clear();
 	}
 
-	private async send(command: RpcCommandBody, timeoutMs = 30000): Promise<RpcResponse> {
+	private async send(
+		command: RpcCommandBody,
+		timeoutMs: RpcRequestTimeoutMs = DEFAULT_RPC_REQUEST_TIMEOUT_MS,
+	): Promise<RpcResponse> {
 		const childProcess = this.process;
 		const stdin = this.getWritableInput();
 		if (!stdin) {
@@ -1379,18 +1389,21 @@ export class RpcClient {
 		const fullCommand = { ...command, clientId: this.clientId, id } as RpcCommand;
 
 		return new Promise((resolve, reject) => {
-			const timeout = setTimeout(() => {
-				this.pendingRequests.delete(id);
-				reject(new Error(`Timeout waiting for response to ${command.type}. Stderr: ${this.stderr}`));
-			}, timeoutMs);
+			const timeout =
+				timeoutMs === null
+					? undefined
+					: setTimeout(() => {
+							this.pendingRequests.delete(id);
+							reject(new Error(`Timeout waiting for response to ${command.type}. Stderr: ${this.stderr}`));
+						}, timeoutMs);
 
 			this.pendingRequests.set(id, {
 				resolve: (response) => {
-					clearTimeout(timeout);
+					if (timeout) clearTimeout(timeout);
 					resolve(response);
 				},
 				reject: (error) => {
-					clearTimeout(timeout);
+					if (timeout) clearTimeout(timeout);
 					reject(error);
 				},
 			});
@@ -1576,7 +1589,7 @@ export class PiRuntimeHandle {
 	}
 
 	compact(customInstructions?: string): Promise<CompactionResult> {
-		return this.requestData({ type: "compact", customInstructions });
+		return this.requestData({ type: "compact", customInstructions }, NO_RPC_REQUEST_TIMEOUT);
 	}
 
 	setModel(provider: string, modelId: string): Promise<{ provider: string; id: string }> {
@@ -1592,25 +1605,25 @@ export class PiRuntimeHandle {
 	}
 
 	async newSession(parentSession?: string): Promise<{ cancelled: boolean }> {
-		const result = await this.requestData<{ cancelled: boolean }>({ type: "new_session", parentSession });
+		const result = await this.requestData<{ cancelled: boolean }>({ type: "new_session", parentSession }, NO_RPC_REQUEST_TIMEOUT);
 		if (!result.cancelled) await this.refreshState();
 		return result;
 	}
 
 	async switchSession(sessionPath: string): Promise<{ cancelled: boolean }> {
-		const result = await this.requestData<{ cancelled: boolean }>({ type: "switch_session", sessionPath });
+		const result = await this.requestData<{ cancelled: boolean }>({ type: "switch_session", sessionPath }, NO_RPC_REQUEST_TIMEOUT);
 		if (!result.cancelled) await this.refreshState();
 		return result;
 	}
 
 	async fork(entryId: string): Promise<{ text: string; cancelled: boolean }> {
-		const result = await this.requestData<{ text: string; cancelled: boolean }>({ type: "fork", entryId });
+		const result = await this.requestData<{ text: string; cancelled: boolean }>({ type: "fork", entryId }, NO_RPC_REQUEST_TIMEOUT);
 		if (!result.cancelled) await this.refreshState();
 		return result;
 	}
 
 	async clone(): Promise<{ cancelled: boolean }> {
-		const result = await this.requestData<{ cancelled: boolean }>({ type: "clone" });
+		const result = await this.requestData<{ cancelled: boolean }>({ type: "clone" }, NO_RPC_REQUEST_TIMEOUT);
 		if (!result.cancelled) await this.refreshState();
 		return result;
 	}
@@ -1650,7 +1663,7 @@ export class PiRuntimeHandle {
 			commandId,
 			args,
 			...(ownerExtensionId !== undefined ? { ownerExtensionId } : {}),
-		});
+		}, NO_RPC_REQUEST_TIMEOUT);
 	}
 
 	sendExtensionFrontendMessage(extensionId: string, channelId: string, message: unknown): Promise<unknown> {
@@ -1659,11 +1672,11 @@ export class PiRuntimeHandle {
 			extensionId,
 			channelId,
 			message,
-		}).then((result) => result.result);
+		}, NO_RPC_REQUEST_TIMEOUT).then((result) => result.result);
 	}
 
 	reloadExtensions(): Promise<{ reloaded: boolean; deferred: boolean }> {
-		return this.requestData({ type: "reload_extensions" });
+		return this.requestData({ type: "reload_extensions" }, NO_RPC_REQUEST_TIMEOUT);
 	}
 
 	setToolExecutionHandler(handler: RpcToolExecutionHandler | null): Promise<void> {
@@ -1691,9 +1704,9 @@ export class PiRuntimeHandle {
 	}
 
 	/** Wait for this runtime's full logical agent run to settle. */
-	waitForIdle(timeout = 60_000): Promise<void> {
+	waitForIdle(timeout?: number | null): Promise<void> {
 		return new Promise((resolve, reject) => {
-			const timer = setTimeout(() => {
+			const timer = timeout == null ? null : setTimeout(() => {
 				unsubscribe();
 				reject(
 					new Error(`Timeout waiting for runtime ${this.runtimeId} to become idle. Stderr: ${this.getStderr()}`),
@@ -1701,7 +1714,7 @@ export class PiRuntimeHandle {
 			}, timeout);
 			const unsubscribe = this.onEvent((event) => {
 				if (event.type === "agent_settled") {
-					clearTimeout(timer);
+					if (timer) clearTimeout(timer);
 					unsubscribe();
 					resolve();
 				}
@@ -1710,17 +1723,17 @@ export class PiRuntimeHandle {
 	}
 
 	/** Collect this runtime's events through logical settlement. */
-	collectEvents(timeout = 60_000): Promise<RpcAgentEvent[]> {
+	collectEvents(timeout?: number | null): Promise<RpcAgentEvent[]> {
 		return new Promise((resolve, reject) => {
 			const events: RpcAgentEvent[] = [];
-			const timer = setTimeout(() => {
+			const timer = timeout == null ? null : setTimeout(() => {
 				unsubscribe();
 				reject(new Error(`Timeout collecting events for runtime ${this.runtimeId}. Stderr: ${this.getStderr()}`));
 			}, timeout);
 			const unsubscribe = this.onEvent((event) => {
 				events.push(event);
 				if (event.type === "agent_settled") {
-					clearTimeout(timer);
+					if (timer) clearTimeout(timer);
 					unsubscribe();
 					resolve(events);
 				}
@@ -1728,7 +1741,7 @@ export class PiRuntimeHandle {
 		});
 	}
 
-	async promptAndWait(message: string, images?: ImageContent[], timeout = 60_000): Promise<RpcAgentEvent[]> {
+	async promptAndWait(message: string, images?: ImageContent[], timeout?: number | null): Promise<RpcAgentEvent[]> {
 		const eventsPromise = this.collectEvents(timeout);
 		await this.prompt(message, images);
 		return eventsPromise;
@@ -1742,12 +1755,12 @@ export class PiRuntimeHandle {
 		}
 	}
 
-	private async requestVoid(command: RpcRuntimeCommandBody, timeoutMs?: number): Promise<void> {
+	private async requestVoid(command: RpcRuntimeCommandBody, timeoutMs?: RpcRequestTimeoutMs): Promise<void> {
 		const response = await this.client.requestRuntime(this.runtimeId, command, timeoutMs);
 		this.client.readResponseData<unknown>(response);
 	}
 
-	private async requestData<T>(command: RpcRuntimeCommandBody, timeoutMs?: number): Promise<T> {
+	private async requestData<T>(command: RpcRuntimeCommandBody, timeoutMs?: RpcRequestTimeoutMs): Promise<T> {
 		const response = await this.client.requestRuntime(this.runtimeId, command, timeoutMs);
 		return this.client.readResponseData<T>(response);
 	}

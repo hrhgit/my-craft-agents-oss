@@ -150,4 +150,28 @@ describe("AgentSession compaction thinking level", () => {
 			});
 		}
 	});
+
+	it("abort cancels an active manual compaction and waits for its end event", async () => {
+		compactMock.mockImplementationOnce(
+			async (...args: Parameters<typeof CompactionModule.compact>) =>
+				await new Promise<never>((_resolve, reject) => {
+					const signal = args[5];
+					signal.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+				}),
+		);
+		const events: string[] = [];
+		session.subscribe((event) => {
+			if (event.type === "compaction_start" || event.type === "compaction_end") {
+				events.push(event.type);
+			}
+		});
+
+		const compacting = session.compact();
+		await vi.waitFor(() => expect(compactMock).toHaveBeenCalledTimes(1));
+		await session.abort();
+
+		await expect(compacting).rejects.toThrow("Aborted");
+		expect(events).toEqual(["compaction_start", "compaction_end"]);
+		expect(session.isCompacting).toBe(false);
+	});
 });

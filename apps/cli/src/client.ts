@@ -7,6 +7,8 @@
 
 import {
   PROTOCOL_VERSION,
+  REQUIRED_PROTOCOL_CAPABILITIES,
+  missingRequiredProtocolCapabilities,
   type MessageEnvelope,
 } from '@mortise/shared/protocol'
 import {
@@ -74,6 +76,7 @@ export class CliRpcClient {
           id: crypto.randomUUID(),
           type: 'handshake',
           protocolVersion: PROTOCOL_VERSION,
+          protocolCapabilities: [...REQUIRED_PROTOCOL_CAPABILITIES],
           workspaceId: this.workspaceId,
           token: this.token,
         }
@@ -90,6 +93,23 @@ export class CliRpcClient {
         }
 
         if (envelope.type === 'handshake_ack') {
+          if (envelope.protocolVersion !== PROTOCOL_VERSION) {
+            clearTimeout(timer)
+            const err = new Error(`Server protocol ${envelope.protocolVersion ?? '(missing)'}, client ${PROTOCOL_VERSION}`)
+            ;(err as any).code = 'PROTOCOL_VERSION_UNSUPPORTED'
+            reject(err)
+            this.ws?.close()
+            return
+          }
+          const missingProtocolCapabilities = missingRequiredProtocolCapabilities(envelope.protocolCapabilities)
+          if (missingProtocolCapabilities.length > 0) {
+            clearTimeout(timer)
+            const err = new Error(`Server is missing required protocol capabilities: ${missingProtocolCapabilities.join(', ')}`)
+            ;(err as any).code = 'PROTOCOL_CAPABILITY_UNSUPPORTED'
+            reject(err)
+            this.ws?.close()
+            return
+          }
           clearTimeout(timer)
           this._clientId = envelope.clientId ?? null
           this._connected = true

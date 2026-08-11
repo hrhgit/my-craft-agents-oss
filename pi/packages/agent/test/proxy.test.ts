@@ -145,6 +145,28 @@ describe("streamProxy", () => {
 		expect(events.map((event) => event.type)).toEqual(["done"]);
 	});
 
+	it("forwards reasoning summaries without overwriting raw thinking", async () => {
+		const events = await collectEvents([
+			'data: {"type":"start"}\n\n',
+			'data: {"type":"thinking_start","contentIndex":0}\n\n',
+			'data: {"type":"thinking_delta","contentIndex":0,"delta":"raw"}\n\n',
+			'data: {"type":"thinking_end","contentIndex":0,"contentSignature":"sig","summary":"summary"}\n\n',
+			`data: ${JSON.stringify({ type: "done", reason: "stop", usage: usage() })}\n\n`,
+		]);
+
+		const thinkingEnd = events.find((event) => event.type === "thinking_end");
+		expect(thinkingEnd).toMatchObject({ contentIndex: 0, content: "raw", summary: "summary" });
+		const doneEvent = events.at(-1);
+		expect(doneEvent?.type).toBe("done");
+		if (doneEvent?.type !== "done") throw new Error("Expected done event");
+		expect(doneEvent.message.content[0]).toMatchObject({
+			type: "thinking",
+			thinking: "raw",
+			thinkingSignature: "sig",
+			thinkingSummary: "summary",
+		});
+	});
+
 	it("turns malformed JSON into an error event", async () => {
 		const events = await collectEvents(['data: {"type":"start"}\n\n', "data: not-json\n\n"]);
 

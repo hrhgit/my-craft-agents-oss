@@ -58,7 +58,17 @@ function createHarness(overrides: Record<string, unknown>) {
       async process() { return Buffer.alloc(0) },
     },
   }
-  registerSessionsHandlers(server, { sessionManager, platform } satisfies HandlerDeps)
+  const operationCoordinator = {
+    accept(operationId: string) {
+      return { accepted: true as const, operationId, status: 'accepted' as const, revision: 1, duplicate: false }
+    },
+    update() { return undefined },
+    start(operationId: string, _type: string, _scope: unknown, task: (signal: AbortSignal) => Promise<unknown>) {
+      void task(new AbortController().signal)
+      return { accepted: true as const, operationId, status: 'accepted' as const, revision: 1, duplicate: false }
+    },
+  }
+  registerSessionsHandlers(server, { sessionManager, platform, operationCoordinator } as unknown as HandlerDeps)
   return { handlers, pushes, session }
 }
 
@@ -80,7 +90,8 @@ describe('session settlement RPC contract', () => {
     const { handlers, session } = createHarness({ retryPendingSettlement })
     const command = handlers.get(RPC_CHANNELS.sessions.COMMAND)!
 
-    await command(ctx, session.id, { type: 'retrySettlement' })
+    await command(ctx, session.id, { type: 'retrySettlement', operationId: 'retry-settlement-1' })
+    await Promise.resolve()
 
     expect(retryPendingSettlement).toHaveBeenCalledTimes(1)
     expect(retryPendingSettlement).toHaveBeenCalledWith(session.id)
@@ -93,6 +104,7 @@ describe('session settlement RPC contract', () => {
 
     await expect(command(ctx, session.id, {
       type: 'retrySettlement',
+      operationId: 'retry-settlement-invalid',
       message: 'do not resend me',
     })).rejects.toThrow('does not accept a message or any other payload')
     expect(retryPendingSettlement).not.toHaveBeenCalled()
@@ -103,7 +115,8 @@ describe('session settlement RPC contract', () => {
     const { handlers, session } = createHarness({ retryAcceptedMessage })
     const command = handlers.get(RPC_CHANNELS.sessions.COMMAND)!
 
-    await command(ctx, session.id, { type: 'retryAcceptedMessage' })
+    await command(ctx, session.id, { type: 'retryAcceptedMessage', operationId: 'retry-accepted-1' })
+    await Promise.resolve()
 
     expect(retryAcceptedMessage).toHaveBeenCalledTimes(1)
     expect(retryAcceptedMessage).toHaveBeenCalledWith(session.id, ctx.clientId)
@@ -116,6 +129,7 @@ describe('session settlement RPC contract', () => {
 
     await expect(command(ctx, session.id, {
       type: 'retryAcceptedMessage',
+      operationId: 'retry-accepted-invalid',
       message: 'do not submit a second mutation',
     })).rejects.toThrow('does not accept a message or any other payload')
     expect(retryAcceptedMessage).not.toHaveBeenCalled()
@@ -142,9 +156,13 @@ describe('session settlement RPC contract', () => {
     const { handlers, pushes, session } = createHarness({ sendMessage })
     const send = handlers.get(RPC_CHANNELS.sessions.SEND_MESSAGE)!
 
-    await expect(send(ctx, session.id, 'accepted once')).resolves.toEqual({
+    await expect(send(ctx, session.id, 'accepted once', undefined, undefined, { operationId: 'send-settlement-1' })).resolves.toEqual({
       accepted: true,
+      duplicate: false,
       messageId: 'accepted-message',
+      operationId: 'send-settlement-1',
+      revision: 1,
+      status: 'accepted',
     })
     await Promise.resolve()
 

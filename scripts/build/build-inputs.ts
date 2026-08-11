@@ -157,6 +157,7 @@ export const ELECTRON_BUILD_BLOCK_SPECS: Readonly<Record<string, BuildBlockSpec>
       'apps/electron/package.json',
       'apps/electron/scripts',
       'apps/electron/build',
+      'packages/shared/src/protocol',
       'scripts/build/stage-electron-packaging-inputs.ts',
       'scripts/build/common.ts',
     ],
@@ -164,9 +165,10 @@ export const ELECTRON_BUILD_BLOCK_SPECS: Readonly<Record<string, BuildBlockSpec>
     outputPaths: [
       'apps/electron/dist/packaging-inputs',
       'apps/electron/resources/bin',
+      'apps/electron/dist/resources/bin',
     ],
     platformSensitive: true,
-    builder: 'electron-packaging-inputs-v1',
+    builder: 'electron-packaging-inputs-v3',
   },
   'electron-capsule-assembly': {
     id: 'electron-capsule-assembly',

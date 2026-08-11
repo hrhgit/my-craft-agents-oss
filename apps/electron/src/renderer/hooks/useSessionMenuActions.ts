@@ -14,6 +14,7 @@ import { toast } from 'sonner'
 import { navigate, routes } from '@/lib/navigate'
 import type { SessionMeta } from '@/atoms/sessions'
 import { useWorkspaceElectronApi } from '@/context/WorkspaceElectronApiContext'
+import { waitForOperation } from '@/lib/operations'
 
 export interface UseSessionMenuActionsOptions {
   item: SessionMeta
@@ -46,18 +47,22 @@ export function useSessionMenuActions({
   const sharedUrl = item.sharedUrl
 
   const share = React.useCallback(async () => {
-    const result = await electronApi.sessionCommand(sessionId, { type: 'shareToViewer' }) as { success: boolean; url?: string; error?: string } | undefined
-    if (result?.success && result.url) {
-      await navigator.clipboard.writeText(result.url)
+    const operationId = crypto.randomUUID()
+    await electronApi.sessionCommand(sessionId, { type: 'shareToViewer', operationId })
+    const operation = await waitForOperation(electronApi, operationId)
+    const session = operation.status === 'succeeded' ? await electronApi.getSessionMessages(sessionId) : null
+    const url = session?.sharedUrl
+    if (url) {
+      await navigator.clipboard.writeText(url)
       toast.success(t('toast.linkCopied'), {
-        description: result.url,
+        description: url,
         action: {
           label: t('common.open'),
-          onClick: () => electronApi.openUrl(result.url!),
+          onClick: () => electronApi.openUrl(url),
         },
       })
     } else {
-      toast.error(t('toast.failedToShare'), { description: result?.error || t('toast.unknownError') })
+      toast.error(t('toast.failedToShare'), { description: operation.error?.message || t('toast.unknownError') })
     }
   }, [electronApi, sessionId, t])
 
@@ -74,11 +79,14 @@ export function useSessionMenuActions({
   }, [electronApi, sessionId, t])
 
   const refreshTitle = React.useCallback(async () => {
-    const result = await electronApi.sessionCommand(sessionId, { type: 'refreshTitle' }) as { success: boolean; title?: string; error?: string } | undefined
-    if (result?.success) {
-      toast.success(t('toast.titleRefreshed'), { description: result.title })
+    const operationId = crypto.randomUUID()
+    await electronApi.sessionCommand(sessionId, { type: 'refreshTitle', operationId })
+    const operation = await waitForOperation(electronApi, operationId)
+    const session = operation.status === 'succeeded' ? await electronApi.getSessionMessages(sessionId) : null
+    if (session) {
+      toast.success(t('toast.titleRefreshed'), { description: session.name })
     } else {
-      toast.error(t('toast.failedToRefreshTitle'), { description: result?.error || t('toast.unknownError') })
+      toast.error(t('toast.failedToRefreshTitle'), { description: operation.error?.message || t('toast.unknownError') })
     }
   }, [electronApi, sessionId, t])
 
@@ -98,22 +106,24 @@ export function useSessionMenuActions({
   }, [sharedUrl, t])
 
   const updateShare = React.useCallback(async () => {
-    const result = await electronApi.sessionCommand(sessionId, { type: 'updateShare' })
-    if (result && 'success' in result && result.success) {
+    const operationId = crypto.randomUUID()
+    await electronApi.sessionCommand(sessionId, { type: 'updateShare', operationId })
+    const operation = await waitForOperation(electronApi, operationId)
+    if (operation.status === 'succeeded') {
       toast.success(t('chat.shareUpdated'))
     } else {
-      const errorMsg = result && 'error' in result ? result.error : undefined
-      toast.error(t('chat.failedToUpdateShare'), { description: errorMsg })
+      toast.error(t('chat.failedToUpdateShare'), { description: operation.error?.message })
     }
   }, [electronApi, sessionId, t])
 
   const revokeShare = React.useCallback(async () => {
-    const result = await electronApi.sessionCommand(sessionId, { type: 'revokeShare' })
-    if (result && 'success' in result && result.success) {
+    const operationId = crypto.randomUUID()
+    await electronApi.sessionCommand(sessionId, { type: 'revokeShare', operationId })
+    const operation = await waitForOperation(electronApi, operationId)
+    if (operation.status === 'succeeded') {
       toast.success(t('chat.sharingStopped'))
     } else {
-      const errorMsg = result && 'error' in result ? result.error : undefined
-      toast.error(t('chat.failedToStopSharing'), { description: errorMsg })
+      toast.error(t('chat.failedToStopSharing'), { description: operation.error?.message })
     }
   }, [electronApi, sessionId, t])
 

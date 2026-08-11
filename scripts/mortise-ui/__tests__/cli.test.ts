@@ -32,12 +32,63 @@ async function runCliText(args: string[]): Promise<{ code: number; stdout: strin
 }
 
 describe('mortise-ui CLI', () => {
-  it('documents the Electron-only skip-build validation option', async () => {
+  it('documents prepared and current-source Electron build reuse', async () => {
     const result = await runCliText(['help'])
     expect(result.code).toBe(0)
+    expect(result.stdout).toContain('mortise-ui prepare')
+    expect(result.stdout).toContain('--build-id')
     expect(result.stdout).toContain('--skip-build')
+    expect(result.stdout).toContain('mortise-ui flows run')
     expect(result.stderr).toBe('')
   })
+
+  it('lists interaction flows without starting a host', async () => {
+    const result = await runCli(['flows', 'list', '--flow', 'validation.batch-contract'])
+    expect(result.code).toBe(0)
+    expect(result.json.result).toEqual({
+      count: 1,
+      flows: [{
+        id: 'validation.batch-contract',
+        moduleId: 'ui-validation-developer-kit',
+        interactionId: 'validation.flow.batch',
+      }],
+    })
+  })
+
+  it('validates pinned Electron build identities before starting a run', async () => {
+    const invalid = await runCli(['start', '--build-id', 'not-a-build'])
+    expect(invalid.code).toBe(1)
+    expect(invalid.json).toMatchObject({ ok: false, error: { code: 'INVALID_REQUEST' } })
+
+    const webui = await runCli(['start', '--surface', 'webui', '--build-id', 'a'.repeat(64)])
+    expect(webui.code).toBe(1)
+    expect(webui.json).toMatchObject({ ok: false, error: { code: 'INVALID_REQUEST' } })
+
+    const conflicting = await runCli(['start', '--build-id', 'a'.repeat(64), '--skip-build'])
+    expect(conflicting.code).toBe(1)
+    expect(conflicting.json).toMatchObject({ ok: false, error: { code: 'INVALID_REQUEST' } })
+  })
+
+  it('binds an Electron run to an explicit immutable build identity', async () => {
+    const runRoot = mkdtempSync(join(tmpdir(), 'mortise-ui-cli-pinned-build-')); roots.push(runRoot)
+    const adapter = JSON.stringify([process.execPath, join(import.meta.dir, '..', 'test-host.fixture.ts')])
+    const buildId = 'a'.repeat(64)
+    const started = await runCli([
+      'start', '--run-root', runRoot, '--adapter-command-json', adapter,
+      '--build-id', buildId, '--full',
+    ])
+    expect(started.code).toBe(0)
+    expect(started.json.result.manifest).toMatchObject({ buildId })
+    const runId = started.json.runId as string
+    try {
+      const status = await runCli(['status', '--run-root', runRoot, '--run', runId, '--full'])
+      expect(status.code).toBe(0)
+      expect(status.json.result.manifest).toMatchObject({ buildId })
+    } finally {
+      const stopped = await runCli(['stop', '--run-root', runRoot, '--run', runId])
+      expect(stopped.code).toBe(0)
+    }
+  }, 20_000)
 
   it('accepts only loopback V2 frontend dev-server overrides', () => {
     expect(parseUiDevServers(['extension-ui-v2-lab=http://127.0.0.1:5173/'])).toEqual({

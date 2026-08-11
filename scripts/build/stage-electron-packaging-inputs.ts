@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
+import { PROTOCOL_VERSION, REQUIRED_PROTOCOL_CAPABILITIES } from '@mortise/shared/protocol'
 import { downloadUv, type Arch, type BuildConfig, type Platform } from './common.ts'
 import { writeJsonAtomic } from './files.ts'
 
@@ -34,6 +35,11 @@ for (const name of ['electron-builder.yml', 'electron-builder.devhost.yml']) {
   copyRequired(join(electronDir, name), join(packagingRoot, name))
 }
 copyRequired(join(electronDir, 'package.json'), join(packagingRoot, 'runtime-package.json'))
+writeJsonAtomic(join(packagingRoot, 'workspace-rpc-protocol.json'), {
+  schemaVersion: 1,
+  protocolVersion: PROTOCOL_VERSION,
+  protocolCapabilities: [...REQUIRED_PROTOCOL_CAPABILITIES],
+})
 for (const name of ['beforePack.cjs', 'afterPack.cjs', 'afterSign.cjs']) {
   copyRequired(join(electronDir, 'scripts', name), join(packagingRoot, 'hooks', name))
 }

@@ -117,6 +117,7 @@ export interface AcquireElectronBuildOptions {
   mode?: ElectronBuildMode
   skipBuild?: boolean
   expectedBuildId?: string
+  verification?: 'full' | 'fast'
   retainCount?: number
   maxBytes?: number
   lockTimeoutMs?: number
@@ -265,7 +266,13 @@ export function acquireElectronBuild(options: AcquireElectronBuildOptions): Mort
     }
     const buildDir = join(buildRoot, 'builds', expectedBuildId)
     return withFileLock(join(buildRoot, 'locks', expectedBuildId), () => {
-      const manifest = readValidBuildManifest(buildDir, expectedBuildId, buildRoot, true)
+      const manifest = readValidBuildManifest(
+        buildDir,
+        expectedBuildId,
+        buildRoot,
+        true,
+        options.verification ?? 'full',
+      )
       if (!manifest) {
         throw new Error(`Expected immutable Electron build ${shortBuildId(expectedBuildId)} is missing or invalid; pinned acquisition will not rebuild.`)
       }
@@ -302,6 +309,7 @@ export function acquireElectronBuild(options: AcquireElectronBuildOptions): Mort
   try {
     return withFileLock(join(buildRoot, 'locks', buildId), () => {
       let manifest = readValidBuildManifest(buildDir, fingerprint, buildRoot, true)
+      let publishedNewBuild = false
 
       if (!manifest) {
         if (options.skipBuild) {
@@ -335,6 +343,7 @@ export function acquireElectronBuild(options: AcquireElectronBuildOptions): Mort
             toolchain: currentBuildToolchainIdentity(bunExecutable),
             now: now(),
           })
+          publishedNewBuild = true
         } finally {
           source.dispose()
         }
@@ -352,6 +361,7 @@ export function acquireElectronBuild(options: AcquireElectronBuildOptions): Mort
         maxBytes,
         now,
         pid,
+        pruneBeforeLease: publishedNewBuild,
       })
     }, { timeoutMs: options.lockTimeoutMs ?? UI_VALIDATION_MAX_WAIT_MS, staleMs: BUILD_LOCK_STALE_MS })
   } finally {
@@ -370,16 +380,21 @@ function leaseElectronBuild(args: {
   maxBytes: number
   now: () => Date
   pid: number
+  pruneBeforeLease?: boolean
 }): MortiseUiBuildLease {
   return withFileLock(args.coordinatorPath, () => {
-    const cleanupStartedAt = Date.now()
-    cleanupElectronBuildCacheLocked({
-      buildRoot: args.buildRoot,
-      retainCount: args.retainCount,
-      maxBytes: args.maxBytes,
-      protectBuildIds: [args.buildId],
-      now: args.now,
-    })
+    const leaseStartedAt = Date.now()
+    if (args.pruneBeforeLease) {
+      cleanupElectronBuildCacheLocked({
+        buildRoot: args.buildRoot,
+        retainCount: args.retainCount,
+        maxBytes: args.maxBytes,
+        protectBuildIds: [args.buildId],
+        now: args.now,
+      })
+    } else {
+      reapStaleLeases(args.buildRoot)
+    }
     const lease: MortiseUiBuildLease = {
       schemaVersion: ELECTRON_BUILD_SCHEMA_VERSION,
       token: randomUUID(),
@@ -394,7 +409,7 @@ function leaseElectronBuild(args: {
       manifest: args.manifest,
     }
     writeJsonAtomic(leasePath(args.buildRoot, args.options.runId), leaseFile(lease), 0o600)
-    process.stdout.write(`[electron-build] Build cache checked in ${Date.now() - cleanupStartedAt}ms.\n`)
+    process.stdout.write(`[electron-build] Build lease created in ${Date.now() - leaseStartedAt}ms.\n`)
     return lease
   }, { timeoutMs: args.options.lockTimeoutMs ?? UI_VALIDATION_MAX_WAIT_MS, staleMs: BUILD_LOCK_STALE_MS })
 }
@@ -407,7 +422,16 @@ export function releaseElectronBuild(lease: MortiseUiBuildLease, options: Omit<C
     if (current?.token === lease.token) {
       try { unlinkSync(path) } catch (error) { if (errorCode(error) !== 'ENOENT') throw error }
     }
-    return cleanupElectronBuildCacheLocked({ ...options, buildRoot })
+    const explicitCleanup = Object.keys(options).length > 0
+    return explicitCleanup
+      ? cleanupElectronBuildCacheLocked({ ...options, buildRoot })
+      : {
+          removedBuildIds: [],
+          retainedBuildIds: [],
+          activeBuildIds: [...reapStaleLeases(buildRoot)],
+          failedBuildIds: [],
+          totalBytes: 0,
+        }
   }, { timeoutMs: UI_VALIDATION_MAX_WAIT_MS, staleMs: BUILD_LOCK_STALE_MS })
 }
 
@@ -457,6 +481,80 @@ export function withStagedElectronBuild<T>(
       removeDirectory(stagingApp)
     }
   }, { timeoutMs: UI_VALIDATION_MAX_WAIT_MS, staleMs: BUILD_LOCK_STALE_MS })
+}
+
+export function withElectronBuildForPackaging<T>(
+  lease: MortiseUiBuildLease,
+  use: (build: StagedElectronBuild) => T,
+): T {
+  const manifest = lease.manifest
+  if (manifest.mode === 'ui-validation') {
+    throw new Error(`Electron build ${shortBuildId(lease.buildId)} is ui-validation; validation builds may not be packaged.`)
+  }
+
+  const before = collectPackagingInputMetadata(manifest.appDir)
+  const provenancePath = join(lease.runDir, 'electron-build-provenance.json')
+  writeBuildProvenance(provenancePath, manifest)
+  const build = {
+    buildId: manifest.buildId,
+    sourceId: manifest.sourceId,
+    appDir: manifest.appDir,
+    distDir: join(manifest.appDir, 'dist'),
+    provenancePath,
+  }
+  let result: T | undefined
+  let failure: unknown
+  try {
+    result = use(build)
+  } catch (error) {
+    failure = error
+  }
+
+  const after = collectPackagingInputMetadata(manifest.appDir)
+  if (!packagingInputMetadataEqual(before, after)) {
+    throw new Error(`Immutable Electron build ${shortBuildId(lease.buildId)} changed while it was being packaged.`, {
+      ...(failure === undefined ? {} : { cause: failure }),
+    })
+  }
+  if (failure !== undefined) throw failure
+  return result as T
+}
+
+interface PackagingInputMetadata {
+  path: string
+  sizeBytes: number
+  mtimeMs: number
+}
+
+function collectPackagingInputMetadata(root: string): PackagingInputMetadata[] {
+  const resolvedRoot = resolve(root)
+  const entries: PackagingInputMetadata[] = []
+  const visit = (path: string): void => {
+    const stat = lstatSync(path)
+    if (stat.isSymbolicLink()) throw new Error(`Immutable packaging input cannot be a symbolic link: ${path}`)
+    if (stat.isFile()) {
+      entries.push({
+        path: relative(resolvedRoot, path).replaceAll('\\', '/'),
+        sizeBytes: stat.size,
+        mtimeMs: stat.mtimeMs,
+      })
+      return
+    }
+    for (const entry of readdirSync(path, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+      visit(join(path, entry.name))
+    }
+  }
+  visit(resolvedRoot)
+  return entries
+}
+
+function packagingInputMetadataEqual(expected: PackagingInputMetadata[], actual: PackagingInputMetadata[]): boolean {
+  return expected.length === actual.length && expected.every((entry, index) => {
+    const observed = actual[index]
+    return observed?.path === entry.path
+      && observed.sizeBytes === entry.sizeBytes
+      && observed.mtimeMs === entry.mtimeMs
+  })
 }
 
 function reapPackagingStagingDirectories(stagingParent: string): void {
@@ -637,6 +735,7 @@ function readValidBuildManifest(
   fingerprint: string,
   buildRoot: string,
   persistRecoveredToolchain = false,
+  verification: 'full' | 'fast' = 'full',
 ): MortiseUiBuildManifest | undefined {
   try {
     const manifestPath = join(buildDir, 'build.json')
@@ -664,7 +763,12 @@ function readValidBuildManifest(
       || manifest.sizeBytes !== artifactInventorySize(manifest.artifacts)
     ) return undefined
     assertSourceBuildOutputs(manifest.appDir)
-    if (!artifactInventoriesEqual(manifest.artifacts, collectArtifactInventory(manifest.appDir))) return undefined
+    if (verification === 'full') {
+      if (!artifactInventoriesEqual(manifest.artifacts, collectArtifactInventory(manifest.appDir))) return undefined
+    } else if (!manifest.artifacts.every(artifact => {
+      const path = join(manifest.appDir, ...artifact.path.split('/'))
+      return existsSync(path) && statSync(path).isFile() && statSync(path).size === artifact.sizeBytes
+    })) return undefined
     if (persistRecoveredToolchain && (
       parsed.producerBunVersion !== toolchain.bunVersion
       || parsed.producerBunExecutableSha256 !== toolchain.bunExecutableSha256
@@ -1102,13 +1206,16 @@ function runBuildCommand(repoRoot: string, args: string[], label: string, mode: 
   process.stdout.write(`[electron-build] Completed ${label} in ${Date.now() - startedAt}ms.\n`)
 }
 
-export function seedUvToolchainCacheFromCompletedBuild(buildRootValue: string): boolean {
+export function seedUvToolchainCacheFromCompletedBuild(
+  buildRootValue: string,
+  targetToolchainRootValue?: string,
+): boolean {
   if (!['darwin', 'win32', 'linux'].includes(process.platform) || !['x64', 'arm64'].includes(process.arch)) return false
   const buildRoot = resolve(buildRootValue)
   const platform = process.platform as Platform
   const arch = process.arch as Arch
   const relativeUv = `dist/resources/bin/${getPlatformKey(platform, arch)}/${platform === 'win32' ? 'uv.exe' : 'uv'}`
-  const toolchainRoot = join(buildRoot, 'toolchains')
+  const toolchainRoot = resolve(targetToolchainRootValue ?? join(buildRoot, 'toolchains'))
   if (resolveCachedUvToolchain(toolchainRoot, { platform, arch })) return true
 
   process.stdout.write('[electron-build] Searching completed builds for a verified uv toolchain...\n')

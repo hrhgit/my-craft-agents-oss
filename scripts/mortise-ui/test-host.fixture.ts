@@ -99,6 +99,8 @@ writeJsonAtomic(endpointPath, {
   url: `http://127.0.0.1:${server.port}`,
   pid: process.pid,
   readyAt: new Date().toISOString(),
+  ...(process.env.MORTISE_UI_BUILD_ID ? { buildId: process.env.MORTISE_UI_BUILD_ID } : {}),
+  ...(process.env.MORTISE_BUILD_SOURCE_ID ? { sourceId: process.env.MORTISE_BUILD_SOURCE_ID } : {}),
 })
 
 process.stdout.write(`test host ready token=${token}\n`)

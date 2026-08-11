@@ -44,6 +44,8 @@ export interface MessageEnvelope {
   webContentsId?: number
   /** Client capabilities advertised on handshake. */
   clientCapabilities?: string[]
+  /** Versioned cross-process protocol capabilities supported by the sender. */
+  protocolCapabilities?: string[]
   /** Server-registered channels, sent in handshake_ack. Clients use this to avoid calling unavailable channels. */
   registeredChannels?: string[]
 
@@ -80,6 +82,7 @@ export type TransportErrorCode =
   | 'CHANNEL_NOT_FOUND'
   | 'AUTH_FAILED'
   | 'PROTOCOL_VERSION_UNSUPPORTED'
+  | 'PROTOCOL_CAPABILITY_UNSUPPORTED'
   | 'SESSION_NOT_IDLE'
   | 'SESSION_ID_CONFLICT'
   | 'ARTIFACT_NOT_PORTABLE'
@@ -116,6 +119,7 @@ const KNOWN_ERROR_CODES: ReadonlySet<string> = new Set<TransportErrorCode>([
   'CHANNEL_NOT_FOUND',
   'AUTH_FAILED',
   'PROTOCOL_VERSION_UNSUPPORTED',
+  'PROTOCOL_CAPABILITY_UNSUPPORTED',
   'SESSION_NOT_IDLE',
   'SESSION_ID_CONFLICT',
   'ARTIFACT_NOT_PORTABLE',
@@ -262,7 +266,7 @@ export type PushTarget =
 // Protocol constants
 // ---------------------------------------------------------------------------
 
-export const PROTOCOL_VERSION = '1.0'
+export const PROTOCOL_VERSION = '2.0'
 
 /** Heartbeat interval in ms. Server pings every 30s. */
 export const HEARTBEAT_INTERVAL_MS = 30_000

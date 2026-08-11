@@ -17,13 +17,6 @@ export type {
   ImageContent,
   ToolResult,
 
-  // Developer feedback
-  DeveloperFeedback,
-
-  // Validation types
-  ValidationIssue,
-  ValidationResult,
-
 } from './types.ts';
 
 // Response helpers
@@ -34,37 +27,11 @@ export {
 
 export { getResultText } from './types.ts';
 
-// Validation
-export {
-  // Result helpers
-  validResult,
-  invalidResult,
-  mergeResults,
-
-  // Formatting
-  formatValidationResult,
-
-  // JSON utilities
-  readJsonFile,
-  validateJsonFileHasFields,
-  zodErrorToIssues,
-
-  // Slug validation
-  SLUG_REGEX,
-  validateSlug,
-
-  // Skill validation
-  SkillMetadataSchema,
-  validateSkillContent,
-
-} from './validation.ts';
-
 // Context interface
 export type {
   SessionToolContext,
   SessionToolCallbacks,
   FileSystemInterface,
-  ValidatorInterface,
   // Session query types
   SessionInfo,
   SessionListItem,
@@ -74,28 +41,8 @@ export type {
 
 export { createNodeFileSystem } from './context.ts';
 
-// Handlers
-export type {
-  ConfigValidateArgs,
-  SkillValidateArgs,
-  MermaidValidateArgs,
-  UpdatePreferencesArgs,
-  TransformDataArgs,
-  ScriptSandboxArgs,
-  SendDeveloperFeedbackArgs,
-} from './handlers/index.ts';
-
 // Tool definitions — single source of truth
 export {
-  // Individual Zod schemas
-  ConfigValidateSchema,
-  SkillValidateSchema,
-  MermaidValidateSchema,
-  UpdatePreferencesSchema,
-  TransformDataSchema,
-  ScriptSandboxSchema,
-  // Developer feedback schema
-  SendDeveloperFeedbackSchema,
   // Descriptions
   TOOL_DESCRIPTIONS,
   // Registry
@@ -104,7 +51,7 @@ export {
   SESSION_BACKEND_TOOL_NAMES,
   SESSION_REGISTRY_TOOL_NAMES,
   SESSION_TOOL_REGISTRY,
-  // Filtered helper views
+  // Helper views
   getSessionToolDefs,
   getSessionBackendToolNames,
   getSessionToolRegistry,

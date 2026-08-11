@@ -2,7 +2,7 @@
 
 状态：当前参考
 
-更新日期：2026-08-02
+更新日期：2026-08-10
 
 ## 用途
 
@@ -126,6 +126,7 @@ Workspace 是 Mortise 的顶层用户上下文，也是规范内容和位置关�
 - 子任务与父 Session 的关系表示持久归属和可选的结果关联，不表示子任务属于父 Session 当前的 Agent Loop。智能体子任务拥有独立 Agent Loop；非智能体子任务使用自己的执行单元。父 Agent Loop 结束、重试或替换不影响已经创建的子任务。
 - 关闭父 Session 的标签页或归档父 Session 只改变可见性，不停止父 Session 或子任务。删除父 Session 则先冻结新消息和新子任务，按已登记子任务各自合同停止并完成必要结算，再提交父子删除；失败时删除状态保持可见且可重试，不能留下父已删除而子任务仍运行的不可见状态。
 - 平台只提供父子归属和必须执行的级联边界。结果是否保存、父 Session 如何查询、异常后是否恢复以及如何清理由具体子任务类型决定；平台不为所有任务统一建立结果待投递队列、自动唤醒或孤儿恢复机制。
+- Mortise 主 Agent 默认沿用内嵌 Agent runtime 的原生 system prompt；用户通过 Agent 设置保存自定义 system prompt 后，Mortise 显式覆盖实际运行时提示词。
 
 ### Draft 不是 Session
 
@@ -147,6 +148,8 @@ Draft 是 Workspace 级、尚未公开的编辑状态。它可以保存 composer
 首条 UserMessage 未能 durable 时，首轮请求不成立：backend 先核对会话文件尾部，确认失败后停止运行并丢弃未保存消息，不能留下可见的半成品 Session。用户输入可以保留在 Draft 或输入区供用户再次明确发送。`retryable` 只表示允许重新提交，不表示一个 Session 已经发布。Hidden/internal 与 branch 是显式例外。
 
 Session 的公开可见性还必须遵守 Mortise metadata、UI overlay 和 projection 的正常持久化边界；这些 host 状态不能把尚未 durable 的规范 UserMessage 伪装成已接受。
+
+用户消息提交采用分级确认：Mortise 可靠接管并持久化待发送记录后即可显示消息、恢复输入交互；规范消息持久化作为异步最终确认。后台支持幂等重放、失败可见和崩溃恢复，不得用降低耐久性换取交互速度。
 
 ```mermaid
 stateDiagram-v2
@@ -173,6 +176,15 @@ Session 是已跨过 publication boundary 的可恢复对话实体。内嵌 Agen
 
 每条完整 AgentMessage 都对应一个独立的规范 tree entry。它必须完成 append、flush 并取得 durable acknowledgement 后，才对其他 backend 共享；不等待整个 turn、`agent_end` 或 `agent_settled`。未完成的流式 assistant 内容只存在 owner backend，不能进入共享 transcript。写入失败时，backend 必须先核对文件尾部；确认失败后停止当前运行、丢弃未保存内容，并使用会话内请求错误样式警告用户。
 
+### 推理内容与过程展示
+
+模型推理按“完整原始推理”和“推理摘要”分层处理：完整原始推理属于本地会话记录中的过程数据，推理摘要属于历史视图默认展示的长期可见内容。
+
+- 模型输出的兼容展示保留底层会话和投影中的原始内容类型，只在前端派生视图中重新分类；同一内容升级为正式答复时从过程列表移除，避免重复展示。
+- 会话过程流中的思考文本与工具活动按原始事件顺序统一交错渲染，不按内容类型分区后重排；最终正式答复仍在过程流之后独立呈现。
+- 推理增量只用于流式展示，不升级为用户可见的长期活动；完整原始推理仍完整保存在本地会话记录中，并与推理摘要使用独立标签或字段区分，历史视图默认只保留摘要。
+- 工具活动保留开始与完成时间戳供运行计时和耗时展示，但过程排序必须使用投影事件序号或等价的单调事件顺序，不能依赖时间戳排序。
+
 ### Turn、attempt 与 logical run
 
 - **Turn** 是一次 assistant response cycle，包括它的 tool call 和 tool result。`turn_end` 只结束当前 turn。
@@ -191,6 +203,8 @@ Session 是已跨过 publication boundary 的可恢复对话实体。内嵌 Agen
 UI 将 follow-up 待发送区固定放在 composer 正上方，而不是把尚未投递的内容显示成正式 transcript 中的用户气泡。每条消息使用一行紧凑预览，长内容可以省略显示，但完整内容、附件和其他 metadata 仍由发送方 backend 保留；竞争失败显示为未接受/待发送，不得静默丢弃或自动重试。消息真正进入 Agent context 并完成 canonical durability 后，才离开待发送区并成为 transcript 中的用户消息。
 
 每条待发送消息右侧只提供三个直接操作：使用 Lucide `ArrowUp` 的发送、编辑和删除。三个按钮均使用图标并提供 tooltip；不增加复制、更多菜单或其他常驻操作。发送表示明确重新投递该消息，编辑修改的是这条待发送记录，删除只移除尚未投递的记录。客户端不能静默丢弃消息，也不能只把纯文本复制回 composer 来代替完整队列状态。
+
+编辑待发送消息时，必须先撤回后台队列并恢复到当前草稿，不能在队列仍持有该消息的同时复制一份新草稿。
 
 ### Session 控制权
 
@@ -214,6 +228,9 @@ Electron backend 与 WebUI backend 独立管理各自的 Agent Loop；Agent Loop
 - 已出现部分内容或经历应用断开后恢复时，在同一条 assistant 回复内保留一个轻量的“已从中断处恢复”边界，然后继续显示内容；不新开消息，也不完全无痕拼接。
 - 连接或运行错误属于该回复的执行状态，不是 assistant 正文。恢复成功后错误状态收束为轻量恢复标记；最终无法恢复时才保留“已中断”状态和继续入口。
 - Attempt 细节可以出现在诊断或展开信息中，但普通对话只呈现同一个 logical run 和同一条 assistant 回复。
+- 中断恢复按工具的实际状态闭合：已完成工具直接保留完整原始结果，只有未开始、已中断或结果未知的工具补充对应状态；通用中断提示不推断中断原因，并保持简洁。
+- 只供模型恢复使用的系统上下文作为独立、隐藏的会话事件，按原始语义位于前一轮工具结果之后、下一条用户消息之前，不拼入或显示在用户消息中。
+- 运行计时在崩溃恢复时不得延续到应用重开时刻；缺少正常终止事件时，以崩溃前上一条完整持久化消息的最后时刻作为计时终点，不把关闭或离线时段计入运行时长。
 
 ## Extension 语义
 
@@ -226,6 +243,7 @@ Extension 是 Mortise 可扩展性的一级提供者；Mortise 尽量保持通�
 - 未来引入“模式”后，由模式配置在该模式下启用或关闭哪些 Extension 能力。这是模式对全局能力集的选择，不是 Workspace 自己拥有另一套 Extension 管理。
 - Extension backend 是来自正式来源的受信任本地代码，以用户系统权限在子进程中运行；这是长期信任模型，不是等待未来权限沙箱替代的过渡状态。安装界面可以显示来源并说明其本地代码权限，但不能用并不具备强制隔离能力的权限开关制造安全错觉。
 - 每个 backend 独立加载和管理自己的 Extension runtime。运行中的 Extension 文件变化不立即热重载；当前实例继续运行，修改在下一次 backend 或 Workspace 重新加载时生效。单个 Extension 加载或运行失败只禁用并警告该 Extension，不得拖垮其他 Extension、Session 或 backend；同一次加载中不反复自动重试。
+- 扩展启停开关只写入下次加载的期望状态，不卸载或改变已创建 runtime 中的工具、命令、权限处理器和 GUI；只有成功的显式重载或新 runtime 创建才应用新状态，重载失败时保留旧 runtime 及 GUI。
 - Extension GUI 仍只能通过 Mortise 的版本化 contribution API 进入产品界面，但这个 UI 边界不会同时将 backend 变成 sandboxed code，也不限制 backend 直接使用当前用户拥有的文件、网络和进程能力。
 - Extension GUI 是 Extension runtime 发布的版本化、可序列化 contribution，不是 Extension 代码进入 Mortise renderer。
 - Mortise 信任 host/RPC 注入的 Workspace、Session、runtime 和 Extension identity，不信任 contribution 内容自报身份。
@@ -236,6 +254,10 @@ Extension 是 Mortise 可扩展性的一级提供者；Mortise 尽量保持通�
 - Extension runtime、贡献注册、命令处理器和内存状态归加载它的 backend，随 backend 结束，不跨 backend 共享。关闭 Extension 标签页只移除当前 backend 的前端投影，不卸载 Extension、不停止其后台能力，也不删除持久状态。
 - Mortise 可以为 Extension 提供按 Workspace、backend 类型和 Extension identity 隔离的可选文件存储；Electron 与 WebUI 默认不共享。Extension 是否保存状态、保存什么、如何恢复、迁移和清理由具体 Extension 合同决定；只有 Extension 明确写入 Session 或 Workspace 公共文件的数据才跨 backend 可见。
 - backend 重启时重新加载 Extension，再按本类型布局创建新的投影。布局引用的 Extension 不存在或加载失败时保留不可用占位项；Extension 恢复后可以重新绑定。移除或卸载 Extension 不自动删除平台托管状态，只有用户明确清除扩展数据时才删除。
+
+### Extension 交互
+
+- Extension 交互中的每个选择题均由 Mortise 默认提供行内自由填写答案；模型可见的工具参数只声明预设选项，不控制自由填写入口或其文案，交互协议仍保留结构化自由答案。多选项在每行末端显示复选框，选中后使用黑底白勾。
 
 replace 类高自由 surface 的长期边界仍需要产品决定。
 
@@ -278,6 +300,9 @@ Automation 的导出和导入是明确的用户操作，不等于直接复制或
 - 这些 default 没有 Workspace 级 override；Session 仍可以按需选择它自己的连接、模型和 thinking level。
 - 语义 model reference 可以表示“跟随当前 Session”或“跟随某个全局 default slot”，而不需要把当前 model ID 复制成新配置。
 - 从 provider 获取远程模型只刷新候选列表；只有用户明确选择某个模型后，才将该单个模型加入配置。
+- 模型未明确声明时默认支持推理（等价于 `reasoning: true`），只有明确不支持推理时才声明 `reasoning: false`；模型设置界面与运行时必须使用同一默认语义，不能因字段缺失静默关闭推理。
+- 浏览器和消息这类内核能力的 Agent 工具注册开关位于应用设置，只控制下次加载的 Agent runtime 是否向模型注册对应工具；开关不关闭或卸载内核能力、服务、界面或后台生命周期，内置桥接不作为普通扩展开关展示。
+- 上下文用量指示以可视化为主：用量通过指示环呈现，接近自动压缩阈值时以颜色表达警告；不得以纯数字徽标作为用量或警告的主要呈现方式。
 
 ## 客户端与平台能力
 

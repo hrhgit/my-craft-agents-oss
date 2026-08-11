@@ -11,6 +11,7 @@ import { updateRunManifest } from './controller.ts'
 const root = resolve(import.meta.dir, '..', '..')
 const runId = requiredEnv('MORTISE_UI_RUN_ID')
 const runDir = resolve(requiredEnv('MORTISE_UI_RUN_DIR'))
+const expectedBuildId = process.env.MORTISE_UI_EXPECTED_BUILD_ID
 let lease: ReturnType<typeof acquireElectronBuild>
 try {
   lease = acquireElectronBuild({
@@ -18,7 +19,13 @@ try {
     runDir,
     mode: 'ui-validation',
     repoRoot: root,
-    skipBuild: process.env.MORTISE_UI_SKIP_BUILD === '1',
+    ...(expectedBuildId ? {
+      expectedBuildId,
+      skipBuild: true,
+      verification: 'fast',
+    } : {
+      skipBuild: process.env.MORTISE_UI_SKIP_BUILD === '1',
+    }),
   })
 } catch (error) {
   updateRunManifest(runDir, { buildError: error instanceof Error ? error.message : String(error) })

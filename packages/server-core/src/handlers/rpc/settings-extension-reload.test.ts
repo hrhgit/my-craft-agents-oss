@@ -26,7 +26,7 @@ describe('Extension settings load boundary', () => {
           loaded: workspaceId === 'workspace-1',
           extensionIds: workspaceId === 'workspace-1' ? ['mortise-permissions'] : [],
         }),
-      } as ISessionManager,
+      } as unknown as ISessionManager,
       platform: {} as HandlerDeps['platform'],
     })
 
@@ -41,6 +41,12 @@ describe('Extension settings load boundary', () => {
   it('exposes runtime reload with the explicit interruption boundary', async () => {
     const server = new TestRpcServer()
     let interruptRunning: boolean | undefined
+    const operationCoordinator = {
+      start: (_id: string, _type: string, _scope: unknown, task: (signal: AbortSignal) => Promise<unknown>) => {
+        void task(new AbortController().signal)
+        return { accepted: true as const, operationId: 'reload-1', status: 'accepted' as const, revision: 1, duplicate: false }
+      },
+    }
     registerSettingsHandlers(server, {
       sessionManager: {
         requestExtensionReload: async (value: boolean) => {
@@ -52,13 +58,15 @@ describe('Extension settings load boundary', () => {
             deferredSessionCount: 0,
           }
         },
-      } as ISessionManager,
+        getExtensionReloadActiveSessions: () => [],
+      } as unknown as ISessionManager,
       platform: {} as HandlerDeps['platform'],
+      operationCoordinator: operationCoordinator as HandlerDeps['operationCoordinator'],
     })
 
     const handler = server.handlers.get(RPC_CHANNELS.piExtensions.RELOAD)
     expect(handler).toBeDefined()
-    await handler!({} as never, { interruptRunning: true })
+    await handler!({ workspaceId: null } as never, { interruptRunning: true, operationId: 'reload-1' })
     expect(interruptRunning).toBe(true)
   })
 

@@ -16,7 +16,6 @@
  */
 
 import { getSessionPlansPath } from '../sessions/storage.ts';
-import { DOC_REFS } from '../docs/index.ts';
 import { createSessionToolContext } from './session-tool-context.ts';
 import {
   createInProcessMcpServer,
@@ -37,7 +36,6 @@ import {
 } from '@mortise/session-tools-core';
 import { createSpawnSessionTool, type SpawnSessionFn } from './spawn-session-tool.ts';
 import { createBrowserTools, type BrowserPaneFns } from './browser-tools.ts';
-import { FEATURE_FLAGS } from '../feature-flags.ts';
 import { getBrowserToolEnabled } from '../config/storage.ts';
 
 // Re-export browser pane types for session manager wiring
@@ -175,7 +173,7 @@ export function cleanupSessionScopedTools(sessionId: string): void {
 }
 
 // ============================================================
-// Tool Descriptions (base from registry + DOC_REF enrichments)
+// Tool Descriptions (base from registry)
 // ============================================================
 
 let toolDescriptionsCache: Record<string, string> | undefined;
@@ -184,10 +182,6 @@ function getToolDescriptions(): Record<string, string> {
   if (!toolDescriptionsCache) {
     toolDescriptionsCache = {
       ...BASE_DESCRIPTIONS,
-      // Session tool enrichments with DOC_REFs
-      config_validate: BASE_DESCRIPTIONS.config_validate,
-      skill_validate: BASE_DESCRIPTIONS.skill_validate + `\n\n**Reference:** ${DOC_REFS.skills}`,
-      mermaid_validate: BASE_DESCRIPTIONS.mermaid_validate + `\n\n**Reference:** ${DOC_REFS.mermaid}`,
     };
   }
   return toolDescriptionsCache;
@@ -246,7 +240,7 @@ export function getSessionScopedTools(
 
     // Create tools from the canonical registry — all tools with handlers.
     // Tool visibility is centrally filtered in session-tools-core to avoid backend drift.
-    tools = getSessionToolDefs({ includeDeveloperFeedback: FEATURE_FLAGS.developerFeedback })
+    tools = getSessionToolDefs()
       .filter(def => def.handler !== null) // Skip backend-specific tools (spawn_session, browser_tool)
       .map(def => registryTool(def.name, def.inputSchema.shape));
 

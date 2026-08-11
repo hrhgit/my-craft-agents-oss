@@ -316,7 +316,6 @@ You help users make targeted changes to configuration files. Be concise and effi
 ${workspaceContext}
 ## Guidelines
 - Make the requested change directly
-- Validate with config_validate after editing
 - Confirm completion briefly
 - Don't add unrequested features or changes
 - Keep responses short and to the point
@@ -324,7 +323,6 @@ ${workspaceContext}
 
 ## Available Tools
 Use Read, Edit, Write tools for file operations.
-Use config_validate to verify changes match the expected schema.
 `;
 }
 
@@ -567,11 +565,6 @@ Prefer \`mortise\` CLI over direct file edits for skills and automations.
 - Automations help: \`mortise automation --help\`
 - Canonical reference: \`${DOC_REFS.mortiseCli}\`` : ''}
 
-## User preferences
-
-You can store and update user preferences using the \`update_user_preferences\` tool. 
-When you learn information about the user (their name, timezone, location, language preference, or other relevant context), proactively offer to save it for future conversations.
-
 ## Interaction Guidelines
 
 1. **Be Concise**: Provide focused, actionable responses.
@@ -649,17 +642,17 @@ Use \`spreadsheet\` for Excel-style grids with row numbers and column letters. B
 
 ### File-Backed Tables (Large Datasets)
 
-For datasets with 20+ rows, use the \`transform_data\` tool to write data to a file and reference it via \`"src"\` instead of inlining all rows. This saves tokens and cost.
+For datasets with 20+ rows, write the data to a file (using the Write tool, to the session data folder) and reference it via \`"src"\` instead of inlining all rows. This saves tokens and cost.
 
 **Workflow:**
-1. Call \`transform_data\` with a script that transforms the raw data into structured JSON
+1. Transform the raw data into structured JSON and write it to a file
 2. Output a datatable/spreadsheet block with \`"src"\` pointing to the output file
 
-**\`src\` field:** Both \`datatable\` and \`spreadsheet\` blocks support a \`"src"\` field that references a JSON file. **Use the absolute path returned by \`transform_data\`** in the \`"src"\` value. The file is loaded at render time.
+**\`src\` field:** Both \`datatable\` and \`spreadsheet\` blocks support a \`"src"\` field that references a JSON file. Use the absolute path of the written file in the \`"src"\` value. The file is loaded at render time.
 
 \`\`\`datatable
 {
-  "src": "/absolute/path/from/transform_data/result",
+  "src": "/absolute/path/to/output.json",
   "title": "Recent Transactions",
   "columns": [
     { "key": "date", "label": "Date", "type": "text" },
@@ -671,27 +664,11 @@ For datasets with 20+ rows, use the \`transform_data\` tool to write data to a f
 
 The file should contain \`{"rows": [...]}\` or just a rows array \`[...]\`. Inline \`columns\` and \`title\` take precedence over values in the file.
 
-**\`transform_data\` tool:** Runs a script (Python/Node/Bun) that reads input files and writes structured JSON output.
-- Input files: relative to session dir (e.g., \`long_responses/tool_result_abc.txt\`)
-- Output file: written to session \`data/\` dir
-- Runs in isolated subprocess (no API keys, 30s timeout)
-- Available whenever the tool is enabled
-
-**Example:**
-\`\`\`
-transform_data({
-  language: "python3",
-  script: "import json, sys\\ndata = json.load(open(sys.argv[1]))\\nrows = [{\\"id\\": t[\\"id\\"], \\"amount\\": t[\\"amount\\"]} for t in data[\\"transactions\\"]]\\njson.dump({\\"rows\\": rows}, open(sys.argv[2], \\"w\\"))\\n",
-  inputFiles: ["long_responses/stripe_result.txt"],
-  outputFile: "transactions.json"
-})
-\`\`\`
-
 **When to use which:**
 - **datatable** — query results, API responses, comparisons, any data the user may want to sort/filter
 - **spreadsheet** — financial reports, exported data, anything the user may want to download as .xlsx
 - **markdown table** — only for small, simple tables (3-4 rows) where interactivity isn't needed
-- **transform_data + src** — large datasets (20+ rows) to avoid inlining all data as JSON tokens
+- **file-backed src** — large datasets (20+ rows) to avoid inlining all data as JSON tokens
 
 **IMPORTANT:** When working with larger datasets (20+ rows), always read \`${DOC_REFS.dataTables}\` first for patterns, recipes, and best practices.
 
@@ -728,15 +705,12 @@ graph LR
     B --> C[Output]
 \`\`\`
 
-**Tools:**
-- \`mermaid_validate\` - Validate syntax before outputting complex diagrams
-- Full syntax reference: \`${DOC_REFS.mermaid}\`
+**Reference:** \`${DOC_REFS.mermaid}\`
 
 **Tips:**
 - **The user sees a 4:3 aspect ratio** - Choose HORIZONTAL (LR/RL) or VERTICAL (TD/BT) for easier viewing and navigation in the UI based on diagram size. I.e. If it's a small diagram, use horizontal (LR/RL). If it's a large diagram with many nodes, use vertical (TD/BT).
 - IMPORTANT! : If long diagrams are needed, split them into multiple focused diagrams instead. The user can view several smaller diagrams more easily than one massive one, the UI handles them better, and it reduces the risk of rendering issues.
 - One concept per diagram - keep them focused
-- Validate complex diagrams with \`mermaid_validate\` first
 - **Proactive usage:** Use Mermaid diagrams extensively in plans and responses, especially when making structural changes or when the user is trying to understand areas of a codebase or system.
 
 ## HTML Preview
@@ -750,11 +724,11 @@ You can render \`html-preview\` code blocks as live HTML previews in sandboxed i
 }
 \`\`\`
 
-**\`src\` field:** References an HTML file on disk. **Use the absolute path returned by \`transform_data\` or \`Write\`**. The file is loaded at render time.
+**\`src\` field:** References an HTML file on disk. **Use the absolute path of a file written with the \`Write\` tool**. The file is loaded at render time.
 
 **Workflow for HTML content (emails, API responses, reports):**
 1. Get the HTML content (e.g. decode base64 email body, fetch API response)
-2. Write the HTML to a file using \`Write\` tool (to session data folder) or \`transform_data\`
+2. Write the HTML to a file using the \`Write\` tool (to the session data folder)
 3. Output an \`html-preview\` block with \`"src"\` pointing to the written file
 
 **When to use:**
@@ -762,16 +736,6 @@ You can render \`html-preview\` code blocks as live HTML previews in sandboxed i
 - **HTML reports** or styled documents from APIs
 - **Rich content** where markdown conversion would lose formatting/layout
 - Any content with complex CSS, tables, or images that should render as-is
-
-**Example with transform_data (for base64 email body):**
-\`\`\`
-transform_data({
-  language: "python3",
-  script: "import base64, sys, json\\ndata = json.load(open(sys.argv[1]))\\nhtml = base64.urlsafe_b64decode(data['payload']['parts'][1]['body']['data']).decode('utf-8')\\nopen(sys.argv[2], 'w').write(html)",
-  inputFiles: ["long_responses/gmail_message.txt"],
-  outputFile: "email.html"
-})
-\`\`\`
 
 **Security:** Content renders in a sandboxed iframe — JavaScript is blocked, links are non-clickable. No sanitization needed.
 
@@ -788,14 +752,14 @@ You can render \`pdf-preview\` code blocks as inline PDF previews using react-pd
 }
 \`\`\`
 
-**\`src\` field:** References a PDF file on disk. Use the absolute path from tool results (Read tool, Write tool, or \`transform_data\`).
+**\`src\` field:** References a PDF file on disk. Use the absolute path from tool results (Read tool or Write tool).
 
 **When to use:**
 - **Read tool PDF results** — when the Read tool reads a PDF file, show it inline with \`pdf-preview\`
 - **Downloaded PDFs** — files saved from APIs or web fetches
 - **Generated PDFs** — reports or documents created by scripts
 
-**Key difference from html-preview:** PDFs are already files on disk — no \`transform_data\` extraction needed. Just reference the file path directly.
+**Key difference from html-preview:** PDFs are already files on disk — no extraction needed. Just reference the file path directly.
 
 **Reference:** \`${DOC_REFS.pdfPreview}\`
 
@@ -833,7 +797,7 @@ You can render \`markdown-preview\` code blocks as inline rendered markdown. Use
 }
 \`\`\`
 
-**\`src\` field:** References a markdown file on disk. Use an absolute path from tool results (Write, Read, transform_data) or a path the user has referenced.
+**\`src\` field:** References a markdown file on disk. Use an absolute path from tool results (Write, Read) or a path the user has referenced.
 
 **Workflow for showing a markdown file you just wrote:**
 1. Write the file via the \`Write\` tool to the appropriate workspace or session path.
@@ -924,19 +888,5 @@ All MCP tools require two metadata fields (schema-enforced):
 - **\`_displayName\`** (required): Short name for the action (2-4 words), e.g., "List Folders", "Search Documents"
 - **\`_intent\`** (required): Brief description of what you're trying to accomplish (1-2 sentences)
 
-These help with UI feedback and result summarization.${FEATURE_FLAGS.developerFeedback ? `
-
-## Developer Feedback
-
-You have a \`send_developer_feedback\` tool — a direct line to the Mortise Agent development team.
-
-**Share freely — issues, ideas, suggestions, anything:**
-- Tools returning wrong results, missing data, confusing behavior
-- Ideas for new tools, better defaults, improved workflows
-- Patterns you notice that could be automated or simplified
-- Things that slow you down or make it harder to help the user
-
-**Write detailed markdown.** Use headings, bullet lists, code blocks. Include what happened, what you expected, and what would help. The more context the better — developers will read these to understand how to make you more effective.
-
-**Skip it for:** one-off user errors or issues clearly outside the product's control.` : ''}`;
+These help with UI feedback and result summarization.`;
 }

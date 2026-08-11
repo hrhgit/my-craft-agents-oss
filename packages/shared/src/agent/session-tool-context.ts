@@ -8,27 +8,13 @@
  * the app backend's full feature set.
  */
 
-import { existsSync, readFileSync, writeFileSync, readdirSync, statSync, mkdirSync } from 'fs';
-import { join } from 'path';
-import { CONFIG_DIR } from '../config/paths.ts';
+import { existsSync, readFileSync, writeFileSync, readdirSync, statSync } from 'fs';
 import type {
   SessionToolContext,
   SessionToolCallbacks,
   FileSystemInterface,
-  ValidatorInterface,
-  DeveloperFeedback,
 } from '@mortise/session-tools-core';
-import {
-  validateConfig,
-  validatePreferences,
-  validateAll,
-  validateSkill,
-  validateToolIcons,
-} from '../config/validators.ts';
-import { debug } from '../utils/debug.ts';
-import { getSessionPlansPath, getSessionPath, getSessionDataPath } from '../sessions/storage.ts';
-import { updatePreferences as updatePreferencesImpl } from '../config/preferences.ts';
-import { createPiSkillResolver } from '../pi/pi-skill-resolver.ts';
+import { getSessionPlansPath } from '../sessions/storage.ts';
 
 // Re-export types that may be needed by consumers
 export type { SessionToolContext, SessionToolCallbacks } from '@mortise/session-tools-core';
@@ -48,8 +34,7 @@ export interface SessionToolContextOptions {
  *
  * This provides:
  * - Full file system access
- * - Full Zod validators
- * - Workspace-aware validators and preferences
+ * - Session self-management bindings (attached externally)
  */
 export function createSessionToolContext(options: SessionToolContextOptions): SessionToolContext {
   const { sessionId, workspaceId, workspacePath, onPlanSubmitted } = options;
@@ -76,37 +61,13 @@ export function createSessionToolContext(options: SessionToolContextOptions): Se
     onPlanSubmitted,
   };
 
-  // Validators implementation
-  const validators: ValidatorInterface = {
-    validateConfig: () => validateConfig(),
-    validatePreferences: () => validatePreferences(),
-    validateToolIcons: () => validateToolIcons(),
-    validateAll: (wsPath: string) => validateAll(wsPath),
-    validateSkill: (wsPath: string, slug: string) => validateSkill(wsPath, slug),
-  };
-
   // Build context
   const context: SessionToolContext = {
     sessionId,
     workspacePath,
-    get skillPaths() { return createPiSkillResolver(workspacePath).getSkillPaths().map(e => e.dir); },
-    get skillsPath() { return this.skillPaths?.[0] ?? ''; },
     plansFolderPath: getSessionPlansPath(workspaceId, sessionId),
-    sessionPath: getSessionPath(workspaceId, sessionId),
-    dataPath: getSessionDataPath(workspaceId, sessionId),
     callbacks,
     fs,
-    validators,
-    updatePreferences: (updates: Record<string, unknown>) => {
-      updatePreferencesImpl(updates as any);
-    },
-    submitFeedback: (feedback: DeveloperFeedback) => {
-      const feedbackDir = join(CONFIG_DIR, 'feedback');
-      mkdirSync(feedbackDir, { recursive: true });
-      const filePath = join(feedbackDir, `${feedback.id}.json`);
-      writeFileSync(filePath, JSON.stringify(feedback, null, 2), 'utf-8');
-      debug('session-tool-context', `Developer feedback written to ${filePath}`);
-    },
     // Session self-management bindings are attached externally via
     // attachSessionSelfManagementBindings() — not part of the factory.
   };

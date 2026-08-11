@@ -430,14 +430,7 @@ export async function processResponsesStream<TApi extends Api>(
 				currentItem.summary = currentItem.summary || [];
 				const lastPart = currentItem.summary[currentItem.summary.length - 1];
 				if (lastPart) {
-					currentBlock.thinking += event.delta;
 					lastPart.text += event.delta;
-					stream.push({
-						type: "thinking_delta",
-						contentIndex: blockIndex(),
-						delta: event.delta,
-						partial: output,
-					});
 				}
 			}
 		} else if (event.type === "response.reasoning_summary_part.done") {
@@ -445,14 +438,7 @@ export async function processResponsesStream<TApi extends Api>(
 				currentItem.summary = currentItem.summary || [];
 				const lastPart = currentItem.summary[currentItem.summary.length - 1];
 				if (lastPart) {
-					currentBlock.thinking += "\n\n";
 					lastPart.text += "\n\n";
-					stream.push({
-						type: "thinking_delta",
-						contentIndex: blockIndex(),
-						delta: "\n\n",
-						partial: output,
-					});
 				}
 			}
 		} else if (event.type === "response.reasoning_text.delta") {
@@ -541,13 +527,13 @@ export async function processResponsesStream<TApi extends Api>(
 
 			if (item.type === "reasoning" && currentBlock?.type === "thinking") {
 				const summaryText = item.summary?.map((s) => s.text).join("\n\n") || "";
-				const contentText = item.content?.map((c) => c.text).join("\n\n") || "";
-				currentBlock.thinking = summaryText || contentText || currentBlock.thinking;
+				currentBlock.thinkingSummary = summaryText || undefined;
 				currentBlock.thinkingSignature = JSON.stringify(item);
 				stream.push({
 					type: "thinking_end",
 					contentIndex: blockIndex(),
 					content: currentBlock.thinking,
+					...(summaryText ? { summary: summaryText } : {}),
 					partial: output,
 				});
 				currentBlock = null;

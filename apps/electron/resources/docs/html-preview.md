@@ -1,6 +1,6 @@
 # HTML Preview Guide
 
-This guide covers how to render rich HTML content inline using `html-preview` code blocks, and how to use `transform_data` to prepare HTML files from various sources.
+This guide covers how to render rich HTML content inline using `html-preview` code blocks, and how to prepare HTML files from various sources.
 
 ## Overview
 
@@ -72,30 +72,21 @@ Content loads lazily on tab switch and is cached once loaded.
 
 *Either `src` (single) or `items` (multiple) is required. If both are present, `items` takes precedence.
 
-**Important:** The `src` path must be an **absolute path** — use the exact path returned by `transform_data` or construct one using the session data folder path.
+**Important:** The `src` path must be an **absolute path** — use the path of the file you wrote with the Write tool, or construct one using the session data folder path.
 
 ## Preparing HTML Content
 
-### Using transform_data
+### Writing the HTML File
 
-The `transform_data` tool is the primary way to extract and write HTML files. It runs a script that reads input files and writes output.
+Write the HTML file with the **Write tool** (to the session data folder). When the HTML is embedded in a larger response (e.g. a base64 email body or a JSON API payload), run a small script via the shell to decode/extract it, then write the result to the file.
 
-**Key difference from datatable usage:** For `html-preview`, the output file is `.html` (not `.json`). The script writes raw HTML content, not JSON.
-
-**Parameters:**
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `language` | `"python3"` \| `"node"` \| `"bun"` | Script runtime |
-| `script` | string | Transform script source code |
-| `inputFiles` | string[] | Input file paths relative to session dir |
-| `outputFile` | string | Output file name ending in `.html` (written to session `data/` dir) |
+**Key difference from datatable usage:** For `html-preview`, the output file is `.html` (not `.json`). The file contains raw HTML content, not JSON.
 
 **Path conventions:**
 - **Input files** are relative to the session directory. Common locations:
   - `long_responses/tool_result_abc.txt` — saved tool results (Gmail API responses, etc.)
-  - `data/previous_output.html` — output from a prior transform
-- **Output file** is relative to the session `data/` directory. Just provide the filename (e.g., `"email.html"`)
+  - `data/previous_output.html` — output from a prior run
+- **Output file** goes in the session `data/` directory (e.g., `"email.html"`)
 
 ### Using Write Tool
 
@@ -137,14 +128,9 @@ with open(sys.argv[-1], 'w') as f:
     f.write(html)
 ```
 
-Call with:
+Run this script via the shell (input path = `long_responses/gmail_message.txt`, output = `email.html` in the session data folder), then write the result with the Write tool:
 ```
-transform_data({
-  language: "python3",
-  script: "...",
-  inputFiles: ["long_responses/gmail_message.txt"],
-  outputFile: "email.html"
-})
+python3 script.py long_responses/gmail_message.txt data/email.html
 ```
 
 **Simple shortcut (when you know the structure):**
@@ -256,21 +242,16 @@ GET gmail/v1/users/me/messages?q=from:scott belsky subject:implications
 GET gmail/v1/users/me/messages/{id}?format=full
 ```
 
-**Step 3:** Call `transform_data` to decode the HTML body:
+**Step 3:** Decode the HTML body with a script via the shell (recursive `find_html_part()` pattern from the Gmail recipe above):
 ```
-transform_data({
-  language: "python3",
-  script: "import base64, json, sys\nwith open(sys.argv[1]) as f:\n    msg = json.load(f)\ndef find_html(p):\n    if p.get('mimeType')=='text/html': return p['body']['data']\n    for part in p.get('parts',[]): \n        r=find_html(part)\n        if r: return r\nhtml=base64.urlsafe_b64decode(find_html(msg['payload'])).decode('utf-8')\nopen(sys.argv[-1],'w').write(html)",
-  inputFiles: ["long_responses/gmail_result.txt"],
-  outputFile: "newsletter.html"
-})
+python3 decode_gmail.py long_responses/gmail_result.txt data/newsletter.html
 ```
 
-**Step 4:** Output the html-preview block with the absolute path from `transform_data` result:
+**Step 4:** Output the html-preview block with the absolute path of the written file:
 ````
 ```html-preview
 {
-  "src": "/absolute/path/from/transform_data/newsletter.html",
+  "src": "/absolute/path/to/newsletter.html",
   "title": "Implications #40 — Exponential Code, Network Effects In AI"
 }
 ```
@@ -322,7 +303,7 @@ Gmail uses **URL-safe base64** (RFC 4648 §5):
 ### Large Emails
 
 Some newsletter HTML bodies are 100KB+. This is fine:
-- `transform_data` writes to disk (no token cost)
+- Write the file to disk with the Write tool (no token cost)
 - The iframe loads the file directly
 - The 400px inline preview shows just the top portion
 
@@ -353,7 +334,7 @@ Is the content rich HTML with important styling/layout?
   → NO: Convert to markdown
 
 Is the HTML content large (> 1KB)?
-  → YES: Use transform_data to write file, reference via src
+  → YES: Write the file and reference via src
   → NO: Consider just summarizing in markdown
 
 Does the user explicitly want to SEE the email/HTML?
@@ -376,12 +357,12 @@ Does the user explicitly want to SEE the email/HTML?
 ## Troubleshooting
 
 ### "Loading..." shown indefinitely
-- The `"src"` path must be an **absolute path** — use the exact path returned by `transform_data`
+- The `"src"` path must be an **absolute path** — use the path of the file you wrote
 - Do not construct relative paths or guess the data folder location
-- Verify `transform_data` succeeded (check the tool result message)
+- Verify the file actually exists at that path
 
 ### Blank/white iframe
-- The HTML file may be empty — check `transform_data` output for errors
+- The HTML file may be empty — check the decoding script output for errors
 - The base64 decoding may have failed silently — verify the script handles the email structure correctly
 - Check if the email has an HTML part at all (some are text-only)
 
@@ -400,7 +381,7 @@ Does the user explicitly want to SEE the email/HTML?
 - Check that the JSON config is valid: must have `"src"` field
 - Ensure the file content is actual HTML (not JSON containing HTML)
 
-### Script errors in transform_data
+### Script errors
 - `KeyError` on `payload.parts` — email may be single-part (no `parts` array). Use the recursive `find_html_part()` pattern
 - `binascii.Error: Invalid base64` — email may use standard base64, not URL-safe. Try `base64.b64decode()` as fallback
 - `UnicodeDecodeError` — check the email's charset encoding (see encoding issues above)

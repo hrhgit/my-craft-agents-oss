@@ -17,6 +17,13 @@ import {
   stripRuntimeLayoutProcessEnvironment,
   type ImmutableRuntimeLayout,
 } from '@mortise/session-tools-core/runtime'
+import {
+  WORKSPACE_CAPABILITY_BRIDGE_VERSION,
+  isWorkspaceCapabilityBridgeToHostV1,
+  type CapabilityRequestV1,
+  type WorkspaceCapabilityBridgeToServerV1,
+  type WorkspaceCapabilitySessionContextV1,
+} from '@mortise/shared/protocol'
 import { writeRuntimeLog } from '@mortise/shared/utils'
 import { mainLog } from './logger'
 
@@ -27,7 +34,13 @@ export interface SpawnedWorkspaceServer {
   url: string
   token: string
   pid?: number
+  probeCapability?: (request: CapabilityRequestV1) => Promise<WorkspaceCapabilityProbeResult>
   stop: () => Promise<void>
+}
+
+export interface WorkspaceCapabilityProbeResult {
+  output: unknown
+  progress: unknown[]
 }
 
 export interface SpawnWorkspaceServerOptions {
@@ -42,7 +55,14 @@ export interface SpawnWorkspaceServerOptions {
   messagingWorkerPath?: string
   immutableRuntime?: ImmutableRuntimeLayout
   startupTimeoutMs?: number
+  capabilityExecutor?: WorkspaceCapabilityExecutor
 }
+
+export type WorkspaceCapabilityExecutor = (
+  request: CapabilityRequestV1,
+  session: WorkspaceCapabilitySessionContextV1,
+  context: { signal: AbortSignal; reportProgress(progress: unknown): void },
+) => Promise<unknown>
 
 interface ProcessExit {
   code: number | null
@@ -53,6 +73,12 @@ interface LaunchedWorkspaceServer {
   child: ChildProcess
   url: string
   exit: Promise<ProcessExit>
+  capabilityBridge?: AttachedCapabilityBridge
+}
+
+export interface AttachedCapabilityBridge {
+  dispose(): void
+  probe(request: CapabilityRequestV1): Promise<WorkspaceCapabilityProbeResult>
 }
 
 export function resolveWorkspaceServerWorkingDirectory(parentWorkingDirectory = process.cwd()): string {
@@ -220,10 +246,130 @@ export function buildWorkspaceServerChildEnv(
   }
   if (options.messagingWorkerPath) env.MORTISE_MESSAGING_WA_WORKER = options.messagingWorkerPath
   if (options.nodeBinary) env.MORTISE_MESSAGING_NODE_BIN = options.nodeBinary
+  if (options.capabilityExecutor) env.MORTISE_ELECTRON_CAPABILITY_BRIDGE = '1'
   delete env.MORTISE_SERVER_URL
   delete env.MORTISE_LOCAL_WORKSPACE_SERVER_URL
   delete env.MORTISE_LOCAL_WORKSPACE_SERVER_TOKEN
   return env
+}
+
+export function attachCapabilityBridge(
+  child: ChildProcess,
+  executor: WorkspaceCapabilityExecutor,
+  validationProbeEnabled = process.env.MORTISE_UI_TEST_HOST === '1',
+): AttachedCapabilityBridge {
+  const pending = new Map<string, AbortController>()
+  const probes = new Map<string, {
+    resolve(result: WorkspaceCapabilityProbeResult): void
+    reject(error: Error): void
+    timer: ReturnType<typeof setTimeout>
+  }>()
+
+  const send = (message: WorkspaceCapabilityBridgeToServerV1): boolean => {
+    if (child.connected !== true || typeof child.send !== 'function') return false
+    try { child.send(message); return true } catch { return false }
+  }
+
+  const onMessage = (message: unknown): void => {
+    if (!isWorkspaceCapabilityBridgeToHostV1(message)) return
+    if (message.type === 'workspace_capability_probe_result') {
+      const probe = probes.get(message.bridgeId)
+      if (!probe) return
+      probes.delete(message.bridgeId)
+      clearTimeout(probe.timer)
+      if (message.ok) probe.resolve({ output: message.output, progress: message.progress })
+      else probe.reject(Object.assign(new Error(message.error.message), { code: message.error.code }))
+      return
+    }
+    if (message.type === 'workspace_capability_cancel') {
+      pending.get(message.bridgeId)?.abort('cancelled')
+      return
+    }
+    if (pending.has(message.bridgeId)) {
+      send({
+        type: 'workspace_capability_result',
+        version: WORKSPACE_CAPABILITY_BRIDGE_VERSION,
+        bridgeId: message.bridgeId,
+        ok: false,
+        error: { code: 'REQUEST_ID_CONFLICT', message: 'Capability bridge ID is already active' },
+      })
+      return
+    }
+
+    const controller = new AbortController()
+    pending.set(message.bridgeId, controller)
+    void executor(message.request, message.session, {
+      signal: controller.signal,
+      reportProgress: progress => send({
+        type: 'workspace_capability_progress',
+        version: WORKSPACE_CAPABILITY_BRIDGE_VERSION,
+        bridgeId: message.bridgeId,
+        progress,
+      }),
+    }).then(
+      output => send({
+        type: 'workspace_capability_result',
+        version: WORKSPACE_CAPABILITY_BRIDGE_VERSION,
+        bridgeId: message.bridgeId,
+        ok: true,
+        output,
+      }),
+      error => send({
+        type: 'workspace_capability_result',
+        version: WORKSPACE_CAPABILITY_BRIDGE_VERSION,
+        bridgeId: message.bridgeId,
+        ok: false,
+        error: {
+          code: error && typeof error === 'object' && typeof error.code === 'string'
+            ? error.code
+            : 'PROVIDER_ERROR',
+          message: error instanceof Error ? error.message : String(error ?? 'Capability provider failed'),
+        },
+      }),
+    ).finally(() => pending.delete(message.bridgeId))
+  }
+
+  child.on('message', onMessage)
+  const dispose = () => {
+    child.off('message', onMessage)
+    for (const controller of pending.values()) controller.abort('workspace_server_exited')
+    pending.clear()
+    for (const probe of probes.values()) {
+      clearTimeout(probe.timer)
+      probe.reject(Object.assign(new Error('Workspace capability bridge disconnected'), { code: 'NO_INTERACTIVE_CLIENT' }))
+    }
+    probes.clear()
+  }
+  return {
+    dispose,
+    probe(request) {
+      if (!validationProbeEnabled) {
+        return Promise.reject(Object.assign(
+          new Error('Capability probes require the UI validation host'),
+          { code: 'UNSUPPORTED_CAPABILITY' },
+        ))
+      }
+      const bridgeId = randomUUID()
+      return new Promise<WorkspaceCapabilityProbeResult>((resolve, reject) => {
+        const timeoutMs = request.timeoutMs ?? 30_000
+        const timer = setTimeout(() => {
+          probes.delete(bridgeId)
+          reject(Object.assign(new Error(`Capability probe timed out after ${timeoutMs}ms`), { code: 'CAPABILITY_TIMEOUT' }))
+        }, timeoutMs)
+        probes.set(bridgeId, { resolve, reject, timer })
+        if (!send({
+          type: 'workspace_capability_probe',
+          version: WORKSPACE_CAPABILITY_BRIDGE_VERSION,
+          bridgeId,
+          request,
+        })) {
+          clearTimeout(timer)
+          probes.delete(bridgeId)
+          reject(Object.assign(new Error('Workspace capability bridge is not connected'), { code: 'NO_INTERACTIVE_CLIENT' }))
+        }
+      })
+    },
+  }
 }
 
 async function launchWorkspaceServer(
@@ -245,10 +391,16 @@ async function launchWorkspaceServer(
     // identically in the Electron main process and its Workspace server.
     cwd: resolveWorkspaceServerWorkingDirectory(),
     env,
-    stdio: ['ignore', 'pipe', 'pipe'],
+    stdio: options.capabilityExecutor
+      ? ['ignore', 'pipe', 'pipe', 'ipc']
+      : ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
   })
   const exit = waitForExit(child)
+  const capabilityBridge = options.capabilityExecutor
+    ? attachCapabilityBridge(child, options.capabilityExecutor)
+    : undefined
+  void exit.finally(() => capabilityBridge?.dispose())
   const stdoutTail: string[] = []
   const stderrTail: string[] = []
 
@@ -294,7 +446,7 @@ async function launchWorkspaceServer(
         const url = line.slice('MORTISE_SERVER_URL='.length).trim()
         mainLog.info('[workspace-server] Ready', { url, pid: child.pid })
         runtimeLog('info', 'startup.ready', { url, pid: child.pid })
-        resolve({ child, url, exit })
+        resolve({ child, url, exit, capabilityBridge })
       } else if (line.trim()) {
         mainLog.info(`[workspace-server] ${line}`)
       }
@@ -370,6 +522,14 @@ export async function spawnWorkspaceServer(options: SpawnWorkspaceServerOptions)
     url: stableUrl,
     token,
     pid: current.child.pid,
+    ...(options.capabilityExecutor && process.env.MORTISE_UI_TEST_HOST === '1' ? {
+      probeCapability: (request: CapabilityRequestV1) => {
+        if (!current.capabilityBridge) {
+          throw Object.assign(new Error('Workspace capability bridge is unavailable'), { code: 'NO_INTERACTIVE_CLIENT' })
+        }
+        return current.capabilityBridge.probe(request)
+      },
+    } : {}),
     stop: async () => {
       if (stopped) return
       stopped = true

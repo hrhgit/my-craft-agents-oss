@@ -7,6 +7,7 @@ import {
   parseWorkspacePathRefV1,
   parseWorkspaceTransferRequestV1,
   parseWorkspaceTransferResultV1,
+  CLIENT_WORKSPACE_EXECUTE_TRANSFER,
   parseWorkspaceTransferEndpointAbortV1,
   parseWorkspaceTransferEndpointAccessV1,
   parseWorkspaceTransferEndpointCommitV1,
@@ -31,6 +32,7 @@ import {
 } from '@mortise/shared/workspaces'
 import { WORKSPACE_TOPOLOGY_ERROR_CODES } from '@mortise/shared/protocol'
 import type { RpcServer } from '../../transport'
+import type { OperationCoordinator } from '../../operations'
 
 export const WORKSPACE_TRANSFER_HANDLED_CHANNELS = [
   RPC_CHANNELS.workspaces.TRANSFER,
@@ -58,7 +60,7 @@ export const WORKSPACE_TRANSFER_HANDLED_CHANNELS = [
 export function registerWorkspaceTransferHandlers(
   server: RpcServer,
   store: WorkspaceTopologyStore = getDefaultWorkspaceTopologyStore(),
-  options: { endpointSessionTtlMs?: number } = {},
+  options: { endpointSessionTtlMs?: number; operationCoordinator?: OperationCoordinator } = {},
 ): void {
   const endpointSessionTtlMs = options.endpointSessionTtlMs ?? 5 * 60_000
   if (!Number.isFinite(endpointSessionTtlMs) || endpointSessionTtlMs <= 0) {
@@ -79,6 +81,7 @@ export function registerWorkspaceTransferHandlers(
         `Workspace mismatch: authenticated workspace (${ctx.workspaceId}) does not match requested (${request.workspaceId})`,
       )
     }
+    const executeTransfer = async (): Promise<WorkspaceTransferResultV1> => {
     const replay = store.getTransferResult(request)
     if (replay) {
       const completed = store.getTransferJournal(request)
@@ -127,6 +130,24 @@ export function registerWorkspaceTransferHandlers(
     } finally {
       if (inFlight.get(key)?.result === result) inFlight.delete(key)
     }
+    }
+    if (!options.operationCoordinator) return executeTransfer()
+    return options.operationCoordinator.start(
+      request.operationId,
+      'workspace.transfer',
+      { workspaceId: request.workspaceId, transferId: request.operationId },
+      async () => {
+        const result = server.hasClientCapability(ctx.clientId, CLIENT_WORKSPACE_EXECUTE_TRANSFER)
+          ? await (server.invokeClientWithOptions
+              ? server.invokeClientWithOptions(ctx.clientId, CLIENT_WORKSPACE_EXECUTE_TRANSFER, [request], { timeoutMs: null })
+              : server.invokeClient(ctx.clientId, CLIENT_WORKSPACE_EXECUTE_TRANSFER, request))
+          : await executeTransfer()
+        if (result && typeof result === 'object' && 'status' in result && result.status === 'failed') {
+          throw new Error('Workspace transfer execution failed')
+        }
+        return { resultRef: `workspace-transfer:${request.operationId}` }
+      },
+    )
   })
 
   server.handle(RPC_CHANNELS.workspaces.TRANSFER_RECEIPT_GET, async (ctx, requestValue: unknown) => {

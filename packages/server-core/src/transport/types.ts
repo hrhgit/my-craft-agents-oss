@@ -15,7 +15,7 @@ export type HandlerFn = (ctx: RequestContext, ...args: any[]) => Promise<any> | 
 
 export interface HandlerOptions {
   /** Override the default server-side handler budget for long-lived transactions. */
-  timeoutMs?: number
+  timeoutMs?: number | null
 }
 
 export type WorkspaceAuthMethod = 'token' | 'cookie' | 'none'
@@ -34,6 +34,7 @@ export interface RpcServer {
   handle(channel: string, handler: HandlerFn, options?: HandlerOptions): void
   push(channel: string, target: PushTarget, ...args: any[]): void
   invokeClient(clientId: string, channel: string, ...args: any[]): Promise<any>
+  invokeClientWithOptions?(clientId: string, channel: string, args: any[], options?: { timeoutMs?: number | null }): Promise<any>
   updateClientWorkspace?(clientId: string, workspaceId: string): Promise<void> | void
 
   /** Whether a connected client advertised the given capability on handshake. */
@@ -41,11 +42,14 @@ export interface RpcServer {
 
   /** Connected clients (optionally narrowed by workspaceId) that advertised the capability. */
   findClientsWithCapability(capability: string, opts?: { workspaceId?: string }): string[]
+
+  /** Register cleanup owned by the RPC server lifecycle. */
+  onClose?(listener: () => void): () => void
 }
 
 export interface RpcClient {
   invoke(channel: string, ...args: any[]): Promise<any>
-  invokeWithOptions?(channel: string, args: any[], options?: { timeoutMs?: number }): Promise<any>
+  invokeWithOptions?(channel: string, args: any[], options?: { timeoutMs?: number | null }): Promise<any>
   on(channel: string, callback: (...args: any[]) => void): () => void
   handleCapability(channel: string, handler: (...args: any[]) => Promise<any> | any): void
 }

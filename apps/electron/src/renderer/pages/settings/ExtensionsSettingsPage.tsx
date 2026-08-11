@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { waitForOperation } from '../../lib/operations'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { FileArchive, FolderOpen, Loader2, RotateCw } from 'lucide-react'
@@ -152,15 +153,27 @@ export default function ExtensionsSettingsPage() {
     setReloadPending(true)
     if (interruptRunning) setReloadConfirmation(null)
     try {
-      const result = await window.electronAPI.reloadPiExtensions(interruptRunning)
+      const result = await window.electronAPI.reloadPiExtensions({
+        interruptRunning,
+        operationId: crypto.randomUUID(),
+      })
       if (result.status === 'confirmation_required') {
         setReloadConfirmation(result.activeSessions)
         return
       }
+      let deferredSessionCount = 0
+      if (result.status === 'accepted') {
+        const receipt = await waitForOperation(window.electronAPI, result.operation.operationId)
+        if (receipt.status !== 'succeeded') {
+          throw new Error(receipt.error?.message ?? `Extension reload ${receipt.status}`)
+        }
+      } else {
+        deferredSessionCount = result.deferredSessionCount
+      }
       await loadCatalog()
       window.dispatchEvent(new Event('mortise:pi-extensions-reloaded'))
-      if (result.deferredSessionCount > 0) {
-        toast.warning(t('settings.extensions.reloadDeferred', { count: result.deferredSessionCount }))
+      if (deferredSessionCount > 0) {
+        toast.warning(t('settings.extensions.reloadDeferred', { count: deferredSessionCount }))
       } else {
         toast.success(t('settings.extensions.reloadSuccess'))
       }
@@ -179,9 +192,11 @@ export default function ExtensionsSettingsPage() {
         ? await window.electronAPI.openFolderDialog()
         : (await window.electronAPI.openFileDialog())[0]
       if (!sourcePath) return
-      const result = await window.electronAPI.importPiExtension(sourcePath)
+      const result = await window.electronAPI.importPiExtension({ sourcePath, operationId: crypto.randomUUID() })
+      const receipt = await waitForOperation(window.electronAPI, result.operation.operationId)
+      if (receipt.status !== 'succeeded') throw new Error(receipt.error?.message ?? 'Extension import failed')
       await loadCatalog()
-      toast.success(t('settings.extensions.importSuccess', { name: result.packageName }))
+      toast.success(t('settings.extensions.importSuccess', { name: sourcePath.split(/[\\/]/).pop() ?? sourcePath }))
       await handleReload(false)
     } catch (error) {
       console.error('Failed to import extension:', error)
@@ -196,10 +211,12 @@ export default function ExtensionsSettingsPage() {
     const target = uninstallTarget
     setUninstallTarget(null)
     try {
-      const result = await window.electronAPI.uninstallPiExtension(target.id)
+      const result = await window.electronAPI.uninstallPiExtension({ extensionId: target.id, operationId: crypto.randomUUID() })
+      const receipt = await waitForOperation(window.electronAPI, result.operation.operationId)
+      if (receipt.status !== 'succeeded') throw new Error(receipt.error?.message ?? 'Extension uninstall failed')
       if (selectedExtensionId === target.id) setSelectedExtensionId(null)
       await loadCatalog()
-      toast.success(t('settings.extensions.uninstallSuccess', { name: result.packageName }))
+      toast.success(t('settings.extensions.uninstallSuccess', { name: target.title ?? target.id }))
       await handleReload(false)
     } catch (error) {
       console.error('Failed to uninstall extension:', error)

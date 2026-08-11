@@ -133,6 +133,7 @@ export interface ISessionManager extends WorkspaceTopologySessionCoordinator {
 
   /** Reload extensions in all open Pi runtimes; running turns require confirmation. */
   requestExtensionReload(interruptRunning: boolean): Promise<import('@mortise/shared/config').PiExtensionReloadResult>
+  getExtensionReloadActiveSessions?(): import('@mortise/shared/config').PiExtensionReloadActiveSession[]
 
   /** Read the extension IDs applied to a loaded Workspace runtime snapshot. */
   getExtensionRuntimeState(workspaceId?: string): import('@mortise/shared/config').PiExtensionRuntimeState

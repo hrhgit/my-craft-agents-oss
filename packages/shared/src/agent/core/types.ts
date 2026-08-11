@@ -43,7 +43,7 @@ export interface PromptBuilderConfig {
 export interface ContextBlockOptions {
   /** Plans folder path */
   plansFolderPath?: string;
-  /** Data folder path (transform_data tool output) */
+  /** Data folder path (session data dir) */
   dataFolderPath?: string;
 }
 

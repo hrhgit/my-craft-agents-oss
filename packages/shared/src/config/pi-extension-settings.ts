@@ -183,8 +183,11 @@ export interface PiExtensionReloadActiveSession {
   title?: string;
 }
 
+import type { OperationAccepted } from '../protocol/operations'
+
 export type PiExtensionReloadResult =
   | { status: 'confirmation_required'; activeSessions: PiExtensionReloadActiveSession[] }
+  | { status: 'accepted'; operation: OperationAccepted }
   | {
       status: 'reloaded';
       interruptedSessionCount: number;

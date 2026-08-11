@@ -1,3 +1,4 @@
+import { UI_VALIDATION_PROTOCOL_VERSION } from '@mortise/shared/ui-validation'
 import type { UiVerificationLevel } from './electron-surface-driver'
 
 export interface UiTestHostHttpErrorEnvelopeOptions {
@@ -12,7 +13,7 @@ export interface UiTestHostHttpErrorEnvelopeOptions {
 
 export function uiTestHostHttpErrorEnvelope(options: UiTestHostHttpErrorEnvelopeOptions) {
   return {
-    v: 1 as const,
+    v: UI_VALIDATION_PROTOCOL_VERSION,
     kind: 'response' as const,
     id: options.requestId,
     requestId: options.requestId,
