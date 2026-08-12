@@ -6,7 +6,7 @@ export interface ListSessionsArgs {
   search?: string;
   sortBy?: 'recent' | 'name';
   limit?: number;
-  offset?: number;
+  cursor?: string;
 }
 
 export async function handleListSessions(
@@ -22,7 +22,7 @@ export async function handleListSessions(
       search: args.search,
       sortBy: args.sortBy,
       limit: args.limit,
-      offset: args.offset,
+      cursor: args.cursor,
     });
     return successResponse(JSON.stringify(result, null, 2));
   } catch (error) {

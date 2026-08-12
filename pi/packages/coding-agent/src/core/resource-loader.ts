@@ -216,6 +216,8 @@ export interface DefaultResourceLoaderOptions {
 	noContextFiles?: boolean;
 	systemPrompt?: string;
 	appendSystemPrompt?: string[];
+	extensionServiceScope?: import("./extension-manifest.ts").ExtensionCapabilityScopeV1;
+	extensionServiceParentRegistry?: import("./extensions/service-registry.ts").ExtensionServiceRegistry;
 	extensionsOverride?: (base: LoadExtensionsResult) => LoadExtensionsResult;
 	skillsOverride?: (base: { skills: Skill[]; diagnostics: ResourceDiagnostic[] }) => {
 		skills: Skill[];
@@ -249,6 +251,8 @@ export class DefaultResourceLoader implements ResourceLoader {
 	private noContextFiles: boolean;
 	private systemPromptSource?: string;
 	private appendSystemPromptSource?: string[];
+	private extensionServiceScope: import("./extension-manifest.ts").ExtensionCapabilityScopeV1;
+	private extensionServiceParentRegistry?: import("./extensions/service-registry.ts").ExtensionServiceRegistry;
 	private extensionsOverride?: (base: LoadExtensionsResult) => LoadExtensionsResult;
 	private skillsOverride?: (base: { skills: Skill[]; diagnostics: ResourceDiagnostic[] }) => {
 		skills: Skill[];
@@ -295,6 +299,8 @@ export class DefaultResourceLoader implements ResourceLoader {
 		this.noContextFiles = options.noContextFiles ?? false;
 		this.systemPromptSource = options.systemPrompt;
 		this.appendSystemPromptSource = options.appendSystemPrompt;
+		this.extensionServiceScope = options.extensionServiceScope ?? "session";
+		this.extensionServiceParentRegistry = options.extensionServiceParentRegistry;
 		this.extensionsOverride = options.extensionsOverride;
 		this.skillsOverride = options.skillsOverride;
 		this.promptsOverride = options.promptsOverride;
@@ -302,7 +308,14 @@ export class DefaultResourceLoader implements ResourceLoader {
 		this.systemPromptOverride = options.systemPromptOverride;
 		this.appendSystemPromptOverride = options.appendSystemPromptOverride;
 
-		this.extensionsResult = { extensions: [], errors: [], runtime: createExtensionRuntime() };
+		this.extensionsResult = {
+			extensions: [],
+			errors: [],
+			runtime: createExtensionRuntime({
+				scope: this.extensionServiceScope,
+				parentServiceRegistry: this.extensionServiceParentRegistry,
+			}),
+		};
 		this.skills = [];
 		this.skillDiagnostics = [];
 		this.prompts = [];
@@ -844,6 +857,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 				manifestUI: resource.metadata.extensionUI,
 				frontendLoadable: resource.metadata.extensionFrontendLoadable,
 				frontendDiagnostics: resource.metadata.extensionFrontendDiagnostics,
+				capabilityBindings: resource.metadata.extensionCapabilityBindings,
 			};
 			const resolvedPath = this.resolveResourcePath(resource.path);
 			result.set(resource.path, metadata);
@@ -910,6 +924,10 @@ export class DefaultResourceLoader implements ResourceLoader {
 			this.eventBus,
 			activationByPath,
 			metadataByPath,
+			{
+				scope: this.extensionServiceScope,
+				parentServiceRegistry: this.extensionServiceParentRegistry,
+			},
 		);
 		const inlineExtensions = await this.loadExtensionFactories(extensionsResult.runtime, phase);
 		extensionsResult.extensions.push(...inlineExtensions.extensions);

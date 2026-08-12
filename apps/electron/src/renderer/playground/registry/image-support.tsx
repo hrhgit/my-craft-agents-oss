@@ -20,6 +20,7 @@ function BannerDemo({
   modelName: string
   onClickEnable?: () => void
 }) {
+  const { t } = useTranslation()
   const [enabled, setEnabled] = React.useState(false)
   return (
     <div className="w-full max-w-[640px] mx-auto p-6">
@@ -35,8 +36,8 @@ function BannerDemo({
         )}
         <div className="px-4 py-6 text-foreground/40 text-sm">
           {enabled
-            ? 'Image support enabled — banner dismissed.'
-            : 'Imagine the chat input here. Banner sits above any staged attachments.'}
+            ? t('playground.imageSupport.bannerDismissed')
+            : t('playground.imageSupport.bannerPlaceholder')}
         </div>
       </div>
     </div>
@@ -113,15 +114,19 @@ export const imageSupportComponents: ComponentEntry[] = [
   {
     id: 'image-support-banner',
     name: 'Image Support — Pre-flight Banner',
+    nameZh: '图片支持 — 前置横幅',
     category: 'Chat Inputs',
     description:
       'Inline warning rendered above the chat input when the user has staged images on a custom-endpoint model that is configured as text-only. One-click action toggles the per-model supportsImages override.',
+    descriptionZh:
+      '当用户在文本专用的自定义端点模型上暂存了图片时，显示在聊天输入框上方的内联警告。一键操作可切换该模型的 supportsImages 覆盖。',
     component: BannerDemo,
     layout: 'centered',
     props: [
       {
         name: 'modelName',
         description: 'Display name of the active text-only model',
+        descriptionZh: '当前文本专用模型的显示名称',
         control: { type: 'string' },
         defaultValue: 'qwen3-coder',
       },
@@ -129,12 +134,16 @@ export const imageSupportComponents: ComponentEntry[] = [
     variants: [
       {
         name: 'Default',
+        nameZh: '默认',
         description: 'Generic text-only custom-endpoint model with images staged',
+        descriptionZh: '通用文本专用自定义端点模型，已暂存图片',
         props: { modelName: 'qwen3-coder' },
       },
       {
         name: 'Long model name',
+        nameZh: '长模型名称',
         description: 'Verifies wrapping behaviour for long names',
+        descriptionZh: '验证长名称的换行表现',
         props: { modelName: 'minimax-text-01-very-long-id-no-images-here' },
       },
     ],
@@ -143,9 +152,12 @@ export const imageSupportComponents: ComponentEntry[] = [
   {
     id: 'image-support-picker-row',
     name: 'Image Support — Picker Row',
+    nameZh: '图片支持 — 选择行',
     category: 'Chat Inputs',
     description:
       'A single chat-input model picker row with the per-model image-support toggle. The icon is gated to pi_custom connections — built-in providers (anthropic / pi) hide it because their catalogs are SDK-owned.',
+    descriptionZh:
+      '带单模型图片支持切换的聊天输入模型选择行。图标仅在 pi_custom 连接下显示——内置提供商（anthropic / pi）因目录由 SDK 管理而隐藏。',
     component: PickerRow,
     layout: 'centered',
     props: [
@@ -162,12 +174,14 @@ export const imageSupportComponents: ComponentEntry[] = [
       {
         name: 'showVisionToggle',
         description: 'true for pi_custom (custom endpoints), false for built-in providers',
+        descriptionZh: 'pi_custom（自定义端点）为 true，内置提供商为 false',
         control: { type: 'boolean' },
         defaultValue: true,
       },
       {
         name: 'visionOn',
         description: 'Per-model supportsImages override resolution',
+        descriptionZh: '单模型 supportsImages 覆盖解析结果',
         control: { type: 'boolean' },
         defaultValue: false,
       },
@@ -175,22 +189,30 @@ export const imageSupportComponents: ComponentEntry[] = [
     variants: [
       {
         name: 'pi_custom — text-only (default)',
+        nameZh: 'pi_custom — 仅文本（默认）',
         description: 'Toggle visible, dim icon — image support disabled',
+        descriptionZh: '切换可见，图标变暗——图片支持已禁用',
         props: { modelName: 'qwen3-coder', isSelected: false, showVisionToggle: true, visionOn: false },
       },
       {
         name: 'pi_custom — vision-on',
+        nameZh: 'pi_custom — 视觉开启',
         description: 'Toggle visible, bright icon — per-model override true',
+        descriptionZh: '切换可见，图标明亮——单模型覆盖为 true',
         props: { modelName: 'minimax-vision', isSelected: false, showVisionToggle: true, visionOn: true },
       },
       {
         name: 'pi_custom — selected, vision-on',
+        nameZh: 'pi_custom — 已选中且视觉开启',
         description: 'Both Check and bright icon visible',
+        descriptionZh: '对勾和明亮图标同时可见',
         props: { modelName: 'minimax-vision', isSelected: true, showVisionToggle: true, visionOn: true },
       },
       {
         name: 'Built-in provider (no toggle)',
+        nameZh: '内置提供商（无切换）',
         description: 'Anthropic or pi — no toggle rendered',
+        descriptionZh: 'Anthropic 或 pi——不渲染切换',
         props: { modelName: 'claude-haiku-4-5', isSelected: true, showVisionToggle: false, visionOn: false },
       },
     ],

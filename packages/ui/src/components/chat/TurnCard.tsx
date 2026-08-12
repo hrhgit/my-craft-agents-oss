@@ -569,8 +569,10 @@ function getToolDisplayName(name: string): string {
   // Friendly display names for specific tools
   const displayNames: Record<string, string> = {
     'TodoWrite': 'Todo List Updated',
-    'get_session_info': 'Get Session Info',
     'list_sessions': 'List Sessions',
+    'create_session': 'Create Session',
+    'read_session': 'Read Session',
+    'send_message_to_session': 'Send Message to Session',
   }
 
   return displayNames[stripped] || stripped

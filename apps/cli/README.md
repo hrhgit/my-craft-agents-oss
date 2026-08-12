@@ -10,6 +10,8 @@ real-time streaming, and validating server health.
 > which manages workspace config domains such as skills and automations.
 > This `mortise-cli` is the WebSocket client that drives a running server.
 
+Extension service discovery and real extension-service invocation are exposed by the project `mortise-ui` control plane (`extension-services list|describe|invoke`) so acceptance runs use the same Pi registry, provider resolution, schema validation, cancellation, and runtime identity checks as Electron and WebUI. `apps/cli` remains the headless server client and does not duplicate the Developer Kit command surface.
+
 ## Quick start
 
 ```bash
@@ -85,12 +87,12 @@ a structured cancellation in the default non-interactive mode.
 ### Independent child-session windows (desktop-only)
 
 The mortise desktop app can open pi session tree child sessions (branches
-spawned via `spawn_session`) in independent UI windows — see the
+started via `subagent`) in independent UI windows — see the
 SubagentPanel's "在独立窗口打开" button. This is a **desktop-only** feature:
 
 - The CLI has no windowing infrastructure and does not expose the
   `window:openChildSessionWindow` IPC channel.
-- Under the CLI, child sessions spawned via `spawn_session` run in the pi
+- Under the CLI, child tasks started via `subagent` run in the Pi
   session tree but are not surfaced in a separate UI. Their output is
   captured in the pi session JSONL logs and can be inspected via
   `session messages <id>` or `listChildSessions` on the parent session.

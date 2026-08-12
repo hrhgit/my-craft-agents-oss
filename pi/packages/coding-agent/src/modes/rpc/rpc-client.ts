@@ -11,6 +11,7 @@ import type { AgentMessage, ThinkingLevel } from "@mortise/pi-agent-core";
 import type { ImageContent } from "@mortise/pi-ai/types";
 import type { AgentSessionEvent, SessionStats } from "../../core/agent-session.ts";
 import type { CompactionResult } from "../../core/compaction/index.ts";
+import type { ExtensionServiceCatalogV1, ExtensionServiceResultV1 } from "../../core/extensions/types.ts";
 import { PI_GLOBAL_HOST_INSTANCE_ID_ENV, readPiGlobalHostState } from "../../core/global-host-state.ts";
 import type {
 	HostExtensionsResult,
@@ -476,6 +477,7 @@ export class RpcClient {
 			clientMutationId?: string;
 			interruptedAttempt?: boolean;
 			attachments?: import("@mortise/pi-ai/types").UserAttachmentMetadata[];
+			origin?: import("@mortise/pi-ai/types").UserMessageOrigin;
 		},
 	): Promise<RpcSessionCommandDisposition> {
 		const response = await this.send({
@@ -488,6 +490,7 @@ export class RpcClient {
 			clientMutationId: options.clientMutationId,
 			interruptedAttempt: options.interruptedAttempt,
 			attachments: options.attachments,
+			origin: options.origin,
 		});
 		return this.getData(response);
 	}
@@ -498,13 +501,14 @@ export class RpcClient {
 	async steer(
 		message: string,
 		images: ImageContent[] | undefined,
-		options: { clientMutationId?: string } = {},
+		options: { clientMutationId?: string; origin?: import("@mortise/pi-ai/types").UserMessageOrigin } = {},
 	): Promise<RpcSessionCommandDisposition> {
 		const response = await this.send({
 			type: "steer",
 			message,
 			images,
 			clientMutationId: options.clientMutationId,
+			origin: options.origin,
 		});
 		return this.getData(response);
 	}
@@ -518,6 +522,7 @@ export class RpcClient {
 		options: {
 			clientMutationId?: string;
 			attachments?: import("@mortise/pi-ai/types").UserAttachmentMetadata[];
+			origin?: import("@mortise/pi-ai/types").UserMessageOrigin;
 		} = {},
 	): Promise<RpcSessionCommandDisposition> {
 		const response = await this.send({
@@ -526,11 +531,14 @@ export class RpcClient {
 			images,
 			clientMutationId: options.clientMutationId,
 			attachments: options.attachments,
+			origin: options.origin,
 		});
 		return this.getData(response);
 	}
 
-	async withdrawQueued(clientMutationId: string): Promise<{ status: "removed" } | { status: "rejected"; reason: "already-consumed" }> {
+	async withdrawQueued(
+		clientMutationId: string,
+	): Promise<{ status: "removed" } | { status: "rejected"; reason: "already-consumed" }> {
 		const response = await this.send({ type: "withdraw_queued", clientMutationId });
 		return this.getData(response);
 	}
@@ -930,6 +938,33 @@ export class RpcClient {
 		return this.getData<HostModelCatalog>(response);
 	}
 
+	async extensionServicesList(): Promise<ExtensionServiceCatalogV1> {
+		return this.getData<ExtensionServiceCatalogV1>(
+			await this.send({ type: "extension_services_list" }, NO_RPC_REQUEST_TIMEOUT),
+		);
+	}
+	async extensionServicesDescribe(capability: string): Promise<ExtensionServiceCatalogV1["providers"]> {
+		return this.getData<ExtensionServiceCatalogV1["providers"]>(
+			await this.send({ type: "extension_services_describe", capability }, NO_RPC_REQUEST_TIMEOUT),
+		);
+	}
+	async extensionServicesInvoke(input: {
+		requestId: string;
+		runtimeId?: string;
+		sessionId?: string;
+		capability: string;
+		operation: string;
+		provider?: string;
+		input: unknown;
+		timeoutMs?: number;
+	}): Promise<ExtensionServiceResultV1> {
+		return this.getData<ExtensionServiceResultV1>(await this.send({ type: "extension_services_invoke", ...input }));
+	}
+	async extensionServicesCancel(requestId: string): Promise<boolean> {
+		return this.getData<{ cancelled: boolean }>(await this.send({ type: "extension_services_cancel", requestId }))
+			.cancelled;
+	}
+
 	// =========================================================================
 	// Helpers
 	// =========================================================================
@@ -1047,11 +1082,7 @@ export class RpcClient {
 	/**
 	 * Send prompt and wait for completion, returning all events.
 	 */
-	async promptAndWait(
-		message: string,
-		images?: ImageContent[],
-		timeout?: number | null,
-	): Promise<RpcAgentEvent[]> {
+	async promptAndWait(message: string, images?: ImageContent[], timeout?: number | null): Promise<RpcAgentEvent[]> {
 		const disposition = await this.prompt(message, images, {});
 		if (disposition.status !== "started") throw new Error(`Prompt was not started: ${disposition.status}`);
 		const eventsPromise = this.collectEvents(disposition.attemptId, timeout);
@@ -1248,13 +1279,15 @@ export class RpcClient {
 						action: "modify",
 						input: result.input,
 					});
-				} else {
+				} else if (result.action === "allow") {
 					respond({
 						type: "tool_execution_response",
 						id: request.id,
 						attemptId: request.attemptId,
 						action: "allow",
 					});
+				} else {
+					throw new Error("Host execution interceptor returned an invalid action");
 				}
 			})
 			.catch((err: unknown) => {
@@ -1531,6 +1564,10 @@ export class PiRuntimeHandle {
 		return this.requestData({ type: "get_state" });
 	}
 
+	getMessages(): Promise<AgentMessage[]> {
+		return this.requestData<{ messages: AgentMessage[] }>({ type: "get_messages" }).then((result) => result.messages);
+	}
+
 	prepareRuntime(): Promise<void> {
 		return this.requestVoid({ type: "prepare_runtime" });
 	}
@@ -1559,6 +1596,7 @@ export class PiRuntimeHandle {
 			clientMutationId?: string;
 			interruptedAttempt?: boolean;
 			attachments?: import("@mortise/pi-ai/types").UserAttachmentMetadata[];
+			origin?: import("@mortise/pi-ai/types").UserMessageOrigin;
 		},
 	): Promise<RpcSessionCommandDisposition> {
 		return this.requestData({
@@ -1571,19 +1609,21 @@ export class PiRuntimeHandle {
 			clientMutationId: options.clientMutationId,
 			interruptedAttempt: options.interruptedAttempt,
 			attachments: options.attachments,
+			origin: options.origin,
 		});
 	}
 
 	steer(
 		message: string,
 		images: ImageContent[] | undefined,
-		options: { clientMutationId?: string } = {},
+		options: { clientMutationId?: string; origin?: import("@mortise/pi-ai/types").UserMessageOrigin } = {},
 	): Promise<RpcSessionCommandDisposition> {
 		return this.requestData({
 			type: "steer",
 			message,
 			images,
 			clientMutationId: options.clientMutationId,
+			origin: options.origin,
 		});
 	}
 
@@ -1593,6 +1633,7 @@ export class PiRuntimeHandle {
 		options: {
 			clientMutationId?: string;
 			attachments?: import("@mortise/pi-ai/types").UserAttachmentMetadata[];
+			origin?: import("@mortise/pi-ai/types").UserMessageOrigin;
 		} = {},
 	): Promise<RpcSessionCommandDisposition> {
 		return this.requestData({
@@ -1601,10 +1642,13 @@ export class PiRuntimeHandle {
 			images,
 			clientMutationId: options.clientMutationId,
 			attachments: options.attachments,
+			origin: options.origin,
 		});
 	}
 
-	withdrawQueued(clientMutationId: string): Promise<{ status: "removed" } | { status: "rejected"; reason: "already-consumed" }> {
+	withdrawQueued(
+		clientMutationId: string,
+	): Promise<{ status: "removed" } | { status: "rejected"; reason: "already-consumed" }> {
 		return this.requestData({ type: "withdraw_queued", clientMutationId });
 	}
 
@@ -1700,6 +1744,33 @@ export class PiRuntimeHandle {
 		return this.requestData({ type: "reload_extensions" }, NO_RPC_REQUEST_TIMEOUT);
 	}
 
+	extensionServicesList(): Promise<ExtensionServiceCatalogV1> {
+		return this.requestData<ExtensionServiceCatalogV1>({ type: "extension_services_list" }, NO_RPC_REQUEST_TIMEOUT);
+	}
+	extensionServicesDescribe(capability: string): Promise<ExtensionServiceCatalogV1["providers"]> {
+		return this.requestData<ExtensionServiceCatalogV1["providers"]>(
+			{ type: "extension_services_describe", capability },
+			NO_RPC_REQUEST_TIMEOUT,
+		);
+	}
+	extensionServicesInvoke(input: {
+		requestId: string;
+		runtimeId?: string;
+		sessionId?: string;
+		capability: string;
+		operation: string;
+		provider?: string;
+		input: unknown;
+		timeoutMs?: number;
+	}): Promise<ExtensionServiceResultV1> {
+		return this.requestData<ExtensionServiceResultV1>({ type: "extension_services_invoke", ...input }, input.timeoutMs);
+	}
+	extensionServicesCancel(requestId: string): Promise<boolean> {
+		return this.requestData<{ cancelled: boolean }>({ type: "extension_services_cancel", requestId }).then(
+			(result) => result.cancelled,
+		);
+	}
+
 	setToolExecutionHandler(handler: RpcToolExecutionHandler | null): Promise<void> {
 		return this.client.setRuntimeToolExecutionHandler(this.runtimeId, handler);
 	}
@@ -1775,11 +1846,7 @@ export class PiRuntimeHandle {
 		});
 	}
 
-	async promptAndWait(
-		message: string,
-		images?: ImageContent[],
-		timeout?: number | null,
-	): Promise<RpcAgentEvent[]> {
+	async promptAndWait(message: string, images?: ImageContent[], timeout?: number | null): Promise<RpcAgentEvent[]> {
 		const disposition = await this.prompt(message, images, {});
 		if (disposition.status !== "started") throw new Error(`Prompt was not started: ${disposition.status}`);
 		const eventsPromise = this.collectEvents(disposition.attemptId, timeout);

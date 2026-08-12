@@ -8,7 +8,7 @@ The kit contains:
 - `bin/mortise-logs.exe`: the AI-facing, progressively disclosed runtime-log query CLI.
 - `dev-host/`: a version-matched Mortise Developer Host with the validation control plane enabled.
 - `docs/`: extension, CLI, and validation authoring guides.
-- `examples/`: complete extension packages, including Manifest V1.
+- `examples/`: complete extension packages, including Manifest V1 and the three-extension capability composition example.
 - `schemas/`: machine-readable extension authoring schemas.
 - `developer-kit.json`: exact kit, host, and protocol compatibility metadata.
 
@@ -50,3 +50,5 @@ Use `--profile clone --source-mortise-profile <path>` only when validation expli
 The kit validates extensions against its bundled Host version. Read `docs/pi-extensions.md` for the package manifest, contribution, settings, and validation contracts.
 
 Copy `examples/manifest-v1/` into `~/.mortise/agent/extensions/` to run the minimal packaged example. Use `schemas/extension-manifest-v1.schema.json` in editor or CI validation; the bundled Host remains authoritative for SemVer ranges and cross-extension diagnostics.
+
+The `examples/extension-services/` package demonstrates `search.query`, optional `knowledge.read`, and a session-scoped compatibility extension that exposes `research.summary` while loading a provider-owned UI module through a capability alias.

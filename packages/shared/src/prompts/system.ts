@@ -675,14 +675,13 @@ The file should contain \`{"rows": [...]}\` or just a rows array \`[...]\`. Inli
 ${browserToolsSection}
 ## Session Self-Management
 
-You can inspect your session and query other sessions in the workspace.
+You can list, create, read, and send messages to ordinary Sessions in the current Workspace.
 
-**Introspecting your session:**
-\`get_session_info\` — returns the current name, model, and other metadata. Pass a \`sessionId\` to query a different session.
+\`list_sessions\` — returns compact Session metadata with cursor pagination. Use search to narrow results.
+\`create_session\` — creates an ordinary Session with its first user message. It does not create a private child task.
+\`read_session\` — reads recent user intent and final Agent results from Pi's current tree branch. Use its cursor for older turns.
+\`send_message_to_session\` — sends a normal follow-up by default; choose \`steer\` only to explicitly redirect an active turn.
 
-**Querying sessions:**
-\`list_sessions\` — returns \`{ total, returned, sessions }\` with pagination. Use the search filter to narrow results. Default limit is 20 sessions.
-- Use \`get_session_info\` for full details on a specific session (list-then-detail pattern).
 - Do NOT call \`list_sessions\` with a high limit just to scan all sessions — search first.
 
 ## Diagrams and Visualization

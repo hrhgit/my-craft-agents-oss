@@ -147,6 +147,19 @@ export interface PiExtensionManifestV1 {
   conflicts?: Record<string, string>;
   capabilities?: string[];
   permissions?: string[];
+  provides?: Record<string, {
+    version: string;
+    scope: 'global' | 'workspace' | 'session';
+    service?: { operations: Record<string, { inputSchema: Record<string, unknown>; outputSchema: Record<string, unknown> }> };
+    ui?: { modules?: string[]; frontends?: string[] };
+  }>;
+  uses?: Record<string, {
+    capability: string;
+    version: string;
+    required?: boolean;
+    provider?: string;
+    facets?: Array<'service' | 'ui'>;
+  }>;
   subagents?: Array<{
     id: string;
     name: string;
@@ -163,6 +176,21 @@ export interface PiExtensionManifestDiagnostic {
   severity: 'warning' | 'error';
   message: string;
   relatedExtensionId?: string;
+  capability?: string;
+  consumerAlias?: string;
+  providerExtensionId?: string;
+}
+export interface PiExtensionCapabilityBindingV1 {
+  alias: string;
+  capability: string;
+  version: string;
+  required: boolean;
+  requestedFacets: Array<'service' | 'ui'>;
+  status: 'bound' | 'missing' | 'version-mismatch' | 'provider-mismatch' | 'ambiguous' | 'facet-missing';
+  providerExtensionId?: string;
+  providerVersion?: string;
+  scope?: 'global' | 'workspace' | 'session';
+  candidateProviderIds?: string[];
 }
 export interface PiExtensionConfigPatch {
   schemaVersion: 1;
@@ -220,6 +248,7 @@ export interface PiExtensionCatalogEntry {
   manifest?: PiExtensionManifestV1;
   manifestStatus: PiExtensionManifestStatus;
   manifestDiagnostics: PiExtensionManifestDiagnostic[];
+  capabilityBindings?: PiExtensionCapabilityBindingV1[];
   loadable: boolean;
   ui?: PiExtensionManifestUIAny;
   frontendLoadable?: boolean;

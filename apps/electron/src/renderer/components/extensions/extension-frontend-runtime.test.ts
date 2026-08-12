@@ -37,7 +37,10 @@ const runtime = {
   locale: 'en',
   notify: () => {},
   backend: { channel: () => ({ getSnapshot: () => undefined, subscribe: () => () => {}, send: async () => undefined }) },
-  dependencies: { extension: () => ({ module: () => ({ load: async <T = unknown>() => ({} as T) }) }) },
+  dependencies: {
+    extension: () => ({ module: () => ({ load: async <T = unknown>() => ({} as T) }) }),
+    use: () => ({ module: () => ({ load: async <T = unknown>() => ({} as T) }) }),
+  },
   host: { get: () => null, query: () => null, queryAll: () => [], watch: () => () => {} },
 }
 
@@ -86,6 +89,18 @@ describe('ExtensionFrontendHost', () => {
     expect(document.head.querySelectorAll('link[data-mortise-extension-module-style]')).toHaveLength(1)
     dependencies.dispose?.()
     expect(document.head.querySelectorAll('link[data-mortise-extension-module-style]')).toHaveLength(0)
+  })
+
+  it('loads a provider module through the consuming extension capability alias', async () => {
+    const dependencies = createExtensionUIDependencies([
+      { schemaVersion: 2, extensionId: 'provider', moduleId: 'components', entryUrl: fixture('module.js'), styleUrls: [], apiVersion: '1.0.0', revision: 1 },
+    ], [], [{
+      extensionId: 'consumer',
+      capabilityBindings: [{ alias: 'kit', capability: 'ui.components', version: '^1.0.0', required: true, requestedFacets: ['ui'], status: 'bound', providerExtensionId: 'provider', providerVersion: '1.0.0', scope: 'session' }],
+    }], 'consumer')
+    const kit = await dependencies.use('kit').module<{ Button: (label: string) => string }>('components').load()
+    expect(kit.Button('send')).toBe('button:send')
+    await expect(createExtensionUIDependencies([], [], [], 'other').use('kit').module('components').load()).rejects.toThrow(/alias kit is unavailable/)
   })
 
   it('resolves stable host anchors and semantic entities', () => {

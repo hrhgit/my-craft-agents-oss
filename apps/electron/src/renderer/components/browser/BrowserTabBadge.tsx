@@ -6,7 +6,7 @@
  */
 
 import { forwardRef, useEffect, useState, type ButtonHTMLAttributes } from 'react'
-import * as Icons from 'lucide-react'
+import { ChevronDown, Globe } from 'lucide-react'
 import { Spinner } from '@mortise/ui'
 import type { BrowserInstanceInfo } from '../../../shared/types'
 import { getHostname, getThemeLuminance } from './utils'
@@ -81,14 +81,14 @@ export const BrowserTabBadge = forwardRef<HTMLButtonElement, BrowserTabBadgeProp
             />
           )
         ) : (
-          <Icons.Globe className="h-3 w-3" />
+          <Globe className="h-3 w-3" />
         )}
       </span>
 
       <span className="truncate ml-0.5 leading-[12px]">{displayLabel}</span>
 
       <span className="shrink-0 h-3 w-3 flex items-center justify-center opacity-55 group-hover:opacity-90 transition-opacity">
-        <Icons.ChevronDown className="h-2.5 w-2.5" />
+        <ChevronDown className="h-2.5 w-2.5" />
       </span>
     </button>
   )

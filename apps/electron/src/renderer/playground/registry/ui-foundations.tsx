@@ -52,8 +52,10 @@ function SettingsFoundationScene() {
 export const uiFoundationComponents: ComponentEntry[] = [{
   id: 'settings-foundations',
   name: 'Settings Foundations',
+  nameZh: '设置基础组件',
   category: 'Settings',
   description: 'Production settings controls composed into a complete interactive page surface.',
+  descriptionZh: '生产设置控件组合成的完整可交互页面。',
   component: SettingsFoundationScene,
   props: [],
   layout: 'top',
@@ -65,5 +67,6 @@ export const uiFoundationComponents: ComponentEntry[] = [{
   scene: {
     kind: 'static',
     label: 'Settings page context',
+    labelZh: '设置页面上下文',
   },
 }]

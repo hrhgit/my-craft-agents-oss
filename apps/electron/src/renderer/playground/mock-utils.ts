@@ -1,3 +1,4 @@
+import { i18n } from '@mortise/shared/i18n'
 import type {
   FileAttachment,
   MessagingPlatformRuntimeInfo,
@@ -421,7 +422,7 @@ export const mockElectronAPI = {
     if (token.includes(':') && token.length > 10) {
       return { success: true, botName: 'Playground Bot', botUsername: 'playground_bot' }
     }
-    return { success: false, error: 'Invalid token format (expected 1234567:ABC...)' }
+    return { success: false, error: i18n.t('playground.messaging.tokenInvalidFormat') }
   },
 
   saveTelegramToken: async (token: string) => {

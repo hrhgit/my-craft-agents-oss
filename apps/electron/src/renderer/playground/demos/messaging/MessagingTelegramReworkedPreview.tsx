@@ -21,6 +21,8 @@
  */
 
 import * as React from 'react'
+import { useTranslation } from 'react-i18next'
+import type { TFunction } from 'i18next'
 import { motion, AnimatePresence } from 'motion/react'
 import {
   ArrowUpRight,
@@ -61,27 +63,39 @@ interface TopicBinding {
   threadId: number
 }
 
-const DIRECT_SESSIONS: DirectSession[] = [
-  { id: 'd1', sessionTitle: 'Interceptor Failure Analysis' },
-  { id: 'd2', sessionTitle: 'Daily standup notes' },
-  { id: 'd3', sessionTitle: 'Triage backlog refresh' },
-]
+function buildDirectSessions(t: TFunction): DirectSession[] {
+  return [
+    {
+      id: 'd1',
+      sessionTitle: t('playground.messaging.fixtures.interceptorFailureAnalysis'),
+    },
+    { id: 'd2', sessionTitle: t('playground.messaging.fixtures.dailyStandupNotes') },
+    { id: 'd3', sessionTitle: t('playground.messaging.fixtures.triageBacklogRefresh') },
+  ]
+}
 
-const TOPIC_BINDINGS: TopicBinding[] = [
-  {
-    id: 't1',
-    sessionTitle: 'GitHub Issue Triage (mortise-oss)',
-    topicName: 'GithubIssues',
-    threadId: 16,
-  },
-  { id: 't2', sessionTitle: 'Evening weather', topicName: 'Weather', threadId: 11 },
-  {
-    id: 't3',
-    sessionTitle: 'Error pattern review (Sentry digest)',
-    topicName: 'Errors',
-    threadId: 22,
-  },
-]
+function buildTopicBindings(t: TFunction): TopicBinding[] {
+  return [
+    {
+      id: 't1',
+      sessionTitle: t('playground.messaging.fixtures.githubIssueTriage'),
+      topicName: 'GithubIssues',
+      threadId: 16,
+    },
+    {
+      id: 't2',
+      sessionTitle: t('playground.messaging.fixtures.eveningWeather'),
+      topicName: 'Weather',
+      threadId: 11,
+    },
+    {
+      id: 't3',
+      sessionTitle: t('playground.messaging.fixtures.errorPatternReview'),
+      topicName: 'Errors',
+      threadId: 22,
+    },
+  ]
+}
 
 // ---------------------------------------------------------------------------
 // Component
@@ -102,12 +116,19 @@ export function MessagingTelegramReworkedPreview({
   directSessions,
   supergroupTopics,
 }: MessagingTelegramReworkedPreviewProps) {
-  const directs = DIRECT_SESSIONS.slice(0, Math.max(0, Math.min(directSessions, DIRECT_SESSIONS.length)))
-  const topics = TOPIC_BINDINGS.slice(0, Math.max(0, Math.min(supergroupTopics, TOPIC_BINDINGS.length)))
+  const { t } = useTranslation()
+  const directs = React.useMemo(() => {
+    const all = buildDirectSessions(t)
+    return all.slice(0, Math.max(0, Math.min(directSessions, all.length)))
+  }, [directSessions, t])
+  const topics = React.useMemo(() => {
+    const all = buildTopicBindings(t)
+    return all.slice(0, Math.max(0, Math.min(supergroupTopics, all.length)))
+  }, [supergroupTopics, t])
 
   return (
     <div className="space-y-6 p-6">
-      <SettingsSection title="Messaging">
+      <SettingsSection title={t('settings.messaging.title')}>
         <SettingsCard>
           <BotHeader connected={telegramConnected} />
 
@@ -143,27 +164,31 @@ function Separator() {
 }
 
 function BotHeader({ connected }: { connected: boolean }) {
+  const { t } = useTranslation()
   return (
     <div className="flex items-center gap-3 px-4 py-3.5">
       <MessagingPlatformIcon platform="telegram" size={ROW_ICON_SIZE} />
       <div className="min-w-0 flex-1">
-        <div className="text-sm font-medium">Telegram</div>
+        <div className="text-sm font-medium">{t('settings.messaging.telegram.title')}</div>
         <div className="mt-0.5 truncate text-xs text-foreground/50">
-          Bot API · {connected ? 'Valid bot: @MortiseBot' : 'Not connected'}
+          {t('settings.messaging.telegram.apiType')} ·{' '}
+          {connected
+            ? t('settings.messaging.telegram.validBot', { username: 'MortiseBot' })
+            : t('playground.messaging.notConnected')}
         </div>
       </div>
       {connected ? (
         <button
           type="button"
           className="rounded-md p-1.5 transition-colors hover:bg-foreground/[0.05]"
-          aria-label="More"
+          aria-label={t('common.more')}
         >
           <MoreHorizontal className="h-4 w-4 text-foreground/50" />
         </button>
       ) : (
         <Button variant="outline" size="sm">
           <Plus className="h-3.5 w-3.5" />
-          Connect
+          {t('common.connect')}
         </Button>
       )}
     </div>
@@ -222,6 +247,7 @@ function DirectSessionsSection({ sessions }: { sessions: DirectSession[] }) {
 }
 
 function DirectSessionRow({ title }: { title: string }) {
+  const { t } = useTranslation()
   // Layout convention matches the production MessagingSettingsPage: type
   // becomes the primary line, the session name drops to the subtitle so
   // Direct and Supergroup rows read in parallel.
@@ -229,7 +255,9 @@ function DirectSessionRow({ title }: { title: string }) {
     <div className="flex items-center gap-3 px-4 py-2.5">
       <SubRowIcon icon={MessageSquare} />
       <div className="min-w-0 flex-1">
-        <div className="truncate text-sm">Direct message session</div>
+        <div className="truncate text-sm">
+          {t('settings.messaging.telegram.directSessionSubtitle')}
+        </div>
         <div className="mt-0.5 truncate text-xs text-foreground/50">{title}</div>
       </div>
       <RowActions />
@@ -238,42 +266,45 @@ function DirectSessionRow({ title }: { title: string }) {
 }
 
 function RowActions() {
+  const { t } = useTranslation()
   return (
     <div className="flex items-center gap-1">
       <Button variant="ghost" size="sm">
         <ArrowUpRight className="h-3.5 w-3.5" />
-        Open
+        {t('common.open')}
       </Button>
       <Button
         variant="ghost"
         size="sm"
         className="text-destructive hover:text-destructive"
       >
-        Disconnect
+        {t('common.disconnect')}
       </Button>
     </div>
   )
 }
 
 function UnpairedSupergroupRow() {
+  const { t } = useTranslation()
   return (
     <div className="flex items-center gap-3 px-4 py-2.5">
       <SubRowIcon icon={MessagesSquare} />
       <div className="min-w-0 flex-1">
-        <div className="text-sm">Supergroup</div>
+        <div className="text-sm">{t('settings.messaging.telegram.supergroup.label')}</div>
         <div className="mt-0.5 truncate text-xs text-foreground/50">
-          Not configured — pair to route automation topics into Telegram.
+          {t('playground.messaging.supergroupNotConfigured')}
         </div>
       </div>
       <Button variant="outline" size="sm">
         <Plus className="h-3.5 w-3.5" />
-        Pair Supergroup
+        {t('settings.messaging.telegram.supergroup.pair')}
       </Button>
     </div>
   )
 }
 
 function PairedSupergroupSection({ topics }: { topics: TopicBinding[] }) {
+  const { t } = useTranslation()
   // Default open when there are topics to draw attention to them; default
   // closed when the supergroup is paired but unused.
   const [isExpanded, setIsExpanded] = React.useState(topics.length > 0)
@@ -293,8 +324,10 @@ function PairedSupergroupSection({ topics }: { topics: TopicBinding[] }) {
           </div>
           <div className="mt-0.5 truncate text-xs text-foreground/50">
             {topics.length === 0
-              ? 'No topics bound yet — automations with `telegramTopic` will create them.'
-              : `${topics.length} ${topics.length === 1 ? 'topic' : 'topics'} bound`}
+              ? t('settings.messaging.telegram.supergroup.noTopicsHint')
+              : t('settings.messaging.telegram.supergroup.topicsBound', {
+                  count: topics.length,
+                })}
           </div>
         </div>
         {isExpanded ? (
@@ -319,11 +352,7 @@ function PairedSupergroupSection({ topics }: { topics: TopicBinding[] }) {
                    so the wording sits exactly under the supergroup name. */
                 <div className="flex items-start gap-3 px-4 py-3 text-xs text-foreground/50">
                   <IconSpacer />
-                  <span>
-                    No bound topics. Set{' '}
-                    <code className="rounded bg-foreground/[0.06] px-1 py-0.5">telegramTopic</code>{' '}
-                    on an automation matcher to create one.
-                  </span>
+                  <span>{t('playground.messaging.supergroupEmptyDetail')}</span>
                 </div>
               ) : (
                 <div className="divide-y divide-border/50">
@@ -335,7 +364,7 @@ function PairedSupergroupSection({ topics }: { topics: TopicBinding[] }) {
               <div className="flex items-center gap-3 px-4 py-2">
                 <IconSpacer />
                 <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive">
-                  Unpair Supergroup
+                  {t('playground.messaging.unpairSupergroup')}
                 </Button>
               </div>
             </div>
@@ -347,6 +376,7 @@ function PairedSupergroupSection({ topics }: { topics: TopicBinding[] }) {
 }
 
 function TopicRow({ binding }: { binding: TopicBinding }) {
+  const { t } = useTranslation()
   // Topic title sits in the same column as the supergroup name above,
   // achieved by occupying the icon slot with an `<IconSpacer />` rather
   // than guessing at a `pl-[N]` value.
@@ -358,7 +388,8 @@ function TopicRow({ binding }: { binding: TopicBinding }) {
         <div className="mt-0.5 flex items-center gap-1.5 text-xs text-foreground/50">
           <Hash className="h-3 w-3" />
           <span className="truncate">
-            {binding.topicName} <span className="text-foreground/30">·</span> Topic #{binding.threadId}
+            {binding.topicName} <span className="text-foreground/30">·</span>{' '}
+            {t('playground.messaging.topicWithId', { id: binding.threadId })}
           </span>
         </div>
       </div>

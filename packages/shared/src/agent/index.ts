@@ -1,10 +1,19 @@
 export * from './conversation-summary.ts';
 
-// Canonical ToolResult type and helpers (shared across session-tools-core, spawn-session-tool, browser-tools)
+// Canonical ToolResult type and helpers (shared across session-tools-core, subagent-tool, browser-tools)
 export type { TextContent, ImageContent, ToolResult } from './tool-result.ts';
 export { errorResponse, successResponse, mcpErrorResponse, getResultText } from './tool-result.ts';
 
 export type { PiSpawnChildSessionOptions, PiSpawnChildSessionResult, PiChildSessionInfo } from './pi-agent.ts';
+export type {
+  SubagentAction,
+  SubagentRequest,
+  SubagentTask,
+  SubagentAgentInfo,
+  SubagentListResult,
+  SubagentWaitResult,
+  SubagentOperationResult,
+} from './base-agent.ts';
 export * from './errors.ts';
 
 // Export session-scoped-tools - tools scoped to a specific session
@@ -48,7 +57,7 @@ export {
 // the public package surface. Mortise server composition imports the internal
 // backend module directly; product and Extension consumers receive only data
 // contracts and host capabilities.
-export type { PiExtensionCommand } from './backend/types.ts';
+export type { ChildTaskActivityEvent, PiExtensionCommand } from './backend/types.ts';
 
 // Export core utilities for shared agent logic
 export * from './core/index.ts';

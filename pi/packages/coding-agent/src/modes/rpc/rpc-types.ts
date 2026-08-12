@@ -16,6 +16,7 @@ import type {
 	ExtensionUIContribution,
 	ExtensionUIValidationDefinitionV1,
 } from "../../core/extensions/types.ts";
+import type { ExtensionServiceCatalogV1, ExtensionServiceResultV1 } from "../../core/extensions/types.ts";
 import type { GlobalBackgroundTaskSnapshot } from "../../core/global-background-tasks.ts";
 import type {
 	HostExtensionsResult,
@@ -86,6 +87,10 @@ export const PI_RPC_COMMANDS = [
 	"get_extensions",
 	"set_extension_config",
 	"get_model_catalog",
+	"extension_services_list",
+	"extension_services_describe",
+	"extension_services_invoke",
+	"extension_services_cancel",
 ] as const;
 
 // ============================================================================
@@ -129,6 +134,8 @@ export interface RpcRuntimeOpenOptions {
 	runtimeId?: string;
 	cwd: string;
 	extensionPaths?: string[];
+	extensionServiceScope?: "workspace" | "session";
+	extensionServiceWorkspaceKey?: string;
 	agentDir?: string;
 	/** Project-local config directory name. Standalone Pi defaults to `.pi`. */
 	projectConfigDir?: string;
@@ -141,6 +148,8 @@ export interface RpcRuntimeOpenOptions {
 	spawnedFrom?: string;
 	/** Host-selected execution overrides retained in the child task header. */
 	spawnConfig?: SessionHeader["spawnConfig"];
+	/** Reliable parent-branch messages persisted before the first child prompt. */
+	seedMessages?: Array<Extract<AgentMessage, { role: "user" | "assistant" }>>;
 	deferResourceLoad?: boolean;
 	persistInitialState?: boolean;
 	/** Keep the runtime transcript entirely in memory and never create a Session file. */
@@ -165,12 +174,7 @@ export type RpcSessionCommandDisposition =
 	| { status: "queued"; attemptId: string }
 	| {
 			status: "rejected";
-			reason:
-				| "not-running"
-				| "already-running"
-				| "compaction-in-progress"
-				| "invalid-state"
-				| "preflight-failed";
+			reason: "not-running" | "already-running" | "compaction-in-progress" | "invalid-state" | "preflight-failed";
 	  };
 
 export type RpcCommand = RpcEnvelope &
@@ -188,6 +192,7 @@ export type RpcCommand = RpcEnvelope &
 				interruptedAttempt?: boolean;
 				/** Sanitized display metadata only; paths and attachment contents are forbidden. */
 				attachments?: UserAttachmentMetadata[];
+				origin?: import("@mortise/pi-ai/types").UserMessageOrigin;
 				/** Host system-prompt override for this turn onward (see PromptOptions.systemPrompt). */
 				systemPrompt?: string;
 				/** Clear a previously persisted host system-prompt override. */
@@ -201,6 +206,7 @@ export type RpcCommand = RpcEnvelope &
 				message: string;
 				images?: ImageContent[];
 				clientMutationId?: string;
+				origin?: import("@mortise/pi-ai/types").UserMessageOrigin;
 		  }
 		| {
 				id?: string;
@@ -209,6 +215,7 @@ export type RpcCommand = RpcEnvelope &
 				images?: ImageContent[];
 				clientMutationId?: string;
 				attachments?: UserAttachmentMetadata[];
+				origin?: import("@mortise/pi-ai/types").UserMessageOrigin;
 		  }
 		| { id?: string; type: "withdraw_queued"; clientMutationId: string }
 		| { id?: string; type: "abort" }
@@ -322,6 +329,21 @@ export type RpcCommand = RpcEnvelope &
 		| { id?: string; type: "get_extensions"; cwd?: string; agentDir?: string; projectConfigDir?: string }
 		| { id?: string; type: "set_extension_config"; name: string; config: Record<string, unknown> }
 		| { id?: string; type: "get_model_catalog"; provider?: string }
+		| { id?: string; type: "extension_services_list" }
+		| { id?: string; type: "extension_services_describe"; capability: string }
+		| {
+				id?: string;
+				type: "extension_services_invoke";
+				requestId: string;
+				runtimeId?: string;
+				sessionId?: string;
+				capability: string;
+				operation: string;
+				provider?: string;
+				input: unknown;
+				timeoutMs?: number;
+		  }
+		| { id?: string; type: "extension_services_cancel"; requestId: string }
 	);
 
 export interface RpcLLMQueryRequest {
@@ -355,6 +377,7 @@ export interface RpcChildSessionInfo {
 	firstMessage: string;
 	status: "running" | "completed" | "interrupted" | "failed";
 	lastOutput?: string;
+	error?: string;
 	persistedClientMutationIds: string[];
 	history: Array<{
 		role: string;
@@ -659,6 +682,34 @@ export type RpcResponse = RpcEnvelope &
 				data?: { result?: unknown };
 		  }
 		| { id?: string; type: "response"; command: "get_model_catalog"; success: true; data: HostModelCatalog }
+		| {
+				id?: string;
+				type: "response";
+				command: "extension_services_list";
+				success: true;
+				data: ExtensionServiceCatalogV1;
+		  }
+		| {
+				id?: string;
+				type: "response";
+				command: "extension_services_describe";
+				success: true;
+				data: ExtensionServiceCatalogV1["providers"];
+		  }
+		| {
+				id?: string;
+				type: "response";
+				command: "extension_services_invoke";
+				success: true;
+				data: ExtensionServiceResultV1;
+		  }
+		| {
+				id?: string;
+				type: "response";
+				command: "extension_services_cancel";
+				success: true;
+				data: { cancelled: boolean };
+		  }
 
 		// Error response (any command can fail)
 		| {

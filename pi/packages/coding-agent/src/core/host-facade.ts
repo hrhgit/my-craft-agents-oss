@@ -132,6 +132,8 @@ export interface HostGlobalModel {
 	maxTokens?: number;
 	headers?: Record<string, string>;
 	compat?: Model<Api>["compat"];
+	/** Another configured model (provider + model id) acting as image-reading proxy. */
+	visionProxy?: { provider: string; model: string };
 	[key: string]: unknown;
 }
 
@@ -1396,6 +1398,7 @@ export async function getExtensionCatalog(
 						manifest,
 						manifestStatus: resource.metadata.extensionManifestStatus ?? "legacy",
 						manifestDiagnostics: resource.metadata.extensionManifestDiagnostics ?? [],
+						capabilityBindings: resource.metadata.extensionCapabilityBindings ?? [],
 						loadable: resource.metadata.extensionLoadable ?? resource.enabled,
 						ui: manifestUI,
 						frontendLoadable: resource.metadata.extensionFrontendLoadable,

@@ -1,5 +1,5 @@
 import * as React from 'react'
-import * as Icons from 'lucide-react'
+import { ChevronLeft, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
 
@@ -52,7 +52,7 @@ export function MobileMenuPage({
               aria-label={t('common.back')}
               className="h-10 w-10 flex items-center justify-center rounded-full active:bg-foreground/10"
             >
-              <Icons.ChevronLeft className="h-5 w-5 text-foreground/80" strokeWidth={1.75} />
+              <ChevronLeft className="h-5 w-5 text-foreground/80" strokeWidth={1.75} />
             </button>
           )}
         </div>
@@ -66,7 +66,7 @@ export function MobileMenuPage({
             aria-label={t('common.close')}
             className="h-10 w-10 flex items-center justify-center rounded-full active:bg-foreground/10"
           >
-            <Icons.X className="h-5 w-5 text-foreground/80" strokeWidth={1.75} />
+            <X className="h-5 w-5 text-foreground/80" strokeWidth={1.75} />
           </button>
         </div>
       </header>

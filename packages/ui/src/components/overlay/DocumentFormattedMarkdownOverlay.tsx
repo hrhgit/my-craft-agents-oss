@@ -12,6 +12,7 @@
  */
 
 import { useEffect, useState, type ReactNode } from 'react'
+import { useTranslation } from 'react-i18next'
 import { ListTodo } from 'lucide-react'
 import { Markdown } from '../markdown'
 import type { AnnotationV1 } from '@mortise/core'
@@ -83,9 +84,13 @@ export function DocumentFormattedMarkdownOverlay({
   isStreaming = false,
   openAnnotationRequest,
   aside,
-  asideTitle = 'Review',
+  asideTitle,
 }: DocumentFormattedMarkdownOverlayProps) {
+  const { t } = useTranslation()
   const [activePane, setActivePane] = useState<'primary' | 'aside'>('primary')
+
+  // Default companion-pane title is translated; callers can override.
+  const effectiveAsideTitle = asideTitle ?? t('overlay.document.asideTitle')
 
   useEffect(() => {
     if (isOpen) setActivePane('primary')
@@ -127,7 +132,7 @@ export function DocumentFormattedMarkdownOverlay({
       filePath={filePath}
       typeBadge={typeBadge}
       copyContent={content}
-      error={error ? { label: 'Write Failed', message: error } : undefined}
+      error={error ? { label: t('overlay.document.writeFailed'), message: error } : undefined}
     >
       {/* Content wrapper — min-h-full for vertical centering within FullscreenOverlayBase's scroll container.
           Scrolling and gradient fade mask are handled by FullscreenOverlayBase. */}
@@ -141,20 +146,20 @@ export function DocumentFormattedMarkdownOverlay({
           {variant === 'plan' && (
             <div className="px-4 py-2 border-b border-border/30 flex items-center gap-2 bg-success/5 rounded-t-[16px]">
               <ListTodo className="w-3 h-3 text-success" />
-              <span className="text-[13px] font-medium text-success">Plan</span>
+              <span className="text-[13px] font-medium text-success">{t('overlay.document.plan')}</span>
             </div>
           )}
 
           {aside ? (
             <>
-              <div className="flex border-b border-border/30 bg-muted/15 p-1 @2xl/document-overlay:hidden" role="tablist" aria-label="Document views">
-                <button type="button" role="tab" aria-selected={activePane === 'primary'} onClick={() => setActivePane('primary')} className={`min-h-9 flex-1 rounded-[6px] px-3 text-xs font-medium ${activePane === 'primary' ? 'bg-background text-foreground shadow-minimal' : 'text-muted-foreground'}`}>Plan</button>
-                <button type="button" role="tab" aria-selected={activePane === 'aside'} onClick={() => setActivePane('aside')} className={`min-h-9 flex-1 rounded-[6px] px-3 text-xs font-medium ${activePane === 'aside' ? 'bg-background text-foreground shadow-minimal' : 'text-muted-foreground'}`}>{asideTitle}</button>
+              <div className="flex border-b border-border/30 bg-muted/15 p-1 @2xl/document-overlay:hidden" role="tablist" aria-label={t('overlay.document.views')}>
+                <button type="button" role="tab" aria-selected={activePane === 'primary'} onClick={() => setActivePane('primary')} className={`min-h-9 flex-1 rounded-[6px] px-3 text-xs font-medium ${activePane === 'primary' ? 'bg-background text-foreground shadow-minimal' : 'text-muted-foreground'}`}>{t('overlay.document.plan')}</button>
+                <button type="button" role="tab" aria-selected={activePane === 'aside'} onClick={() => setActivePane('aside')} className={`min-h-9 flex-1 rounded-[6px] px-3 text-xs font-medium ${activePane === 'aside' ? 'bg-background text-foreground shadow-minimal' : 'text-muted-foreground'}`}>{effectiveAsideTitle}</button>
               </div>
               <div className="@2xl/document-overlay:grid @2xl/document-overlay:grid-cols-2">
                 <div className={activePane === 'primary' ? 'min-w-0' : 'hidden min-w-0 @2xl/document-overlay:block'} role="tabpanel">{documentContent}</div>
-                <aside className={`${activePane === 'aside' ? 'min-w-0' : 'hidden min-w-0 @2xl/document-overlay:block'} border-border/30 @2xl/document-overlay:border-l`} role="tabpanel" aria-label={asideTitle}>
-                  <div className="hidden h-10 items-center border-b border-border/30 bg-muted/15 px-5 text-xs font-medium text-muted-foreground @2xl/document-overlay:flex">{asideTitle}</div>
+                <aside className={`${activePane === 'aside' ? 'min-w-0' : 'hidden min-w-0 @2xl/document-overlay:block'} border-border/30 @2xl/document-overlay:border-l`} role="tabpanel" aria-label={effectiveAsideTitle}>
+                  <div className="hidden h-10 items-center border-b border-border/30 bg-muted/15 px-5 text-xs font-medium text-muted-foreground @2xl/document-overlay:flex">{effectiveAsideTitle}</div>
                   <div className="px-6 py-6 text-sm @2xl/document-overlay:px-8 @2xl/document-overlay:py-8">{aside}</div>
                 </aside>
               </div>

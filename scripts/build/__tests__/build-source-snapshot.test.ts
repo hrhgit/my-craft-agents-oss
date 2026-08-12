@@ -1,15 +1,19 @@
 import { afterEach, describe, expect, it } from 'bun:test'
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   assertMaterializedBuildSourceIdentity,
-  BUILD_DEPENDENCY_INSTALL_TIMEOUT_MS,
   captureBuildSource,
-  frozenBunInstallArgs,
   MATERIALIZED_BUILD_SOURCE_PROVENANCE,
-  runFrozenDependencyInstall,
 } from '../../build-source-snapshot.ts'
+import {
+  BUILD_DEPENDENCY_INSTALL_TIMEOUT_MS,
+  frozenBunInstallArgs,
+  prepareFrozenPiDependencies,
+  prepareFrozenRootDependencies,
+  runFrozenDependencyInstall,
+} from '../dependency-view-cache.ts'
 
 const roots: string[] = []
 
@@ -188,7 +192,61 @@ describe('immutable build source snapshot', () => {
       materialized.dispose()
       capture.dispose()
     }
+  }, 40_000)
+
+  it('reuses the root dependency view when only source files change', () => {
+    const root = createRepository()
+    const scratchRoot = join(root, '.scratch')
+    write(root, 'package.json', '{"name":"fixture-root","private":true,"dependencies":{"fixture-dependency":"1.0.0"}}\n')
+    write(root, 'bun.lock', 'fixture lock\n')
+    write(root, 'bunfig.toml', '[install]\nlinker = "hoisted"\n')
+    const installCountPath = join(root, 'install-count.txt')
+    const fakeBun = createFakeBun(root, installCountPath)
+
+    prepareFrozenRootDependencies(root, scratchRoot, fakeBun)
+    expect(readFileSync(installCountPath, 'utf8')).toBe('1')
+    expect(readFileSync(join(root, 'node_modules', 'fixture-dependency', 'index.js'), 'utf8')).toContain('fixture dependency')
+    rmSync(join(root, 'node_modules'), { recursive: true, force: true })
+
+    write(root, 'apps/electron/main.ts', 'export const tracked = false\n')
+    prepareFrozenRootDependencies(root, scratchRoot, fakeBun)
+    expect(readFileSync(installCountPath, 'utf8')).toBe('1')
+    expect(readFileSync(join(root, 'node_modules', 'fixture-dependency', 'index.js'), 'utf8')).toContain('fixture dependency')
+
+    rmSync(join(root, 'node_modules'), { recursive: true, force: true })
+    write(root, 'package.json', '{"name":"fixture-root","private":true,"dependencies":{"fixture-dependency":"2.0.0"}}\n')
+    prepareFrozenRootDependencies(root, scratchRoot, fakeBun)
+    expect(readFileSync(installCountPath, 'utf8')).toBe('2')
+
+    rmSync(join(root, 'node_modules'), { recursive: true, force: true })
+    write(root, 'package.json', '{"name":"fixture-root","private":true,"dependencies":{"fixture-dependency":"3.0.0"}}\n')
+    prepareFrozenRootDependencies(root, scratchRoot, fakeBun)
+    expect(readFileSync(installCountPath, 'utf8')).toBe('3')
+    const viewRoot = join(scratchRoot, 'dependency-cache', 'views', 'root-bun')
+    expect(readdirSync(viewRoot).filter(name => /^[0-9a-f]{64}$/.test(name)).length).toBe(2)
   }, 20_000)
+
+  it('reuses the Pi dependency view when only Pi source files change', () => {
+    const root = createRepository()
+    const scratchRoot = join(root, '.scratch')
+    write(root, 'pi/package.json', '{"name":"fixture-pi","private":true,"dependencies":{"fixture-pi-dependency":"file:tools/fixture-pi-dependency"}}\n')
+    write(root, 'pi/tools/fixture-pi-dependency/package.json', '{"name":"fixture-pi-dependency","version":"1.0.0"}\n')
+    write(root, 'pi/tools/fixture-pi-dependency/index.js', 'module.exports = "pi dependency"\n')
+    write(root, 'pi/packages/example/package.json', '{"name":"@fixture/pi-example","version":"1.0.0"}\n')
+    write(root, 'pi/packages/example/index.ts', 'export const example = true\n')
+    runNpm(join(root, 'pi'), ['install', '--package-lock-only', '--ignore-scripts', '--no-audit', '--no-fund'])
+
+    prepareFrozenPiDependencies(root, scratchRoot)
+    expect(readFileSync(join(root, 'pi', 'node_modules', 'fixture-pi-dependency', 'index.js'), 'utf8')).toContain('pi dependency')
+    const viewRoot = join(scratchRoot, 'dependency-cache', 'views', 'embedded-pi-npm')
+    expect(readdirSync(viewRoot).filter(name => !name.startsWith('.')).length).toBe(1)
+    rmSync(join(root, 'pi', 'node_modules'), { recursive: true, force: true })
+
+    write(root, 'pi/packages/example/index.ts', 'export const example = false\n')
+    prepareFrozenPiDependencies(root, scratchRoot)
+    expect(readFileSync(join(root, 'pi', 'node_modules', 'fixture-pi-dependency', 'index.js'), 'utf8')).toContain('pi dependency')
+    expect(readdirSync(viewRoot).filter(name => !name.startsWith('.')).length).toBe(1)
+  }, 30_000)
 })
 
 function createRepository(): string {
@@ -224,4 +282,30 @@ function runNpm(root: string, args: string[]): void {
   const command = process.platform === 'win32' ? 'npm.cmd' : 'npm'
   const result = Bun.spawnSync([command, ...args], { cwd: root, stdout: 'pipe', stderr: 'pipe' })
   if (result.exitCode !== 0) throw new Error(new TextDecoder().decode(result.stderr))
+}
+
+function createFakeBun(root: string, installCountPath: string): string {
+  const executable = process.platform === 'win32' ? join(root, 'fake-bun.cmd') : join(root, 'fake-bun')
+  const script = join(root, 'fake-bun.js')
+  write(root, 'fake-bun.js', `
+const fs = require('node:fs')
+const path = require('node:path')
+if (process.argv[2] === '--version') {
+  process.stdout.write('1.0.0\\n')
+  process.exit(0)
+}
+const countPath = ${JSON.stringify(installCountPath)}
+const count = fs.existsSync(countPath) ? Number(fs.readFileSync(countPath, 'utf8')) : 0
+fs.writeFileSync(countPath, String(count + 1))
+const dependency = path.join(process.cwd(), 'node_modules', 'fixture-dependency')
+fs.mkdirSync(dependency, { recursive: true })
+fs.writeFileSync(path.join(dependency, 'index.js'), 'module.exports = "fixture dependency"\\n')
+`)
+  if (process.platform === 'win32') {
+    write(root, 'fake-bun.cmd', `@echo off\r\n"${process.execPath}" "${script}" %*\r\n`)
+  } else {
+    write(root, 'fake-bun', `#!/bin/sh\nexec "${process.execPath}" "${script}" "$@"\n`)
+    chmodSync(executable, 0o755)
+  }
+  return executable
 }

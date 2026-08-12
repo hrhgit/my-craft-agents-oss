@@ -16,6 +16,7 @@ export interface InteractionFlowBatchOptions {
   adapterCommand?: string[]
   waitMs?: number
   expectedBuildId?: string
+  requireFreshBuild?: boolean
   skipBuild?: boolean
   keep?: boolean
 }
@@ -78,6 +79,7 @@ export async function runInteractionFlowBatch(
   let run = await dependencies.start({
     surface,
     expectedBuildId: options.expectedBuildId,
+    requireFreshBuild: options.requireFreshBuild,
     label: options.label ?? `flows-${surface}`,
     profileMode: 'fixture',
     windowMode: options.windowMode ?? (surface === 'electron' ? 'background' : 'foreground'),

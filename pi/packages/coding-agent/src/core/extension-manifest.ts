@@ -20,6 +20,30 @@ export interface ExtensionSubagentTemplateV1 {
 	model?: string;
 }
 
+export type ExtensionCapabilityScopeV1 = "global" | "workspace" | "session";
+export type ExtensionCapabilityFacetV1 = "service" | "ui";
+export type ExtensionJsonSchemaV1 = Record<string, unknown>;
+
+export interface ExtensionCapabilityServiceOperationV1 {
+	inputSchema: ExtensionJsonSchemaV1;
+	outputSchema: ExtensionJsonSchemaV1;
+}
+
+export interface ExtensionCapabilityProvideV1 {
+	version: string;
+	scope: ExtensionCapabilityScopeV1;
+	service?: { operations: Record<string, ExtensionCapabilityServiceOperationV1> };
+	ui?: { modules?: string[]; frontends?: string[] };
+}
+
+export interface ExtensionCapabilityUseV1 {
+	capability: string;
+	version: string;
+	required?: boolean;
+	provider?: string;
+	facets?: ExtensionCapabilityFacetV1[];
+}
+
 export interface ExtensionManifestV1 {
 	schemaVersion: 1;
 	name: string;
@@ -35,6 +59,8 @@ export interface ExtensionManifestV1 {
 	conflicts?: Record<string, string>;
 	capabilities?: string[];
 	permissions?: string[];
+	provides?: Record<string, ExtensionCapabilityProvideV1>;
+	uses?: Record<string, ExtensionCapabilityUseV1>;
 	subagents?: ExtensionSubagentTemplateV1[];
 	loadOrder?: ExtensionManifestLoadOrderV1;
 }
@@ -48,6 +74,13 @@ export type ExtensionManifestDiagnosticCode =
 	| "optional-dependency-version-mismatch"
 	| "conflict"
 	| "dependency-cycle"
+	| "missing-capability"
+	| "capability-version-mismatch"
+	| "capability-provider-mismatch"
+	| "capability-provider-ambiguous"
+	| "capability-facet-missing"
+	| "capability-dependency-cycle"
+	| "capability-ui-reference-missing"
 	| "load-order-cycle";
 
 export interface ExtensionManifestDiagnostic {
@@ -55,6 +88,30 @@ export interface ExtensionManifestDiagnostic {
 	severity: "warning" | "error";
 	message: string;
 	relatedExtensionId?: string;
+	capability?: string;
+	consumerAlias?: string;
+	providerExtensionId?: string;
+}
+
+export type ExtensionCapabilityBindingStatusV1 =
+	| "bound"
+	| "missing"
+	| "version-mismatch"
+	| "provider-mismatch"
+	| "ambiguous"
+	| "facet-missing";
+
+export interface ExtensionCapabilityBindingV1 {
+	alias: string;
+	capability: string;
+	version: string;
+	required: boolean;
+	requestedFacets: ExtensionCapabilityFacetV1[];
+	status: ExtensionCapabilityBindingStatusV1;
+	providerExtensionId?: string;
+	providerVersion?: string;
+	scope?: ExtensionCapabilityScopeV1;
+	candidateProviderIds?: string[];
 }
 
 export type ExtensionManifestStatus = "compatible" | "warning" | "blocked" | "legacy";
@@ -62,6 +119,7 @@ export type ExtensionManifestStatus = "compatible" | "warning" | "blocked" | "le
 const EXTENSION_ID_PATTERN = /^[a-z0-9](?:[a-z0-9.-]{0,126}[a-z0-9])?$/;
 const DECLARATION_ID_PATTERN = /^[a-z][a-z0-9.-]{0,127}$/;
 const TOOL_ID_PATTERN = /^[a-z][a-z0-9._-]{0,255}$/;
+const OPERATION_ID_PATTERN = /^[a-z][a-z0-9._-]{0,127}$/;
 
 function hasOnlyKeys(value: Record<string, unknown>, allowed: readonly string[]): boolean {
 	return Object.keys(value).every((key) => allowed.includes(key));
@@ -132,6 +190,177 @@ function assertToolList(value: unknown, context: string): asserts value is strin
 			throw new Error(`${context}: extension manifest subagents.tools must contain unique tool identifiers`);
 		}
 		seen.add(entry);
+	}
+}
+
+function assertJsonSchema(value: unknown, field: string, context: string): asserts value is ExtensionJsonSchemaV1 {
+	if (!value || typeof value !== "object" || Array.isArray(value)) {
+		throw new Error(`${context}: extension manifest ${field} must be a JSON Schema object`);
+	}
+	let serialized: string;
+	try {
+		serialized = JSON.stringify(value);
+	} catch {
+		throw new Error(`${context}: extension manifest ${field} must be JSON serializable`);
+	}
+	if (!serialized || serialized.length > 256_000) {
+		throw new Error(`${context}: extension manifest ${field} is too large`);
+	}
+}
+
+function assertStableIdList(value: unknown, field: string, context: string): asserts value is string[] | undefined {
+	if (value === undefined) return;
+	if (!Array.isArray(value) || value.length > 128) {
+		throw new Error(`${context}: extension manifest ${field} must be an array with at most 128 entries`);
+	}
+	const seen = new Set<string>();
+	for (const id of value) {
+		if (typeof id !== "string" || !DECLARATION_ID_PATTERN.test(id) || seen.has(id)) {
+			throw new Error(`${context}: extension manifest ${field} contains an invalid or duplicate id`);
+		}
+		seen.add(id);
+	}
+}
+
+function assertCapabilityDeclarations(manifest: Record<string, unknown>, extensionId: string, context: string): void {
+	if (manifest.provides !== undefined) {
+		if (!manifest.provides || typeof manifest.provides !== "object" || Array.isArray(manifest.provides)) {
+			throw new Error(`${context}: extension manifest provides must be an object`);
+		}
+		const entries = Object.entries(manifest.provides as Record<string, unknown>);
+		if (entries.length > 128) throw new Error(`${context}: extension manifest provides has too many entries`);
+		for (const [capabilityId, raw] of entries) {
+			if (!DECLARATION_ID_PATTERN.test(capabilityId) || !raw || typeof raw !== "object" || Array.isArray(raw)) {
+				throw new Error(`${context}: extension manifest provides contains an invalid capability`);
+			}
+			const provide = raw as Record<string, unknown>;
+			if (!hasOnlyKeys(provide, ["version", "scope", "service", "ui"])) {
+				throw new Error(`${context}: extension manifest provides.${capabilityId} contains unknown fields`);
+			}
+			if (typeof provide.version !== "string" || valid(provide.version) === null) {
+				throw new Error(`${context}: extension manifest provides.${capabilityId}.version must be valid semver`);
+			}
+			if (!(["global", "workspace", "session"] as unknown[]).includes(provide.scope)) {
+				throw new Error(`${context}: extension manifest provides.${capabilityId}.scope is invalid`);
+			}
+			let hasFacet = false;
+			if (provide.service !== undefined) {
+				hasFacet = true;
+				if (!provide.service || typeof provide.service !== "object" || Array.isArray(provide.service)) {
+					throw new Error(`${context}: extension manifest provides.${capabilityId}.service must be an object`);
+				}
+				const service = provide.service as Record<string, unknown>;
+				if (
+					!hasOnlyKeys(service, ["operations"]) ||
+					!service.operations ||
+					typeof service.operations !== "object" ||
+					Array.isArray(service.operations)
+				) {
+					throw new Error(
+						`${context}: extension manifest provides.${capabilityId}.service.operations must be an object`,
+					);
+				}
+				const operations = Object.entries(service.operations as Record<string, unknown>);
+				if (operations.length === 0 || operations.length > 128) {
+					throw new Error(
+						`${context}: extension manifest provides.${capabilityId}.service.operations is empty or too large`,
+					);
+				}
+				for (const [operationId, operationRaw] of operations) {
+					if (
+						!OPERATION_ID_PATTERN.test(operationId) ||
+						!operationRaw ||
+						typeof operationRaw !== "object" ||
+						Array.isArray(operationRaw)
+					) {
+						throw new Error(`${context}: extension manifest capability operation is invalid`);
+					}
+					const operation = operationRaw as Record<string, unknown>;
+					if (!hasOnlyKeys(operation, ["inputSchema", "outputSchema"])) {
+						throw new Error(`${context}: extension manifest capability operation contains unknown fields`);
+					}
+					assertJsonSchema(
+						operation.inputSchema,
+						`provides.${capabilityId}.service.operations.${operationId}.inputSchema`,
+						context,
+					);
+					assertJsonSchema(
+						operation.outputSchema,
+						`provides.${capabilityId}.service.operations.${operationId}.outputSchema`,
+						context,
+					);
+				}
+			}
+			if (provide.ui !== undefined) {
+				hasFacet = true;
+				if (!provide.ui || typeof provide.ui !== "object" || Array.isArray(provide.ui)) {
+					throw new Error(`${context}: extension manifest provides.${capabilityId}.ui must be an object`);
+				}
+				const ui = provide.ui as Record<string, unknown>;
+				if (!hasOnlyKeys(ui, ["modules", "frontends"])) {
+					throw new Error(`${context}: extension manifest provides.${capabilityId}.ui contains unknown fields`);
+				}
+				assertStableIdList(ui.modules, `provides.${capabilityId}.ui.modules`, context);
+				assertStableIdList(ui.frontends, `provides.${capabilityId}.ui.frontends`, context);
+				if (
+					((ui.modules as string[] | undefined)?.length ?? 0) +
+						((ui.frontends as string[] | undefined)?.length ?? 0) ===
+					0
+				) {
+					throw new Error(
+						`${context}: extension manifest provides.${capabilityId}.ui must reference a module or frontend`,
+					);
+				}
+			}
+			if (!hasFacet)
+				throw new Error(
+					`${context}: extension manifest provides.${capabilityId} must expose a service or ui facet`,
+				);
+		}
+	}
+	if (manifest.uses !== undefined) {
+		if (!manifest.uses || typeof manifest.uses !== "object" || Array.isArray(manifest.uses)) {
+			throw new Error(`${context}: extension manifest uses must be an object`);
+		}
+		const entries = Object.entries(manifest.uses as Record<string, unknown>);
+		if (entries.length > 128) throw new Error(`${context}: extension manifest uses has too many entries`);
+		for (const [alias, raw] of entries) {
+			if (!DECLARATION_ID_PATTERN.test(alias) || !raw || typeof raw !== "object" || Array.isArray(raw)) {
+				throw new Error(`${context}: extension manifest uses contains an invalid alias`);
+			}
+			const use = raw as Record<string, unknown>;
+			if (!hasOnlyKeys(use, ["capability", "version", "required", "provider", "facets"])) {
+				throw new Error(`${context}: extension manifest uses.${alias} contains unknown fields`);
+			}
+			if (typeof use.capability !== "string" || !DECLARATION_ID_PATTERN.test(use.capability)) {
+				throw new Error(`${context}: extension manifest uses.${alias}.capability is invalid`);
+			}
+			if (typeof use.version !== "string" || validRange(use.version) === null) {
+				throw new Error(`${context}: extension manifest uses.${alias}.version must be a valid semver range`);
+			}
+			if (use.required !== undefined && typeof use.required !== "boolean") {
+				throw new Error(`${context}: extension manifest uses.${alias}.required must be boolean`);
+			}
+			if (
+				use.provider !== undefined &&
+				(typeof use.provider !== "string" ||
+					!EXTENSION_ID_PATTERN.test(use.provider) ||
+					use.provider === extensionId)
+			) {
+				throw new Error(`${context}: extension manifest uses.${alias}.provider is invalid`);
+			}
+			if (use.facets !== undefined) {
+				if (
+					!Array.isArray(use.facets) ||
+					use.facets.length === 0 ||
+					use.facets.length > 2 ||
+					new Set(use.facets).size !== use.facets.length ||
+					use.facets.some((facet) => facet !== "service" && facet !== "ui")
+				) {
+					throw new Error(`${context}: extension manifest uses.${alias}.facets is invalid`);
+				}
+			}
+		}
 	}
 }
 
@@ -218,6 +447,8 @@ export function assertValidExtensionManifest(
 		"conflicts",
 		"capabilities",
 		"permissions",
+		"provides",
+		"uses",
 		"subagents",
 		"loadOrder",
 	];
@@ -283,6 +514,7 @@ export function assertValidExtensionManifest(
 	}
 	assertDeclarationList(manifest.capabilities, "capabilities", context);
 	assertDeclarationList(manifest.permissions, "permissions", context);
+	assertCapabilityDeclarations(manifest, extensionId, context);
 	assertSubagentTemplates(manifest.subagents, context);
 	if (manifest.loadOrder !== undefined) {
 		if (!manifest.loadOrder || typeof manifest.loadOrder !== "object" || Array.isArray(manifest.loadOrder)) {

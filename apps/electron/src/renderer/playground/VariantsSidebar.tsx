@@ -1,6 +1,7 @@
 import * as React from 'react'
+import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
-import type { ComponentEntry, ComponentVariant, PropDefinition } from './registry'
+import type { ComponentEntry, ComponentVariant, PlaygroundLocale, PropDefinition } from './registry'
 
 interface VariantsSidebarProps {
   component: ComponentEntry | null
@@ -9,7 +10,7 @@ interface VariantsSidebarProps {
   props: Record<string, unknown>
   onPropsChange: (props: Record<string, unknown>) => void
   isOpen: boolean
-  locale: 'zh-CN' | 'en'
+  locale: PlaygroundLocale
 }
 
 export function VariantsSidebar({
@@ -21,6 +22,7 @@ export function VariantsSidebar({
   isOpen,
   locale,
 }: VariantsSidebarProps) {
+  const { t } = useTranslation()
   if (!isOpen || !component) return null
 
   const hasVariants = component.variants && component.variants.length > 0
@@ -36,7 +38,7 @@ export function VariantsSidebar({
       {hasVariants && (
         <div className="p-4 border-b border-border">
           <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">
-            {locale === 'zh-CN' ? '变体' : 'Variants'}
+            {t('playground.variants.sectionTitle')}
           </h2>
           <div className="space-y-1">
             {component.variants!.map(variant => (
@@ -50,10 +52,10 @@ export function VariantsSidebar({
                     : 'text-muted-foreground hover:bg-foreground/5 hover:text-foreground'
                 )}
               >
-                <div>{variant.name}</div>
+                <div>{locale === 'zh-CN' ? (variant.nameZh ?? variant.name) : variant.name}</div>
                 {variant.description && (
                   <div className="text-xs mt-0.5 line-clamp-2 text-muted-foreground">
-                    {variant.description}
+                    {locale === 'zh-CN' ? (variant.descriptionZh ?? variant.description) : variant.description}
                   </div>
                 )}
               </button>
@@ -66,13 +68,14 @@ export function VariantsSidebar({
       {hasProps && (
         <div className="p-4">
           <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">
-            {locale === 'zh-CN' ? '属性' : 'Props'}
+            {t('playground.props.sectionTitle')}
           </h2>
           <div className="space-y-3">
             {component.props.map(propDef => (
               <PropControl
                 key={propDef.name}
                 definition={propDef}
+                locale={locale}
                 value={props[propDef.name]}
                 onChange={value => handlePropChange(propDef.name, value)}
               />
@@ -85,7 +88,7 @@ export function VariantsSidebar({
       {!hasVariants && !hasProps && (
         <div className="p-4">
           <p className="text-sm text-muted-foreground italic">
-            {locale === 'zh-CN' ? '未定义变体或属性。' : 'No variants or props defined.'}
+            {t('playground.props.empty')}
           </p>
         </div>
       )}
@@ -99,21 +102,24 @@ export function VariantsSidebar({
 
 interface PropControlProps {
   definition: PropDefinition
+  locale: PlaygroundLocale
   value: unknown
   onChange: (value: unknown) => void
 }
 
-function PropControl({ definition, value, onChange }: PropControlProps) {
-  const { name, description, control } = definition
+function PropControl({ definition, locale, value, onChange }: PropControlProps) {
+  const { name, nameZh, description, descriptionZh, control } = definition
+  const displayName = locale === 'zh-CN' ? (nameZh ?? name) : name
+  const displayDescription = locale === 'zh-CN' ? (descriptionZh ?? description) : description
 
   return (
     <div className="space-y-1">
       <div className="flex flex-col gap-0.5">
         <label className="text-sm font-medium text-foreground">
-          {name}
+          {displayName}
         </label>
-        {description && (
-          <span className="text-xs text-muted-foreground">{description}</span>
+        {displayDescription && (
+          <span className="text-xs text-muted-foreground">{displayDescription}</span>
         )}
       </div>
 

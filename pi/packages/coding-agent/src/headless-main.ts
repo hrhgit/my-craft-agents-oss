@@ -106,6 +106,8 @@ export async function runHeadlessMain(args: string[], options: HeadlessMainOptio
 		deferResourceLoad,
 		persistInitialState,
 		extensionPaths,
+		extensionServiceScope,
+		extensionServiceParentRegistry,
 	}) => {
 		const services = await createAgentSessionServices({
 			cwd: runtimeCwd,
@@ -113,6 +115,8 @@ export async function runHeadlessMain(args: string[], options: HeadlessMainOptio
 			projectConfigDir: runtimeProjectConfigDir,
 			authStorage,
 			deferResourceLoad,
+			extensionServiceScope,
+			extensionServiceParentRegistry,
 			resourceLoaderOptions: {
 				additionalExtensionPaths: (extensionPaths ?? []).map((path, index) =>
 					statSync(path).isDirectory()

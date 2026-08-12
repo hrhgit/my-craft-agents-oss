@@ -1,0 +1,46 @@
+{
+  "name": "example-search-knowledge-compat",
+  "private": true,
+  "type": "module",
+  "pi": {
+    "extensions": [{
+      "id": "example-search-knowledge-compat",
+      "path": "./index.js",
+      "activation": "startup",
+      "manifest": {
+        "schemaVersion": 1,
+        "name": "Example Search Knowledge Composition",
+        "version": "1.0.0",
+        "author": { "name": "Mortise Developer Kit" },
+        "description": "Combines search with an optional knowledge provider and a provider-owned UI module.",
+        "permissions": [],
+        "uses": {
+          "search": { "capability": "search.query", "version": "^1.0.0", "required": true, "facets": ["service", "ui"] },
+          "knowledge": { "capability": "knowledge.read", "version": "^1.0.0", "required": false, "facets": ["service"] }
+        },
+        "provides": {
+          "research.summary": {
+            "version": "1.0.0",
+            "scope": "session",
+            "service": {
+              "operations": {
+                "compose": {
+                  "inputSchema": { "type": "object", "required": ["query"], "properties": { "query": { "type": "string", "minLength": 1 }, "topic": { "type": "string" } }, "additionalProperties": false },
+                  "outputSchema": { "type": "object", "required": ["summary", "results", "knowledgeAvailable"], "properties": { "summary": { "type": "string" }, "results": { "type": "array" }, "knowledgeAvailable": { "type": "boolean" } }, "additionalProperties": false }
+                }
+              }
+            },
+            "ui": { "frontends": ["research-summary"] }
+          }
+        }
+      },
+      "ui": {
+        "schemaVersion": 2,
+        "title": "Example Research Summary",
+        "category": "ui",
+        "compatibility": { "uiApi": "^2.0.0", "mortise": ">=0.1.0 <0.2.0" },
+        "frontends": [{ "id": "research-summary", "entry": "./research-summary.js", "styles": ["./research-summary.css"], "surface": "conversation.timeline.before", "mode": "append", "scope": "session" }]
+      }
+    }]
+  }
+}

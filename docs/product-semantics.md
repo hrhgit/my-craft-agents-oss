@@ -2,7 +2,7 @@
 
 状态：当前参考
 
-更新日期：2026-08-10
+更新日期：2026-08-13
 
 ## 用途
 
@@ -29,6 +29,64 @@ Mortise 是一个由用户塑造、高度可扩展的桌面 Agent 平台。它�
 - 内嵌 Agent runtime 拥有 Agent Loop、Session 主会话记录、工具执行、compaction、retry 和 Extension runtime 等运行时语义。
 - Mortise host 拥有 Workspace、客户端 UI、导航、通用布局、操作系统集成、Automations 编排和其他产品脚手架。
 - Mortise 运行时和项目资源只使用 Mortise 自有的 `.mortise` 根。`.pi` 属于外部独立产品，不是 Mortise 的运行模式、fallback 或兼容数据源。
+
+## 底层设计原则
+
+以下原则是 Mortise 架构判断的底层依据，先于任何具体领域章节阅读。它们被所有模块、专题协议和实现复用；领域章节给出细节，本节给出可复用的边界与约束。
+
+### 分层与权威边界
+
+Mortise 的产品运行模型按以下层级划分：
+
+```text
+Workspace                         Mortise
+└── Session                       Pi
+    ├── 输入队列、历史树与压缩      Pi
+    └── Attempt / Turn             Pi
+        └── Agent Loop             Pi
+            ├── Provider 请求与重试
+            └── 工具调用循环
+```
+
+Mortise 是 Workspace 与产品集成层的事实源，负责 Workspace 生命周期、把前端、CLI、Messaging 和 Automation 的请求路由到目标 Session、提供宿主能力，并订阅 Pi 的长期 Session 事件流建立界面与跨模块投影。Mortise 可以记录当前 `attemptId` 供投影和诊断使用，但不得维护一套独立于 Pi 的 Attempt 状态机，也不向 Pi 签发 execution 权限来决定 Session 是否能够运行。
+
+Pi 是 Session 及其以下运行状态的唯一事实源，负责 Session 历史、命令队列、prompt、steer、follow-up、compact、abort、Attempt 创建与终止、Agent Loop、Provider 重试和工具循环。所有能够改变 Session 运行状态的入口必须汇入同一个 Pi Session 状态机，由 Pi 根据 `idle`、`running`、`stopping` 等状态接受、排队或拒绝，不能存在绕开该状态机的第二条启动路径。
+
+一个持久 Session 在同一时刻只能由一个规范 Pi runtime 拥有。Mortise 负责 Session 到 Pi runtime 的唯一发现与路由，避免 Electron、WebUI 或其他 backend 各自启动竞争实例；这项 runtime ownership 只解决实例唯一性，不管理 Attempt，也不裁决 Pi 已经接受的 Session 命令。
+
+Pi 在接受命令后先发布 `attempt_started`，后续 Session、消息和工具事件均携带同一 `attemptId`，结束时发布 `agent_settled`。Mortise 通过长期事件订阅自下而上应用这些事实；旧 Attempt 的迟到事件只能按 `attemptId` 隔离，不能依靠 Mortise 缺少预先授权而把 Pi 已合法启动的新 Attempt 当作 stale 事件。
+
+可能产生外部副作用的工具使用独立、版本化的旁路记录，至少包含稳定的 `toolCallId`、`attemptId`、`started`、`completed` 或 `outcome-unknown`，不混入 Session transcript。持久化失败、传输失败和只读工具失败可以由 backend 本地自动重试；`outcome-unknown` 作为结构化工具结果交给模型决定核验、重试、换方案或停止。用户界面不提供通用的直接工具重试按钮；模型明确选择重试时，宿主只执行正常的工具格式、权限和运行状态检查。
+
+Attempt 结束后，旧 Attempt 的晚到消息、工具结果和运行事件不得写入当前 transcript 状态或影响新 Attempt，最多记录诊断。backend 关闭采用有上限的正常收尾：停止接收新的产品请求，要求所拥有的 Pi runtime 停止新工具并完成可确认的消息与工具收尾，处理结果未知的工具；超过时限的运行被终止。最后一个 backend 关闭后不再保留由它启动的 Agent Loop 或 Automation 执行进程。
+
+### 单一状态机与调用方无关合同
+
+- 所有能够改变 Session 运行状态的入口必须汇入同一个 Pi Session 状态机；界面、CLI、模型工具、Extension、Automation 和 Messaging 都通过同一命令入口、排队、持久化、事件投影与失败恢复工作，调用方身份只作为来源与审计 metadata，不形成工具专用消息、隐藏执行通道或第二套状态机。
+- 用户消息投递不因调用方而产生不同的产品语义。对既有 Session 发送消息时，所有产品入口提交同一种用户消息意图，并复用同一目标 Session 路由、Pi Session 命令入口、排队规则、持久化边界、事件投影和失败恢复。
+- 普通发送与 `steer` 的差别来自调用方明确选择的命令意图，而不是调用方种类。普通发送遵循统一的 follow-up/下一次 Turn 投递语义；只有显式请求改变当前 Turn 时才使用 `steer`，并继续遵守 native steer 接受或降级规则。
+- 会话查询、读取、投递、等待和控制统一采用“稳定领域协议 + 宿主编排”的分层架构；宿主负责 Workspace 端点路由、跨会话聚合、等待游标与工具适配，不得越权复制 Pi 的 Session/Attempt 状态机。
+- 长任务先持久化操作收据并返回 `operationId`，通信超时或断线只表示结果待核实，不得自动判定业务失败或取消；最终状态由领域事实源、状态查询和可恢复事件确认，真正取消仅来自用户显式取消或明确的资源回收逻辑。
+
+### 规范数据与兼容边界
+
+- Mortise 对当前支持的自有数据使用一个规范 authority，不通过无期 fallback、alias、dual-write 或并行 runtime 维持已被替换的架构。
+- 规范数据共享不表示 backend 运行状态共享。每个 backend 独立管理自己的 Agent Loop、Extension runtime、Automation scheduler、客户端投影和内存状态；它们只通过明确的规范文件或存储合同共享 Session、Workspace、配置、Automation 定义和其他持久数据。
+- 历史数据导入只能是显式、离线的迁移操作，不是启动时的运行时读取路径。
+- 不同版本的已安装和源码开发 backend 可以共享同一 Mortise config/data directory 并存运行。共享数据层使用原子事务、幂等 operation identity、乐观并发、版本化 schema 和 capability negotiation 作为安全边界。
+- 对规范共享数据，不兼容的写能力只限制为 read-only，而不是依赖全局 backend lock 或为每个 backend 创建不同的可变副本。按 backend 类型保存的布局和 Extension 可选状态是明确归属的客户端投影，不是规范共享数据的复制品。
+
+### 故障隔离与降级
+
+- 各功能模块保持故障隔离：单个模块初始化、运行或数据校验失败时，只降级并明确报告该模块，不得阻断其他模块或应用全局启动；仅当共享基础设施失效或无法维持基本一致性时，才允许升级为全局失败。
+- 复合输入区域按能力边界隔离故障：附属控件失败时保留正文编辑与提交，富文本编辑器失败时降级为基础文本输入，避免用整块错误状态替换仍可工作的核心输入能力。
+- 单个 Extension 加载或运行失败只禁用并警告该 Extension，不得拖垮其他 Extension、Session 或 backend（详见“Extension 语义”）。
+
+### 权限审批由 Extension 提供
+
+- 权限审批能力由 Extension 提供，Mortise 核心只保留中立的扩展执行接口；权限状态不得通过额外前缀或动态提示注入模型上下文。产品权限模式只提供“询问”和“始终批准”。
+- 权限 Extension 可以随 Mortise 分发为自带扩展（`mortise-permissions`），也可以独立安装；权限模式状态、策略判断、审批界面和工具调用决策必须完整实现在 Extension 中，Mortise 核心只提供不带权限语义的通用加载、事件、通信与持久化接口，不得保留权限专用实现或兼容执行分支。
+- 工具执行合同保持策略中立：运行时先运行 Extension 的 `tool_call` 处理器，再向宿主请求通用的 allow/block/input-modification 协调；批准模式、批准队列、记忆的决定和审批界面不属于核心运行时或 RPC host。
 
 ## 核心概念图
 
@@ -59,6 +117,16 @@ flowchart TD
 ```
 
 该图只表达产品概念关系，不表达代码依赖方向或存储结构。
+
+## 模型选择与标签
+
+模型的全局配置、组织与选择遵循以下语义：
+
+- 全局默认只保留一个主默认（供应商+模型+推理级别），供新会话与未指定模型的入口使用；不再提供“多个默认槽位”的产品概念。历史遗留的多槽位数据不再在设置页展示，也不作为新会话的默认来源。
+- 模型标签是替代多默认的轻量组织机制：模型可以被打上任意自由文本标签（例如 常用、快速、轻量），标签属于全局模型配置（models.json），不属于会话或工作区状态。
+- 带标签的模型在会话页模型切换器中显示标签徽标；设置页提供“仅显示标签模型”开关（全局 UI 偏好，`shellGui.mortise.showTaggedModelsOnly`）。开启后，会话页切换器只列出带标签的模型，并以单级列表展示（每项直接给出模型与所属供应商），不再使用供应商→模型的二级分组；未开启或不存在带标签模型时保持原有的分组/平铺行为。
+- 模型的基础能力（图片输入、思考、上下文窗口、最大输出、显示名称）可以在设置页按模型直接编辑；这些字段是模型的既有配置属性，不因标签或筛选模式改变。
+- 读图代理模型：可以为没有读图能力（`input` 不含 `image`）的模型指定另一个已配置模型作为读图代理（模型级配置 `visionProxyModelId`）。读图代理采用双层机制：① 自动转录兑底——用户消息含图且活动模型无读图能力时，回合注入前自动调用代理模型描述图片，以结构化文本块注入回合，保证图片不被静默丢弃；② 按需读图工具——无读图能力模型可主动调用读图工具（图片路径 + 可选问题），由代理模型针对性回答。两者共享会话级缓存（图片内容哈希 + 问题指纹）防止重复调用：同一图片同一需求只调用一次代理模型，工具优先复用已有描述；带新问题的调用是带上下文的增量调用。无代理模型可解析时不静默丢弃图片：图片落盘并注入说明文本，提示配置读图代理模型。读图代理仅在活动模型无读图能力时启用，代理模型必须支持图片输入；描述为内部机制，不改变会话持久化内容，中断续接后重新走同一转录路径（缓存命中零成本）。
 
 ## Workspace 与内容
 
@@ -115,14 +183,16 @@ Workspace 是 Mortise 的顶层用户上下文，也是规范内容和位置关�
 
 ## Draft、Session 与 Agent 运行
 
-### 主智能体、子智能体与模板
+### 主智能体、子智能体与配置
 
 - 主智能体是当前 Session 中直接承接用户对话和主要任务的 Agent。它是 Session 的运行主体，不需要另外作为一个独立的、可单独管理的产品对象存在。
 - 子智能体属于 Mortise 的核心能力，不再把它的长期产品边界理解为某个 Extension 私有能力。现有 Extension 形式的实现和设置文案属于历史实现，不能反过来决定产品归属。
 - 子智能体首先是一项基础的临时委派能力：主智能体可以把一个边界清楚的临时任务交给一个子智能体执行，再接收它的结果。一次临时执行不等于创建了一个长期可管理的 Agent。
-- 预制模板是建立在临时委派能力之上的更高层复用方式。模板不是正在运行的子智能体，而是针对某类任务预先准备的提示词、工具范围、权限或其他运行偏好；调用模板时，仍然是创建一次子智能体执行。
-- 模板可以由 Mortise 内置、由用户创建，也可以由 Extension 提供。无论来源如何，模板都接入同一套核心子智能体能力；Extension 提供的是模板定义，不另行拥有一套子智能体执行系统。
-- 当任务明确适合某个模板时，主智能体应优先使用该模板；没有合适模板时，仍可直接创建临时子智能体。模板数量可以逐步增加，但每个模板都应有清楚、互不混淆的用途和能力范围。
+- 可复用智能体配置是本地 Markdown 文本，不是正在运行的子智能体。全局配置位于 `~/.mortise/agent/agents`，Workspace 配置位于 `.mortise/agents`；Workspace 同 ID 配置覆盖全局配置，Extension 配置使用命名空间 ID 且保持只读。配置由 AI 直接编写、选择和调用，当前不提供子智能体配置或调用前端。
+- 配置只表达稳定的系统提示词、可用工具和默认模型偏好；每次运行的当前请求、本次覆盖和父 Session 上下文选择独立传入。上下文继承只沿当前分支选择完整、可靠的用户消息和助手最终回复，不复制推理、工具过程、未完成消息或其他分支。运行开始后保存最终配置与上下文选择的不可变快照。
+- 核心只向模型提供 `subagent` 工具，负责当前 Session 私有子智能体的启动、列表、检查、消息、续接、中断与等待；启动立即返回任务标识，等待不改变或取消业务状态。旧 `spawn_session` 名称不再注册或保留兼容执行分支。
+- 子智能体的状态变化和完成结果投影到父 Session 的过程信息流，不伪造用户消息或助手最终回复，也不自动触发新的 Agent Turn；调用方通过等待、结果读取或新的明确请求继续处理。
+- 子智能体运行协议提供可组合的基础能力并保持默认自由。能力由实际工具、系统提示词和运行环境决定；核心不增加 `read-only`、`write`、权限等级或面向假设风险的强制分类与兜底，结构化结果、预算或强隔离只在调用方明确选择时启用。
 - 子任务与父 Session 的关系表示持久归属和可选的结果关联，不表示子任务属于父 Session 当前的 Agent Loop。智能体子任务拥有独立 Agent Loop；非智能体子任务使用自己的执行单元。父 Agent Loop 结束、重试或替换不影响已经创建的子任务。
 - 关闭父 Session 的标签页或归档父 Session 只改变可见性，不停止父 Session 或子任务。删除父 Session 则先冻结新消息和新子任务，按已登记子任务各自合同停止并完成必要结算，再提交父子删除；失败时删除状态保持可见且可重试，不能留下父已删除而子任务仍运行的不可见状态。
 - 平台只提供父子归属和必须执行的级联边界。结果是否保存、父 Session 如何查询、异常后是否恢复以及如何清理由具体子任务类型决定；平台不为所有任务统一建立结果待投递队列、自动唤醒或孤儿恢复机制。
@@ -138,6 +208,10 @@ Draft 是 Workspace 级、尚未公开的编辑状态。它可以保存 composer
 - 首条消息提交失败时保留，以便用户重试。
 
 “新建会话”和普通启动默认进入 Workspace 级空 Draft，而不是提前创建空 Session。
+
+普通 Session 协调能力可以由界面、CLI、模型工具、Extension 或 Automation 请求创建新 Session，但创建命令必须同时携带首条用户消息，并复用同一个首轮事务与 publication boundary；它不是创建一个可见的空 Session。调用方可以提供名称、模型、附件等创建选项，但这些选项不能单独发布 Session。
+
+普通 Session 创建与 `subagent` 子任务委派不是同一种产品动作。前者创建进入 Workspace 普通 Session 集合的可恢复对话；后者创建由父 Session 私有拥有的子智能体任务，继续遵守自己的作用域、列表和生命周期合同。普通会话协调工具不得借用或扩展 `subagent` 来实现普通 Session 创建。
 
 ### Publication
 
@@ -164,6 +238,14 @@ stateDiagram-v2
 
 Session 是已跨过 publication boundary 的可恢复对话实体。内嵌 Agent runtime 拥有规范对话 message entry；Mortise 可以维护 UI overlay、排队状态和产品 metadata，但 overlay 不是规范 message。
 
+用户消息投递不因调用方而产生不同的产品语义。对既有 Session 发送消息时，界面用户操作、CLI、模型工具、Extension、Automation 和其他产品入口都提交同一种用户消息意图，并复用同一目标 Session 路由、Pi Session 命令入口、排队规则、持久化边界、事件投影和失败恢复。调用方身份只作为来源、权限范围、操作收据和审计 metadata，不创建工具专用消息、隐藏执行通道或第二套状态机。
+
+普通发送与 `steer` 的区别来自调用方明确选择的命令意图，而不是调用方种类。普通发送遵循统一的 follow-up/下一次 Turn 投递语义；只有显式请求改变当前 Turn 时才使用 `steer`，并继续遵守 native steer 接受或降级规则。模型工具不得因为由 Agent 发起就自动获得不同于用户界面发送的插队、合并、耐久性或结算语义。
+
+读取 Session 与恢复 Session 不是同一个动作。Pi Session 的规范历史是由 `parentId` 连接的树，持久化的当前叶节点表示当前活动分支。面向 UI、CLI、模型工具和其他调用方的普通读取默认由 Pi 的当前叶节点沿父链回溯，只投影当前分支，包括当前状态和最近 Turn 的必要用户意图与最终结果，并通过不透明游标继续读取该分支的更早内容；不得扫描整棵树后按全局时间顺序混合其他分支。
+
+普通读取不得默认把当前分支的完整 transcript、原始推理、工具调用过程和命令输出注入调用模型的上下文。完整规范树仍由 Pi 持有，Mortise 不复制或猜测当前叶节点；调用方只有在明确指定分支节点、Turn、条目范围或详情级别时才按需展开。读取其他分支必须显式选择目标节点，并在结果中标明它不是当前分支；较大的消息和工具输出还必须独立限长并标明截断。
+
 对消息和运行来说，以下状态不是同一件事：
 
 - **Accepted**：对应运行时或持久队列已接受消息/投递意图。
@@ -175,6 +257,13 @@ Session 是已跨过 publication boundary 的可恢复对话实体。内嵌 Agen
 客户端、RPC 和 Automation 不应将这些边界压缩成一个模糊的“成功”。
 
 每条完整 AgentMessage 都对应一个独立的规范 tree entry。它必须完成 append、flush 并取得 durable acknowledgement 后，才对其他 backend 共享；不等待整个 turn、`agent_end` 或 `agent_settled`。未完成的流式 assistant 内容只存在 owner backend，不能进入共享 transcript。写入失败时，backend 必须先核对文件尾部；确认失败后停止当前运行、丢弃未保存内容，并使用会话内请求错误样式警告用户。
+
+### 会话命名、未读与通知
+
+- 会话显示名称是 Mortise host 侧的产品 metadata，不是 Pi 规范消息的一部分；它可以由用户设置或由外部事件（如 `name_changed`）更新，但不改变 Pi 的 Session 生命周期事实。
+- `hasUnread` 是 NEW 徽标的唯一事实源：助手完成且用户不在查看该会话时标记未读；用户开始查看非运行中会话时清除；用户也可以手动标记未读。
+- 跨 Workspace 聚合未读会话数与各 Workspace 是否有未读/运行中状态，驱动应用徽标、通知和侧栏分组；隐藏会话不参与计数。
+- 未读与运行中状态是 UI/投影状态，不改变 Pi 的会话生命周期事实。
 
 ### 推理内容与过程展示
 
@@ -205,32 +294,6 @@ UI 将 follow-up 待发送区固定放在 composer 正上方，而不是把尚�
 每条待发送消息右侧只提供三个直接操作：使用 Lucide `ArrowUp` 的发送、编辑和删除。三个按钮均使用图标并提供 tooltip；不增加复制、更多菜单或其他常驻操作。发送表示明确重新投递该消息，编辑修改的是这条待发送记录，删除只移除尚未投递的记录。客户端不能静默丢弃消息，也不能只把纯文本复制回 composer 来代替完整队列状态。
 
 编辑待发送消息时，必须先撤回后台队列并恢复到当前草稿，不能在队列仍持有该消息的同时复制一份新草稿。
-
-### Workspace 与 Session 分层
-
-Mortise 的产品运行模型按以下层级划分：
-
-```text
-Workspace                         Mortise
-└── Session                       Pi
-    ├── 输入队列、历史树与压缩      Pi
-    └── Attempt / Turn             Pi
-        └── Agent Loop             Pi
-            ├── Provider 请求与重试
-            └── 工具调用循环
-```
-
-Mortise 是 Workspace 与产品集成层的事实源，负责 Workspace 生命周期、把前端、CLI、Messaging 和 Automation 的请求路由到目标 Session、提供宿主能力，并订阅 Pi 的长期 Session 事件流建立界面与跨模块投影。Mortise 可以记录当前 `attemptId` 供投影和诊断使用，但不得维护一套独立于 Pi 的 Attempt 状态机，也不向 Pi 签发 execution 权限来决定 Session 是否能够运行。
-
-Pi 是 Session 及其以下运行状态的唯一事实源，负责 Session 历史、命令队列、prompt、steer、follow-up、compact、abort、Attempt 创建与终止、Agent Loop、Provider 重试和工具循环。所有能够改变 Session 运行状态的入口必须汇入同一个 Pi Session 状态机，由 Pi 根据 `idle`、`running`、`stopping` 等状态接受、排队或拒绝，不能存在绕开该状态机的第二条启动路径。
-
-一个持久 Session 在同一时刻只能由一个规范 Pi runtime 拥有。Mortise 负责 Session 到 Pi runtime 的唯一发现与路由，避免 Electron、WebUI 或其他 backend 各自启动竞争实例；这项 runtime ownership 只解决实例唯一性，不管理 Attempt，也不裁决 Pi 已经接受的 Session 命令。
-
-Pi 在接受命令后先发布 `attempt_started`，后续 Session、消息和工具事件均携带同一 `attemptId`，结束时发布 `agent_settled`。Mortise 通过长期事件订阅自下而上应用这些事实；旧 Attempt 的迟到事件只能按 `attemptId` 隔离，不能依靠 Mortise 缺少预先授权而把 Pi 已合法启动的新 Attempt 当作 stale 事件。
-
-可能产生外部副作用的工具使用独立、版本化的旁路记录，至少包含稳定的 `toolCallId`、`attemptId`、`started`、`completed` 或 `outcome-unknown`，不混入 Session transcript。持久化失败、传输失败和只读工具失败可以由 backend 本地自动重试；`outcome-unknown` 作为结构化工具结果交给模型决定核验、重试、换方案或停止。用户界面不提供通用的直接工具重试按钮；模型明确选择重试时，宿主只执行正常的工具格式、权限和运行状态检查。
-
-Attempt 结束后，旧 Attempt 的晚到消息、工具结果和运行事件不得写入当前 transcript 状态或影响新 Attempt，最多记录诊断。backend 关闭采用有上限的正常收尾：停止接收新的产品请求，要求所拥有的 Pi runtime 停止新工具并完成可确认的消息与工具收尾，处理结果未知的工具；超过时限的运行被终止。最后一个 backend 关闭后不再保留由它启动的 Agent Loop 或 Automation 执行进程。
 
 ### 重试分类
 
@@ -272,6 +335,15 @@ Attempt 结束后，旧 Attempt 的晚到消息、工具结果和运行事件不
 
 运行计时在崩溃或重启后不得延续到应用重开时刻；缺少正常终止事件时，以崩溃前上一条完整持久化消息的最后时刻作为计时终点，不把关闭或离线时段计入运行时长。
 
+## Messaging 语义
+
+Mortise Messaging 网关是 host 侧的产品能力，负责把 Telegram、WhatsApp、Feishu 等外部消息通道接入 Mortise 会话。它不是独立产品，也不拥有第二套会话状态机。
+
+- 入站消息映射到稳定的 Workspace/Session 上下文（binding 语义），消息经适配器归一化后进入目标 Session 的用户消息投递合同；通道确认不得先于 durable 接受，即只有目标 Session 规范消息被可靠持久化后，才向通道确认收到。
+- 回复和后续消息通过与普通 Session 相同的会话合同产生，再经网关适配器回到原通道；Messaging 不复制 Pi 的 Session/Attempt 状态机，也不为消息创建另一条持久化路径。
+- 不同通道的适配器拥有各自的配对、访问控制、重连和重复投递语义；远程媒体可能超过本地附件限制，由通道合同负责降级或明确失败。
+- Messaging 绑定、连接状态和设置是 Mortise UI 的产品面；通道成功与否以目标 Session 的持久化与结算为准，不以网关自身的交互速度为准。
+
 ## Extension 语义
 
 Extension 是 Mortise 可扩展性的一级提供者；Mortise 尽量保持通用宿主、生命周期和渲染边界，而不把特定 Extension 业务写进核心。
@@ -283,6 +355,7 @@ Extension 是 Mortise 可扩展性的一级提供者；Mortise 尽量保持通�
 - 未来引入“模式”后，由模式配置在该模式下启用或关闭哪些 Extension 能力。这是模式对全局能力集的选择，不是 Workspace 自己拥有另一套 Extension 管理。
 - Extension backend 是来自正式来源的受信任本地代码，以用户系统权限在子进程中运行；这是长期信任模型，不是等待未来权限沙箱替代的过渡状态。安装界面可以显示来源并说明其本地代码权限，但不能用并不具备强制隔离能力的权限开关制造安全错觉。
 - Extension 可以请求发送用户消息、steer、follow-up、compact、interrupt、创建 Session 或子任务。涉及 Workspace 和产品集成的请求通过 Mortise 路由；涉及当前 Session 的运行命令汇入该 Pi Session 的统一命令队列，由 Pi 状态机接受、排队或拒绝。Extension 不得绕开 Session 状态机直接启动 Agent Loop，也不得创建第二个 Pi runtime 竞争同一持久 Session。
+- Mortise 可以向 Extension 提供中立的 Agent Run 服务，复用同一 Pi Agent Loop、事件、结果和控制合同。Extension 可据此注册自己的后台智能体或多智能体工作流工具，并自行拥有定义、运行记录、编排和界面；这些能力不自动成为核心模型工具、普通 Session 或 Mortise Automation，也不得让 Extension 复制 Pi 的 Agent Loop 状态机。
 - 每个 backend 独立加载和管理自己的 Extension runtime。运行中的 Extension 文件变化不立即热重载；当前实例继续运行，修改在下一次 backend 或 Workspace 重新加载时生效。单个 Extension 加载或运行失败只禁用并警告该 Extension，不得拖垮其他 Extension、Session 或 backend；同一次加载中不反复自动重试。
 - 扩展启停开关只写入下次加载的期望状态，不卸载或改变已创建 runtime 中的工具、命令、权限处理器和 GUI；只有成功的显式重载或新 runtime 创建才应用新状态，重载失败时保留旧 runtime 及 GUI。
 - Extension GUI 仍只能通过 Mortise 的版本化 contribution API 进入产品界面，但这个 UI 边界不会同时将 backend 变成 sandboxed code，也不限制 backend 直接使用当前用户拥有的文件、网络和进程能力。
@@ -290,6 +363,8 @@ Extension 是 Mortise 可扩展性的一级提供者；Mortise 尽量保持通�
 - Mortise 信任 host/RPC 注入的 Workspace、Session、runtime 和 Extension identity，不信任 contribution 内容自报身份。
 - Host-rendered UI 是默认边界。需要自由应用 UI 时使用宿主分配区域内的隔离 sandbox；sandbox 不获得父 DOM、凭据、Electron IPC、任意网络或文件系统权限。
 - Extension 声明内容归属、placement intent 和优先级；Mortise 决定共享区域的实际位置、容量、顺序、overflow、focus、冲突和响应式退化。
+- 扩展 UI 的响应式布局以核心聊天转录和输入框为最高优先级，不得挤占或破坏其可读性与可操作性；扩展可以声明适配不同容量的紧凑表达，宿主在空间不足时按确定规则收纳为更多菜单、可展开区域或该区域适用的可滚动列表。
+- 扩展接入规范以代码表达力、可组合性和工程清晰度为优先，不以无代码或小白式使用门槛为目标；Mortise 提供稳定的底层生命周期、挂载、通信和验收合同，让能够编程或借助 AI 编程的作者自由构建复杂 GUI。
 - 对话相关 UI 默认归属产生它的 message、tool 或 turn；影响下一条消息的 UI 归属 composer；需要脱离对话长期操作的完整工具使用 `workspace.content`。
 - `workspace.content` 只使工具可被用户打开，不自动打开或抢占焦点。Extension 的初始放置偏好不得覆盖用户之后的移动、分组、detach 和保存布局。
 - Extension runtime、贡献注册、命令处理器和内存状态归加载它的 backend，随 backend 结束，不跨 backend 共享。关闭 Extension 标签页只移除当前 backend 的前端投影，不卸载 Extension、不停止其后台能力，也不删除持久状态。
@@ -301,6 +376,16 @@ Extension 是 Mortise 可扩展性的一级提供者；Mortise 尽量保持通�
 - Extension 交互中的每个选择题均由 Mortise 默认提供行内自由填写答案；模型可见的工具参数只声明预设选项，不控制自由填写入口或其文案，交互协议仍保留结构化自由答案。多选项在每行末端显示复选框，选中后使用黑底白勾。
 
 replace 类高自由 surface 的长期边界仍需要产品决定。
+
+### Extension 能力组合
+
+- Extension 是安装、升级、卸载和故障隔离单位；版本化能力是 Extension 之间的组合单位。Extension 可以公开多个具名能力，也可以通过必需或可选依赖消费多个提供者的公开能力。
+- Mortise 正式支持公开能力、硬依赖、软依赖和独立兼容 Extension。源码 Fork、私有对象访问、源码路径注入、任意 Hook 或 Mixin 不属于 Extension 运行时组合合同。
+- 一个能力可以同时包含后端服务、UI 模块和前端入口侧面。各侧面共享能力 ID、版本、提供者解析和诊断，但后端服务继续通过结构化调用运行，UI 模块继续在 renderer 中加载；不得为了表面统一而跨进程传递 JavaScript 对象。
+- 未固定提供者时只自动绑定唯一满足能力、版本、作用域和侧面要求的提供者；多个匹配提供者属于歧义，不按加载顺序、安装顺序或最高版本静默选择。消费方可以显式固定提供者。
+- 必需能力缺失、版本不匹配、歧义或必需依赖循环只阻止消费 Extension 激活；可选能力缺失只关闭相关联动。提供者重载、崩溃或作用域结束后，旧句柄明确失效，不自动切换到另一个提供者。
+- Extension 间服务与 Mortise host-owned capability 是不同边界。前者由 Pi Extension runtime 注册、解析和调用，后者仍由 `ctx.capabilities` 表示；两者不得共享隐含授权或混用身份。
+- `mortise-ui` 必须通过与生产 runtime 相同的能力目录和调用协议发现、描述和验收公开 Extension 服务。开发目录可同时挂载多个 Extension；CLI 不以测试专用实现绕过真实解析、校验、生命周期和故障状态。
 
 ## Skills 与管理界面
 
@@ -322,6 +407,7 @@ Mortise Automations 是唯一的自动化产品能力。它统一定义规范存
 - 当前 trigger 类型是时间和事件。时间 trigger 包含 `cron`、`once` 和 `interval`；action 是 prompt 或 outbound webhook。
 - Automation 的 Agent 动作始终使用 Session 语义。默认目标是创建一个新 Session；用户也可以明确选择已有或事件 Session，并使用 `followUp` 或 `steer` 投递。
 - Mortise 不提供脱离 Session 存在的 Isolated Agent 作为 Automation target，也不为后台 Agent 执行建立另一套用户可见的记录、继续或提升语义。
+- Extension 自行提供的后台 Agent Run 或工作流不改变上述核心 Automation target 边界；只有 Extension 明确把它接入 Automation action 时，Automation 才按该 Extension action 的合同记录执行结果。
 - Automation run history 记录它创建或投递到的 Session 及动作结果，完整对话和后续交互仍属于该 Session，不在 run history 中复制第二份对话。
 - Automation 不重新解释 Agent Loop。`followUp`、`steer`、interrupt、retry、queue 和 turn ordering 继承内嵌 Agent runtime 语义。
 - 事件或时间 occurrence 必须先持久化，再进行匹配、claim 和执行。Adapter 不能绕过定义匹配、run claim 和历史直接向 Session 注入 prompt。
@@ -356,17 +442,26 @@ Electron 和 WebUI 是同一 Mortise 产品的不同平台投影，但不以功�
 - 文件选择框、原生菜单、系统通知和桌面窗口等客户端原生能力由发起请求的客户端执行。当前客户端不支持时明确返回不支持，不因本机存在其他客户端而静默转交。没有明确前台发起客户端的 Automation 或子任务不能使用交互式客户端能力，也不等待、广播或任意选择一个 Electron。
 - 相同 viewport 和交互只在能力合同明确要求一致时才要求跨平台对等。
 
-## 数据、兼容与权威边界
+## 构建与发布
 
-- Mortise 对当前支持的自有数据使用一个规范 authority，不通过无期 fallback、alias、dual-write 或并行 runtime 维持已被替换的架构。
-- 规范数据共享不表示 backend 运行状态共享。每个 backend 独立管理自己的 Agent Loop、Extension runtime、Automation scheduler、客户端投影和内存状态；它们只通过明确的规范文件或存储合同共享 Session、Workspace、配置、Automation 定义和其他持久数据。
-- 历史数据导入只能是显式、离线的迁移操作，不是启动时的运行时读取路径。
-- 不同版本的已安装和源码开发 backend 可以共享同一 Mortise config/data directory 并存运行。共享数据层使用原子事务、幂等 operation identity、乐观并发、版本化 schema 和 capability negotiation 作为安全边界。
-- 对规范共享数据，不兼容的写能力只限制为 read-only，而不是依赖全局 backend lock 或为每个 backend 创建不同的可变副本。按 backend 类型保存的布局和 Extension 可选状态是明确归属的客户端投影，不是规范共享数据的复制品。
+构建产物是不可变、可验证身份的内容寻址产物。构建与打包入口默认按当前源码身份（sourceId）决定复用或重建，保证安装包、Developer Kit 与测试宿主反映当前工作树源码，不静默携带陈旧构建。
+
+- 构建与打包默认捕获当前源码身份并与既有不可变构建比对：源码未变动才复用既有构建，源码变动则重建。重建时块级缓存只构建变动的构建块，未变动的块直接复用其已验证产物。
+- 隔离构建的依赖视图拥有独立于普通源码内容的身份，由锁文件、工作区清单、安装配置、工具链版本和目标平台决定。普通源码变化继续复用已验证的不可变依赖视图，只有依赖身份变化才执行安装并原子发布新视图；复用不得把旧源码工作区链接或可变构建输出带入新快照。
+- 显式指定构建编号（如 `--expected-build-id`）或外部源码身份（如 `--source-id`）时按编号固定复用或校验，不执行默认的内容寻址选择。
+- 快速桌面端测试默认记录测试宿主的构建身份；宿主 sourceId 与当前工作树源码不一致时给出警告，`MORTISE_UI_REQUIRE_FRESH=1`（或 `--require-fresh`）时提升为启动失败。测试验收必须反映被验收的构建身份，不得把陈旧宿主当成当前源码的验收证据。
+
+- 构建入口对未声明构建输入的源码变动不做承诺；只有声明为构建输入的文件影响源码身份。
+- Developer Kit 不再独立分发或离线使用：`dev-host` 只随 Mortise 主安装包分发，运行验证以已安装且版本匹配的 Mortise 本体为前提。`dev-host` 作为独立测试实例复用本体运行时，使用隔离 userData 与进程运行，不得影响正在使用的本体。
+- `dev-host` 与本体字节级相同的运行时文件（Electron 运行时、pi、bun、uv 等）不在主安装包中重复携带，安装后通过同卷链接指向本体同路径文件；`Mortise Developer Host.exe` 与带验证控制面的应用代码仍保留在 `dev-host` 目录。
+- `dev-host` 验证控制面随主安装包版本一起构建、分发和重建，不单独维护版本线。
 
 ## 已接受的详细参考
 
 - [The Red Line: bottom layer vs scaffolding](architecture/red-line.md)
 - [Mortise Automations Architecture And Protocol](architecture/automations-protocol.md)
 - [Pi Extension GUI Architecture](architecture/pi-extension-gui.md)
+- [Extension UI V2](architecture/extension-ui-v2.md)
+- [Extension Capability Composition](architecture/extension-capability-composition.md)
 - [Mortise Extension Authoring Guide](../apps/electron/resources/docs/pi-extensions.md)
+

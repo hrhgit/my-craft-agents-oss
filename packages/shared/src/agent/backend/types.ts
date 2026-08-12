@@ -19,6 +19,7 @@ import type { ExtensionContributionDeltaV1 } from '../../protocol/extension-cont
 import type { ExtensionInteractionBridgeCancelV1, ExtensionInteractionBridgeRequestV1, ExtensionInteractionBridgeSettledV1, ExtensionInteractionResponseV1 } from '../../protocol/extension-interactions.ts';
 import type { ExtensionUIValidationDeltaV1 } from '../../protocol/extension-ui-validation.ts';
 import type { ExtensionFrontendStateV2 } from '../../protocol/extension-frontend-channels.ts';
+import type { ExtensionServiceCatalogDTO, ExtensionServiceResultDTO } from '../../protocol/extension-services.ts';
 import type { FileAttachment } from '../../utils/files.ts';
 import type { ThinkingLevel } from '../thinking-levels.ts';
 import type { Workspace } from '../../config/storage.ts';
@@ -53,6 +54,12 @@ export interface HostQueuedUserProjection {
   }>;
 }
 
+export interface HostQueuedCancellationProjection {
+  clientMutationId: string;
+  messageId?: string;
+  timestamp?: number;
+}
+
 export interface ChildTaskBackgroundOperation {
   operationId: string;
   attemptId: string;
@@ -65,6 +72,14 @@ export interface ChildTaskSettledOperation extends ChildTaskBackgroundOperation 
   status: 'completed' | 'interrupted' | 'failed';
   output?: string;
   modified: string;
+}
+
+export interface ChildTaskActivityEvent {
+  childSessionId: string;
+  phase: 'activity' | 'status';
+  status: 'running' | 'completed' | 'failed' | 'interrupted';
+  summary: string;
+  timestamp?: number;
 }
 
 export interface ChildAttemptRegistrationRequest {
@@ -209,6 +224,9 @@ export interface CoreBackendConfig {
   /** Workspace configuration */
   workspace: Workspace;
 
+  /** Lifecycle owner for Extension services in this Pi runtime. */
+  extensionServiceScope?: 'workspace' | 'session';
+
   /** Session configuration (for resume) */
   session?: Session;
 
@@ -330,6 +348,9 @@ export interface CoreBackendConfig {
   /** Deliver a terminal background child result through the parent Session. */
   onChildTaskSettled?: (operation: ChildTaskSettledOperation) => Promise<void>;
 
+  /** Project bounded child runtime activity into its owning parent Session. */
+  onChildTaskActivity?: (event: ChildTaskActivityEvent) => void;
+
   /** Durably complete a child tool receipt under its exact execution lease. */
   onChildToolExecutionCompleted?: (result: ChildToolExecutionCompleted) => Promise<void>;
 
@@ -366,6 +387,8 @@ export interface ChatOptions {
   interruptedAttempt?: boolean;
   /** Sanitized display metadata forwarded to Pi; never include paths or contents. */
 	attachmentRefs?: Array<{ id: string; name: string; mediaType?: string; size?: number }>;
+	/** Structured origin persisted on the user message without changing its content. */
+	origin?: { type: 'session'; sessionId: string };
 }
 
 /**
@@ -439,7 +462,7 @@ export interface AgentBackend {
    * @returns true if steered (events flow through existing stream),
    *          false if aborted (session layer must queue + re-send)
    */
-  redirect(message: string, clientMutationId?: string): Promise<boolean>;
+  redirect(message: string, clientMutationId?: string, options?: ChatOptions): Promise<boolean>;
 
   /**
    * Queue a native follow-up inside the current logical agent run.
@@ -536,7 +559,7 @@ export interface AgentBackend {
   /**
    * Spawn a child session in the backend's session tree (pi session tree for
    * PiAgent). When absent, the session manager falls back to creating an
-   * independent mortise session. Present on PiAgent; the spawn_session tool path
+   * independent Mortise Session. Present on PiAgent; the subagent tool path
    * delegates here so mortise no longer reimplements session creation.
    */
   spawnChildSession?(
@@ -619,6 +642,10 @@ export interface AgentBackend {
    * 仅 Pi 后端实现；非 Pi 后端可不实现。
    */
   listExtensionCommands?(): Promise<PiExtensionCommand[]>;
+  extensionServicesList?(): Promise<ExtensionServiceCatalogDTO>;
+  extensionServicesDescribe?(capability: string): Promise<ExtensionServiceCatalogDTO['providers']>;
+  extensionServicesInvoke?(input: { requestId: string; runtimeId?: string; sessionId?: string; capability: string; operation: string; provider?: string; input: unknown; timeoutMs?: number }): Promise<ExtensionServiceResultDTO>;
+  extensionServicesCancel?(requestId: string): Promise<boolean>;
   sendExtensionFrontendMessage?(extensionId: string, channelId: string, message: unknown): Promise<unknown>;
 
   /** Project a Host failure through Pi's sequence-owning projection builder. */
@@ -627,6 +654,13 @@ export interface AgentBackend {
   /** Keep a Host-queued user message visible until Pi accepts it. */
   projectQueuedUser?(message: HostQueuedUserProjection): void;
 
+  /**
+   * Project a Host queued-message withdrawal through the sequence-owning
+   * builder so later runtime events cannot collide with the cancellation seq.
+   * Returns the number of entities cancelled (0 when nothing was queued).
+   */
+  projectQueuedCancellation?(message: HostQueuedCancellationProjection): number;
+
   // ============================================================
   // Callbacks (set by facade after construction)
   // ============================================================
@@ -634,7 +668,7 @@ export interface AgentBackend {
   /** Host policy hook invoked before the Agent Loop may execute a tool. */
   onBeforeToolExecution?: ((request: {
     runtimeId?: string;
-    attemptId?: string;
+    attemptId: string;
     toolCallId: string;
     toolName: string;
     input: Record<string, unknown>;
@@ -654,7 +688,7 @@ export interface AgentBackend {
   onBackendAuthRequired: ((reason: string) => void) | null;
 
   /** Called when agent requests spawning a new session */
-  onSpawnSession: ((request: import('../base-agent.ts').SpawnSessionRequest) => Promise<import('../base-agent.ts').SpawnSessionOperationResult>) | null;
+  onSubagent: ((request: import('../base-agent.ts').SubagentRequest) => Promise<import('../base-agent.ts').SubagentOperationResult>) | null;
 }
 
 /**

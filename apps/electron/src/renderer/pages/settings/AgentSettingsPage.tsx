@@ -1,27 +1,17 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-import { Bot, Loader2, LockKeyhole, Pencil, Plus, RotateCcw, Trash2 } from 'lucide-react'
+import { Loader2, Pencil, RotateCcw } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@mortise/ui'
-import type {
-  AgentSettingsSnapshot,
-  MainAgentSettings,
-  SubagentDefinition,
-} from '@mortise/shared/config'
-import { PI_MODEL_REFERENCE_CURRENT_SESSION } from '@mortise/shared/config/pi-extension-settings'
+import type { AgentSettingsSnapshot, MainAgentSettings } from '@mortise/shared/config'
 import { PanelHeader } from '@/components/app-shell/PanelHeader'
 import { HeaderMenu } from '@/components/ui/HeaderMenu'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
-import { SettingsCard, SettingsCardContent, SettingsCardFooter, SettingsSection, SettingsSelectRow, useModelReferenceOptions } from '@/components/settings'
-import { usePiGlobalConfig } from '@/hooks/usePiGlobalConfig'
+import { SettingsCard, SettingsCardContent, SettingsCardFooter, SettingsSection } from '@/components/settings'
 import { routes } from '@/lib/navigate'
 import { getRaw, KEYS, remove, setRaw, type StorageKey } from '@/lib/local-storage'
 import type { DetailsPageMeta } from '@/lib/navigation-registry'
@@ -35,8 +25,6 @@ const SYSTEM_DRAFT_KEY = KEYS.agentSystemPromptDraft
 const COMPACTION_DRAFT_KEY = KEYS.agentCompactionPromptDraft
 
 type PromptKind = 'systemPrompt' | 'compactionPrompt'
-type SubagentDraft = Omit<SubagentDefinition, 'id'> & { id: string }
-
 function readDraft(key: StorageKey, suffix?: string): string | null {
   return getRaw(key, suffix)
 }
@@ -52,45 +40,6 @@ function writeDraft(key: StorageKey, value: string, suffix?: string): void {
 function clearDraft(key: StorageKey, suffix?: string): void {
   try {
     remove(key, suffix)
-  } catch {
-    // Ignore unavailable local storage.
-  }
-}
-
-function slugify(value: string): string {
-  return value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-}
-
-function subagentDraftScope(id: string): string {
-  return id || 'new'
-}
-
-function readSubagentDraft(scope: string, fallback: SubagentDraft): SubagentDraft {
-  try {
-    const raw = readDraft(KEYS.agentSubagentDraft, scope)
-    if (!raw) return fallback
-    const parsed = JSON.parse(raw) as Partial<SubagentDraft>
-    if (
-      typeof parsed.id !== 'string'
-      || typeof parsed.name !== 'string'
-      || typeof parsed.description !== 'string'
-      || typeof parsed.systemPrompt !== 'string'
-      || !Array.isArray(parsed.tools)
-      || parsed.tools.some((tool) => typeof tool !== 'string')
-    ) return fallback
-    return parsed as SubagentDraft
-  } catch {
-    return fallback
-  }
-}
-
-function writeSubagentDraft(scope: string, draft: SubagentDraft): void {
-  try {
-    writeDraft(KEYS.agentSubagentDraft, JSON.stringify(draft), scope)
   } catch {
     // Ignore unavailable local storage.
   }
@@ -248,198 +197,14 @@ function ToolList({
   )
 }
 
-function SubagentDialog({
-  open,
-  agent,
-  availableTools,
-  modelOptions,
-  saving,
-  onOpenChange,
-  onSave,
-  onDelete,
-}: {
-  open: boolean
-  agent: SubagentDefinition | null
-  availableTools: MainAgentSettings['tools']
-  modelOptions: Array<{ value: string; label: string; description?: string }>
-  saving: boolean
-  onOpenChange: (open: boolean) => void
-  onSave: (draft: SubagentDraft) => void
-  onDelete: (agent: SubagentDefinition) => void
-}) {
-  const { t } = useTranslation()
-  const fallback = useMemo<SubagentDraft>(() => agent ?? {
-    id: '',
-    name: '',
-    description: '',
-    systemPrompt: '',
-    tools: availableTools.filter((tool) => tool.enabled).map((tool) => tool.name),
-  }, [agent, availableTools])
-  const draftScope = subagentDraftScope(agent?.id ?? 'new')
-  const [draft, setDraft] = useState<SubagentDraft>(fallback)
-  const [idTouched, setIdTouched] = useState(Boolean(agent))
-
-  useEffect(() => {
-    if (!open) return
-    setDraft(readSubagentDraft(draftScope, fallback))
-    setIdTouched(Boolean(agent))
-  }, [agent, draftScope, fallback, open])
-
-  const updateDraft = useCallback((patch: Partial<SubagentDraft>) => {
-    setDraft((current) => {
-      const next = { ...current, ...patch }
-      writeSubagentDraft(draftScope, next)
-      return next
-    })
-  }, [draftScope])
-
-  const valid = /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(draft.id)
-    && Boolean(draft.name.trim() && draft.description.trim() && draft.systemPrompt.trim())
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl">
-        <DialogHeader>
-          <DialogTitle>{agent ? t('settings.agents.editSubagent') : t('settings.agents.newSubagent')}</DialogTitle>
-          <DialogDescription>{t('settings.agents.subagentDialogDescription')}</DialogDescription>
-        </DialogHeader>
-        <div className="max-h-[68vh] space-y-5 overflow-y-auto pr-1">
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label htmlFor="subagent-name">{t('settings.agents.name')}</Label>
-              <Input
-                id="subagent-name"
-                semanticId="settings.agents.subagent.name"
-                value={draft.name}
-                onChange={(event) => {
-                  const name = event.target.value
-                  updateDraft({ name, ...(!idTouched ? { id: slugify(name) } : {}) })
-                }}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="subagent-id">{t('settings.agents.id')}</Label>
-              <Input
-                id="subagent-id"
-                semanticId="settings.agents.subagent.id"
-                value={draft.id}
-                onChange={(event) => {
-                  setIdTouched(true)
-                  updateDraft({ id: slugify(event.target.value) })
-                }}
-              />
-            </div>
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="subagent-description">{t('settings.agents.agentDescription')}</Label>
-            <Input
-              id="subagent-description"
-              semanticId="settings.agents.subagent.description"
-              value={draft.description}
-              onChange={(event) => updateDraft({ description: event.target.value })}
-            />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="subagent-prompt">{t('settings.agents.systemPrompt')}</Label>
-            <Textarea
-              id="subagent-prompt"
-              semanticId="settings.agents.subagent.systemPrompt"
-              className="min-h-48 resize-y font-mono text-xs leading-5"
-              value={draft.systemPrompt}
-              spellCheck={false}
-              onChange={(event) => updateDraft({ systemPrompt: event.target.value })}
-            />
-          </div>
-          <div className="rounded-md border border-border/70">
-            <SettingsSelectRow
-              label={t('settings.agents.model')}
-              description={t('settings.agents.modelDesc')}
-              value={draft.model ?? PI_MODEL_REFERENCE_CURRENT_SESSION}
-              options={modelOptions}
-              onValueChange={(value) => updateDraft({ model: value === PI_MODEL_REFERENCE_CURRENT_SESSION ? undefined : value })}
-            />
-          </div>
-          <div className="space-y-2">
-            <Label>{t('settings.agents.toolAccess')}</Label>
-            <div className="max-h-56 overflow-y-auto rounded-md border border-border/70">
-              {availableTools.map((tool) => {
-                const checked = draft.tools.includes(tool.name)
-                return (
-                  <div key={tool.name} className="flex min-h-12 items-center justify-between gap-3 border-b border-border/50 px-3 py-2 last:border-b-0">
-                    <div className="min-w-0">
-                      <div className="truncate font-mono text-xs font-medium">{tool.name}</div>
-                      <div className="truncate text-xs text-muted-foreground">{tool.description}</div>
-                    </div>
-                    <Switch
-                      semanticId={`settings.agents.subagent.tool.${tool.name}`}
-                      aria-label={tool.name}
-                      checked={checked}
-                      onCheckedChange={(enabled) => updateDraft({
-                        tools: enabled
-                          ? [...new Set([...draft.tools, tool.name])]
-                          : draft.tools.filter((name) => name !== tool.name),
-                      })}
-                    />
-                  </div>
-                )
-              })}
-            </div>
-          </div>
-        </div>
-        <DialogFooter className="justify-between sm:justify-between">
-          <div>
-            {agent && (
-              <Button
-                variant="destructive"
-                size="sm"
-                semanticId="settings.agents.subagent.delete"
-                disabled={saving}
-                onClick={() => onDelete(agent)}
-              >
-                <Trash2 />
-                {t('common.delete')}
-              </Button>
-            )}
-          </div>
-          <div className="flex gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              semanticId="settings.agents.subagent.cancel"
-              disabled={saving}
-              onClick={() => onOpenChange(false)}
-            >
-              {t('common.cancel')}
-            </Button>
-            <Button
-              size="sm"
-              semanticId="settings.agents.subagent.save"
-              disabled={saving || !valid}
-              onClick={() => onSave(draft)}
-            >
-              {saving && <Loader2 className="animate-spin" />}
-              {t('common.save')}
-            </Button>
-          </div>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  )
-}
-
 export default function AgentSettingsPage() {
   const { t } = useTranslation()
-  const { providers, settings: piSettings } = usePiGlobalConfig()
   const [snapshot, setSnapshot] = useState<AgentSettingsSnapshot | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [editingPrompt, setEditingPrompt] = useState<PromptKind | null>(null)
   const [systemDraft, setSystemDraft] = useState('')
   const [compactionDraft, setCompactionDraft] = useState('')
-  const [selectedSubagent, setSelectedSubagent] = useState<SubagentDefinition | null>(null)
-  const [subagentDialogOpen, setSubagentDialogOpen] = useState(false)
-  const [deleteTarget, setDeleteTarget] = useState<SubagentDefinition | null>(null)
-  const modelOptions = useModelReferenceOptions(providers, piSettings.defaultSlots ?? [])
 
   const loadSettings = useCallback(async () => {
     setLoading(true)
@@ -504,58 +269,6 @@ export default function AgentSettingsPage() {
     await saveMain(undefined, mainAgent)
   }
 
-  const openSubagent = (agent: SubagentDefinition | null) => {
-    setSelectedSubagent(agent)
-    setSubagentDialogOpen(true)
-  }
-
-  const saveSubagent = async (draft: SubagentDraft) => {
-    setSaving(true)
-    try {
-      const result = await window.electronAPI.upsertSubagent({
-        schemaVersion: 1,
-        previousId: selectedSubagent?.id,
-        agent: draft,
-      })
-      setSnapshot((current) => current ? {
-        ...current,
-        subagents: [
-          ...current.subagents.filter((agent) => agent.id !== selectedSubagent?.id && agent.id !== result.agent.id),
-          { ...result.agent, source: 'user' as const, editable: true as const },
-        ].sort((left, right) => left.name.localeCompare(right.name)),
-      } : current)
-      clearDraft(KEYS.agentSubagentDraft, subagentDraftScope(selectedSubagent?.id ?? 'new'))
-      setSubagentDialogOpen(false)
-      toast.success(t('settings.agents.saved'))
-    } catch (error) {
-      console.error('Failed to save subagent:', error)
-      toast.error(t('settings.agents.saveFailed'))
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  const deleteSubagent = async () => {
-    if (!deleteTarget) return
-    setSaving(true)
-    try {
-      await window.electronAPI.deleteSubagent(deleteTarget.id)
-      setSnapshot((current) => current ? {
-        ...current,
-        subagents: current.subagents.filter((agent) => agent.id !== deleteTarget.id),
-      } : current)
-      clearDraft(KEYS.agentSubagentDraft, subagentDraftScope(deleteTarget.id))
-      setDeleteTarget(null)
-      setSubagentDialogOpen(false)
-      toast.success(t('settings.agents.deleted'))
-    } catch (error) {
-      console.error('Failed to delete subagent:', error)
-      toast.error(t('settings.agents.deleteFailed'))
-    } finally {
-      setSaving(false)
-    }
-  }
-
   return (
     <div className="h-full flex flex-col">
       <PanelHeader title={t('settings.agents.title')} actions={<HeaderMenu route={routes.view.settings('agents')} />} />
@@ -565,12 +278,7 @@ export default function AgentSettingsPage() {
             {loading || !snapshot ? (
               <div className="flex justify-center py-12"><Loader2 className="size-5 animate-spin text-muted-foreground" /></div>
             ) : (
-              <Tabs defaultValue="main">
-                <TabsList className="mb-5">
-                  <TabsTrigger semanticId="settings.agents.tab.main" value="main">{t('settings.agents.mainTab')}</TabsTrigger>
-                  <TabsTrigger semanticId="settings.agents.tab.subagents" value="subagents">{t('settings.agents.subagentsTab')}</TabsTrigger>
-                </TabsList>
-                <TabsContent value="main" className="mt-0 space-y-8">
+              <div className="space-y-8">
                   <PromptEditor
                     kind="systemPrompt"
                     title={t('settings.agents.systemPrompt')}
@@ -604,115 +312,11 @@ export default function AgentSettingsPage() {
                     onSave={() => void saveMain({ compactionPrompt: compactionDraft }, undefined, 'compactionPrompt')}
                     onReset={() => void saveMain({ compactionPrompt: null }, undefined, 'compactionPrompt')}
                   />
-                </TabsContent>
-                <TabsContent value="subagents" className="mt-0">
-                  <SettingsSection
-                    title={t('settings.agents.subagentsTitle')}
-                    description={t('settings.agents.subagentsDesc')}
-                    action={
-                      <Button variant="outline" size="sm" semanticId="settings.agents.subagent.add" onClick={() => openSubagent(null)}>
-                        <Plus />
-                        {t('common.add')}
-                      </Button>
-                    }
-                  >
-                    <SettingsCard>
-                      {snapshot.subagents.length === 0 ? (
-                        <div className="flex min-h-40 flex-col items-center justify-center gap-2 px-6 text-center text-muted-foreground">
-                          <Bot className="size-5" />
-                          <div className="text-sm">{t('settings.agents.emptySubagents')}</div>
-                        </div>
-                      ) : snapshot.subagents.map((agent) => {
-                        const content = (
-                          <>
-                            <div className="min-w-0">
-                              <div className="truncate text-sm font-medium">{agent.name}</div>
-                              <div className="mt-0.5 truncate text-xs text-muted-foreground">{agent.description}</div>
-                            </div>
-                            <div className="flex shrink-0 items-center gap-2">
-                              {agent.source === 'extension' && (
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <Badge variant="outline" className="max-w-40 gap-1.5 font-mono font-normal">
-                                      <LockKeyhole className="size-3" />
-                                      <span className="truncate">{agent.extensionId}</span>
-                                    </Badge>
-                                  </TooltipTrigger>
-                                  <TooltipContent>{agent.extensionId}</TooltipContent>
-                                </Tooltip>
-                              )}
-                              <Badge variant="secondary" className="font-mono font-normal">{agent.tools.length}</Badge>
-                            </div>
-                          </>
-                        )
-                        const className = 'flex w-full items-center justify-between gap-4 px-4 py-3.5 text-left'
-                        return agent.editable ? (
-                          <button
-                            key={agent.id}
-                            type="button"
-                            data-mortise-semantic-id={`settings.agents.subagent.${agent.id}`}
-                            className={`${className} transition-colors hover:bg-foreground/3`}
-                            onClick={() => openSubagent(agent)}
-                          >
-                            {content}
-                          </button>
-                        ) : (
-                          <div
-                            key={agent.id}
-                            data-mortise-semantic-id={`settings.agents.subagent.${agent.id}`}
-                            className={className}
-                          >
-                            {content}
-                          </div>
-                        )
-                      })}
-                    </SettingsCard>
-                  </SettingsSection>
-                </TabsContent>
-              </Tabs>
+              </div>
             )}
           </div>
         </ScrollArea>
       </div>
-      {snapshot && (
-        <SubagentDialog
-          open={subagentDialogOpen}
-          agent={selectedSubagent}
-          availableTools={snapshot.mainAgent.tools}
-          modelOptions={modelOptions}
-          saving={saving}
-          onOpenChange={(open) => { setSubagentDialogOpen(open); if (!open) setSelectedSubagent(null) }}
-          onSave={(draft) => void saveSubagent(draft)}
-          onDelete={(agent) => setDeleteTarget(agent)}
-        />
-      )}
-      <Dialog open={deleteTarget !== null} onOpenChange={(open) => { if (!open) setDeleteTarget(null) }}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{t('settings.agents.deleteConfirmTitle')}</DialogTitle>
-            <DialogDescription>{t('settings.agents.deleteConfirmDescription', { name: deleteTarget?.name ?? '' })}</DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              semanticId="settings.agents.subagent.delete.cancel"
-              disabled={saving}
-              onClick={() => setDeleteTarget(null)}
-            >
-              {t('common.cancel')}
-            </Button>
-            <Button
-              variant="destructive"
-              semanticId="settings.agents.subagent.delete.confirm"
-              disabled={saving}
-              onClick={() => void deleteSubagent()}
-            >
-              {saving && <Loader2 className="animate-spin" />}
-              {t('common.delete')}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   )
 }

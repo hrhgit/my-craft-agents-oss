@@ -16,6 +16,7 @@ tags:
   - version
 entrypoints:
   - package.json
+  - scripts/build/dependency-view-cache.ts
   - scripts/build/validate-production-bundles.ts
   - apps/electron/src/main/logger.ts
 depends_on:
@@ -56,6 +57,8 @@ Do not import former upstream changes without explicit direction or own feature 
 # Capabilities
 
 Own workspace manifests, CI, build scripts, packaging metadata, bundled resources, installers, runtime logging, and version lineage.
+
+Isolated source builds reuse immutable dependency views addressed independently from ordinary source files. Root Bun and embedded Pi npm views are identified by lockfiles, workspace manifests, install configuration, toolchain, platform, and architecture; source-only changes rematerialize the matching view instead of reinstalling dependencies.
 
 Root scripts orchestrate Bun and Pi workspaces; Electron scripts package desktop assets; CI runs repository validation and audits. `validate:production-node-bundles` is the non-writing high-frequency production compile, `validate:production-bundles` runs the complete Electron build, and `electron:dist:win`, `electron:dist:mac`, and `electron:dist:linux` own target-platform installer generation.
 

@@ -10,7 +10,7 @@
  * browser pane functions) as they become available.
  */
 
-import type { SpawnSessionFn } from './spawn-session-tool.ts';
+import type { SubagentFn } from './subagent-tool.ts';
 import type { BrowserPaneFns } from './browser-tools.ts';
 import { debug } from '../utils/debug.ts';
 
@@ -25,10 +25,10 @@ export interface SessionScopedToolCallbacks {
   onPlanSubmitted?: (planPath: string) => void;
 
   /**
-   * Callback for spawn_session tool — creates an independent session and sends initial prompt.
-   * Each agent backend delegates to its onSpawnSession callback.
+   * Callback for the subagent tool.
+   * Each Agent backend delegates to its onSubagent callback.
    */
-  spawnSessionFn?: SpawnSessionFn;
+  subagentFn?: SubagentFn;
 
   /**
    * Browser pane functions for browser_* tools.
@@ -37,12 +37,14 @@ export interface SessionScopedToolCallbacks {
    */
   browserPaneFns?: BrowserPaneFns;
 
-  /** Get detailed info about a session (defaults to current). */
-  getSessionInfoFn?: (sessionId?: string) => import('@mortise/session-tools-core').SessionInfo | null;
   /** List sessions in the workspace with pagination. */
   listSessionsFn?: (options?: import('@mortise/session-tools-core').ListSessionsOptions) => import('@mortise/session-tools-core').ListSessionsResult;
-  /** Send a message to another session (inter-session messaging). */
-  sendAgentMessageFn?: (sessionId: string, message: string, attachments?: Array<{ path: string; name?: string }>) => Promise<void>;
+  /** Create and publish an ordinary Session with its first message. */
+  createSessionFn?: (request: import('@mortise/session-tools-core').CreateSessionRequest) => Promise<import('@mortise/session-tools-core').CreateSessionResult>;
+  /** Read a bounded projection of an ordinary Session. */
+  readSessionFn?: (sessionId: string, options?: import('@mortise/session-tools-core').ReadSessionOptions) => Promise<import('@mortise/session-tools-core').ReadSessionResult>;
+  /** Send a normal user message to another ordinary Session. */
+  sendMessageToSessionFn?: (request: import('@mortise/session-tools-core').SendMessageToSessionRequest) => Promise<import('@mortise/session-tools-core').SendMessageToSessionResult>;
   /** Get messaging bindings for a session. */
   getMessagingBindingsFn?: (sessionId: string) => Array<{ platform: string; channelId: string; threadId?: number; channelName?: string; enabled: boolean }>;
   /** Unbind messaging channels from a session. Returns count of removed bindings. */

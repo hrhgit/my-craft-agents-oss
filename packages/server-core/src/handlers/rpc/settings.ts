@@ -13,8 +13,6 @@ import {
   setMidStreamBehavior,
   getAgentSettingsSnapshot,
   updateMainAgentSettings,
-  upsertSubagent,
-  deleteSubagent,
 } from '@mortise/shared/config'
 import { normalizeThinkingLevel, THINKING_LEVEL_IDS } from '@mortise/shared/agent/thinking-levels'
 import * as configStorage from '@mortise/shared/config/storage'
@@ -50,10 +48,10 @@ export const HANDLED_CHANNELS = [
   RPC_CHANNELS.settings.SET_MID_STREAM_BEHAVIOR,
   RPC_CHANNELS.agentSettings.GET,
   RPC_CHANNELS.agentSettings.UPDATE_MAIN,
-  RPC_CHANNELS.agentSettings.UPSERT_SUBAGENT,
-  RPC_CHANNELS.agentSettings.DELETE_SUBAGENT,
   RPC_CHANNELS.tools.GET_BROWSER_TOOL_ENABLED,
   RPC_CHANNELS.tools.SET_BROWSER_TOOL_ENABLED,
+  RPC_CHANNELS.settings.GET_SHOW_TAGGED_MODELS_ONLY,
+  RPC_CHANNELS.settings.SET_SHOW_TAGGED_MODELS_ONLY,
   RPC_CHANNELS.piExtensions.GET_SETTINGS,
   RPC_CHANNELS.piExtensions.SET_SETTINGS,
   RPC_CHANNELS.piExtensions.UPDATE_SETTINGS,
@@ -86,19 +84,6 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
     await deps.sessionManager.reloadProviderRuntime()
     const runtimeProfile = await deps.sessionManager.getAgentRuntimeProfile()
     return getAgentSettingsSnapshot(runtimeProfile)
-  })
-
-  server.handle(RPC_CHANNELS.agentSettings.UPSERT_SUBAGENT, async (
-    _ctx,
-    update: import('@mortise/shared/config').SubagentUpsert,
-  ) => {
-    const agent = upsertSubagent(update)
-    return { success: true, agent }
-  })
-
-  server.handle(RPC_CHANNELS.agentSettings.DELETE_SUBAGENT, async (_ctx, id: string) => {
-    deleteSubagent(id)
-    return { success: true }
   })
 
   // ============================================================
@@ -290,6 +275,15 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
 
   server.handle(RPC_CHANNELS.tools.SET_BROWSER_TOOL_ENABLED, async (_ctx, enabled: boolean) => {
     await configStorage.setBrowserToolEnabled(enabled)
+  })
+
+  // Model picker "仅显示标签模型" preference (local UI preference)
+  server.handle(RPC_CHANNELS.settings.GET_SHOW_TAGGED_MODELS_ONLY, async () => {
+    return configStorage.getShowTaggedModelsOnly()
+  })
+
+  server.handle(RPC_CHANNELS.settings.SET_SHOW_TAGGED_MODELS_ONLY, async (_ctx, enabled: boolean) => {
+    await configStorage.setShowTaggedModelsOnly(enabled)
   })
 
   server.handle(RPC_CHANNELS.tools.GET_MESSAGING_TOOL_ENABLED, async () => {

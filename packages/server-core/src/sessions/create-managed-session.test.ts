@@ -9,9 +9,19 @@ import {
 
 describe('createManagedSession', () => {
   const workspace = {
+    schemaVersion: 2,
     id: 'ws_test',
     name: 'Test Workspace',
-    rootPath: '/tmp/test-workspace',
+    nameSource: 'custom',
+    slug: 'test-workspace',
+    revision: 1,
+    primaryLocationId: 'local',
+    locations: [{
+      id: 'local',
+      name: 'Local',
+      rootName: 'test-workspace',
+      endpoint: { kind: 'local', rootPath: '/tmp/test-workspace' },
+    }],
     createdAt: Date.now(),
   }
 
@@ -67,9 +77,10 @@ describe('createManagedSession', () => {
   })
 
   it('does not render retired namespaced session tools as current internal tools', async () => {
-    await expect(resolveToolDisplayMeta('mcp__session__get_session_info', {}, workspace.rootPath)).resolves.toBeUndefined()
-    await expect(resolveToolDisplayMeta('get_session_info', {}, workspace.rootPath)).resolves.toMatchObject({
-      displayName: 'Session Info',
+    await expect(resolveToolDisplayMeta('mcp__session__get_session_info', {}, '/tmp/test-workspace')).resolves.toBeUndefined()
+    await expect(resolveToolDisplayMeta('get_session_info', {}, '/tmp/test-workspace')).resolves.toBeUndefined()
+    await expect(resolveToolDisplayMeta('read_session', {}, '/tmp/test-workspace')).resolves.toMatchObject({
+      displayName: 'Read Session',
       category: 'native',
     })
   })

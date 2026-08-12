@@ -31,7 +31,7 @@ import {
   executeElectronBuildStages,
   publishBuildBunToolchain,
 } from '../electron-build-cache'
-import { runFrozenDependencyInstall } from '../../build-source-snapshot'
+import { runFrozenDependencyInstall } from '../dependency-view-cache'
 
 const repositoryRoot = resolve(import.meta.dir, '../../..')
 const temporaryRoots: string[] = []
@@ -342,7 +342,7 @@ describe('production bundle validation composition', () => {
     expect(() => resolveExpectedPackageBuildId(['--expected-build-id'])).toThrow('lowercase SHA-256')
   })
 
-  test('reuses builds by default and requires an explicit source freshness request', () => {
+  test('builds by content address by default and reuses only unchanged source builds', () => {
     const expectedBuildId = 'a'.repeat(64)
     expect(resolvePackageFreshSource([])).toBe(false)
     expect(resolvePackageFreshSource(['--fresh-source'])).toBe(true)
@@ -353,10 +353,12 @@ describe('production bundle validation composition', () => {
     ])).toThrow('cannot be combined')
 
     const packageElectron = readSource(resolve(repositoryRoot, 'scripts/build/package-electron.ts'))
-    expect(packageElectron).toContain('resolveReusableElectronBuildId({ buildRoot, mode')
-    expect(packageElectron).toContain("args.includes('--fresh-source')")
-    expect(packageElectron).toContain('if (expectedBuildId) throw error')
-    expect(packageElectron).toContain("if (!freshSource) {\n        throw new Error('No reusable Electron build is available.")
+    // 默认按当前源码内容寻址：总是捕获源码身份并比对既有构建，未命中才冷构建。
+    expect(packageElectron).not.toContain('resolveReusableElectronBuildId')
+    expect(packageElectron).toContain('Capturing immutable source snapshot')
+    expect(packageElectron).toContain('Acquiring pinned build')
+    expect(packageElectron).toContain('captureElectronBuildSource({ repoRoot: buildSourceRoot, buildRoot })')
+    expect(packageElectron).not.toContain('No reusable Electron build is available')
     expect(packageElectron).not.toContain('falling back to current source')
   })
 

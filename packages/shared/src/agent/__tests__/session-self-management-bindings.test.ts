@@ -6,20 +6,10 @@ import {
 } from '../session-scoped-tools.ts';
 import { createSessionToolContext } from '../session-tool-context.ts';
 import { attachSessionSelfManagementBindings } from '../session-self-management-bindings.ts';
-import type { SessionToolContext, SessionInfo, TextContent } from '@mortise/session-tools-core';
+import type { SessionToolContext, TextContent } from '@mortise/session-tools-core';
 import { SESSION_TOOL_REGISTRY } from '@mortise/session-tools-core';
 
 const noop = () => {};
-
-function makeSessionInfo(overrides: Partial<SessionInfo> = {}): SessionInfo {
-  return {
-    id: 'test-session',
-    name: 'Test Session',
-    createdAt: Date.now(),
-    isActive: true,
-    ...overrides,
-  };
-}
 
 function createBaseContext(sessionId: string): SessionToolContext {
   return createSessionToolContext({
@@ -35,50 +25,50 @@ describe('session query bindings', () => {
 
   beforeEach(() => unregisterSessionScopedToolCallbacks(sessionId));
 
-  it('exposes only registered query callbacks', () => {
+  it('exposes only registered coordination callbacks', async () => {
     const context = createBaseContext(sessionId);
     attachSessionSelfManagementBindings(context, sessionId);
 
-    expect(context.getSessionInfo).toBeUndefined();
     expect(context.listSessions).toBeUndefined();
+    expect(context.createSession).toBeUndefined();
+    expect(context.readSession).toBeUndefined();
+    expect(context.sendMessageToSession).toBeUndefined();
 
     registerSessionScopedToolCallbacks(sessionId, {
-      getSessionInfoFn: id => makeSessionInfo({ id: id ?? sessionId }),
-      listSessionsFn: () => ({ total: 1, returned: 1, sessions: [] }),
+      listSessionsFn: () => ({ sessions: [], hasMore: false }),
+      createSessionFn: async () => ({ sessionId: 'created', messageId: 'message', operationId: 'operation', publication: 'published' }),
+      readSessionFn: async id => ({
+        session: { id, name: id, createdAt: 1, status: 'idle' },
+        branch: { leafId: null, currentLeafId: null, isCurrent: true },
+        turns: [],
+        hasMore: false,
+      }),
+      sendMessageToSessionFn: async () => ({
+        accepted: true,
+        operationId: 'operation',
+        messageId: 'message',
+        delivery: 'followUp',
+      }),
     });
 
-    expect(context.getSessionInfo!()!.id).toBe(sessionId);
-    expect(context.listSessions!().total).toBe(1);
+    expect(context.listSessions!().hasMore).toBe(false);
+    expect((await context.createSession!({ message: 'hello', sourceSessionId: sessionId })).sessionId).toBe('created');
+    expect((await context.readSession!('other')).session.id).toBe('other');
+    expect((await context.sendMessageToSession!({ sessionId: 'other', message: 'hello', sourceSessionId: sessionId })).accepted).toBe(true);
   });
 
   it('uses current callbacks after a late replacement', () => {
     const context = createBaseContext(sessionId);
     attachSessionSelfManagementBindings(context, sessionId);
     registerSessionScopedToolCallbacks(sessionId, {
-      listSessionsFn: () => ({ total: 1, returned: 1, sessions: [] }),
+      listSessionsFn: () => ({ sessions: [{ id: 'one', name: 'one', createdAt: 1, status: 'idle' }], hasMore: false }),
     });
-    expect(context.listSessions!().total).toBe(1);
+    expect(context.listSessions!().sessions[0]?.id).toBe('one');
 
     mergeSessionScopedToolCallbacks(sessionId, {
-      listSessionsFn: () => ({ total: 2, returned: 2, sessions: [] }),
+      listSessionsFn: () => ({ sessions: [{ id: 'two', name: 'two', createdAt: 2, status: 'idle' }], hasMore: false }),
     });
-    expect(context.listSessions!().total).toBe(2);
-  });
-
-  it('passes explicit session IDs through and defaults omitted IDs', () => {
-    const context = createBaseContext(sessionId);
-    attachSessionSelfManagementBindings(context, sessionId);
-    const received: string[] = [];
-    registerSessionScopedToolCallbacks(sessionId, {
-      getSessionInfoFn: id => {
-        received.push(id ?? 'missing');
-        return makeSessionInfo({ id: id ?? sessionId });
-      },
-    });
-
-    context.getSessionInfo!();
-    context.getSessionInfo!('other-session');
-    expect(received).toEqual([sessionId, 'other-session']);
+    expect(context.listSessions!().sessions[0]?.id).toBe('two');
   });
 
   it('does not register retired organization tools', () => {
@@ -86,10 +76,10 @@ describe('session query bindings', () => {
     expect(SESSION_TOOL_REGISTRY.has('set_session_status')).toBe(false);
   });
 
-  it('returns availability errors when query callbacks are absent', async () => {
+  it('returns availability errors when coordination callbacks are absent', async () => {
     const context = createBaseContext(sessionId);
     attachSessionSelfManagementBindings(context, sessionId);
-    for (const name of ['get_session_info', 'list_sessions'] as const) {
+    for (const name of ['list_sessions', 'create_session', 'read_session', 'send_message_to_session'] as const) {
       const result = await SESSION_TOOL_REGISTRY.get(name)!.handler!(context, {});
       expect(result.isError).toBe(true);
       expect((result.content[0] as TextContent).text).toContain('not available in this context');

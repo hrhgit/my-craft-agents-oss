@@ -33,10 +33,18 @@ export type {
   SessionToolCallbacks,
   FileSystemInterface,
   // Session query types
-  SessionInfo,
+  SessionSummary,
+  SessionCoordinationStatus,
   SessionListItem,
   ListSessionsOptions,
   ListSessionsResult,
+  CreateSessionRequest,
+  CreateSessionResult,
+  ReadSessionOptions,
+  SessionReadTurn,
+  ReadSessionResult,
+  SendMessageToSessionRequest,
+  SendMessageToSessionResult,
 } from './context.ts';
 
 export { createNodeFileSystem } from './context.ts';
@@ -59,6 +67,7 @@ export {
   isSessionToolName,
   // JSON Schema converter
   getToolDefsAsJsonSchema,
+  SubagentSchema,
 } from './tool-defs.ts';
 
 export type {

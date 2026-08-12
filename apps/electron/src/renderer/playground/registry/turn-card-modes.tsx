@@ -1,5 +1,6 @@
-import type { ComponentEntry } from './types'
-import { useState, useEffect, useRef, useCallback, type ReactNode } from 'react'
+import type { ComponentEntry, PlaygroundLocale } from './types'
+import { useState, useEffect, useRef, useCallback, useMemo, type ReactNode } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Play, RotateCcw } from 'lucide-react'
 import {
   TurnCard,
@@ -33,12 +34,12 @@ function PaddedWrapper({ children }: { children: ReactNode }) {
 }
 
 // ============================================================================
-// Simple Sample Data (for quick demos)
+// Simple Sample Data (for quick demos) — localized via locale factories
 // ============================================================================
 
 const now = Date.now()
 
-// Simple native tool samples
+// Simple native tool samples (no user-visible text — shared across locales)
 const simpleRead: ActivityItem = {
   id: 'simple-read-1',
   type: 'tool',
@@ -57,102 +58,134 @@ const simpleEdit: ActivityItem = {
   timestamp: now - 4000,
 }
 
-const simpleBashGit: ActivityItem = {
-  id: 'simple-bash-git',
-  type: 'tool',
-  status: 'completed',
-  toolName: 'Bash',
-  toolInput: { command: 'git status', description: 'Checking repository status' },
-  intent: 'Checking repository status',
-  toolDisplayMeta: {
-    displayName: 'Git',
-    category: 'native',
-    iconDataUrl: nativeToolIcons.git,
-  },
-  timestamp: now - 3000,
-}
-
-const simpleBashNpm: ActivityItem = {
-  id: 'simple-bash-npm',
-  type: 'tool',
-  status: 'completed',
-  toolName: 'Bash',
-  toolInput: { command: 'npm test', description: 'Running the test suite' },
-  intent: 'Running the test suite',
-  toolDisplayMeta: {
-    displayName: 'npm',
-    category: 'native',
-    iconDataUrl: nativeToolIcons.npm,
-  },
-  timestamp: now - 2000,
-}
-
 // Windows shell tool sample (real pi session shape: toolName 'pwsh', displayName 'Run Command')
-const simplePwsh: ActivityItem = {
-  id: 'simple-pwsh',
-  type: 'tool',
-  status: 'completed',
-  toolName: 'pwsh',
-  toolInput: {
-    command: 'Get-ChildItem "$env:USERPROFILE\\.mortise\\logs" | Select-Object Name, Length, LastWriteTime',
-    timeout: 120,
-  },
-  displayName: 'Run Command',
-  content: [
-    'Name                 Length LastWriteTime',
-    '----                 ------ --------------',
-    'runtime.log           4271750 8/11/2026 10:04:18 PM',
-    'runtime.log.1         5226772 8/10/2026  3:53:46 PM',
-  ].join('\n'),
-  timestamp: now - 1500,
+function simplePwshActivity(locale: PlaygroundLocale): ActivityItem {
+  return {
+    id: 'simple-pwsh',
+    type: 'tool',
+    status: 'completed',
+    toolName: 'pwsh',
+    toolInput: {
+      command: 'Get-ChildItem "$env:USERPROFILE\\.mortise\\logs" | Select-Object Name, Length, LastWriteTime',
+      timeout: 120,
+    },
+    displayName: locale === 'zh-CN' ? '运行命令' : 'Run Command',
+    content: [
+      'Name                 Length LastWriteTime',
+      '----                 ------ --------------',
+      'runtime.log           4271750 8/11/2026 10:04:18 PM',
+      'runtime.log.1         5226772 8/10/2026  3:53:46 PM',
+    ].join('\n'),
+    timestamp: now - 1500,
+  }
+}
+
+function simpleBashGitActivity(locale: PlaygroundLocale): ActivityItem {
+  const description = locale === 'zh-CN' ? '检查仓库状态' : 'Checking repository status'
+  return {
+    id: 'simple-bash-git',
+    type: 'tool',
+    status: 'completed',
+    toolName: 'Bash',
+    toolInput: { command: 'git status', description },
+    intent: description,
+    toolDisplayMeta: {
+      displayName: 'Git',
+      category: 'native',
+      iconDataUrl: nativeToolIcons.git,
+    },
+    timestamp: now - 3000,
+  }
+}
+
+function simpleBashNpmActivity(locale: PlaygroundLocale): ActivityItem {
+  const description = locale === 'zh-CN' ? '运行测试套件' : 'Running the test suite'
+  return {
+    id: 'simple-bash-npm',
+    type: 'tool',
+    status: 'completed',
+    toolName: 'Bash',
+    toolInput: { command: 'npm test', description },
+    intent: description,
+    toolDisplayMeta: {
+      displayName: 'npm',
+      category: 'native',
+      iconDataUrl: nativeToolIcons.npm,
+    },
+    timestamp: now - 2000,
+  }
 }
 
 // Simple MCP tool samples
-const simpleSlack: ActivityItem = {
-  id: 'simple-slack',
-  type: 'tool',
-  status: 'completed',
-  toolName: 'mcp__slack__slack_send_message',
-  toolInput: {
-    channel: '#general',
-    text: 'Hello team!',
-    _intent: 'Sending a message to the team',
-    _displayName: 'Send Message',
-  },
-  intent: 'Sending a message to the team',
-  displayName: 'Send Message',
-  toolDisplayMeta: {
-    displayName: 'Slack',
-    category: 'mcp',
-    iconDataUrl: mcpToolIcons.slack,
-  },
-  timestamp: now - 1000,
+function simpleSlackActivity(locale: PlaygroundLocale): ActivityItem {
+  const intent = locale === 'zh-CN' ? '向团队发送消息' : 'Sending a message to the team'
+  const displayName = locale === 'zh-CN' ? '发送消息' : 'Send Message'
+  return {
+    id: 'simple-slack',
+    type: 'tool',
+    status: 'completed',
+    toolName: 'mcp__slack__slack_send_message',
+    toolInput: {
+      channel: '#general',
+      text: locale === 'zh-CN' ? '大家好！' : 'Hello team!',
+      _intent: intent,
+      _displayName: displayName,
+    },
+    intent,
+    displayName,
+    toolDisplayMeta: {
+      displayName: 'Slack',
+      category: 'mcp',
+      iconDataUrl: mcpToolIcons.slack,
+    },
+    timestamp: now - 1000,
+  }
 }
 
-const simpleStripe: ActivityItem = {
-  id: 'simple-stripe',
-  type: 'tool',
-  status: 'completed',
-  toolName: 'mcp__stripe__list_customers',
-  toolInput: {
-    limit: 25,
-    _intent: 'Fetching customer list',
-    _displayName: 'List Customers',
-  },
-  intent: 'Fetching customer list',
-  displayName: 'List Customers',
-  toolDisplayMeta: {
-    displayName: 'Stripe',
-    category: 'mcp',
-    iconDataUrl: mcpToolIcons.stripe,
-  },
-  timestamp: now,
+function simpleStripeActivity(locale: PlaygroundLocale): ActivityItem {
+  const intent = locale === 'zh-CN' ? '获取客户列表' : 'Fetching customer list'
+  const displayName = locale === 'zh-CN' ? '列出客户' : 'List Customers'
+  return {
+    id: 'simple-stripe',
+    type: 'tool',
+    status: 'completed',
+    toolName: 'mcp__stripe__list_customers',
+    toolInput: {
+      limit: 25,
+      _intent: intent,
+      _displayName: displayName,
+    },
+    intent,
+    displayName,
+    toolDisplayMeta: {
+      displayName: 'Stripe',
+      category: 'mcp',
+      iconDataUrl: mcpToolIcons.stripe,
+    },
+    timestamp: now,
+  }
 }
 
-// Simple responses
-const shortResponse: ResponseContent = {
-  text: "I've completed the requested operations. All tasks have been processed successfully.",
-  isStreaming: false,
+function simpleActivities(locale: PlaygroundLocale): ActivityItem[] {
+  return [
+    simpleRead,
+    simpleEdit,
+    simpleBashGitActivity(locale),
+    simpleBashNpmActivity(locale),
+    simplePwshActivity(locale),
+    simpleSlackActivity(locale),
+    simpleStripeActivity(locale),
+  ]
+}
+
+// Simple response
+function shortResponse(locale: PlaygroundLocale): ResponseContent {
+  return {
+    text: locale === 'zh-CN'
+      ? '已完成的请求已全部成功处理。'
+      : "I've completed the requested operations. All tasks have been processed successfully.",
+    isStreaming: false,
+  }
 }
 
 // ============================================================================
@@ -161,17 +194,64 @@ const shortResponse: ResponseContent = {
 
 type DisplayMode = 'informative' | 'detailed'
 
-function TurnCardModesDemo({
-  activities,
-  response,
-  userMessage,
-  initialMode = 'detailed',
-}: {
+/** Demo selectors used by registry variants — each builds a localized fixture. */
+type TurnCardDemoId = 'incident' | 'deployment' | 'support' | 'simple' | 'pwsh'
+
+interface TurnCardDemoContent {
+  userMessage: string
   activities: ActivityItem[]
-  response?: ResponseContent
-  userMessage?: string
+  response: ResponseContent
+}
+
+const DEMO_USER_MESSAGES: Record<TurnCardDemoId, { zh: string; en: string }> = {
+  incident: {
+    en: "There's a spike in errors on the dashboard. Can you investigate and fix the issue?",
+    zh: '仪表盘出现错误激增，请调查并修复问题。',
+  },
+  deployment: {
+    en: 'Deploy the new user authentication feature to production with full CI/CD pipeline.',
+    zh: '通过完整的 CI/CD 流水线将新的用户认证功能部署到生产环境。',
+  },
+  support: {
+    en: 'I got an email from a customer about a billing issue. Can you help resolve it?',
+    zh: '我收到客户关于账单问题的邮件，能帮忙解决吗？',
+  },
+  simple: {
+    en: 'Read the Button component, check git status, and post to Slack.',
+    zh: '读取 Button 组件、检查 git 状态并发送消息到 Slack。',
+  },
+  pwsh: {
+    en: 'List the recently modified files in the log directory.',
+    zh: '列出日志目录里最近修改的文件',
+  },
+}
+
+function buildTurnCardDemoContent(demo: TurnCardDemoId, locale: PlaygroundLocale): TurnCardDemoContent {
+  const userMessage = DEMO_USER_MESSAGES[demo][locale === 'zh-CN' ? 'zh' : 'en']
+  switch (demo) {
+    case 'incident':
+      return { userMessage, activities: incidentResponseActivities, response: incidentResponseResponse }
+    case 'deployment':
+      return { userMessage, activities: deploymentActivities, response: deploymentResponse }
+    case 'support':
+      return { userMessage, activities: customerSupportActivities, response: customerSupportResponse }
+    case 'pwsh':
+      return { userMessage, activities: [simplePwshActivity(locale)], response: shortResponse(locale) }
+    default:
+      return { userMessage, activities: simpleActivities(locale), response: shortResponse(locale) }
+  }
+}
+
+function TurnCardModesDemo({
+  demo = 'simple',
+  initialMode = 'detailed',
+  locale = 'en',
+}: {
+  demo?: TurnCardDemoId
   initialMode?: DisplayMode
+  locale?: PlaygroundLocale
 }) {
+  const { t } = useTranslation()
   const [mode, setMode] = useState<DisplayMode>(initialMode)
 
   // Activity detail overlay (Input/Output cards) opened from tool rows
@@ -183,18 +263,22 @@ function TurnCardModesDemo({
   const [showResponse, setShowResponse] = useState(false)
   const playbackRef = useRef<{ cancel: boolean }>({ cancel: false })
 
+  // Localized fixture for the selected demo
+  const content = useMemo(() => buildTurnCardDemoContent(demo, locale), [demo, locale])
+  const { userMessage, activities, response } = content
+
   // Sync mode when variant changes initialMode prop
   useEffect(() => {
     setMode(initialMode)
   }, [initialMode])
 
-  // Reset playback when activities change (variant switch)
+  // Reset playback when demo content changes (variant or locale switch)
   useEffect(() => {
     playbackRef.current.cancel = true
     setIsPlaying(false)
     setPlaybackActivities([])
     setShowResponse(false)
-  }, [activities])
+  }, [content])
 
   // Playback logic
   const startPlayback = useCallback(async () => {
@@ -261,12 +345,12 @@ function TurnCardModesDemo({
           {hasPlaybackStarted ? (
             <>
               <RotateCcw className="w-3.5 h-3.5" />
-              Reset
+              {t('playground.turnCardModes.reset')}
             </>
           ) : (
             <>
               <Play className="w-3.5 h-3.5" />
-              Play
+              {t('playground.turnCardModes.play')}
             </>
           )}
         </button>
@@ -274,7 +358,7 @@ function TurnCardModesDemo({
         <div className="w-px h-5 bg-border mx-2" />
 
         {/* Mode Toggle */}
-        <span className="text-sm font-medium text-muted-foreground mr-2">Display Mode:</span>
+        <span className="text-sm font-medium text-muted-foreground mr-2">{t('playground.turnCardModes.displayMode')}</span>
         <button
           onClick={() => setMode('informative')}
           className={`px-3 py-1.5 text-sm rounded-md transition-colors ${
@@ -283,7 +367,7 @@ function TurnCardModesDemo({
               : 'text-muted-foreground hover:text-foreground'
           }`}
         >
-          Informative
+          {t('playground.turnCardModes.modeInformative')}
         </button>
         <button
           onClick={() => setMode('detailed')}
@@ -293,12 +377,12 @@ function TurnCardModesDemo({
               : 'text-muted-foreground hover:text-foreground'
           }`}
         >
-          Detailed
+          {t('playground.turnCardModes.modeDetailed')}
         </button>
         <span className="ml-4 text-xs text-muted-foreground">
           {mode === 'informative'
-            ? 'Hides MCP tool names and params, shows only service + intent'
-            : 'Shows full tool names, params, and all metadata'
+            ? t('playground.turnCardModes.informativeHint')
+            : t('playground.turnCardModes.detailedHint')
           }
         </span>
       </div>
@@ -332,7 +416,7 @@ function TurnCardModesDemo({
           isOpen={true}
           onClose={() => setDetailActivity(null)}
           cards={extractOverlayCards(detailActivity)}
-          title={detailActivity.displayName || detailActivity.toolName || 'Activity'}
+          title={detailActivity.displayName || detailActivity.toolName || t('playground.turnCardModes.activity')}
         />
       )}
     </div>
@@ -347,15 +431,19 @@ export const turnCardModesComponents: ComponentEntry[] = [
   {
     id: 'turn-card-modes-all',
     name: 'All Tool Types',
+    nameZh: '全部工具类型',
     category: 'TurnCard Modes',
     description: 'Compare Informative vs Detailed mode with various tool types and workflows',
+    descriptionZh: '用多种工具类型与工作流对比 Informative 与 Detailed 模式',
     component: TurnCardModesDemo,
     wrapper: PaddedWrapper,
     layout: 'top',
     props: [
       {
         name: 'initialMode',
+        nameZh: '初始模式',
         description: 'Starting display mode',
+        descriptionZh: '起始显示模式',
         control: {
           type: 'select',
           options: [
@@ -369,91 +457,47 @@ export const turnCardModesComponents: ComponentEntry[] = [
     variants: [
       {
         name: '🚨 Incident Response',
+        nameZh: '🚨 故障应急响应',
         description: 'Production incident: Sentry → Slack → GitHub → Fix → Deploy (12 steps)',
-        props: {
-          userMessage: 'There\'s a spike in errors on the dashboard. Can you investigate and fix the issue?',
-          activities: incidentResponseActivities,
-          response: incidentResponseResponse,
-          initialMode: 'detailed',
-        },
+        descriptionZh: '生产故障：Sentry → Slack → GitHub → 修复 → 部署（12 步）',
+        props: { demo: 'incident', initialMode: 'detailed' },
       },
       {
         name: '🚀 Full-Stack Deployment',
+        nameZh: '🚀 全栈部署',
         description: 'Feature development through CI/CD to production (16 steps)',
-        props: {
-          userMessage: 'Deploy the new user authentication feature to production with full CI/CD pipeline.',
-          activities: deploymentActivities,
-          response: deploymentResponse,
-          initialMode: 'detailed',
-        },
+        descriptionZh: '功能开发经 CI/CD 到生产部署（16 步）',
+        props: { demo: 'deployment', initialMode: 'detailed' },
       },
       {
         name: '💬 Customer Support',
+        nameZh: '💬 客户支持',
         description: 'Cross-platform support: Gmail → Stripe → ClickUp → Slack (10 steps)',
-        props: {
-          userMessage: 'I got an email from a customer about a billing issue. Can you help resolve it?',
-          activities: customerSupportActivities,
-          response: customerSupportResponse,
-          initialMode: 'detailed',
-        },
+        descriptionZh: '跨平台支持：Gmail → Stripe → ClickUp → Slack（10 步）',
+        props: { demo: 'support', initialMode: 'detailed' },
       },
       {
         name: 'Simple: Native + MCP Mix',
+        nameZh: '简单：原生 + MCP 混合',
         description: 'Quick demo with native tools and MCP servers',
-        props: {
-          userMessage: 'Check the repo status, run tests, and notify the team on Slack.',
-          activities: [
-            simpleRead,
-            simpleEdit,
-            simpleBashGit,
-            simpleBashNpm,
-            simplePwsh,
-            simpleSlack,
-            simpleStripe,
-          ],
-          response: shortResponse,
-          initialMode: 'detailed',
-        },
+        descriptionZh: '原生工具与 MCP 服务器的快速演示',
+        props: { demo: 'simple', initialMode: 'detailed' },
       },
       {
         name: 'Informative Mode Preview',
+        nameZh: 'Informative 模式预览',
         description: 'Same mix starting in Informative mode',
-        props: {
-          userMessage: 'Check the repo status, run tests, and notify the team on Slack.',
-          activities: [
-            simpleRead,
-            simpleEdit,
-            simpleBashGit,
-            simpleBashNpm,
-            simplePwsh,
-            simpleSlack,
-            simpleStripe,
-          ],
-          response: shortResponse,
-          initialMode: 'informative',
-        },
+        descriptionZh: '同一混合内容以 Informative 模式启动',
+        props: { demo: 'simple', initialMode: 'informative' },
       },
       {
         name: 'Windows: pwsh shell tool',
+        nameZh: 'Windows：pwsh shell 工具',
         description: 'Pwsh (Windows shell tool) — click the row to open Command + Output',
-        props: {
-          userMessage: '列出日志目录里最近修改的文件',
-          activities: [simplePwsh],
-          response: shortResponse,
-          initialMode: 'detailed',
-        },
+        descriptionZh: 'Pwsh（Windows shell 工具）——点击行以打开命令与输出',
+        props: { demo: 'pwsh', initialMode: 'detailed' },
       },
     ],
-    mockData: () => ({
-      userMessage: 'Read the Button component, check git status, and post to Slack.',
-      activities: [
-        simpleRead,
-        simpleBashGit,
-        simplePwsh,
-        simpleSlack,
-      ],
-      response: shortResponse,
-      initialMode: 'detailed',
-    }),
+    mockData: (locale) => ({ locale }),
   },
 ]

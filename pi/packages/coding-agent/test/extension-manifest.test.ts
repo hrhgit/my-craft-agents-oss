@@ -75,7 +75,7 @@ describe("unified Mortise extension manifest", () => {
 					name: "Reviewer",
 					description: "Reviews changes",
 					systemPrompt: "Review changes carefully.",
-					tools: ["read", "spawn_session", "mcp__session__config_validate"],
+					tools: ["read", "subagent", "mcp__session__config_validate"],
 				},
 			],
 		});
@@ -112,6 +112,168 @@ describe("unified Mortise extension manifest", () => {
 			"foundation.js",
 			"addon.js",
 		]);
+	});
+
+	it("resolves a unique capability provider and orders it before the consumer", async () => {
+		for (const id of ["consumer", "provider"]) writeExtension(id);
+		const operation = {
+			inputSchema: { type: "object", properties: { query: { type: "string" } }, required: ["query"] },
+			outputSchema: { type: "object", properties: { hits: { type: "array" } }, required: ["hits"] },
+		};
+		const result = await resolve([
+			{
+				id: "consumer",
+				path: "extensions/consumer.js",
+				manifest: manifest("Consumer", {
+					uses: { search: { capability: "search.query", version: "^1.0.0", facets: ["service"] } },
+				}),
+			},
+			{
+				id: "provider",
+				path: "extensions/provider.js",
+				manifest: manifest("Provider", {
+					provides: {
+						"search.query": { version: "1.2.0", scope: "session", service: { operations: { query: operation } } },
+					},
+				}),
+			},
+		]);
+
+		expect(result.extensions.filter((entry) => entry.enabled).map((entry) => entry.metadata.extensionId)).toEqual([
+			"provider",
+			"consumer",
+		]);
+		expect(
+			result.extensions.find((entry) => entry.metadata.extensionId === "consumer")?.metadata
+				.extensionCapabilityBindings,
+		).toEqual([
+			expect.objectContaining({
+				alias: "search",
+				status: "bound",
+				providerExtensionId: "provider",
+				providerVersion: "1.2.0",
+				scope: "session",
+			}),
+		]);
+	});
+
+	it("blocks ambiguous required capabilities and degrades optional missing capabilities", async () => {
+		for (const id of ["consumer", "optional", "provider-a", "provider-b"]) writeExtension(id);
+		const provides = {
+			"search.query": {
+				version: "1.0.0",
+				scope: "workspace" as const,
+				service: { operations: { query: { inputSchema: {}, outputSchema: {} } } },
+			},
+		};
+		const result = await resolve([
+			{ id: "provider-a", path: "extensions/provider-a.js", manifest: manifest("A", { provides }) },
+			{ id: "provider-b", path: "extensions/provider-b.js", manifest: manifest("B", { provides }) },
+			{
+				id: "consumer",
+				path: "extensions/consumer.js",
+				manifest: manifest("Consumer", { uses: { search: { capability: "search.query", version: "*" } } }),
+			},
+			{
+				id: "optional",
+				path: "extensions/optional.js",
+				manifest: manifest("Optional", {
+					uses: { knowledge: { capability: "knowledge.read", version: "^1.0.0", required: false } },
+				}),
+			},
+		]);
+		const consumer = result.extensions.find((entry) => entry.metadata.extensionId === "consumer")!;
+		const optional = result.extensions.find((entry) => entry.metadata.extensionId === "optional")!;
+		expect(consumer.enabled).toBe(false);
+		expect(consumer.metadata.extensionManifestDiagnostics).toContainEqual(
+			expect.objectContaining({ code: "capability-provider-ambiguous", severity: "error" }),
+		);
+		expect(optional.enabled).toBe(true);
+		expect(optional.metadata.extensionCapabilityBindings).toContainEqual(
+			expect.objectContaining({ alias: "knowledge", status: "missing", required: false }),
+		);
+	});
+
+	it("propagates a required capability cycle failure to downstream consumers", async () => {
+		for (const id of ["cycle-a", "cycle-b", "downstream"]) writeExtension(id);
+		const service = { operations: { run: { inputSchema: {}, outputSchema: {} } } };
+		const result = await resolve([
+			{
+				id: "cycle-a",
+				path: "extensions/cycle-a.js",
+				manifest: manifest("Cycle A", {
+					provides: { "cycle.a": { version: "1.0.0", scope: "session", service } },
+					uses: { b: { capability: "cycle.b", version: "*" } },
+				}),
+			},
+			{
+				id: "cycle-b",
+				path: "extensions/cycle-b.js",
+				manifest: manifest("Cycle B", {
+					provides: { "cycle.b": { version: "1.0.0", scope: "session", service } },
+					uses: { a: { capability: "cycle.a", version: "*" } },
+				}),
+			},
+			{
+				id: "downstream",
+				path: "extensions/downstream.js",
+				manifest: manifest("Downstream", { uses: { a: { capability: "cycle.a", version: "*" } } }),
+			},
+		]);
+
+		for (const id of ["cycle-a", "cycle-b"]) {
+			expect(
+				result.extensions.find((entry) => entry.metadata.extensionId === id)?.metadata.extensionManifestDiagnostics,
+			).toContainEqual(expect.objectContaining({ code: "capability-dependency-cycle", severity: "error" }));
+		}
+		const downstream = result.extensions.find((entry) => entry.metadata.extensionId === "downstream")!;
+		expect(downstream.enabled).toBe(false);
+		expect(downstream.metadata.extensionCapabilityBindings).toContainEqual(
+			expect.objectContaining({ alias: "a", status: "missing", required: true }),
+		);
+	});
+
+	it("accepts a fixed provider and rejects missing UI capability references", async () => {
+		for (const id of ["consumer", "provider-a", "provider-b", "invalid-ui"]) writeExtension(id);
+		const provide = {
+			version: "1.0.0",
+			scope: "global" as const,
+			service: { operations: { read: { inputSchema: {}, outputSchema: {} } } },
+		};
+		const result = await resolve([
+			{
+				id: "provider-a",
+				path: "extensions/provider-a.js",
+				manifest: manifest("A", { provides: { "knowledge.read": provide } }),
+			},
+			{
+				id: "provider-b",
+				path: "extensions/provider-b.js",
+				manifest: manifest("B", { provides: { "knowledge.read": provide } }),
+			},
+			{
+				id: "consumer",
+				path: "extensions/consumer.js",
+				manifest: manifest("Consumer", {
+					uses: { knowledge: { capability: "knowledge.read", version: "*", provider: "provider-b" } },
+				}),
+			},
+			{
+				id: "invalid-ui",
+				path: "extensions/invalid-ui.js",
+				manifest: manifest("Invalid UI", {
+					provides: { "ui.result": { version: "1.0.0", scope: "session", ui: { modules: ["result"] } } },
+				}),
+			},
+		]);
+		expect(
+			result.extensions.find((entry) => entry.metadata.extensionId === "consumer")?.metadata
+				.extensionCapabilityBindings,
+		).toContainEqual(expect.objectContaining({ status: "bound", providerExtensionId: "provider-b" }));
+		expect(
+			result.extensions.find((entry) => entry.metadata.extensionId === "invalid-ui")?.metadata
+				.extensionManifestDiagnostics,
+		).toContainEqual(expect.objectContaining({ code: "capability-ui-reference-missing" }));
 	});
 
 	it("blocks missing dependencies and declared conflicts", async () => {

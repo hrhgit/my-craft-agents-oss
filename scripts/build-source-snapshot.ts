@@ -7,18 +7,26 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
-  realpathSync,
   rmSync,
   statSync,
   writeFileSync,
 } from 'node:fs'
-import { delimiter, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { prepareFrozenDependencies, workspaceManifestPaths } from './build/dependency-view-cache.ts'
+
+export {
+  assertFrozenDependencyViewsContained,
+  BUILD_DEPENDENCY_INSTALL_TIMEOUT_MS,
+  frozenBunInstallArgs,
+  prepareFrozenDependencies,
+  prepareFrozenPiDependencies,
+  prepareFrozenRootDependencies,
+  runFrozenDependencyInstall,
+} from './build/dependency-view-cache.ts'
 
 const SOURCE_SNAPSHOT_SCHEMA_VERSION = 1
 export const MATERIALIZED_BUILD_SOURCE_PROVENANCE = '.mortise-build-source.json'
-export const BUILD_DEPENDENCY_INSTALL_TIMEOUT_MS = 600_000
 const ABANDONED_SNAPSHOT_MS = 60 * 60 * 1_000
-const PI_DEPENDENCY_ROOT = 'pi'
 const DEFAULT_SOURCE_PATHS = [
   'package.json',
   'bun.lock',
@@ -66,6 +74,7 @@ interface MaterializedBuildSourceProvenance {
   sourceId: string
   treeId: string
 }
+
 
 /**
  * Captures dirty tracked files, deletions, and relevant untracked files without
@@ -275,153 +284,6 @@ function isPidAlive(pid: number): boolean {
   } catch (error) {
     return (error as NodeJS.ErrnoException).code === 'EPERM' || (error as NodeJS.ErrnoException).code === 'EACCES'
   }
-}
-
-export function prepareFrozenDependencies(sourceRoot: string, scratchRoot: string, bunExecutable: string): void {
-  prepareFrozenRootDependencies(sourceRoot, bunExecutable)
-  prepareFrozenPiDependencies(sourceRoot, scratchRoot)
-  assertFrozenDependencyViewsContained(sourceRoot)
-}
-
-export function prepareFrozenRootDependencies(sourceRoot: string, bunExecutable: string): void {
-  if (!existsSync(join(sourceRoot, 'bun.lock'))) {
-    throw new Error('Immutable build dependencies require a captured bun.lock.')
-  }
-  runFrozenDependencyInstall(
-    bunExecutable,
-    frozenBunInstallArgs(),
-    sourceRoot,
-    'root Bun dependency domain',
-    { bunExecutable },
-  )
-}
-
-export function prepareFrozenPiDependencies(sourceRoot: string, scratchRoot: string): void {
-  const piRoot = join(sourceRoot, PI_DEPENDENCY_ROOT)
-  if (!existsSync(join(piRoot, 'package-lock.json'))) {
-    throw new Error('Immutable Pi build dependencies require a captured pi/package-lock.json.')
-  }
-  const npmCacheDir = join(scratchRoot, 'dependency-cache', 'npm')
-  mkdirSync(npmCacheDir, { recursive: true })
-  runFrozenDependencyInstall(process.platform === 'win32' ? 'npm.cmd' : 'npm', [
-    'ci',
-    '--ignore-scripts',
-    '--no-audit',
-    '--no-fund',
-    `--cache=${npmCacheDir}`,
-  ], piRoot, 'embedded Pi npm dependency domain')
-}
-
-export function frozenBunInstallArgs(): string[] {
-  return [
-    'install',
-    '--frozen-lockfile',
-    '--no-save',
-    '--linker=hoisted',
-    '--backend=hardlink',
-    '--no-progress',
-    '--no-summary',
-  ]
-}
-
-export function runFrozenDependencyInstall(
-  command: string,
-  args: string[],
-  cwd: string,
-  label: string,
-  options: { timeoutMs?: number; bunExecutable?: string } = {},
-): void {
-  const timeoutMs = options.timeoutMs ?? BUILD_DEPENDENCY_INSTALL_TIMEOUT_MS
-  const startedAt = Date.now()
-  process.stdout.write(`[build-source] Preparing ${label}...\n`)
-  const result = spawnSync(command, args, {
-    cwd,
-    env: frozenDependencyInstallEnvironment(process.env, options.bunExecutable),
-    stdio: 'inherit',
-    timeout: timeoutMs,
-    windowsHide: true,
-  })
-  if (result.error) {
-    const error = result.error as NodeJS.ErrnoException
-    if (error.code === 'ETIMEDOUT') {
-      throw new Error(`Frozen installation for ${label} timed out after ${timeoutMs}ms.`)
-    }
-    throw result.error
-  }
-  if (result.status !== 0) {
-    throw new Error(`Frozen installation for ${label} failed with exit code ${result.status ?? 'unknown'}.`)
-  }
-  process.stdout.write(`[build-source] Prepared ${label} in ${Date.now() - startedAt}ms.\n`)
-}
-
-function frozenDependencyInstallEnvironment(
-  baseEnv: NodeJS.ProcessEnv,
-  bunExecutable: string | undefined,
-): NodeJS.ProcessEnv {
-  const inheritedPath = Object.entries(baseEnv)
-    .find(([name]) => name.toLowerCase() === 'path')?.[1]
-  const envWithoutPath = Object.fromEntries(
-    Object.entries(baseEnv).filter(([name]) => name.toLowerCase() !== 'path'),
-  )
-  return {
-    ...envWithoutPath,
-    ...(bunExecutable
-      ? { PATH: [dirname(bunExecutable), inheritedPath].filter(Boolean).join(delimiter) }
-      : inheritedPath ? { PATH: inheritedPath } : {}),
-    HUSKY: '0',
-  }
-}
-
-export function assertFrozenDependencyViewsContained(sourceRootValue: string): void {
-  const sourceRoot = realpathSync(sourceRootValue)
-  for (const workspaceRoot of workspaceRoots(sourceRoot)) {
-    const dependencies = join(workspaceRoot, 'node_modules')
-    if (!existsSync(dependencies)) continue
-    for (const packageRoot of dependencyPackageRoots(dependencies)) {
-      const target = realpathSync(packageRoot)
-      if (!isWithin(sourceRoot, target)) {
-        throw new Error(`Immutable dependency view escapes the source snapshot: ${packageRoot} -> ${target}`)
-      }
-    }
-  }
-}
-
-function dependencyPackageRoots(dependencies: string): string[] {
-  const roots: string[] = []
-  for (const entry of readdirSync(dependencies, { withFileTypes: true })) {
-    if (entry.name.startsWith('.')) continue
-    const path = join(dependencies, entry.name)
-    if (entry.name.startsWith('@') && entry.isDirectory()) {
-      for (const scoped of readdirSync(path, { withFileTypes: true })) {
-        if (scoped.isDirectory() || scoped.isSymbolicLink()) roots.push(join(path, scoped.name))
-      }
-    } else if (entry.isDirectory() || entry.isSymbolicLink()) {
-      roots.push(path)
-    }
-  }
-  return roots
-}
-
-function workspaceManifestPaths(repoRoot: string): string[] {
-  return workspaceRoots(repoRoot)
-    .map(root => relative(repoRoot, join(root, 'package.json')).replaceAll('\\', '/'))
-    .filter(path => path !== 'package.json' && existsSync(join(repoRoot, ...path.split('/'))))
-}
-
-function workspaceRoots(repoRoot: string): string[] {
-  const roots = [repoRoot, join(repoRoot, PI_DEPENDENCY_ROOT)].filter(path => existsSync(join(path, 'package.json')))
-  for (const group of [join(repoRoot, 'apps'), join(repoRoot, 'packages'), join(repoRoot, 'pi', 'packages')]) {
-    if (!existsSync(group)) continue
-    for (const entry of readdirSync(group, { withFileTypes: true })) {
-      if (entry.isDirectory() && existsSync(join(group, entry.name, 'package.json'))) roots.push(join(group, entry.name))
-    }
-  }
-  return roots
-}
-
-function isWithin(root: string, candidate: string): boolean {
-  const path = relative(root, candidate)
-  return path === '' || (!path.startsWith(`..${sep}`) && path !== '..' && !isAbsolute(path))
 }
 
 function assertGitWorktree(repoRoot: string): void {

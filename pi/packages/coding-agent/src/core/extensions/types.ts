@@ -474,6 +474,7 @@ export interface ExtensionContext {
 	ui: ExtensionUIContext;
 	/** Versioned, host-owned desktop or embedding capabilities. */
 	capabilities: ExtensionCapabilitiesContext;
+	services: ExtensionServicesAPI;
 	/** Whether UI is available (false in print/RPC mode) */
 	hasUI: boolean;
 	/** Current working directory */
@@ -1207,6 +1208,76 @@ export interface ExtensionEnvironment {
 	config: Readonly<Record<string, unknown>>;
 }
 
+export interface ExtensionServiceProgressV1 {
+	message?: string;
+	completed?: number;
+	total?: number;
+	data?: unknown;
+}
+export interface ExtensionServiceInvokeOptions {
+	signal?: AbortSignal;
+	timeoutMs?: number;
+	runtimeId?: string;
+	requestId?: string;
+	onProgress?: (progress: ExtensionServiceProgressV1) => void;
+}
+export interface ExtensionServiceInvocationContext {
+	signal: AbortSignal;
+	reportProgress(progress: ExtensionServiceProgressV1): void;
+}
+export type ExtensionServiceOperation = (
+	input: unknown,
+	context: ExtensionServiceInvocationContext,
+) => unknown | Promise<unknown>;
+export type ExtensionServiceImplementation = Record<string, ExtensionServiceOperation>;
+export interface ExtensionServiceHandle {
+	readonly available: boolean;
+	invoke<TOutput = unknown>(
+		operation: string,
+		input?: unknown,
+		options?: ExtensionServiceInvokeOptions,
+	): Promise<TOutput>;
+}
+export interface ExtensionServicesAPI {
+	provide(capabilityId: string, implementation: ExtensionServiceImplementation): () => void;
+	use(alias: string): ExtensionServiceHandle;
+}
+export interface ExtensionServiceCatalogV1 {
+	protocolVersion: 1;
+	runtimeId: string;
+	scope: import("../extension-manifest.ts").ExtensionCapabilityScopeV1;
+	providers: Array<{
+		extensionId: string;
+		capability: string;
+		version: string;
+		scope: import("../extension-manifest.ts").ExtensionCapabilityScopeV1;
+		operations: Record<string, import("../extension-manifest.ts").ExtensionCapabilityServiceOperationV1>;
+	}>;
+	consumers: Array<{
+		extensionId: string;
+		bindings: import("../extension-manifest.ts").ExtensionCapabilityBindingV1[];
+	}>;
+}
+export type ExtensionServiceResultStatusV1 =
+	| "succeeded"
+	| "unavailable"
+	| "ambiguous"
+	| "invalid_input"
+	| "invalid_output"
+	| "cancelled"
+	| "timed_out"
+	| "failed"
+	| "runtime_stale";
+export interface ExtensionServiceResultV1 {
+	protocolVersion: 1;
+	requestId: string;
+	runtimeId: string;
+	status: ExtensionServiceResultStatusV1;
+	output?: unknown;
+	error?: { code: string; message: string; details?: unknown };
+	progress?: unknown[];
+}
+
 /**
  * ExtensionAPI passed to extension factory functions.
  */
@@ -1215,6 +1286,7 @@ export interface ExtensionAPI {
 	readonly host: ExtensionHostAPI;
 	/** Stable identity and host boundary for this loaded extension. */
 	readonly environment: ExtensionEnvironment;
+	readonly services: ExtensionServicesAPI;
 	/** Declare the Host capabilities this extension may request. Declarations are not grants. */
 	declareCapabilities(declarations: readonly HostCapabilityDeclaration[]): void;
 	// =========================================================================
@@ -1681,6 +1753,7 @@ export interface ExtensionRuntimeState {
 	/** Provider registrations queued during extension loading, processed when runner binds */
 	pendingProviderRegistrations: Array<{ name: string; config: ProviderConfig; extensionPath: string }>;
 	pendingFrontendChannels: Array<{ extensionId: string; id: string; options: ExtensionFrontendChannelOptions }>;
+	serviceRegistry: import("./service-registry.ts").ExtensionServiceRegistry;
 	/** Throws when this extension instance is stale after runtime replacement. */
 	assertActive: () => void;
 	/** Marks this extension instance as stale after runtime replacement or reload. */
@@ -1759,6 +1832,7 @@ export interface Extension {
 	manifestUI?: ExtensionManifestUI;
 	frontendLoadable?: boolean;
 	frontendDiagnostics?: ExtensionFrontendDiagnostic[];
+	capabilityBindings?: import("../extension-manifest.ts").ExtensionCapabilityBindingV1[];
 	hostCapabilities?: HostCapabilityDeclaration[];
 	handlers: Map<string, HandlerFn[]>;
 	tools: Map<string, RegisteredTool>;

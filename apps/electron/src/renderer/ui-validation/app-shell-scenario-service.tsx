@@ -1,4 +1,5 @@
 import * as React from 'react'
+import { useTranslation } from 'react-i18next'
 import {
   FrozenUiValidationClock,
   UiScenarioRegistry,
@@ -390,6 +391,7 @@ export function installAppShellScenarioBridge(): (() => void) | undefined {
 }
 
 export function ScenarioAppShellHost() {
+  const { t } = useTranslation()
   const state = React.useSyncExternalStore(appShellScenarioService.subscribe, appShellScenarioService.getSnapshot, appShellScenarioService.getSnapshot)
   React.useEffect(() => {
     if (state.view !== 'extension') return
@@ -399,8 +401,8 @@ export function ScenarioAppShellHost() {
         schemaVersion: 1, id: 'scenario-status', surface: 'composer.above',
         content: { type: 'row', gap: 'small', children: [
           { type: 'icon', name: state.extension.phase === 'error' ? 'alert-circle' : state.extension.phase === 'ready' ? 'check' : 'loader', label: state.extension.phase },
-          { type: 'text', text: `Extension ${state.extension.phase}`, tone: state.extension.phase === 'error' ? 'danger' : state.extension.phase === 'ready' ? 'success' : 'muted' },
-          { type: 'button', label: 'Reload', action: { kind: 'command', command: 'scenario-extension-reload' }, disabled: state.extension.phase === 'reloading' },
+          { type: 'text', text: t('scenario.extensionStatus', { phase: state.extension.phase }), tone: state.extension.phase === 'error' ? 'danger' : state.extension.phase === 'ready' ? 'success' : 'muted' },
+          { type: 'button', label: t('scenario.reload'), action: { kind: 'command', command: 'scenario-extension-reload' }, disabled: state.extension.phase === 'reloading' },
         ] },
       },
     })
@@ -409,7 +411,7 @@ export function ScenarioAppShellHost() {
       SCENARIO_RUNTIME_ID,
       PLAYGROUND_WORKSPACE.id,
     )
-  }, [state.extension.phase, state.revision, state.view])
+  }, [state.extension.phase, state.revision, state.view, t])
 
   if (['transport', 'session-empty', 'session-streaming', 'session-reasoning-result', 'session-queued', 'extension', 'settings'].includes(state.view)) {
     return <RealScenarioAppShell state={state} />
@@ -417,19 +419,19 @@ export function ScenarioAppShellHost() {
 
   return (
     <main className="flex h-full min-h-[420px] w-full flex-col bg-background text-foreground" data-testid="scenario.app-shell" data-scenario={state.activeScenario ?? 'none'}>
-      <header className="flex h-12 shrink-0 items-center border-b px-4 text-sm font-medium">Mortise Scenario AppShell</header>
+      <header className="flex h-12 shrink-0 items-center border-b px-4 text-sm font-medium">{t('scenario.hostTitle')}</header>
       {state.view === 'transport' && state.transport && (
         <React.Suspense fallback={null}>
           <ScenarioTransportConnectionBanner state={state.transport} onRetry={() => void appShellScenarioService.retryTransport()} />
         </React.Suspense>
       )}
       <section className="flex min-h-0 flex-1 items-center justify-center overflow-auto p-6">
-        {state.view === 'idle' && <p className="text-sm text-muted-foreground">No scenario applied</p>}
+        {state.view === 'idle' && <p className="text-sm text-muted-foreground">{t('scenario.noScenarioApplied')}</p>}
         {state.view === 'app-loading' && <SplashScreen isExiting={false} />}
-        {state.view === 'session-empty' && <div className="text-center"><h2 className="text-base font-medium">No sessions yet</h2><p className="mt-1 text-sm text-muted-foreground">Create a session to start working.</p></div>}
+        {state.view === 'session-empty' && <div className="text-center"><h2 className="text-base font-medium">{t('scenario.noSessionsYet')}</h2><p className="mt-1 text-sm text-muted-foreground">{t('scenario.createSessionHint')}</p></div>}
         {state.view === 'session-streaming' && <article className="w-full max-w-2xl"><StreamingMarkdown content={state.stream.text} isStreaming={state.stream.active} /></article>}
         {state.view === 'extension' && <div className="w-full max-w-xl"><ExtensionContributionZone sessionId={SCENARIO_SESSION_ID} surface="composer.above" hydrateRuntime={false} /></div>}
-        {state.view === 'settings' && <div className="w-full max-w-2xl"><SettingsSection title="Application"><SettingsCard><SettingsRow label="Browser tools" description="Controlled scenario setting"><Button size="sm" variant="outline">Enabled</Button></SettingsRow><SettingsRow label="Keep awake" description="Uses production settings layout"><span className="text-sm text-muted-foreground">Off</span></SettingsRow></SettingsCard></SettingsSection></div>}
+        {state.view === 'settings' && <div className="w-full max-w-2xl"><SettingsSection title={t('scenario.settingsApplication')}><SettingsCard><SettingsRow label={t('scenario.settingsBrowserTools')} description={t('scenario.controlledScenarioSetting')}><Button size="sm" variant="outline">{t('scenario.enabled')}</Button></SettingsRow><SettingsRow label={t('scenario.keepAwake')} description={t('scenario.usesProductionSettingsLayout')}><span className="text-sm text-muted-foreground">{t('scenario.off')}</span></SettingsRow></SettingsCard></SettingsSection></div>}
       </section>
       <footer className="border-t px-4 py-2 text-xs text-muted-foreground">{state.lastEvent} · revision {state.revision}</footer>
     </main>

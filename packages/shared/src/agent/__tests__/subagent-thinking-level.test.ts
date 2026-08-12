@@ -1,7 +1,6 @@
 /**
- * Verifies that `spawn_session` forwards `thinkingLevel` through the
- * `SpawnSessionRequest` object so `SessionManager.onSpawnSession` can
- * pass it along to `createSession()`.
+ * Verifies that `subagent` forwards `thinkingLevel` through the
+ * `SubagentRequest` object to the current parent Session adapter.
  *
  * Pairs with the corresponding fix in SessionManager.createSession that
  * reads `options?.thinkingLevel` as the first-precedence source before the
@@ -10,23 +9,22 @@
  */
 import { describe, it, expect, beforeEach } from 'bun:test';
 import { THINKING_LEVEL_IDS } from '../thinking-levels.ts';
-import type { SpawnSessionRequest, SpawnSessionResult } from '../base-agent.ts';
+import type { SubagentRequest, SubagentTask } from '../base-agent.ts';
 import { TestAgent, createMockBackendConfig } from './test-utils.ts';
 
-class SpawnTestAgent extends TestAgent {
+class SubagentTestAgent extends TestAgent {
   public invokeSpawn(input: Record<string, unknown>) {
-    return this.preExecuteSpawnSession(input);
+    return this.preExecuteSubagent(input);
   }
 }
 
 function setup() {
-  const agent = new SpawnTestAgent(createMockBackendConfig());
-  const captured: SpawnSessionRequest[] = [];
-  agent.onSpawnSession = async (request) => {
+  const agent = new SubagentTestAgent(createMockBackendConfig());
+  const captured: SubagentRequest[] = [];
+  agent.onSubagent = async (request) => {
     captured.push(request);
-    const result: SpawnSessionResult = {
-      sessionId: 'spawned-id',
-      name: 'spawned',
+    const result: SubagentTask = {
+      taskId: 'spawned-id',
       status: 'running',
     };
     return result;
@@ -34,15 +32,15 @@ function setup() {
   return { agent, captured };
 }
 
-describe('spawn_session thinkingLevel forwarding', () => {
-  let agent: SpawnTestAgent;
-  let captured: SpawnSessionRequest[];
+describe('subagent thinkingLevel forwarding', () => {
+  let agent: SubagentTestAgent;
+  let captured: SubagentRequest[];
 
   beforeEach(() => {
     ({ agent, captured } = setup());
   });
 
-  it('forwards an explicit thinkingLevel to onSpawnSession', async () => {
+  it('forwards an explicit thinkingLevel to onSubagent', async () => {
     await agent.invokeSpawn({ prompt: 'hi', thinkingLevel: 'high' });
     expect(captured).toHaveLength(1);
     expect(captured[0]?.thinkingLevel).toBe('high');

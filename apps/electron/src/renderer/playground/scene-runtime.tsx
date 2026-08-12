@@ -1,4 +1,5 @@
 import * as React from 'react'
+import { useTranslation } from 'react-i18next'
 import { ChevronLeft, ChevronRight, Pause, Play, RotateCcw } from 'lucide-react'
 import type { PreviewScene, PreviewScenePhase } from './registry/types'
 
@@ -220,8 +221,12 @@ export function PreviewSceneFrame({ scene, phase, phaseIndex, children }: Previe
 
 interface PreviewSceneControlsProps {
   label: string
+  /** Chinese label shown when the playground locale is zh-CN. */
+  labelZh?: string
   scene: PreviewScene
   phase: PreviewScenePhase
+  /** Chinese phase label shown when the playground locale is zh-CN. */
+  phaseLabelZh?: string
   playing: boolean
   onReplay(): void
   onPrevious(): void
@@ -231,26 +236,29 @@ interface PreviewSceneControlsProps {
 
 export function PreviewSceneControls({
   label,
+  labelZh,
   scene,
   phase,
+  phaseLabelZh,
   playing,
   onReplay,
   onPrevious,
   onNext,
   onTogglePlaying,
 }: PreviewSceneControlsProps) {
+  const { t } = useTranslation()
   return (
-    <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground" aria-label="Preview scene controls">
-      <span className="rounded border border-border px-1.5 py-0.5 font-mono">{label}</span>
+    <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground" aria-label={t('playground.scene.controlsAria')}>
+      <span className="rounded border border-border px-1.5 py-0.5 font-mono">{labelZh ?? label}</span>
       {scene.kind === 'timeline' && (
         <>
-          <span className="max-w-52 truncate">{phase.label}</span>
-          <IconButton label="Previous scene phase" onClick={onPrevious}><ChevronLeft className="h-3.5 w-3.5" /></IconButton>
-          <IconButton label={playing ? 'Pause scene' : 'Play scene'} onClick={onTogglePlaying}>
+          <span className="max-w-52 truncate">{phaseLabelZh ?? phase.label}</span>
+          <IconButton label={t('playground.scene.previous')} onClick={onPrevious}><ChevronLeft className="h-3.5 w-3.5" /></IconButton>
+          <IconButton label={playing ? t('playground.scene.pause') : t('playground.scene.play')} onClick={onTogglePlaying}>
             {playing ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
           </IconButton>
-          <IconButton label="Next scene phase" onClick={onNext}><ChevronRight className="h-3.5 w-3.5" /></IconButton>
-          <IconButton label="Replay scene" onClick={onReplay}><RotateCcw className="h-3.5 w-3.5" /></IconButton>
+          <IconButton label={t('playground.scene.next')} onClick={onNext}><ChevronRight className="h-3.5 w-3.5" /></IconButton>
+          <IconButton label={t('playground.scene.replay')} onClick={onReplay}><RotateCcw className="h-3.5 w-3.5" /></IconButton>
         </>
       )}
     </div>

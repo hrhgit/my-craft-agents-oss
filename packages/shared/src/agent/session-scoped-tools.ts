@@ -12,7 +12,7 @@
  * - Session callback registry (per-session plan and query callbacks)
  * - Plan state management
  * - MCP tool wrapping with DOC_REF-enriched descriptions
- * - spawn_session, browser_tool (backend-specific, not in registry)
+ * - subagent, browser_tool (backend-specific, not in registry)
  */
 
 import { getSessionPlansPath } from '../sessions/storage.ts';
@@ -34,7 +34,7 @@ import {
   type ToolResult,
   type TextContent,
 } from '@mortise/session-tools-core';
-import { createSpawnSessionTool, type SpawnSessionFn } from './spawn-session-tool.ts';
+import { createSubagentTool } from './subagent-tool.ts';
 import { createBrowserTools, type BrowserPaneFns } from './browser-tools.ts';
 import { getBrowserToolEnabled } from '../config/storage.ts';
 
@@ -60,7 +60,7 @@ import { attachSessionSelfManagementBindings } from './session-self-management-b
 
 /** Backend-executed session tools currently supported by the in-process adapter layer. */
 export const IN_PROCESS_BACKEND_SESSION_TOOL_NAMES = new Set<string>([
-  'spawn_session',
+  'subagent',
   'browser_tool',
 ]);
 
@@ -196,7 +196,7 @@ function getToolDescriptions(): Record<string, string> {
  * Returns an MCP server with all session-scoped tools registered.
  *
  * All tools come from the canonical SESSION_TOOL_DEFS registry in session-tools-core,
- * except spawn_session and browser_tool which are backend-specific.
+ * except subagent and browser_tool which are backend-specific.
  */
 export function getSessionScopedTools(
   sessionId: string,
@@ -241,16 +241,15 @@ export function getSessionScopedTools(
     // Create tools from the canonical registry — all tools with handlers.
     // Tool visibility is centrally filtered in session-tools-core to avoid backend drift.
     tools = getSessionToolDefs()
-      .filter(def => def.handler !== null) // Skip backend-specific tools (spawn_session, browser_tool)
+      .filter(def => def.handler !== null) // Skip backend-specific tools (subagent, browser_tool)
       .map(def => registryTool(def.name, def.inputSchema.shape));
 
-    // Add spawn_session — backend-specific (not in registry handler)
+    // Add subagent — backend-specific (not in registry handler)
     tools.push(
-      createSpawnSessionTool({
-        sessionId,
-        getSpawnSessionFn: () => {
+      createSubagentTool({
+        getSubagentFn: () => {
           const callbacks = getSessionScopedToolCallbacks(sessionId);
-          return callbacks?.spawnSessionFn;
+          return callbacks?.subagentFn;
         },
       }),
     );

@@ -7,6 +7,7 @@
  * Flow: WelcomeStep → ProviderSelectStep → CredentialsStep / LocalModelStep → CompletionStep
  */
 import { useState, useCallback, useEffect } from 'react'
+import { useTranslation } from 'react-i18next'
 import { ensureMockElectronAPI } from '../mock-utils'
 import { WelcomeStep } from '@/components/onboarding/WelcomeStep'
 import { ProviderSelectStep, type ProviderChoice } from '@/components/onboarding/ProviderSelectStep'
@@ -24,6 +25,7 @@ const CHOICE_TO_METHOD: Record<Exclude<ProviderChoice, 'local'>, ApiSetupMethod>
 }
 
 export function OnboardingFlowDemo() {
+  const { t } = useTranslation()
   useEffect(() => { ensureMockElectronAPI() }, [])
 
   const [step, setStep] = useState<DemoStep>('welcome')
@@ -98,12 +100,16 @@ export function OnboardingFlowDemo() {
   }, [handleRestart])
 
   // Step labels for the breadcrumb
-  const activeStepLabel = step === 'local-model' ? 'Local Model' : 'Credentials'
   const STEP_ORDER: { key: DemoStep; label: string }[] = [
-    { key: 'welcome', label: 'Welcome' },
-    { key: 'provider-select', label: 'Provider' },
-    { key: step === 'local-model' ? 'local-model' : 'credentials', label: activeStepLabel },
-    { key: 'complete', label: 'Done' },
+    { key: 'welcome', label: t('playground.onboarding.step.welcome') },
+    { key: 'provider-select', label: t('playground.onboarding.step.provider') },
+    {
+      key: step === 'local-model' ? 'local-model' : 'credentials',
+      label: step === 'local-model'
+        ? t('playground.onboarding.step.localModel')
+        : t('playground.onboarding.step.credentials'),
+    },
+    { key: 'complete', label: t('playground.onboarding.step.done') },
   ]
 
   const currentIndex = STEP_ORDER.findIndex(s => s.key === step)
@@ -134,7 +140,7 @@ export function OnboardingFlowDemo() {
           onClick={handleRestart}
           className="text-xs text-muted-foreground hover:text-foreground transition-colors px-2 py-1 rounded hover:bg-foreground/5"
         >
-          Restart
+          {t('playground.onboarding.restart')}
         </button>
       </div>
 

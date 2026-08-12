@@ -126,25 +126,42 @@ describe("Pi RPC extension host capabilities", () => {
 		let receivedRequest: RpcExtensionHostCapabilityRequest | undefined;
 		let receivedDeclaration: RpcExtensionHostCapabilityDeclaration | undefined;
 		let receivedCancel: RpcExtensionHostCapabilityCancel | undefined;
-		let receivedRouteRejection: { phase: string; reason: string } | undefined;
+		const receivedRouteRejections: Array<{ phase: string; reason: string }> = [];
 		let receivedInteractionPresentation: unknown;
+		let notificationRequestCount = 0;
 		client.onClientEvent((event) => {
 			if (event.type === "extension_host_capability_route_rejected") {
-				receivedRouteRejection = event;
+				receivedRouteRejections.push(event);
 				return;
 			}
 			if (event.type === "extension_ui_request" && event.method === "interact") {
 				receivedInteractionPresentation = event.request.presentation;
-				client.respondToExtensionUI({
-					type: "extension_ui_response",
-					id: event.id,
-					extensionId: event.extensionId,
-					interaction: {
-						schemaVersion: 1,
-						status: "submitted",
-						answers: [{ fieldId: "choices", kind: "choice", selectedOptionIds: ["fixed"], otherText: "Custom" }],
-					},
-				});
+				const writable = (client as unknown as { process?: { stdin?: { write(value: string): void } } }).process
+					?.stdin;
+				writable?.write(
+					`${JSON.stringify({
+						type: "extension_ui_response",
+						id: event.id,
+						extensionId: event.extensionId,
+						runtimeId: "wrong-runtime",
+						sessionId: event.sessionId,
+						interaction: { schemaVersion: 1, status: "cancelled", reason: "user" },
+					})}\n`,
+				);
+				setTimeout(() => {
+					client.respondToExtensionUI({
+						type: "extension_ui_response",
+						id: event.id,
+						extensionId: event.extensionId,
+						interaction: {
+							schemaVersion: 1,
+							status: "submitted",
+							answers: [
+								{ fieldId: "choices", kind: "choice", selectedOptionIds: ["fixed"], otherText: "Custom" },
+							],
+						},
+					});
+				}, 20);
 				return;
 			}
 			if (event.type === "extension_host_capability_declaration") {
@@ -160,6 +177,17 @@ describe("Pi RPC extension host capabilities", () => {
 				return;
 			}
 			receivedRequest = event;
+			notificationRequestCount++;
+			client.reportExtensionHostCapabilityProgress({
+				type: "extension_host_capability_progress",
+				version: 1,
+				id: event.id,
+				sequence: -1,
+				progress: { phase: "invalid" },
+				runtimeId: event.runtimeId,
+				sessionId: event.sessionId,
+				clientId: event.clientId,
+			});
 			client.reportExtensionHostCapabilityProgress({
 				type: "extension_host_capability_progress",
 				version: 1,
@@ -171,13 +199,25 @@ describe("Pi RPC extension host capabilities", () => {
 				clientId: event.clientId,
 			});
 			// A malformed response must be observable and must not settle another route.
-			client.respondToExtensionHostCapability({
-				type: "extension_host_capability_response",
-				version: 1,
-				id: event.id,
-				status: "success",
-				output: { ignored: true },
-			});
+			if (notificationRequestCount === 1) {
+				client.respondToExtensionHostCapability({
+					type: "extension_host_capability_response",
+					version: 1,
+					id: event.id,
+					status: "unexpected",
+					runtimeId: event.runtimeId,
+					sessionId: event.sessionId,
+					clientId: event.clientId,
+				} as never);
+				client.respondToExtensionHostCapability({
+					type: "extension_host_capability_response",
+					version: 1,
+					id: event.id,
+					status: "success",
+					output: { ignored: true },
+				});
+				return;
+			}
 			client.respondToExtensionHostCapability({
 				type: "extension_host_capability_response",
 				version: 1,
@@ -191,10 +231,16 @@ describe("Pi RPC extension host capabilities", () => {
 		});
 
 		await client.start();
-		await expect(client.invokeExtensionCommandResult("notify-host")).resolves.toEqual({ invoked: true });
+		await expect(client.invokeExtensionCommandResult("notify-host")).resolves.toEqual({
+			invoked: false,
+			error: "Host did not confirm the notification",
+		});
 		await vi.waitFor(() =>
-			expect(receivedRouteRejection).toMatchObject({ phase: "response", reason: "routing_identity_mismatch" }),
+			expect(receivedRouteRejections).toEqual(
+				expect.arrayContaining([expect.objectContaining({ phase: "response", reason: "unknown_request" })]),
+			),
 		);
+		await expect(client.invokeExtensionCommandResult("notify-host")).resolves.toEqual({ invoked: true });
 
 		expect(receivedRequest).toMatchObject({
 			type: "extension_host_capability_request",

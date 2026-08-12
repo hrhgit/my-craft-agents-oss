@@ -7,7 +7,8 @@
 
 import { useCallback, useEffect, useMemo, useRef } from 'react'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
-import * as Icons from 'lucide-react'
+import { useTranslation } from 'react-i18next'
+import { Globe, Monitor, PanelRightOpen, XCircle } from 'lucide-react'
 import { Spinner } from '@mortise/ui'
 import {
   DropdownMenu,
@@ -51,6 +52,7 @@ export function BrowserTabStrip({
   // workspaces have a different `remoteWorkspaceId` (what the remote agent
   // stamps onto its tabs) than the local `activeWorkspaceId` (what locally-
   // opened manual tabs use), so we accept either.
+  const { t } = useTranslation()
   const { activeWorkspaceId, workspaces } = useAppShellContext()
   const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId)
   const remoteWorkspaceId = activeWorkspace ? getPrimaryRemoteWorkspaceId(activeWorkspace) ?? null : null
@@ -225,8 +227,8 @@ export function BrowserTabStrip({
     const targetSessionId = instance.boundSessionId ?? instance.ownerSessionId
     const canOpenSession = !!targetSessionId
     const openSessionLabel = instance.agentControlActive
-      ? 'Open Session Using this Window'
-      : 'Open Session Which Used this Window'
+      ? t('browser.openSessionUsingThisWindow')
+      : t('browser.openSessionWhichUsedThisWindow')
 
     return (
       <>
@@ -234,15 +236,15 @@ export function BrowserTabStrip({
           disabled={!canUseLiveWindowActions}
           onSelect={() => focusBrowserWindow(instance)}
         >
-          <Icons.Monitor className="h-3.5 w-3.5" />
-          Show Browser Window
+          <Monitor className="h-3.5 w-3.5" />
+          {t('browser.showWindow')}
         </StyledDropdownMenuItem>
 
         <StyledDropdownMenuItem
           disabled={!canOpenSession}
           onSelect={() => openSessionUsingWindow(instance)}
         >
-          <Icons.PanelRightOpen className="h-3.5 w-3.5" />
+          <PanelRightOpen className="h-3.5 w-3.5" />
           {openSessionLabel}
         </StyledDropdownMenuItem>
 
@@ -253,12 +255,12 @@ export function BrowserTabStrip({
           disabled={!canUseLiveWindowActions}
           onSelect={() => terminateBrowserWindow(instance)}
         >
-          <Icons.XCircle className="h-3.5 w-3.5" />
-          Terminate Browser
+          <XCircle className="h-3.5 w-3.5" />
+          {t('browser.terminateBrowser')}
         </StyledDropdownMenuItem>
       </>
     )
-  }, [instancesOverride, focusBrowserWindow, openSessionUsingWindow, terminateBrowserWindow])
+  }, [instancesOverride, focusBrowserWindow, openSessionUsingWindow, terminateBrowserWindow, t])
 
   if (orderedInstances.length === 0) return null
 
@@ -295,14 +297,14 @@ export function BrowserTabStrip({
           <StyledDropdownMenuContent align="end" minWidth="min-w-64">
             {overflow.map((instance) => {
               const hostname = getHostname(instance.url)
-              const displayLabel = instance.title.trim() || hostname || 'Local File'
+              const displayLabel = instance.title.trim() || hostname || t('browser.localFile')
               return (
                 <DropdownMenuSub key={instance.id}>
                   <StyledDropdownMenuSubTrigger>
                     {instance.isLoading ? (
                       <Spinner className="text-[10px]" />
                     ) : (
-                      <Icons.Globe className="h-3.5 w-3.5" />
+                      <Globe className="h-3.5 w-3.5" />
                     )}
                     <span className="truncate">{displayLabel}</span>
                   </StyledDropdownMenuSubTrigger>

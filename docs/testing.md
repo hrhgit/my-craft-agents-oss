@@ -30,6 +30,21 @@ bun run test:doc-tools
 
 `validate:dev` deliberately runs a smaller, fast validation set. Run `bun run test` before broad test-related changes; expanding CI coverage is a separate decision because it changes validation time and flake exposure. The isolated-test runner is a Bun script so the command works on Windows as well as POSIX shells.
 
+## Avoiding Test Gaps
+
+A green suite does not prove a change is regression-free; it only proves the cases that were written still pass. When a change touches a condition or routing decision, cover every branch of that decision, including the path that existed before the change. The failure mode below is the canonical example:
+
+- In `packages/shared/src/agent/pi-agent.ts`, `handleCoordinatedToolResult` routed tool results to `childCoordinationBridges.get(request.runtimeId)` whenever `runtimeId` was set. The test for the new child-runtime path passed, but the parent runtime carries `config.session.mortiseId` (for example `mortise-parent`) as its `runtimeId`, so parent results hit the child lookup, found nothing, and were silently dropped. Parent-session write coordination protection was disabled without any failing test.
+
+Rules that would have caught it:
+
+1. Enumerate branches before writing tests. A one-line `condition ? a : b` needs at least one test for each side plus the boundary value. Adding a new branch is not complete until the pre-existing branch still has coverage.
+2. Treat unchanged behavior as a contract. Every change should include at least one assertion that a previously working path still works, not only assertions about the new behavior.
+3. Use production-shaped test data. Construct parent-side cases with the real `mortiseId` from the config helper instead of invented strings that happen to make the routing obvious.
+4. Review the diff branch by branch. For every changed condition, ask which test executes each outcome; this is more reliable than trusting the suite, because the suite cannot report coverage it never had.
+
+When a lookup with a fallback (find child bridge by id, otherwise parent bridge) is extracted into a small pure function, branch enumeration becomes cheap and the tests no longer need to mock a full runtime. Prefer that shape over inline conditionals when the routing is reused or has more than two outcomes.
+
 ## Choosing a UI Validation Surface
 
 Choose the validation surface from the capability being changed. WebUI is useful only for workflows it actually supports; it is not a proxy for Electron-only behavior.

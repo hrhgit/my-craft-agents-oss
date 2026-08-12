@@ -76,8 +76,9 @@ describe('UI validation production bundle boundary', () => {
     expect(buildScript).toContain('mortise-logs.exe')
     expect(buildScript).toContain('mortise-logs\\cli.ts')
     expect(orchestrator).toContain('captureBuildSource')
-    expect(orchestrator).toContain('resolveReusableDeveloperKitBuild')
-    expect(orchestrator).toContain("!freshSource && !reusable")
+    expect(orchestrator).not.toContain('resolveReusableDeveloperKitBuild')
+    expect(orchestrator).not.toContain('!freshSource && !reusable')
+    expect(orchestrator).toContain('Reusing build')
     expect(orchestrator).toContain('computeDeveloperKitBuildId(sourceId, true, bunExecutableSha256)')
     expect(orchestrator).toContain('ensureDeveloperKitArchive(outputRoot, manifest)')
     expect(orchestrator).toContain('seedUvToolchainCacheFromCompletedBuild')
@@ -95,6 +96,21 @@ describe('UI validation production bundle boundary', () => {
     expect(smokeScript).toContain('Remove-Item Env:BUN_INSTALL')
     expect(smokeScript).toContain('source-development-*')
     expect(smokeScript).toContain('$logsCliPath trace smoke-request')
+  })
+
+  test('keeps non-shell UI runtimes outside the playground static graph', () => {
+    const playgroundEntry = readFileSync(resolve(import.meta.dir, '../../../apps/electron/src/renderer/playground.tsx'), 'utf8')
+    const playgroundApp = readFileSync(resolve(import.meta.dir, '../../../apps/electron/src/renderer/playground/PlaygroundApp.tsx'), 'utf8')
+
+    expect(playgroundEntry).toContain("await import('./components/ui/sonner')")
+    expect(playgroundEntry).toContain('React.lazy')
+    expect(playgroundEntry).not.toMatch(
+      /import\s+\{\s*Toaster\s*\}\s+from\s+['"]\.\/components\/ui\/sonner['"]/,
+    )
+    expect(playgroundApp).toContain('<select')
+    expect(playgroundApp).not.toContain("from '@/components/ui/select'")
+    expect(playgroundApp).toContain('type="checkbox"')
+    expect(playgroundApp).not.toContain("from '@/components/ui/switch'")
   })
 
   test('pins the raw Electron smoke to one immutable UI-validation build lease', () => {

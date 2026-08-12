@@ -13,6 +13,7 @@ export {
 } from "./loader.ts";
 export type { ExtensionErrorListener } from "./runner.ts";
 export { ExtensionRunner } from "./runner.ts";
+export { ExtensionServiceError, ExtensionServiceRegistry } from "./service-registry.ts";
 export type {
 	AfterProviderResponseEvent,
 	AgentEndEvent,
@@ -66,6 +67,15 @@ export type {
 	// Runtime
 	ExtensionRuntime,
 	ExtensionRuntimeState,
+	ExtensionServiceCatalogV1,
+	ExtensionServiceHandle,
+	ExtensionServiceImplementation,
+	ExtensionServiceInvocationContext,
+	ExtensionServiceInvokeOptions,
+	ExtensionServiceProgressV1,
+	ExtensionServiceResultStatusV1,
+	ExtensionServiceResultV1,
+	ExtensionServicesAPI,
 	ExtensionUIAction,
 	ExtensionUICapabilities,
 	ExtensionUIContext,

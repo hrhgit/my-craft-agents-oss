@@ -40,6 +40,8 @@ export interface CreateAgentSessionServicesOptions {
 	modelRegistry?: ModelRegistry;
 	resourceLoaderOptions?: Omit<DefaultResourceLoaderOptions, "cwd" | "agentDir" | "settingsManager">;
 	deferResourceLoad?: boolean;
+	extensionServiceScope?: import("./extension-manifest.ts").ExtensionCapabilityScopeV1;
+	extensionServiceParentRegistry?: import("./extensions/service-registry.ts").ExtensionServiceRegistry;
 }
 
 /**
@@ -127,6 +129,8 @@ export async function createAgentSessionServices(
 		agentDir,
 		projectConfigDir,
 		settingsManager,
+		extensionServiceScope: options.extensionServiceScope,
+		extensionServiceParentRegistry: options.extensionServiceParentRegistry,
 	});
 	const objectsReadyAt = performance.now();
 

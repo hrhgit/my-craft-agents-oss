@@ -587,6 +587,87 @@ describe("RPC prompt response semantics", () => {
 		await expect(executeB).resolves.toMatchObject({ content: [{ type: "text", text: "ok" }] });
 	});
 
+	it("rejects malformed host tool responses instead of allowing or acknowledging them", async () => {
+		rpcIo.outputLines = [];
+		rpcIo.lineHandler = undefined;
+		const siblings: Array<ReturnType<typeof createFakeRuntime>> = [];
+		const defaultRuntime = createFakeRuntime("default-session", () => {
+			const sibling = createFakeRuntime("malformed-session");
+			siblings.push(sibling);
+			return sibling;
+		});
+		void runRpcMode(defaultRuntime as never);
+		await vi.waitFor(() => expect(rpcIo.lineHandler).toBeDefined());
+		const send = (command: Record<string, unknown>) => rpcIo.lineHandler!(JSON.stringify(command));
+		send({ id: "open", type: "open_runtime", runtimeId: "runtime-malformed", cwd: process.cwd(), inMemory: true });
+		await vi.waitFor(() => expect(siblings).toHaveLength(1));
+		const runtime = siblings[0]!;
+		send({
+			id: "execution-on",
+			type: "enable_tool_execution_interceptor",
+			runtimeId: "runtime-malformed",
+			enabled: true,
+		});
+		send({ id: "results-on", type: "enable_tool_results", runtimeId: "runtime-malformed", enabled: true });
+		send({
+			id: "tools",
+			type: "register_tools",
+			runtimeId: "runtime-malformed",
+			tools: [{ name: "host_tool", description: "Host tool", inputSchema: { type: "object" } }],
+		});
+		await vi.waitFor(() => expect(runtime.hostTool.name).toBe("host_tool"));
+
+		const execution = runtime.controls.toolExecutionHandler({
+			toolName: "write",
+			toolCallId: "malformed-execution",
+			input: {},
+			assistantTimestamp: 1,
+		});
+		const result = runtime.controls.toolResultHandler({
+			toolName: "write",
+			toolCallId: "malformed-result",
+			input: {},
+			content: [],
+			isError: false,
+			assistantTimestamp: 1,
+		});
+		const execute = runtime.hostTool.execute("malformed-execute", {});
+		await vi.waitFor(() => {
+			const requests = parseOutputLines(rpcIo.outputLines);
+			expect(requests.some((record) => record.toolCallId === "malformed-execution")).toBe(true);
+			expect(requests.some((record) => record.toolCallId === "malformed-result")).toBe(true);
+			expect(requests.some((record) => record.toolCallId === "malformed-execute")).toBe(true);
+		});
+		const requests = parseOutputLines(rpcIo.outputLines);
+		const route = {
+			runtimeId: "runtime-malformed",
+			sessionId: runtime.session.sessionId,
+			attemptId: runtime.session.attemptId,
+		};
+		send({
+			type: "tool_execution_response",
+			id: requests.find((record) => record.toolCallId === "malformed-execution")!.id,
+			...route,
+			action: "unexpected",
+		});
+		send({
+			type: "tool_result_response",
+			id: requests.find((record) => record.toolCallId === "malformed-result")!.id,
+			...route,
+			status: "unexpected",
+		});
+		send({
+			type: "tool_execute_response",
+			id: requests.find((record) => record.toolCallId === "malformed-execute")!.id,
+			...route,
+			content: [{ type: "unknown" }],
+		});
+
+		await expect(execution).rejects.toThrow("invalid tool execution response");
+		await expect(result).rejects.toThrow("invalid tool result response");
+		await expect(execute).rejects.toThrow("invalid tool execute response");
+	});
+
 	it("emits the user persistence event only after canonical JSONL publication", async () => {
 		const clientMutationId = "mutation-durable-1";
 		const { lineHandler, getSessionFile, cleanup } = await startRpcMode({

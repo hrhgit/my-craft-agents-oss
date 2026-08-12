@@ -48,6 +48,8 @@ export const playgroundAppShellContext: AppShellContextType = {
   piProviders: [],
   piGlobalSettings: {},
   refreshPiGlobalConfig: async () => {},
+  showTaggedModelsOnly: false,
+  setShowTaggedModelsOnly: async () => {},
   getDraft: () => '',
   getDraftAttachmentRefs: () => [],
   hydrateDraftAttachments: async () => [],

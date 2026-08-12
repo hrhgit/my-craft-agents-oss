@@ -51,6 +51,17 @@ profile references the source directories without copying them, so local
 dependencies and extension reloads continue to resolve from the development
 workspace.
 
+Inspect and invoke public extension capabilities through the real Pi service registry:
+
+```powershell
+bin\mortise-ui.exe extension-services list --run package-check --json
+bin\mortise-ui.exe extension-services describe --run package-check --id search.query --json
+bin\mortise-ui.exe extension-services invoke --run package-check --id search.query --operation query `
+  --params '{"input":{"query":"composition"}}' --json
+```
+
+Only a service result with `status: "succeeded"` exits with code 0. Domain failures remain in the stable result DTO and exit with code 2.
+
 Inspect the capability catalog before composing a flow, then use targets and
 revisions returned by the latest snapshot:
 
@@ -88,6 +99,8 @@ sequence, revision, verification level, and failure state under the run root.
 Keep the workflow file unchanged when resuming; a changed hash requires a new
 execution. Set `run.cleanup` to `always`, `on-success` (the default), or
 `never` according to whether the host should remain available for inspection.
+
+An `extension-service` step invokes a declared operation through the same registry, provider resolution, validation, cancellation, and lifecycle path. Its complete result DTO is persisted in the step state. Retryable statuses reuse the step request ID; invalid input, invalid output, ambiguity, and cancellation fail without automatic retry.
 
 When an extension is running its own local UI development server, pass a
 loopback-only override for each extension. The mapping is forwarded to the

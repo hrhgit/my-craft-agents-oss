@@ -1,11 +1,13 @@
 import { randomBytes } from 'node:crypto'
 import { closeSync, existsSync, openSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { spawn, spawnSync } from 'node:child_process'
+import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { UI_VALIDATION_DEFAULT_TIMEOUT_MS, UI_VALIDATION_MAX_WAIT_MS } from '@mortise/shared/ui-validation'
 import { MORTISE_UI_PROTOCOL_VERSION, type MortiseUiFailureDiagnostics, type MortiseUiHistoryEntry, type MortiseUiProfileMode, type MortiseUiResponse, type MortiseUiRunManifest, type MortiseUiStartupPhase, type MortiseUiSurface, type MortiseUiWindowMode } from './protocol.ts'
 import { withFileLock } from '../build/file-lock.ts'
 import { ensureDir, writeJsonAtomic } from '../build/files.ts'
+import { captureBuildSource } from '../build-source-snapshot.ts'
 import { getProcessStartTime, isProcessAlive, matchesProcessIdentity, type MortiseUiProcessIdentity } from '../build/process-identity.ts'
 import type { MortiseUiFixtureSpec } from './fixture.ts'
 import { redactText } from './redaction.ts'
@@ -69,8 +71,7 @@ function resolveDeveloperHostExecutable(): string | null {
   return candidates.find(existsSync) ?? null
 }
 
-export function readPackagedDeveloperHostIdentity(executableValue: string): { buildId: string; sourceId: string } {
-  const executable = resolve(executableValue)
+export function readPackagedDeveloperHostIdentity(executableValue: string): { buildId: string; sourceId: string } {  const executable = resolve(executableValue)
   const provenancePath = process.platform === 'darwin'
     ? resolve(dirname(executable), '..', 'Resources', 'app', 'dist', 'build-provenance.json')
     : join(dirname(executable), 'resources', 'app', 'dist', 'build-provenance.json')
@@ -96,6 +97,27 @@ export function readPackagedDeveloperHostIdentity(executableValue: string): { bu
     || !/^[0-9a-f]{64}$/.test(provenance.sourceId)
   ) throw new Error(`Packaged Developer Host provenance is not compatible: ${provenancePath}`)
   return { buildId: provenance.buildId, sourceId: provenance.sourceId }
+}
+
+/**
+ * Capture the current workspace source identity without materializing files.
+ * Returns undefined when the working directory is not a captured git worktree,
+ * so freshness checks degrade gracefully instead of blocking tests.
+ */
+function captureCurrentSourceId(): string | undefined {
+  try {
+    const captured = captureBuildSource({
+      repoRoot: process.cwd(),
+      scratchRoot: join(tmpdir(), 'mortise-ui-source-freshness'),
+    })
+    try {
+      return captured.sourceId
+    } finally {
+      captured.dispose()
+    }
+  } catch {
+    return undefined
+  }
 }
 
 function makeRunId(): string {
@@ -223,6 +245,7 @@ export function resolveRunDir(runRoot = DEFAULT_MORTISE_UI_RUN_ROOT, runSelector
 export async function startMortiseUiRun(args: {
   surface: MortiseUiSurface
   expectedBuildId?: string
+  requireFreshBuild?: boolean
   label?: string
   profileMode?: MortiseUiProfileMode
   windowMode?: MortiseUiWindowMode
@@ -268,6 +291,20 @@ export async function startMortiseUiRun(args: {
     : undefined
   if (args.expectedBuildId && packagedHostIdentity && packagedHostIdentity.buildId !== args.expectedBuildId) {
     throw new Error(`Requested Electron build ${args.expectedBuildId} does not match the packaged Developer Host build ${packagedHostIdentity.buildId}.`)
+  }
+  // Host freshness check: tests record the packaged host identity by default;
+  // when the host source differs from the current workspace source, warn by
+  // default and fail when requireFreshBuild (or MORTISE_UI_REQUIRE_FRESH=1).
+  const requireFreshBuild = args.requireFreshBuild ?? process.env.MORTISE_UI_REQUIRE_FRESH === '1'
+  if (packagedHostIdentity) {
+    const currentSourceId = captureCurrentSourceId()
+    if (currentSourceId && currentSourceId !== packagedHostIdentity.sourceId) {
+      const freshnessMessage = `Developer Host build ${packagedHostIdentity.buildId.slice(0, 12)} (source ${packagedHostIdentity.sourceId.slice(0, 12)}) differs from the current workspace source (${currentSourceId.slice(0, 12)}). Tests run the packaged host, not the current source.`
+      if (requireFreshBuild) {
+        throw new Error(`[mortise-ui] ${freshnessMessage} Point MORTISE_DEV_HOST_PATH at a freshly built host or repackage from the current source.`)
+      }
+      console.warn(`[mortise-ui] ${freshnessMessage} Repackage a fresh Developer Host to verify the current source.`)
+    }
   }
   const label = validateRunLabel(args.label)
   const runId = makeRunId()

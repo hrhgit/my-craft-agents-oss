@@ -1,4 +1,5 @@
 import * as React from 'react'
+import { useTranslation } from 'react-i18next'
 import {
   animate,
   easeIn,
@@ -46,6 +47,7 @@ export function ImageCardStack({
   stackScale = 0.8,
   onTopCardTap,
 }: ImageCardStackProps) {
+  const { t } = useTranslation()
   const ref = React.useRef<HTMLUListElement>(null)
   const [width, setWidth] = React.useState(400)
 
@@ -83,7 +85,7 @@ export function ImageCardStack({
           key={`${item.src}-${index}`}
           src={item.src}
           ratio={item.ratio ?? 4 / 3}
-          alt={item.alt || item.label || `Image ${index + 1}`}
+          alt={item.alt || item.label || t('markdown.imageAltFallback', { index: index + 1 })}
           index={index}
           currentIndex={currentIndex}
           totalImages={items.length}

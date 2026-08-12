@@ -256,6 +256,8 @@ export interface ISessionManager extends WorkspaceTopologySessionCoordinator {
   reloadProviderRuntime(provider?: string): Promise<void>
   /** Inspect one loaded Pi runtime for the global agent settings surface. */
   getAgentRuntimeProfile(): Promise<import('@mortise/shared/config').AgentRuntimeProfile | null>
+  getExtensionServiceCatalog(sessionId?: string): Promise<import('@mortise/shared/protocol').ExtensionServiceCatalogDTO>
+  invokeExtensionService(input: { requestId: string; runtimeId?: string; sessionId?: string; capability: string; operation: string; provider?: string; input: unknown; timeoutMs?: number; signal?: AbortSignal }): Promise<import('@mortise/shared/protocol').ExtensionServiceResultDTO>
 
   /**
    * Install a callback invoked from the canonical V3 automation prompt

@@ -178,6 +178,10 @@ export const LOCAL_ONLY_CHANNELS = new Set<string>([
   RPC_CHANNELS.tools.GET_WEB_SEARCH_MODE,
   RPC_CHANNELS.tools.SET_WEB_SEARCH_MODE,
 
+  // model picker — local UI preference (shellGui.mortise.showTaggedModelsOnly)
+  RPC_CHANNELS.settings.GET_SHOW_TAGGED_MODELS_ONLY,
+  RPC_CHANNELS.settings.SET_SHOW_TAGGED_MODELS_ONLY,
+
   RPC_CHANNELS.piExtensions.GET_SETTINGS,
   RPC_CHANNELS.piExtensions.SET_SETTINGS,
   RPC_CHANNELS.piExtensions.UPDATE_SETTINGS,
@@ -356,8 +360,6 @@ export const REMOTE_ELIGIBLE_CHANNELS = new Set<string>([
   // agent settings — global Pi/Mortise agent configuration
   RPC_CHANNELS.agentSettings.GET,
   RPC_CHANNELS.agentSettings.UPDATE_MAIN,
-  RPC_CHANNELS.agentSettings.UPSERT_SUBAGENT,
-  RPC_CHANNELS.agentSettings.DELETE_SUBAGENT,
 
   // workspace coordination — shared activity and provenance ledger
   RPC_CHANNELS.workspaceCoordination.GET_STATUS,

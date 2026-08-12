@@ -240,7 +240,28 @@ IDs used by `id`, dependency maps, conflicts, and load-order hints are lowercase
 
 Mortise exposes `compatible`, `warning`, `blocked`, or `legacy` manifest status plus structured diagnostics in the extension catalog. Blocked extensions do not execute. Settings shows the extension version, author, and first diagnostic. Fix the manifest or installed dependency set, then use the next backend or Workspace load.
 
-The Developer Kit includes `schemas/extension-manifest-v1.schema.json` and a complete package under `examples/manifest-v1/`. Runtime validation remains authoritative.
+### Capability composition
+
+`dependencies` describes extension packages. `provides` and `uses` describe a public capability graph. Providers keep implementation details private and expose only declared operation schemas. Consumers receive lazy handles through `pi.services.use("alias")`; a missing or ambiguous required capability blocks only that consumer, while an optional capability degrades locally. UI resources remain owned by their provider: a capability declaration references stable module or frontend IDs, and a consuming frontend loads them through `context.dependencies.use("alias").module(id)`.
+
+```json
+{
+  "provides": {
+    "search.query": {
+      "version": "1.0.0",
+      "scope": "workspace",
+      "service": { "operations": { "query": { "inputSchema": { "type": "object" }, "outputSchema": { "type": "object" } } } },
+      "ui": { "modules": ["search-result-view"] }
+    }
+  },
+  "uses": {
+    "search": { "capability": "search.query", "version": "^1.0.0", "facets": ["service", "ui"] },
+    "knowledge": { "capability": "knowledge.read", "version": "^1.0.0", "required": false }
+  }
+}
+```
+
+The Developer Kit includes `schemas/extension-manifest-v1.schema.json` and complete packages under `examples/manifest-v1/` and `examples/extension-services/`. Runtime validation remains authoritative.
 
 ## How Mortise GUI Extensions Work
 

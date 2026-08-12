@@ -54,10 +54,9 @@ export const KEYS = {
   // Settings navigation
   lastSettingsSubpage: 'last-settings-subpage',
 
-  // Agent settings recoverable drafts (global prompts and entity-scoped subagents)
+  // Agent settings recoverable drafts
   agentSystemPromptDraft: 'settings.agents.global.system-prompt-draft.v1',
   agentCompactionPromptDraft: 'settings.agents.global.compaction-prompt-draft.v1',
-  agentSubagentDraft: 'settings.agents.entity-draft.v1',
 
   // Skill management drafts (global or Workspace scoped via suffix)
   skillEditorDraft: 'skills.editor.draft.v1',

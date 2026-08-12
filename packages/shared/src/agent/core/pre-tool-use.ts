@@ -10,7 +10,7 @@
  *
  * Pipeline steps:
  * 1. Prerequisite check: selected skill instructions must be read
- * 2. spawn_session detection: Intercept the canonical spawn_session host tool
+ * 2. subagent detection: Intercept the canonical subagent host tool
  * 3. Input transforms: Path expansion, config validation, skill qualification, metadata stripping
  */
 
@@ -516,7 +516,7 @@ export type PreToolUseCheckResult =
   | { type: 'allow' }
   | { type: 'modify'; input: Record<string, unknown> }
   | { type: 'block'; reason: string; source?: 'prerequisite' }
-  | { type: 'spawn_session_intercept'; input: Record<string, unknown> };
+  | { type: 'subagent_intercept'; input: Record<string, unknown> };
 
 /**
  * Input for `runPreToolUseChecks()`. Each agent builds this from its SDK-specific
@@ -554,7 +554,7 @@ export interface PrerequisiteManagerLike {
  *
  * Pipeline:
  * 1. Prerequisite check
- * 2. spawn_session interception
+ * 2. subagent interception
  * 3. Input transforms (paths, config validation, skills, metadata)
  *
  * @returns A discriminated union that the agent translates to its SDK format
@@ -587,8 +587,8 @@ export function runPreToolUseChecks(ctx: PreToolUseInput): PreToolUseCheckResult
   // ============================================================
   // 3. SPAWN_SESSION INTERCEPTION
   // ============================================================
-  if (toolName === 'spawn_session') {
-    return { type: 'spawn_session_intercept', input };
+  if (toolName === 'subagent') {
+    return { type: 'subagent_intercept', input };
   }
 
   // ============================================================

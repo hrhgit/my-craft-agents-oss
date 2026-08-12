@@ -29,6 +29,9 @@ import type {
 	ExtensionEvent,
 	ExtensionRuntime,
 	ExtensionRuntimeState,
+	ExtensionServiceCatalogV1,
+	ExtensionServiceInvokeOptions,
+	ExtensionServicesAPI,
 	ExtensionUIContext,
 	InputEvent,
 	InputEventResult,
@@ -307,6 +310,30 @@ export class ExtensionRunner {
 		return this.extensions.map((e) => e.path);
 	}
 
+	getExtensionServiceCatalog(): ExtensionServiceCatalogV1 {
+		const bindings = new Map<string, import("../extension-manifest.ts").ExtensionCapabilityBindingV1[]>();
+		for (const extension of this.extensions) bindings.set(extension.id, extension.capabilityBindings ?? []);
+		return this.runtime.serviceRegistry.catalog(bindings);
+	}
+
+	getExtensionServiceRegistry(): ExtensionRuntime["serviceRegistry"] {
+		return this.runtime.serviceRegistry;
+	}
+
+	invokeExtensionService(
+		capability: string,
+		operation: string,
+		input: unknown,
+		options: ExtensionServiceInvokeOptions & { provider?: string } = {},
+	): Promise<unknown> {
+		this.assertActive();
+		return this.runtime.serviceRegistry.invokeCapability(capability, operation, input, options);
+	}
+
+	cancelExtensionService(requestId: string): boolean {
+		return this.runtime.serviceRegistry.cancel(requestId);
+	}
+
 	/** Get all registered tools from all extensions (first registration per name wins). */
 	getAllRegisteredTools(): RegisteredTool[] {
 		const toolsByName = new Map<string, RegisteredTool>();
@@ -337,6 +364,7 @@ export class ExtensionRunner {
 		if (!this.staleMessage) {
 			this.staleMessage = message;
 			this.runtime.invalidate(message);
+			this.runtime.serviceRegistry.invalidate(message);
 		}
 	}
 
@@ -348,10 +376,7 @@ export class ExtensionRunner {
 
 	private runInInvocationContext<T>(action: () => T): T {
 		const attemptId = this.getAttemptIdFn();
-		return runWithExtensionInvocationOrigin(
-			attemptId ? { kind: "attempt", attemptId } : { kind: "runtime" },
-			action,
-		);
+		return runWithExtensionInvocationOrigin(attemptId ? { kind: "attempt", attemptId } : { kind: "runtime" }, action);
 	}
 
 	onError(listener: ExtensionErrorListener): () => void {
@@ -452,6 +477,16 @@ export class ExtensionRunner {
 				return extensionId && runner.capabilitiesContextFactory
 					? runner.capabilitiesContextFactory(extensionId)
 					: unsupportedCapabilitiesContext;
+			},
+			get services() {
+				runner.assertActive();
+				if (!extensionId) throw new Error("Extension service access requires an extension identity");
+				const services: ExtensionServicesAPI = {
+					provide: (capabilityId, implementation) =>
+						runner.runtime.serviceRegistry.provide(extensionId, capabilityId, implementation),
+					use: (alias) => runner.runtime.serviceRegistry.use(extensionId, alias),
+				};
+				return services;
 			},
 			get hasUI() {
 				runner.assertActive();

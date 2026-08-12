@@ -51,6 +51,10 @@ export interface TreeSessionSpawnConfig {
   template?: string;
   tools?: string[];
   background?: boolean;
+  agent?: string;
+  forkTurns?: number | 'all';
+  seedMessageCount?: number;
+  schema?: Record<string, unknown>;
 }
 
 /** On-disk Pi tree JSONL v3 header (file 第一行). */
@@ -62,7 +66,7 @@ export interface TreeSessionHeader {
   timestamp: string;
   cwd: string;
   parentSession?: string;
-  /** Pi shell-spawn parent session ID, used by spawn_session/listChildSessions. */
+  /** Pi shell-spawn parent Session ID, used by subagent/listChildSessions. */
   spawnedFrom?: string;
   spawnConfig?: TreeSessionSpawnConfig;
   mortise?: MortiseMetadataOnDisk;

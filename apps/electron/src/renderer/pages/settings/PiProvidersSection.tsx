@@ -15,7 +15,7 @@
 
 import * as React from 'react'
 import { useTranslation } from 'react-i18next'
-import { AlertCircle, ChevronRight, Loader2, MoreHorizontal, Pencil, Plus, Star, Trash2 } from 'lucide-react'
+import { AlertCircle, ChevronRight, List, Loader2, MoreHorizontal, Pencil, Plus, Star, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
@@ -23,6 +23,8 @@ import {
   DropdownMenu,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { Switch } from '@/components/ui/switch'
 import {
   StyledDropdownMenuContent,
   StyledDropdownMenuItem,
@@ -34,12 +36,14 @@ import {
   SettingsRow,
   SettingsMenuSelectRow,
 } from '@/components/settings'
+import { useAppShellContext } from '@/context/AppShellContext'
 import { usePiGlobalConfig } from '@/hooks/usePiGlobalConfig'
+import { piProviderModelTags } from '@mortise/shared/config/pi-provider-models'
 import { PiProviderFormDialog } from './PiProviderFormDialog'
-import type { PiCustomApi, PiGlobalProvider, PiGlobalProviderForDisplay, PiGlobalSettings } from '../../../shared/types'
+import { ModelEditDialog } from './ModelEditDialog'
+import type { PiCustomApi, PiGlobalModel, PiGlobalProvider, PiGlobalProviderForDisplay, PiGlobalSettings } from '../../../shared/types'
 import type { PiGlobalDefaultSlot } from '@mortise/shared/config'
 import {
-  DEFAULT_THINKING_LEVEL,
   THINKING_LEVELS,
   type ThinkingLevel,
 } from '@mortise/shared/agent/thinking-levels'
@@ -66,6 +70,7 @@ function cleanAddLabel(label: string): string {
 
 export function PiProvidersSection() {
   const { t } = useTranslation()
+  const { showTaggedModelsOnly, setShowTaggedModelsOnly } = useAppShellContext()
   const {
     providers: loadedProviders,
     settings: loadedSettings,
@@ -91,6 +96,9 @@ export function PiProvidersSection() {
   const [editingKey, setEditingKey] = React.useState<string | null>(null)
   const [editingProvider, setEditingProvider] = React.useState<PiGlobalProvider | undefined>(undefined)
   const [expandedSlot, setExpandedSlot] = React.useState<number | null>(1)
+  // Per-provider models popover + per-model edit dialog
+  const [modelsMenuProvider, setModelsMenuProvider] = React.useState<string | null>(null)
+  const [editingModel, setEditingModel] = React.useState<{ providerKey: string; provider: PiGlobalProvider; model: PiGlobalModel } | null>(null)
 
   const defaultProvider = settings.defaultProvider
   const defaultSlots = settings.defaultSlots ?? []
@@ -137,6 +145,22 @@ export function PiProvidersSection() {
         ? current.map(entry => entry.key === key ? nextEntry : entry)
         : [...current, nextEntry]
     })
+    toast.success(t('settings.piProviders.saved'))
+  }, [t])
+
+  // Persist a model edit (tags/name/capabilities) via RPC; keeps the page's
+  // local provider list in sync without a full reload.
+  const handleSaveModel = React.useCallback(async (providerKey: string, provider: PiGlobalProvider) => {
+    const result = await window.electronAPI.savePiGlobalProvider({ key: providerKey, provider })
+    if (!result.success) {
+      toast.error(result.error || t('settings.piProviders.saveFailed'))
+      return
+    }
+    setProviders(current => current.map(entry =>
+      entry.key === providerKey
+        ? { ...entry, provider, modelCount: provider.models?.length ?? 0 }
+        : entry,
+    ))
     toast.success(t('settings.piProviders.saved'))
   }, [t])
 
@@ -205,34 +229,6 @@ export function PiProvidersSection() {
     })
   }, [saveDefaultSlot])
 
-  const handleAddDefault = React.useCallback(async () => {
-    const provider = providers[0]
-    const model = provider?.provider.models?.[0]
-    if (!provider || !model) return
-    const slot = defaultSlots.length + 1
-    const saved = await saveDefaultSlot(slot, {
-      provider: provider.key,
-      model: model.id,
-      thinkingLevel: DEFAULT_THINKING_LEVEL,
-    })
-    if (saved) setExpandedSlot(slot)
-  }, [defaultSlots.length, providers, saveDefaultSlot])
-
-  const handleRemoveDefault = React.useCallback(async (slot: number) => {
-    const result = await window.electronAPI.setPiGlobalDefault({ slot, remove: true })
-    if (result.success) {
-      setSettings(current => ({
-        ...current,
-        defaultSlots: (current.defaultSlots ?? [])
-          .filter(entry => entry.slot !== slot)
-          .map((entry, index) => ({ ...entry, slot: index + 1 })),
-      }))
-      setExpandedSlot(null)
-    } else {
-      toast.error(result.error || t('settings.piProviders.switchFailed'))
-    }
-  }, [t])
-
   const existingKeys = React.useMemo(() => providers.map(p => p.key), [providers])
 
   return (
@@ -270,7 +266,10 @@ export function PiProvidersSection() {
                     {t('settings.piProviders.noProviders')}
                   </div>
                 ) : (
-                  defaultSlots.map((slot, index) => {
+                  // Only the primary default (slot 1) remains; the
+                  // "add multiple defaults" feature has been removed in
+                  // favor of model tags.
+                  defaultSlots.filter(slot => slot.slot === 1).map((slot, index) => {
                     const modelOptions = modelOptionsForProvider(slot.provider)
                     const open = expandedSlot === slot.slot
                     return (
@@ -329,20 +328,6 @@ export function PiProvidersSection() {
                                 description: t(descriptionKey),
                               }))}
                             />
-                            {slot.slot > 1 && (
-                              <div className="flex justify-end px-4 pb-2">
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  semanticId={`settings.ai.default.${slot.slot}.remove`}
-                                  className="text-destructive hover:text-destructive"
-                                  onClick={() => void handleRemoveDefault(slot.slot)}
-                                >
-                                  <Trash2 />
-                                  {t('settings.ai.removeDefault')}
-                                </Button>
-                              </div>
-                            )}
                           </div>
                         </CollapsibleContent>
                       </Collapsible>
@@ -352,14 +337,29 @@ export function PiProvidersSection() {
               </>
             )}
           </SettingsCard>
-          {providers.length > 0 && (
-            <div className="pt-0">
-              <Button variant="outline" size="sm" onClick={() => void handleAddDefault()}>
-                <Plus />
-                {t('settings.ai.addDefault')}
-              </Button>
-            </div>
-          )}
+        </SettingsSection>
+
+        {/* Tagged-models-only picker preference */}
+        <SettingsSection
+          title={t('settings.ai.taggedSection')}
+          description={t('settings.ai.taggedSectionDesc')}
+        >
+          <SettingsCard divided={false}>
+            <SettingsRow
+              label={t('settings.ai.showTaggedModelsOnly')}
+              description={t('settings.ai.showTaggedModelsOnlyDesc')}
+            >
+              <Switch
+                checked={showTaggedModelsOnly}
+                onCheckedChange={(value) => {
+                  void setShowTaggedModelsOnly(value).catch(() => {
+                    toast.error(t('settings.ai.showTaggedModelsOnlyFailed'))
+                  })
+                }}
+                semanticId="settings.ai.showTaggedModelsOnly.toggle"
+              />
+            </SettingsRow>
+          </SettingsCard>
         </SettingsSection>
 
         {/* Providers list */}
@@ -402,6 +402,71 @@ export function PiProvidersSection() {
                       </div>
                     }
                   >
+                    <Popover
+                      open={modelsMenuProvider === entry.key}
+                      onOpenChange={(next) => setModelsMenuProvider(next ? entry.key : null)}
+                    >
+                      <PopoverTrigger asChild>
+                        <button
+                          className="p-1.5 rounded-md hover:bg-foreground/[0.05] transition-colors"
+                          aria-label={t('settings.piProviders.viewModels')}
+                          title={t('settings.piProviders.viewModels')}
+                        >
+                          <List className="h-4 w-4 text-muted-foreground" />
+                        </button>
+                      </PopoverTrigger>
+                      <PopoverContent align="end" className="w-80 max-h-80 p-0 overflow-hidden flex flex-col">
+                        <div className="px-3 pt-2.5 pb-1.5 text-xs font-medium text-foreground/60 uppercase tracking-wide border-b border-border/40">
+                          {t('settings.piProviders.models')} · {entry.modelCount}
+                        </div>
+                        <div className="flex-1 min-h-0 overflow-y-auto py-1">
+                          {(entry.provider.models ?? []).length === 0 ? (
+                            <div className="px-3 py-4 text-center text-xs text-muted-foreground">
+                              {t('settings.piProviders.modelsEmpty')}
+                            </div>
+                          ) : (
+                            (entry.provider.models ?? []).map(model => {
+                              const tags = piProviderModelTags(entry.provider, model.id)
+                              const displayName = model.name && model.name !== model.id ? model.name : model.id
+                              return (
+                                <div
+                                  key={model.id}
+                                  className="flex items-center gap-2 px-3 py-1.5 rounded-lg mx-1 hover:bg-foreground/[0.04] transition-colors"
+                                >
+                                  <div className="flex-1 min-w-0">
+                                    <div className="text-sm font-medium truncate">{displayName}</div>
+                                    {model.name && model.name !== model.id && (
+                                      <div className="text-xs text-muted-foreground truncate">{model.id}</div>
+                                    )}
+                                    {tags.length > 0 && (
+                                      <div className="flex flex-wrap gap-1 pt-0.5">
+                                        {tags.map(tag => (
+                                          <span
+                                            key={tag}
+                                            className="inline-flex items-center h-4.5 px-1.5 text-[10px] font-medium rounded-[3px] bg-foreground/10 text-foreground/70"
+                                          >
+                                            {tag}
+                                          </span>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                  <button
+                                    type="button"
+                                    className="p-1.5 rounded-md text-muted-foreground hover:bg-foreground/[0.06] hover:text-foreground transition-colors shrink-0"
+                                    aria-label={t('settings.piProviders.editModel', { model: displayName })}
+                                    title={t('settings.piProviders.editModel', { model: displayName })}
+                                    onClick={() => setEditingModel({ providerKey: entry.key, provider: entry.provider, model })}
+                                  >
+                                    <Pencil className="h-3.5 w-3.5" />
+                                  </button>
+                                </div>
+                              )
+                            })
+                          )}
+                        </div>
+                      </PopoverContent>
+                    </Popover>
                     <DropdownMenu modal={false}>
                       <DropdownMenuTrigger asChild>
                         <button className="p-1.5 rounded-md hover:bg-foreground/[0.05] transition-colors">
@@ -458,6 +523,20 @@ export function PiProvidersSection() {
         existingKeys={existingKeys}
         onSave={handleSaveProvider}
       />
+
+      {editingModel && (
+        <ModelEditDialog
+          open
+          onOpenChange={(open) => {
+            if (!open) setEditingModel(null)
+          }}
+          providerKey={editingModel.providerKey}
+          provider={editingModel.provider}
+          model={editingModel.model}
+          allProviders={providers.map(entry => ({ key: entry.key, provider: entry.provider }))}
+          onSave={handleSaveModel}
+        />
+      )}
     </>
   )
 }

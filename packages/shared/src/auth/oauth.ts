@@ -2,7 +2,8 @@ import { createServer, type Server } from 'http';
 import { URL } from 'url';
 import { randomBytes, createHash } from 'crypto';
 import { openUrl } from '../utils/open-url.ts';
-import { generateCallbackPage } from './callback-page.ts';
+import { generateCallbackPage, resolveCallbackPageLocale, type CallbackPageLocale } from './callback-page.ts';
+import { i18n } from '../i18n/index.ts';
 import { type OAuthSessionContext, buildOAuthDeeplinkUrl } from './types.ts';
 import type { PreparedOAuthFlow, OAuthExchangeParams, OAuthExchangeResult } from './oauth-flow-types.ts';
 
@@ -339,12 +340,16 @@ export class MortiseOAuth {
           const state = url.searchParams.get('state');
           const error = url.searchParams.get('error');
 
+          // Render the callback page in the app's current UI language (falls back to 'en').
+          const locale: CallbackPageLocale = resolveCallbackPageLocale(i18n.resolvedLanguage ?? i18n.language);
+
           if (error) {
             res.writeHead(400, { 'Content-Type': 'text/html' });
             res.end(generateCallbackPage({
               title: 'Authorization Failed',
               isSuccess: false,
               errorDetail: error,
+              locale,
             }));
             clearTimeout(timeout);
             this.stopServer();
@@ -358,6 +363,7 @@ export class MortiseOAuth {
               title: 'Security Error',
               isSuccess: false,
               errorDetail: 'State mismatch - possible CSRF attack.',
+              locale,
             }));
             clearTimeout(timeout);
             this.stopServer();
@@ -371,6 +377,7 @@ export class MortiseOAuth {
               title: 'Authorization Failed',
               isSuccess: false,
               errorDetail: 'No authorization code received.',
+              locale,
             }));
             clearTimeout(timeout);
             this.stopServer();
@@ -384,6 +391,7 @@ export class MortiseOAuth {
             title: 'Authorization Successful',
             isSuccess: true,
             deeplinkUrl: buildOAuthDeeplinkUrl(this.sessionContext),
+            locale,
           }));
 
           clearTimeout(timeout);

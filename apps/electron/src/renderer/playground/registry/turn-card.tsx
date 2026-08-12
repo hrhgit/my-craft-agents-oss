@@ -1,5 +1,6 @@
-import type { ComponentEntry } from './types'
+import type { ComponentEntry, PlaygroundLocale } from './types'
 import { useState, type ReactNode } from 'react'
+import { useTranslation } from 'react-i18next'
 import {
   TurnCard,
   DocumentFormattedMarkdownOverlay,
@@ -274,6 +275,48 @@ const emptyStreamingResponse: ResponseContent = {
 }
 
 // ============================================================================
+// Chinese sample data (localized variants used by mockData for zh-CN)
+// ============================================================================
+
+const zhCompletedGrepActivity: ActivityItem = {
+  id: 'tool-1',
+  type: 'tool',
+  status: 'completed',
+  toolName: 'Grep',
+  toolInput: { pattern: 'AuthHandler', path: 'src/' },
+  intent: '正在搜索认证处理器',
+  timestamp: now - 5000,
+}
+
+const zhCompletedReadActivity1: ActivityItem = {
+  id: 'tool-2',
+  type: 'tool',
+  status: 'completed',
+  toolName: 'Read',
+  toolInput: { file_path: '/src/auth/index.ts' },
+  timestamp: now - 4000,
+}
+
+const zhCompletedReadActivity2: ActivityItem = {
+  id: 'tool-3',
+  type: 'tool',
+  status: 'completed',
+  toolName: 'Read',
+  toolInput: { file_path: '/src/auth/oauth.ts' },
+  timestamp: now - 3000,
+}
+
+const zhShortResponse: ResponseContent = {
+  text: '我在 `src/auth/` 中找到了认证处理器。主要的处理器是 `AuthHandler`，它管理 OAuth 流程和令牌验证。',
+  isStreaming: false,
+}
+
+/** Pick the localized sample data for the given playground locale. */
+function pickLocale<T>(locale: PlaygroundLocale, en: T, zh: T): T {
+  return locale === 'zh-CN' ? zh : en
+}
+
+// ============================================================================
 // Helper: Generate many activities for stress testing
 // ============================================================================
 
@@ -410,6 +453,7 @@ export const turnCardComponents: ComponentEntry[] = [
     name: 'TurnCard',
     category: 'Turn Cards',
     description: 'Email-like batched display for one assistant turn with activities and response',
+    descriptionZh: '类似邮件的批量展示，用于呈现一次助手回合中的活动与响应',
     component: TurnCard,
     wrapper: PaddedWrapper,
     layout: 'top',
@@ -417,24 +461,28 @@ export const turnCardComponents: ComponentEntry[] = [
       {
         name: 'isStreaming',
         description: 'Whether content is still being received',
+        descriptionZh: '内容是否仍在接收中',
         control: { type: 'boolean' },
         defaultValue: false,
       },
       {
         name: 'isComplete',
         description: 'Whether this turn is fully complete',
+        descriptionZh: '该回合是否已完全完成',
         control: { type: 'boolean' },
         defaultValue: true,
       },
       {
         name: 'defaultExpanded',
         description: 'Start with activities expanded',
+        descriptionZh: '初始以展开状态显示活动',
         control: { type: 'boolean' },
         defaultValue: false,
       },
       {
         name: 'intent',
         description: 'Primary intent/goal for preview text',
+        descriptionZh: '预览文本的主要意图或目标',
         control: { type: 'string', placeholder: 'e.g., Searching for auth handlers...' },
         defaultValue: '',
       },
@@ -443,7 +491,9 @@ export const turnCardComponents: ComponentEntry[] = [
       // Initial / Empty state
       {
         name: 'Initial (Starting)',
+        nameZh: '初始（启动中）',
         description: 'No activities yet, just starting',
+        descriptionZh: '还没有任何活动，刚刚开始',
         props: {
           activities: [],
           response: undefined,
@@ -454,7 +504,9 @@ export const turnCardComponents: ComponentEntry[] = [
       // Single tool running
       {
         name: 'Single Tool Running',
+        nameZh: '单个工具运行中',
         description: 'One tool currently executing',
+        descriptionZh: '当前正在执行一个工具',
         props: {
           activities: [runningGrepActivity],
           response: undefined,
@@ -466,7 +518,9 @@ export const turnCardComponents: ComponentEntry[] = [
       // Multiple tools running
       {
         name: 'Multiple Tools Running',
+        nameZh: '多个工具运行中',
         description: 'Several tools executing in parallel',
+        descriptionZh: '多个工具正在并行执行',
         props: {
           activities: [
             { ...completedGrepActivity, status: 'completed' },
@@ -481,7 +535,9 @@ export const turnCardComponents: ComponentEntry[] = [
       // All tools completed (collapsed)
       {
         name: 'Tools Completed (Collapsed)',
+        nameZh: '工具已完成（折叠）',
         description: 'Multiple tools finished, collapsed by default',
+        descriptionZh: '多个工具已完成，默认折叠显示',
         props: {
           activities: [
             completedGrepActivity,
@@ -496,7 +552,9 @@ export const turnCardComponents: ComponentEntry[] = [
       // Tools completed, now streaming response
       {
         name: 'Streaming Response',
+        nameZh: '流式响应',
         description: 'Tools done, response is streaming',
+        descriptionZh: '工具已完成，响应正在流式输出',
         props: {
           activities: [
             completedGrepActivity,
@@ -510,7 +568,9 @@ export const turnCardComponents: ComponentEntry[] = [
       // Waiting for response (empty streaming)
       {
         name: 'Waiting for Response',
+        nameZh: '等待响应',
         description: 'Tools done, waiting for response to start',
+        descriptionZh: '工具已完成，正在等待响应开始',
         props: {
           activities: [
             completedGrepActivity,
@@ -524,7 +584,9 @@ export const turnCardComponents: ComponentEntry[] = [
       // Complete turn with short response
       {
         name: 'Complete (Short)',
+        nameZh: '已完成（简短）',
         description: 'Finished turn with brief response',
+        descriptionZh: '已完成回合，带有简短回复',
         props: {
           activities: [
             completedGrepActivity,
@@ -539,7 +601,9 @@ export const turnCardComponents: ComponentEntry[] = [
       // Complete turn with long response
       {
         name: 'Complete (Long)',
+        nameZh: '已完成（详细）',
         description: 'Finished turn with detailed response',
+        descriptionZh: '已完成回合，带有详细回复',
         props: {
           activities: [
             completedGrepActivity,
@@ -556,7 +620,9 @@ export const turnCardComponents: ComponentEntry[] = [
       // Error state
       {
         name: 'Error State',
+        nameZh: '错误状态',
         description: 'A tool failed during execution',
+        descriptionZh: '某个工具在执行期间失败',
         props: {
           activities: [
             completedGrepActivity,
@@ -572,7 +638,9 @@ export const turnCardComponents: ComponentEntry[] = [
       // Response only (no tools)
       {
         name: 'Response Only',
+        nameZh: '仅响应',
         description: 'Direct response without tool usage',
+        descriptionZh: '不使用工具的直接回复',
         props: {
           activities: [],
           response: shortResponse,
@@ -583,7 +651,9 @@ export const turnCardComponents: ComponentEntry[] = [
       // Many tools
       {
         name: 'Many Tools (5+)',
+        nameZh: '大量工具（5+）',
         description: 'Large number of completed tools',
+        descriptionZh: '大量已完成的工具',
         props: {
           activities: [
             completedGrepActivity,
@@ -601,7 +671,9 @@ export const turnCardComponents: ComponentEntry[] = [
       // Extreme: 75 steps (real-world stress test)
       {
         name: 'Extreme: 75 Steps',
+        nameZh: '极限：75 个步骤',
         description: 'Stress test with 75 activities - tests scrolling, animation limits, and performance',
+        descriptionZh: '包含 75 个活动的压力测试 - 检验滚动、动画上限与性能',
         props: {
           activities: manyActivities75,
           response: longResponse,
@@ -614,7 +686,9 @@ export const turnCardComponents: ComponentEntry[] = [
       // Expanded by default
       {
         name: 'Expanded (Default)',
+        nameZh: '默认展开',
         description: 'Activities shown expanded initially',
+        descriptionZh: '活动默认以展开状态显示',
         props: {
           activities: [
             completedGrepActivity,
@@ -630,7 +704,9 @@ export const turnCardComponents: ComponentEntry[] = [
       // Mixed: Tools with intermediate messages (completed)
       {
         name: 'Mixed: Tools + Commentary',
+        nameZh: '混合：工具 + 评述',
         description: 'Tools interleaved with LLM intermediate messages',
+        descriptionZh: '工具与 LLM 中间消息交错出现',
         props: {
           activities: [
             intermediateMessage1,
@@ -649,7 +725,9 @@ export const turnCardComponents: ComponentEntry[] = [
       // Mixed: In progress with commentary
       {
         name: 'Mixed: In Progress',
+        nameZh: '混合：进行中',
         description: 'Tool running after intermediate message',
+        descriptionZh: '中间消息之后工具仍在运行',
         props: {
           activities: [
             intermediateMessage1,
@@ -667,7 +745,9 @@ export const turnCardComponents: ComponentEntry[] = [
       // Mixed: Many steps
       {
         name: 'Mixed: Long Chain',
+        nameZh: '混合：长链路',
         description: 'Extended conversation with multiple tool/message pairs',
+        descriptionZh: '包含多组工具/消息对的扩展对话',
         props: {
           activities: [
             intermediateMessage1,
@@ -688,7 +768,9 @@ export const turnCardComponents: ComponentEntry[] = [
       // Mixed: Commentary only (no tools yet)
       {
         name: 'Mixed: Thinking Start',
+        nameZh: '混合：思考开始',
         description: 'LLM thinking before first tool call',
+        descriptionZh: '首次调用工具前的 LLM 思考',
         props: {
           activities: [
             intermediateMessage1,
@@ -701,7 +783,9 @@ export const turnCardComponents: ComponentEntry[] = [
       // Mixed: Currently thinking (streaming intermediate)
       {
         name: 'Mixed: Currently Thinking',
+        nameZh: '混合：正在思考',
         description: 'LLM is streaming an intermediate message',
+        descriptionZh: 'LLM 正在流式输出中间消息',
         props: {
           activities: [
             intermediateMessage1,
@@ -720,7 +804,9 @@ export const turnCardComponents: ComponentEntry[] = [
       // Todo: Just started (all pending)
       {
         name: 'Todo: Just Started',
+        nameZh: '待办：刚开始',
         description: 'TodoWrite with all items pending - just created the plan',
+        descriptionZh: 'TodoWrite 所有条目均为待处理 - 刚创建计划',
         props: {
           activities: [completedGrepActivity],
           response: undefined,
@@ -733,7 +819,9 @@ export const turnCardComponents: ComponentEntry[] = [
       // Todo: In progress
       {
         name: 'Todo: In Progress',
+        nameZh: '待办：进行中',
         description: 'TodoWrite with one item in progress',
+        descriptionZh: 'TodoWrite 有一个条目正在处理',
         props: {
           activities: [completedGrepActivity, completedReadActivity1],
           response: undefined,
@@ -746,7 +834,9 @@ export const turnCardComponents: ComponentEntry[] = [
       // Todo: Mixed progress
       {
         name: 'Todo: Mixed Progress',
+        nameZh: '待办：混合进度',
         description: 'TodoWrite with mixed completed/in_progress/pending items',
+        descriptionZh: 'TodoWrite 包含已完成/进行中/待处理混合条目',
         props: {
           activities: [completedGrepActivity, completedReadActivity1, completedBashActivity],
           response: shortResponse,
@@ -759,7 +849,9 @@ export const turnCardComponents: ComponentEntry[] = [
       // Todo: Almost done
       {
         name: 'Todo: Almost Done',
+        nameZh: '待办：即将完成',
         description: 'TodoWrite with most items completed, one in progress',
+        descriptionZh: 'TodoWrite 大部分条目已完成，一个正在处理',
         props: {
           activities: [completedGrepActivity, completedReadActivity1],
           response: undefined,
@@ -772,7 +864,9 @@ export const turnCardComponents: ComponentEntry[] = [
       // Todo: All completed
       {
         name: 'Todo: All Completed',
+        nameZh: '待办：全部完成',
         description: 'TodoWrite with all items done - task complete',
+        descriptionZh: 'TodoWrite 所有条目均已完成 - 任务完成',
         props: {
           activities: [completedGrepActivity, completedReadActivity1, completedBashActivity],
           response: longResponse,
@@ -785,7 +879,9 @@ export const turnCardComponents: ComponentEntry[] = [
       // Todo: Long list (stress test)
       {
         name: 'Todo: Long List (12 items)',
+        nameZh: '待办：长列表（12 项）',
         description: 'TodoWrite stress test with many items',
+        descriptionZh: 'TodoWrite 多条目压力测试',
         props: {
           activities: [completedGrepActivity, completedReadActivity1],
           response: shortResponse,
@@ -798,7 +894,9 @@ export const turnCardComponents: ComponentEntry[] = [
       // Todo: Only (no activities/response)
       {
         name: 'Todo: Standalone',
+        nameZh: '待办：独立',
         description: 'TodoWrite without activities or response - planning phase only',
+        descriptionZh: '无活动与响应的 TodoWrite - 仅规划阶段',
         props: {
           activities: [],
           response: undefined,
@@ -809,13 +907,13 @@ export const turnCardComponents: ComponentEntry[] = [
         },
       },
     ],
-    mockData: () => ({
+    mockData: (locale) => ({
       activities: [
-        completedGrepActivity,
-        completedReadActivity1,
-        completedReadActivity2,
+        pickLocale(locale, completedGrepActivity, zhCompletedGrepActivity),
+        pickLocale(locale, completedReadActivity1, zhCompletedReadActivity1),
+        pickLocale(locale, completedReadActivity2, zhCompletedReadActivity2),
       ],
-      response: shortResponse,
+      response: pickLocale(locale, shortResponse, zhShortResponse),
       onOpenFile: (path: string) => console.log('[Playground] Open file:', path),
       onOpenUrl: (url: string) => console.log('[Playground] Open URL:', url),
     }),
@@ -824,8 +922,10 @@ export const turnCardComponents: ComponentEntry[] = [
   {
     id: 'turn-card-streaming-sim',
     name: 'TurnCard (Streaming Sim)',
+    nameZh: 'TurnCard（流式模拟）',
     category: 'Turn Cards',
     description: 'Deterministic document-style streaming preview driven by the shared scene timeline',
+    descriptionZh: '由共享场景时间线驱动的确定性文档式流式预览',
     component: StreamingSimulationTurnCard,
     wrapper: PaddedWrapper,
     layout: 'top',
@@ -833,6 +933,7 @@ export const turnCardComponents: ComponentEntry[] = [
       {
         name: 'intent',
         description: 'Intent text shown in header',
+        descriptionZh: '显示在头部区域的意图文本',
         control: { type: 'string', placeholder: 'e.g., Analyzing auth system...' },
         defaultValue: 'Analyzing the authentication system',
       },
@@ -840,7 +941,9 @@ export const turnCardComponents: ComponentEntry[] = [
     variants: [
       {
         name: 'Response Only (Slow)',
+        nameZh: '仅响应（慢速）',
         description: 'Document preview with gradient and toggle - slow to observe cross-fade',
+        descriptionZh: '带渐变与切换的文档预览 - 慢速以便观察交叉淡化',
         props: {
           activities: [],
           streamedText: streamingTextSample.slice(0, 180),
@@ -848,7 +951,9 @@ export const turnCardComponents: ComponentEntry[] = [
       },
       {
         name: 'After Tools (Normal)',
+        nameZh: '工具之后（常规）',
         description: 'Shows last few lines in large card with batched updates',
+        descriptionZh: '在大卡片中显示最后几行，分批更新',
         props: {
           activities: [
             completedGrepActivity,
@@ -861,7 +966,9 @@ export const turnCardComponents: ComponentEntry[] = [
       },
       {
         name: 'Long Content (Slow)',
+        nameZh: '长内容（慢速）',
         description: 'Best for observing gradient at top and cross-fade effect',
+        descriptionZh: '最适合观察顶部渐变与交叉淡化效果',
         props: {
           activities: [
             completedGrepActivity,
@@ -872,7 +979,9 @@ export const turnCardComponents: ComponentEntry[] = [
       },
       {
         name: 'After Mixed (Fast)',
+        nameZh: '混合之后（快速）',
         description: 'Fast streaming after tools + commentary',
+        descriptionZh: '工具 + 评述之后的快速流式输出',
         props: {
           activities: [
             intermediateMessage1,
@@ -886,11 +995,12 @@ export const turnCardComponents: ComponentEntry[] = [
         },
       },
     ],
-    mockData: () => ({
+    mockData: (locale) => ({
       activities: [
-        completedGrepActivity,
-        completedReadActivity1,
+        pickLocale(locale, completedGrepActivity, zhCompletedGrepActivity),
+        pickLocale(locale, completedReadActivity1, zhCompletedReadActivity1),
       ],
+      intent: locale === 'zh-CN' ? '正在分析认证系统' : 'Analyzing the authentication system',
     }),
     source: {
       file: 'packages/ui/src/components/chat/TurnCard.tsx',
@@ -900,12 +1010,13 @@ export const turnCardComponents: ComponentEntry[] = [
     scene: {
       kind: 'timeline',
       label: 'Agent response stream',
+      labelZh: 'Agent 响应流',
       frameDurationMs: 1_500,
       phases: [
-        { id: 'request', label: 'Request accepted', props: { streamedText: '', isComplete: false } },
-        { id: 'opening', label: 'First response chunk', props: { streamedText: streamingTextSample.slice(0, 180), isComplete: false } },
-        { id: 'analysis', label: 'Response in progress', props: { streamedText: streamingTextSample.slice(0, 420), isComplete: false } },
-        { id: 'complete', label: 'Response complete', props: { streamedText: streamingTextSample, isComplete: true } },
+        { id: 'request', label: 'Request accepted', labelZh: '已接受请求', props: { streamedText: '', isComplete: false } },
+        { id: 'opening', label: 'First response chunk', labelZh: '首个响应片段', props: { streamedText: streamingTextSample.slice(0, 180), isComplete: false } },
+        { id: 'analysis', label: 'Response in progress', labelZh: '响应进行中', props: { streamedText: streamingTextSample.slice(0, 420), isComplete: false } },
+        { id: 'complete', label: 'Response complete', labelZh: '响应完成', props: { streamedText: streamingTextSample, isComplete: true } },
       ],
     },
   },
@@ -1001,6 +1112,92 @@ Based on my analysis, here are my recommendations:
 
 Would you like me to implement any of these improvements?`
 
+/** Sample markdown content (Chinese) for fullscreen testing */
+const zhSampleMarkdownContent = `# 认证系统分析
+
+我已经完成了对认证系统的分析。以下是我的发现：
+
+## 概述
+
+认证系统由三个协同工作的核心组件构成，用于提供安全的用户认证。
+
+### 1. AuthHandler（\`src/auth/index.ts\`）
+
+这是所有认证操作的主要入口：
+
+- 管理 OAuth 2.0 流程
+- 处理令牌验证与刷新
+- 提供会话管理
+- 支持多个身份提供商（Google、GitHub、Microsoft）
+
+\`\`\`typescript
+export class AuthHandler {
+  private oauth: OAuthClient;
+  private tokenManager: TokenManager;
+  private sessionStore: SessionStore;
+
+  async authenticate(credentials: Credentials): Promise<Session> {
+    // Validate credentials format
+    this.validateCredentials(credentials);
+
+    // Get OAuth token from provider
+    const token = await this.oauth.getToken(credentials);
+
+    // Create and store session
+    return this.createSession(token);
+  }
+
+  async refreshToken(session: Session): Promise<Session> {
+    const newToken = await this.oauth.refresh(session.refreshToken);
+    return this.updateSession(session.id, newToken);
+  }
+}
+\`\`\`
+
+### 2. TokenManager（\`src/auth/tokens.ts\`）
+
+负责令牌的安全存储与生命周期管理：
+
+- 使用 AES-256 加密安全存储令牌
+- 在过期前自动刷新令牌（提前 5 分钟）
+- 提供令牌吊销与清理
+- 同时支持访问令牌与刷新令牌
+
+### 3. SessionStore（\`src/auth/sessions.ts\`）
+
+维护活跃的用户会话，具备以下特性：
+
+- 内存会话缓存，实现快速查找
+- 基于 Redis 的持久化存储
+- 自动会话超时与清理
+- 应用重启后恢复会话
+
+## 安全考量
+
+当前实现具备多项安全优势：
+
+1. **令牌加密** - 所有令牌在静态存储时均加密
+2. **短时令牌** - 访问令牌 15 分钟过期
+3. **安全刷新** - 刷新令牌每次使用后轮换
+4. **会话绑定** - 会话绑定到设备指纹
+
+不过，我注意到一些可以改进的地方：
+
+- **PKCE 支持** - 尚未为公共客户端实现
+- **速率限制** - 认证端点缺少速率限制
+- **审计日志** - 认证事件未被记录
+
+## 建议
+
+基于我的分析，以下是我的建议：
+
+1. 为所有 OAuth 流程**实现 PKCE**，防止授权码被拦截
+2. **添加速率限制**，防止暴力破解攻击（建议：每分钟 5 次尝试）
+3. **启用审计日志**，用于安全监控与合规
+4. 为敏感操作**添加 MFA 支持**
+
+需要我实施其中任何一项改进吗？`
+
 /** Plan-style content for testing plan variant */
 const samplePlanContent = `# Implement Authentication Improvements
 
@@ -1078,6 +1275,7 @@ function DocumentFormattedMarkdownOverlayPlayground({
   content: string
   variant?: 'response' | 'plan'
 }) {
+  const { t } = useTranslation()
   const [isOpen, setIsOpen] = useState(true)
 
   return (
@@ -1086,7 +1284,7 @@ function DocumentFormattedMarkdownOverlayPlayground({
         onClick={() => setIsOpen(true)}
         className="px-4 py-2 bg-accent text-accent-foreground rounded-lg text-sm font-medium hover:bg-accent/90"
       >
-        Open Document Overlay
+        {t('playground.turnCard.documentOverlay.open')}
       </button>
       <DocumentFormattedMarkdownOverlay
         content={content}
@@ -1714,6 +1912,43 @@ When authentication fails, the API returns:
 
 For more details, see the [API Reference](https://docs.example.com/api).`
 
+/** Sample generic content (Chinese) for fullscreen testing */
+const zhSampleGenericContent = `# WebFetch 结果
+
+已获取 https://docs.example.com/api/authentication 的内容
+
+## 认证
+
+所有 API 请求都需要在 Authorization 头中使用 Bearer 令牌进行认证：
+
+\`\`\`
+Authorization: Bearer YOUR_API_KEY
+\`\`\`
+
+### 速率限制
+
+| 套餐       | 请求/分钟 | 突发 |
+|-----------|----------|------|
+| 免费       | 60       | 10   |
+| 专业版     | 600      | 100  |
+| 企业版     | 6000     | 1000 |
+
+### 错误响应
+
+当认证失败时，API 返回：
+
+\`\`\`json
+{
+  "error": {
+    "code": "unauthorized",
+    "message": "Invalid or expired API key",
+    "status": 401
+  }
+}
+\`\`\`
+
+更多详情，请参阅 [API 参考文档](https://docs.example.com/api)。`
+
 /** Embedded preview of GenericOverlay */
 function GenericOverlayPlayground({
   content,
@@ -1741,24 +1976,25 @@ function GenericOverlayPlayground({
 
 /** Sample table component rendered inside DataTableOverlay */
 function SampleDataTable() {
+  const { t } = useTranslation()
   const rows = [
-    { tool: 'Read', permission: 'allowed', description: 'Read files from disk' },
-    { tool: 'Write', permission: 'ask', description: 'Write files to disk' },
-    { tool: 'Edit', permission: 'ask', description: 'Edit existing files' },
-    { tool: 'Bash', permission: 'ask', description: 'Execute shell commands' },
-    { tool: 'Grep', permission: 'allowed', description: 'Search file contents' },
-    { tool: 'Glob', permission: 'allowed', description: 'Find files by pattern' },
-    { tool: 'WebFetch', permission: 'allowed', description: 'Fetch URL content' },
-    { tool: 'WebSearch', permission: 'blocked', description: 'Search the web' },
+    { tool: 'Read', permission: 'allowed', permissionLabel: t('playground.turnCard.dataTable.permissionAllowed'), description: t('playground.turnCard.dataTable.readFiles') },
+    { tool: 'Write', permission: 'ask', permissionLabel: t('playground.turnCard.dataTable.permissionAsk'), description: t('playground.turnCard.dataTable.writeFiles') },
+    { tool: 'Edit', permission: 'ask', permissionLabel: t('playground.turnCard.dataTable.permissionAsk'), description: t('playground.turnCard.dataTable.editFiles') },
+    { tool: 'Bash', permission: 'ask', permissionLabel: t('playground.turnCard.dataTable.permissionAsk'), description: t('playground.turnCard.dataTable.executeShell') },
+    { tool: 'Grep', permission: 'allowed', permissionLabel: t('playground.turnCard.dataTable.permissionAllowed'), description: t('playground.turnCard.dataTable.searchContents') },
+    { tool: 'Glob', permission: 'allowed', permissionLabel: t('playground.turnCard.dataTable.permissionAllowed'), description: t('playground.turnCard.dataTable.findByPattern') },
+    { tool: 'WebFetch', permission: 'allowed', permissionLabel: t('playground.turnCard.dataTable.permissionAllowed'), description: t('playground.turnCard.dataTable.fetchUrl') },
+    { tool: 'WebSearch', permission: 'blocked', permissionLabel: t('playground.turnCard.dataTable.permissionBlocked'), description: t('playground.turnCard.dataTable.searchWeb') },
   ]
 
   return (
     <table className="w-full text-sm">
       <thead>
         <tr className="border-b border-border">
-          <th className="text-left py-2 px-4 font-medium text-muted-foreground">Tool</th>
-          <th className="text-left py-2 px-4 font-medium text-muted-foreground">Permission</th>
-          <th className="text-left py-2 px-4 font-medium text-muted-foreground">Description</th>
+          <th className="text-left py-2 px-4 font-medium text-muted-foreground">{t('playground.turnCard.dataTable.columnTool')}</th>
+          <th className="text-left py-2 px-4 font-medium text-muted-foreground">{t('playground.turnCard.dataTable.columnPermission')}</th>
+          <th className="text-left py-2 px-4 font-medium text-muted-foreground">{t('playground.turnCard.dataTable.columnDescription')}</th>
         </tr>
       </thead>
       <tbody>
@@ -1771,7 +2007,7 @@ function SampleDataTable() {
                 row.permission === 'ask' ? 'bg-amber-500/10 text-amber-600' :
                 'bg-red-500/10 text-red-600'
               }`}>
-                {row.permission}
+                {row.permissionLabel}
               </span>
             </td>
             <td className="py-2 px-4 text-muted-foreground">{row.description}</td>
@@ -1790,6 +2026,7 @@ function DataTableOverlayPlayground({
   title: string
   subtitle?: string
 }) {
+  const { t } = useTranslation()
   const [isOpen, setIsOpen] = useState(true)
 
   return (
@@ -1798,7 +2035,7 @@ function DataTableOverlayPlayground({
         onClick={() => setIsOpen(true)}
         className="px-4 py-2 bg-accent text-accent-foreground rounded-lg text-sm font-medium hover:bg-accent/90"
       >
-        Open Data Table
+        {t('playground.turnCard.dataTable.open')}
       </button>
       <DataTableOverlay
         isOpen={isOpen}
@@ -1823,12 +2060,14 @@ export const fullscreenOverlayComponents: ComponentEntry[] = [
     name: 'DocumentFormattedMarkdownOverlay',
     category: 'Fullscreen',
     description: 'Fullscreen document view for reading AI responses and plans',
+    descriptionZh: '用于阅读 AI 响应与计划的全屏文档视图',
     component: DocumentFormattedMarkdownOverlayPlayground,
     layout: 'top',
     props: [
       {
         name: 'variant',
         description: 'Style variant: response (default) or plan (shows header)',
+        descriptionZh: '样式变体：response（默认）或 plan（显示头部）',
         control: {
           type: 'select',
           options: [
@@ -1842,7 +2081,9 @@ export const fullscreenOverlayComponents: ComponentEntry[] = [
     variants: [
       {
         name: 'Response (Default)',
+        nameZh: '响应（默认）',
         description: 'Standard response view with commenting support',
+        descriptionZh: '支持评论的标准响应视图',
         props: {
           content: sampleMarkdownContent,
           variant: 'response',
@@ -1850,7 +2091,9 @@ export const fullscreenOverlayComponents: ComponentEntry[] = [
       },
       {
         name: 'Plan Variant',
+        nameZh: '计划变体',
         description: 'Plan view with green header badge',
+        descriptionZh: '带绿色头部徽标的计划视图',
         props: {
           content: samplePlanContent,
           variant: 'plan',
@@ -1858,7 +2101,9 @@ export const fullscreenOverlayComponents: ComponentEntry[] = [
       },
       {
         name: 'Short Content',
+        nameZh: '简短内容',
         description: 'Minimal content to test layout',
+        descriptionZh: '用于测试布局的最简内容',
         props: {
           content: '# Quick Response\n\nThis is a short response to test the layout with minimal content.\n\nLooks good!',
           variant: 'response',
@@ -1866,7 +2111,9 @@ export const fullscreenOverlayComponents: ComponentEntry[] = [
       },
       {
         name: 'Code Heavy',
+        nameZh: '大量代码',
         description: 'Content with lots of code blocks',
+        descriptionZh: '包含大量代码块的内容',
         props: {
           content: `# Code Examples
 
@@ -1908,8 +2155,8 @@ These examples demonstrate different syntax highlighting.`,
         },
       },
     ],
-    mockData: () => ({
-      content: sampleMarkdownContent,
+    mockData: (locale) => ({
+      content: pickLocale(locale, sampleMarkdownContent, zhSampleMarkdownContent),
     }),
   },
 
@@ -1919,12 +2166,14 @@ These examples demonstrate different syntax highlighting.`,
     name: 'CodePreviewOverlay',
     category: 'Fullscreen',
     description: 'Syntax-highlighted code file preview (Read/Write tools)',
+    descriptionZh: '带语法高亮的代码文件预览（Read/Write 工具）',
     component: CodePreviewOverlayPlayground,
     layout: 'top',
     props: [
       {
         name: 'mode',
         description: 'Display mode: read or write',
+        descriptionZh: '显示模式：read 或 write',
         control: {
           type: 'select',
           options: [
@@ -1938,7 +2187,9 @@ These examples demonstrate different syntax highlighting.`,
     variants: [
       {
         name: 'TypeScript File (Read)',
+        nameZh: 'TypeScript 文件（读取）',
         description: 'Reading a TypeScript source file',
+        descriptionZh: '正在读取 TypeScript 源文件',
         props: {
           content: sampleTypeScriptCode,
           filePath: '/src/auth/tokens.ts',
@@ -1950,7 +2201,9 @@ These examples demonstrate different syntax highlighting.`,
       },
       {
         name: 'Python File (Read)',
+        nameZh: 'Python 文件（读取）',
         description: 'Reading a Python ML pipeline',
+        descriptionZh: '正在读取 Python 机器学习流水线',
         props: {
           content: samplePythonCode,
           filePath: '/src/ml/pipeline.py',
@@ -1962,7 +2215,9 @@ These examples demonstrate different syntax highlighting.`,
       },
       {
         name: 'Partial Read (Lines 15-45)',
+        nameZh: '部分读取（第 15-45 行）',
         description: 'Reading a subset of lines from a large file',
+        descriptionZh: '正在读取大文件中的部分行',
         props: {
           content: sampleTypeScriptCode.split('\n').slice(14, 45).join('\n'),
           filePath: '/src/auth/tokens.ts',
@@ -1974,7 +2229,9 @@ These examples demonstrate different syntax highlighting.`,
       },
       {
         name: 'Write Mode',
+        nameZh: '写入模式',
         description: 'Showing a file being written',
+        descriptionZh: '展示正在写入的文件',
         props: {
           content: sampleTypeScriptCode,
           filePath: '/src/auth/tokens.ts',
@@ -1983,7 +2240,9 @@ These examples demonstrate different syntax highlighting.`,
       },
       {
         name: 'Read Failed',
+        nameZh: '读取失败',
         description: 'Error state when file read fails',
+        descriptionZh: '文件读取失败时的错误状态',
         props: {
           content: '',
           filePath: './apps/electron/src/main/sessions.ts',
@@ -2004,12 +2263,14 @@ These examples demonstrate different syntax highlighting.`,
     name: 'MultiDiffPreviewOverlay',
     category: 'Fullscreen',
     description: 'Multi-file diff preview with sidebar navigation (Edit/Write tools)',
+    descriptionZh: '带侧边栏导航的多文件差异预览（Edit/Write 工具）',
     component: MultiDiffPreviewOverlayPlayground,
     layout: 'top',
     props: [
       {
         name: 'consolidated',
         description: 'Group changes by file path',
+        descriptionZh: '按文件路径对更改分组',
         control: { type: 'boolean' },
         defaultValue: false,
       },
@@ -2017,7 +2278,9 @@ These examples demonstrate different syntax highlighting.`,
     variants: [
       {
         name: 'Multiple Files (Ungrouped)',
+        nameZh: '多文件（未分组）',
         description: 'Several file changes shown individually',
+        descriptionZh: '多个文件更改单独显示',
         props: {
           changes: sampleMultiDiffChanges,
           consolidated: false,
@@ -2025,7 +2288,9 @@ These examples demonstrate different syntax highlighting.`,
       },
       {
         name: 'Multiple Files (Consolidated)',
+        nameZh: '多文件（合并分组）',
         description: 'Changes grouped by file path',
+        descriptionZh: '按文件路径分组的更改',
         props: {
           changes: sampleMultiDiffChanges,
           consolidated: true,
@@ -2033,7 +2298,9 @@ These examples demonstrate different syntax highlighting.`,
       },
       {
         name: 'Single Edit',
+        nameZh: '单个编辑',
         description: 'Single file change (no sidebar)',
+        descriptionZh: '单个文件更改（无侧边栏）',
         props: {
           changes: sampleSingleChange,
           consolidated: false,
@@ -2041,7 +2308,9 @@ These examples demonstrate different syntax highlighting.`,
       },
       {
         name: 'Focused Change',
+        nameZh: '聚焦更改',
         description: 'Opens with a specific change focused',
+        descriptionZh: '打开时聚焦到特定更改',
         props: {
           changes: sampleMultiDiffChanges,
           consolidated: false,
@@ -2050,7 +2319,9 @@ These examples demonstrate different syntax highlighting.`,
       },
       {
         name: 'New File (Write)',
+        nameZh: '新文件（写入）',
         description: 'A newly written file (no original)',
+        descriptionZh: '新写入的文件（无原始版本）',
         props: {
           changes: [sampleMultiDiffChanges[2]], // The rate-limiter Write
           consolidated: false,
@@ -2068,12 +2339,14 @@ These examples demonstrate different syntax highlighting.`,
     name: 'TerminalPreviewOverlay',
     category: 'Fullscreen',
     description: 'Terminal output preview (Bash/Grep/Glob tools)',
+    descriptionZh: '终端输出预览（Bash/Grep/Glob 工具）',
     component: TerminalPreviewOverlayPlayground,
     layout: 'top',
     props: [
       {
         name: 'toolType',
         description: 'Tool type for display styling',
+        descriptionZh: '用于显示样式的工具类型',
         control: {
           type: 'select',
           options: [
@@ -2088,7 +2361,9 @@ These examples demonstrate different syntax highlighting.`,
     variants: [
       {
         name: 'Bash: Test Suite',
+        nameZh: 'Bash：测试套件',
         description: 'npm test output with passing tests',
+        descriptionZh: 'npm test 输出，测试全部通过',
         props: {
           command: 'npm test',
           output: sampleBashOutput,
@@ -2099,7 +2374,9 @@ These examples demonstrate different syntax highlighting.`,
       },
       {
         name: 'Bash: Error',
+        nameZh: 'Bash：错误',
         description: 'Failed deployment command',
+        descriptionZh: '失败的部署命令',
         props: {
           command: 'npm run deploy',
           output: sampleBashErrorOutput,
@@ -2110,7 +2387,9 @@ These examples demonstrate different syntax highlighting.`,
       },
       {
         name: 'Grep: Search Results',
+        nameZh: 'Grep：搜索结果',
         description: 'Searching for class/function definitions',
+        descriptionZh: '搜索类/函数定义',
         props: {
           command: 'grep "export class" src/auth/',
           output: sampleGrepOutput,
@@ -2121,7 +2400,9 @@ These examples demonstrate different syntax highlighting.`,
       },
       {
         name: 'Glob: File Listing',
+        nameZh: 'Glob：文件列表',
         description: 'Finding files matching a pattern',
+        descriptionZh: '查找匹配模式的文件',
         props: {
           command: 'glob "src/auth/**/*.ts"',
           output: sampleGlobOutput,
@@ -2132,7 +2413,9 @@ These examples demonstrate different syntax highlighting.`,
       },
       {
         name: 'Command Failed (Error Banner)',
+        nameZh: '命令失败（错误横幅）',
         description: 'Command blocked by permission system',
+        descriptionZh: '命令被权限系统拦截',
         props: {
           command: 'rm -rf /tmp/build-cache',
           output: '',
@@ -2158,12 +2441,14 @@ These examples demonstrate different syntax highlighting.`,
     name: 'JSONPreviewOverlay',
     category: 'Fullscreen',
     description: 'Interactive JSON tree viewer with expand/collapse',
+    descriptionZh: '支持展开/折叠的交互式 JSON 树查看器',
     component: JSONPreviewOverlayPlayground,
     layout: 'top',
     props: [
       {
         name: 'title',
         description: 'Title shown in header',
+        descriptionZh: '显示在头部区域的标题',
         control: { type: 'string', placeholder: 'e.g., API Response' },
         defaultValue: 'JSON Result',
       },
@@ -2171,7 +2456,9 @@ These examples demonstrate different syntax highlighting.`,
     variants: [
       {
         name: 'Complex Object',
+        nameZh: '复杂对象',
         description: 'Deeply nested user/org data',
+        descriptionZh: '深层嵌套的用户/组织数据',
         props: {
           data: sampleJsonData,
           title: 'User Profile',
@@ -2179,7 +2466,9 @@ These examples demonstrate different syntax highlighting.`,
       },
       {
         name: 'API Response',
+        nameZh: 'API 响应',
         description: 'Typical paginated API response',
+        descriptionZh: '典型的分页 API 响应',
         props: {
           data: sampleNestedJsonData,
           title: 'Search Results',
@@ -2187,7 +2476,9 @@ These examples demonstrate different syntax highlighting.`,
       },
       {
         name: 'Simple Array',
+        nameZh: '简单数组',
         description: 'Array of simple objects',
+        descriptionZh: '简单对象数组',
         props: {
           data: [
             { id: 1, name: 'Alpha', status: 'active' },
@@ -2199,7 +2490,9 @@ These examples demonstrate different syntax highlighting.`,
       },
       {
         name: 'Minimal',
+        nameZh: '最小化',
         description: 'Small JSON payload',
+        descriptionZh: '小型 JSON 数据',
         props: {
           data: { success: true, message: 'Operation completed', count: 42 },
           title: 'Status',
@@ -2207,7 +2500,9 @@ These examples demonstrate different syntax highlighting.`,
       },
       {
         name: 'Parse Error',
+        nameZh: '解析错误',
         description: 'Error state when JSON parsing fails',
+        descriptionZh: 'JSON 解析失败时的错误状态',
         props: {
           data: {},
           title: 'API Response',
@@ -2215,9 +2510,9 @@ These examples demonstrate different syntax highlighting.`,
         },
       },
     ],
-    mockData: () => ({
+    mockData: (locale) => ({
       data: sampleJsonData,
-      title: 'JSON Result',
+      title: locale === 'zh-CN' ? 'JSON 结果' : 'JSON Result',
     }),
   },
 
@@ -2227,12 +2522,14 @@ These examples demonstrate different syntax highlighting.`,
     name: 'GenericOverlay',
     category: 'Fullscreen',
     description: 'Fallback overlay for unknown tool content with auto-language detection',
+    descriptionZh: '带自动语言检测的未知工具内容回退浮层',
     component: GenericOverlayPlayground,
     layout: 'top',
     props: [
       {
         name: 'title',
         description: 'Header title',
+        descriptionZh: '头部标题',
         control: { type: 'string', placeholder: 'e.g., WebFetch Result' },
         defaultValue: 'Activity',
       },
@@ -2240,7 +2537,9 @@ These examples demonstrate different syntax highlighting.`,
     variants: [
       {
         name: 'Markdown Content',
+        nameZh: 'Markdown 内容',
         description: 'Web-fetched documentation',
+        descriptionZh: '从网络获取的文档',
         props: {
           content: sampleGenericContent,
           title: 'WebFetch Result',
@@ -2248,7 +2547,9 @@ These examples demonstrate different syntax highlighting.`,
       },
       {
         name: 'Plain Text',
+        nameZh: '纯文本',
         description: 'Simple text output',
+        descriptionZh: '简单的文本输出',
         props: {
           content: 'Build completed successfully.\n\nOutput:\n  dist/index.js (245 KB)\n  dist/index.css (12 KB)\n  dist/assets/ (3 files)\n\nTotal size: 257 KB (gzipped: 62 KB)',
           title: 'Build Output',
@@ -2256,16 +2557,18 @@ These examples demonstrate different syntax highlighting.`,
       },
       {
         name: 'JSON-like Content',
+        nameZh: '类 JSON 内容',
         description: 'Content that looks like JSON',
+        descriptionZh: '看起来像 JSON 的内容',
         props: {
           content: JSON.stringify({ status: 'ok', version: '2.1.0', uptime: '14d 3h 22m' }, null, 2),
           title: 'Health Check',
         },
       },
     ],
-    mockData: () => ({
-      content: sampleGenericContent,
-      title: 'Activity',
+    mockData: (locale) => ({
+      content: pickLocale(locale, sampleGenericContent, zhSampleGenericContent),
+      title: locale === 'zh-CN' ? '活动' : 'Activity',
     }),
   },
 
@@ -2275,18 +2578,21 @@ These examples demonstrate different syntax highlighting.`,
     name: 'DataTableOverlay',
     category: 'Fullscreen',
     description: 'Fullscreen data table view with scrollable content',
+    descriptionZh: '带可滚动内容的全屏数据表格视图',
     component: DataTableOverlayPlayground,
     layout: 'top',
     props: [
       {
         name: 'title',
         description: 'Table title in header',
+        descriptionZh: '头部区域的表格标题',
         control: { type: 'string', placeholder: 'e.g., Permissions' },
         defaultValue: 'Permissions',
       },
       {
         name: 'subtitle',
         description: 'Optional subtitle (e.g., row count)',
+        descriptionZh: '可选的副标题（例如行数）',
         control: { type: 'string', placeholder: 'e.g., 8 tools' },
         defaultValue: '8 tools',
       },
@@ -2294,7 +2600,9 @@ These examples demonstrate different syntax highlighting.`,
     variants: [
       {
         name: 'Tool Permissions',
+        nameZh: '工具权限',
         description: 'Table showing tool permission levels',
+        descriptionZh: '展示工具权限级别的表格',
         props: {
           title: 'Tool Permissions',
           subtitle: '8 tools configured',
@@ -2302,15 +2610,17 @@ These examples demonstrate different syntax highlighting.`,
       },
       {
         name: 'No Subtitle',
+        nameZh: '无副标题',
         description: 'Table without subtitle',
+        descriptionZh: '没有副标题的表格',
         props: {
           title: 'Configuration',
         },
       },
     ],
-    mockData: () => ({
-      title: 'Permissions',
-      subtitle: '8 tools',
+    mockData: (locale) => ({
+      title: locale === 'zh-CN' ? '权限' : 'Permissions',
+      subtitle: locale === 'zh-CN' ? '8 个工具' : '8 tools',
     }),
   },
 ]

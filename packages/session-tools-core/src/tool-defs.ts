@@ -17,9 +17,10 @@ import type { SessionToolContext } from './context.ts';
 import type { ToolResult } from './types.ts';
 
 // Handlers
-import { handleGetSessionInfo } from './handlers/get-session-info.ts';
+import { handleCreateSession } from './handlers/create-session.ts';
 import { handleListSessions } from './handlers/list-sessions.ts';
-import { handleSendAgentMessage } from './handlers/send-agent-message.ts';
+import { handleReadSession } from './handlers/read-session.ts';
+import { handleSendMessageToSession } from './handlers/send-message-to-session.ts';
 import { handleListMessagingChannels, handleUnbindMessagingChannel } from './handlers/messaging.ts';
 
 // ============================================================
@@ -33,39 +34,54 @@ export const BrowserToolSchema = z.object({
   ]).describe('Browser command as a string (e.g., "click @e1") or array (e.g., ["evaluate", "var x = 1; x + 2"]). Array mode preserves semicolons and whitespace in arguments.'),
 });
 
-export const SpawnSessionSchema = z.object({
-  help: z.boolean().optional().describe('If true, returns available providers and models instead of creating a session'),
-  action: z.enum(['spawn', 'list', 'inspect', 'message', 'resume', 'interrupt']).optional().describe('Child-task operation (default: spawn)'),
-  prompt: z.string().optional().describe('Instructions for spawn, or a real follow-up message for message'),
-  sessionId: z.string().optional().describe('Child task ID for inspect, message, resume, or interrupt'),
-  template: z.string().optional().describe('Configured child-task template ID'),
-  background: z.boolean().optional().describe('Run asynchronously and return the persistent child task ID immediately'),
-  name: z.string().optional().describe('Session name'),
-  provider: z.string().optional().describe('Pi provider key (e.g., "anthropic", "openai")'),
-  model: z.string().optional().describe('Model ID override'),
+export const SubagentSchema = z.object({
+  action: z.enum(['start', 'list', 'inspect', 'message', 'resume', 'interrupt', 'wait']).optional()
+    .describe('Operation to perform. Defaults to start.'),
+  prompt: z.string().optional().describe('Task instructions for start, or a follow-up message for message.'),
+  taskId: z.string().optional().describe('Task ID for inspect, message, resume, or interrupt.'),
+  taskIds: z.array(z.string()).min(1).optional().describe('Task IDs to wait for. Returns when any task reaches a terminal state.'),
+  agent: z.string().optional().describe('Local Agent configuration ID. Omit to use the default Agent configuration.'),
+  forkTurns: z.union([z.number().int().positive(), z.literal('all')]).optional()
+    .describe('Inherit the current parent branch: a positive number of recent turns, or all reliable turns. Omit for no inherited history.'),
+  systemPrompt: z.string().optional().describe('System prompt replacement for this run only.'),
+  tools: z.array(z.string()).optional().describe('Tool list replacement for this run only.'),
+  model: z.string().optional().describe('Model override for this run.'),
   thinkingLevel: z.enum(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']).optional()
-    .describe('Reasoning level for the new session. Silently ignored on non-reasoning models (e.g. gpt-4o, gemini-2.5-flash). Omit to inherit the global default.'),
-  attachments: z.array(z.object({
-    path: z.string().describe('Absolute file path on disk'),
-    name: z.string().optional().describe('Display name (defaults to file basename)'),
-  })).optional().describe('Existing absolute file paths the child can read with its read tool'),
-});
-
-export const GetSessionInfoSchema = z.object({
-  sessionId: z.string().optional().describe('Session ID to query. Omit to get info about the current session.'),
+    .describe('Reasoning level override for this run.'),
+  schema: z.record(z.unknown()).optional().describe('Optional JSON Schema for structured result data.'),
+  timeoutMs: z.number().int().min(0).max(300_000).optional()
+    .describe('Wait timeout in milliseconds. Defaults to 30000 and does not cancel tasks.'),
 });
 
 export const ListSessionsSchema = z.object({
   search: z.string().optional().describe('Substring match on session name'),
   sortBy: z.enum(['recent', 'name']).optional().describe('Sort order (default: recent)'),
   limit: z.number().optional().describe('Max sessions to return (default 20, max 100)'),
-  offset: z.number().optional().describe('Skip first N results (for pagination)'),
+  cursor: z.string().optional().describe('Opaque cursor returned by an earlier list_sessions call'),
 });
 
-// Inter-session messaging
-export const SendAgentMessageSchema = z.object({
+export const CreateSessionSchema = z.object({
+  message: z.string().describe('First user message for the new ordinary Session'),
+  name: z.string().optional().describe('Optional Session name'),
+  provider: z.string().optional().describe('Optional provider override'),
+  model: z.string().optional().describe('Optional model override'),
+  thinkingLevel: z.enum(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']).optional()
+    .describe('Optional reasoning level override'),
+});
+
+export const ReadSessionSchema = z.object({
+  sessionId: z.string().describe('Session ID to read'),
+  cursor: z.string().optional().describe('Opaque cursor for older turns on the selected branch'),
+  turnLimit: z.number().optional().describe('Maximum recent turns to return (default 10, max 50)'),
+  branchNodeId: z.string().optional().describe('Explicit Pi tree node to read instead of the current leaf'),
+  maxCharsPerItem: z.number().optional().describe('Maximum characters per user or Agent message'),
+});
+
+export const SendMessageToSessionSchema = z.object({
   sessionId: z.string().describe('Target session ID to send the message to'),
   message: z.string().describe('The message to send to the target session'),
+  delivery: z.enum(['followUp', 'steer']).optional()
+    .describe('Delivery intent. Defaults to followUp; steer explicitly redirects the active turn.'),
   attachments: z.array(z.object({
     path: z.string().describe('Absolute file path on disk'),
     name: z.string().optional().describe('Display name (defaults to file basename)'),
@@ -130,36 +146,32 @@ Examples:
 - \`close\` — close and destroy the browser window
 - \`hide\` — hide the window while preserving state`,
 
-  spawn_session: `Create and control persistent child tasks owned by the current Session.
+  subagent: `Delegate work to persistent private subagents owned by the current Session.
 
-Use this to delegate tasks to parallel sessions — research, analysis, drafts, or any work that benefits from separate context.
+Start is the default action and requires only prompt. It returns taskId immediately. Use wait to wait for any of several tasks, inspect to read one task, message to steer or queue work, resume to continue interrupted work, and interrupt to stop it.
 
-Call with help=true first to discover available providers and models.
-When spawning, the 'prompt' parameter is required.
+Use list to discover configured Agents and current private tasks. Agent configurations are local Markdown files. Optional systemPrompt, tools, model, and thinkingLevel replace configuration values for this run only.
 
-Optional overrides: \`provider\`, \`model\`, and \`thinkingLevel\`. Omitted AI fields inherit from the spawning session or the global default; workspace-scoped fields retain their workspace defaults. Create or switch workspace to run from another folder.
+forkTurns optionally inherits reliable messages from the current parent branch. Omit it for an independent context, pass a positive turn count for recent context, or "all" for the complete reliable branch.
 
-\`thinkingLevel\` is silently ignored on non-reasoning models (e.g. gpt-4o, gemini-2.5-flash) — the SDK drops the reasoning param rather than erroring. Use it when you want to force deeper reasoning on a supported model, or set it to \`off\` when spawning a session that doesn't need to think.
+Child tasks never appear in the ordinary Session list. Completion is recorded as a process event and never inserted as a user message. Optional schema validates structured result data; ordinary final text always remains available.`,
 
-Child tasks never appear in the ordinary Session list. Foreground execution returns the final text; use background=true for asynchronous work. Use action=list/message/resume/interrupt to inspect and control existing child tasks. Resume without a prompt is a control action and does not append a synthetic message.
-Attachments pass existing absolute file paths to the child task. The selected template must include the read tool so the child can read their contents.`,
-
-  get_session_info: `Get metadata about the current session or a specific session by ID.
-
-Returns the name and other runtime metadata.
-Call with no arguments to introspect your own session state.`,
-
-  list_sessions: `List sessions in the workspace. Returns total count + paginated results.
+  list_sessions: `List ordinary Sessions in the current Workspace using cursor pagination.
 
 Use search to narrow results instead of fetching everything. Default limit is 20 sessions.
-Use get_session_info for full details on a specific session (list-then-detail pattern).`,
+Use read_session to inspect the current branch of a specific Session.`,
 
-  send_agent_message: `Send a message to another session. The message is delivered with your session ID so the target can reply back.
+  create_session: `Create an ordinary Session and send its first user message through the normal publication transaction.
 
-Use this to coordinate with spawned sessions, send follow-up instructions, or relay information between sessions.
-Use list_sessions to find session IDs, or use the sessionId returned by spawn_session.
+The Session is published only after Pi durably accepts the first user message. This is not subagent and does not create a private child task.`,
 
-The target session receives your message with a sender envelope containing your session ID, so it can use send_agent_message to reply.`,
+  read_session: `Read a bounded projection of an ordinary Session.
+
+By default this follows Pi's persisted current leaf and returns recent user intent plus final Agent results from that tree branch. It does not mix sibling branches or include full reasoning and tool output. Use the returned cursor for older turns, or branchNodeId to explicitly inspect another branch.`,
+
+  send_message_to_session: `Send a normal user message to another ordinary Session through the same delivery path used by UI and CLI.
+
+The source Session is recorded as structured metadata rather than text inserted into the message. Delivery defaults to followUp; use steer only when you explicitly need to redirect the target's active turn.`,
 
   list_messaging_channels: `List messaging channels (Telegram, WhatsApp) bound to a session.
 Shows which external chat apps are connected and can send/receive messages.`,
@@ -206,15 +218,15 @@ export type SessionToolDef = RegistrySessionToolDef | BackendSessionToolDef;
 // ============================================================
 
 export const SESSION_TOOL_DEFS: SessionToolDef[] = [
-  { name: 'spawn_session', description: TOOL_DESCRIPTIONS.spawn_session, inputSchema: SpawnSessionSchema, executionMode: 'backend', handler: null },
+  { name: 'subagent', description: TOOL_DESCRIPTIONS.subagent, inputSchema: SubagentSchema, executionMode: 'backend', handler: null },
   // Browser tool (backend-specific — requires BrowserPaneManager in Electron)
   // Single CLI-like tool that handles all browser actions via command string.
   { name: 'browser_tool', description: TOOL_DESCRIPTIONS.browser_tool, inputSchema: BrowserToolSchema, executionMode: 'backend', handler: null },
-  // Session query tools (registry — use context callbacks to reach SessionManager)
-  { name: 'get_session_info', description: TOOL_DESCRIPTIONS.get_session_info, inputSchema: GetSessionInfoSchema, executionMode: 'registry', readOnly: true, handler: handleGetSessionInfo },
+  // Ordinary Session coordination tools
   { name: 'list_sessions', description: TOOL_DESCRIPTIONS.list_sessions, inputSchema: ListSessionsSchema, executionMode: 'registry', readOnly: true, handler: handleListSessions },
-  // Inter-session messaging
-  { name: 'send_agent_message', description: TOOL_DESCRIPTIONS.send_agent_message, inputSchema: SendAgentMessageSchema, executionMode: 'registry', handler: handleSendAgentMessage },
+  { name: 'create_session', description: TOOL_DESCRIPTIONS.create_session, inputSchema: CreateSessionSchema, executionMode: 'registry', handler: handleCreateSession },
+  { name: 'read_session', description: TOOL_DESCRIPTIONS.read_session, inputSchema: ReadSessionSchema, executionMode: 'registry', readOnly: true, handler: handleReadSession },
+  { name: 'send_message_to_session', description: TOOL_DESCRIPTIONS.send_message_to_session, inputSchema: SendMessageToSessionSchema, executionMode: 'registry', handler: handleSendMessageToSession },
   // Messaging gateway tools
   { name: 'list_messaging_channels', description: TOOL_DESCRIPTIONS.list_messaging_channels, inputSchema: ListMessagingChannelsSchema, executionMode: 'registry', readOnly: true, handler: handleListMessagingChannels },
   { name: 'unbind_messaging_channel', description: TOOL_DESCRIPTIONS.unbind_messaging_channel, inputSchema: UnbindMessagingChannelSchema, executionMode: 'registry', handler: handleUnbindMessagingChannel },

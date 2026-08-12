@@ -4,13 +4,14 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
 import { UiValidationError, type UiValidationResponseEnvelope } from '@mortise/shared/ui-validation'
+import type { ExtensionServiceResultDTO } from '@mortise/shared/protocol'
 import { requestMortiseUiHost } from './client.ts'
 import { readRunManifest, resolveRunDir, startMortiseUiRun, stopMortiseUiRunDetailed, updateRunManifest } from './controller.ts'
 import type { MortiseUiRunManifest, MortiseUiSurface, MortiseUiProfileMode, MortiseUiWindowMode } from './protocol.ts'
 
 export const MORTISE_UI_WORKFLOW_SCHEMA_VERSION = 1 as const
 
-export type MortiseUiWorkflowStepType = 'open' | 'snapshot' | 'action' | 'wait' | 'assert' | 'evidence'
+export type MortiseUiWorkflowStepType = 'open' | 'snapshot' | 'action' | 'wait' | 'assert' | 'evidence' | 'extension-service'
 
 export interface MortiseUiWorkflowRunConfig {
   surface?: MortiseUiSurface
@@ -75,7 +76,7 @@ export interface MortiseUiWorkflowState {
   error?: { code: string; message: string; details?: unknown }
 }
 
-const STEP_TYPES = new Set<MortiseUiWorkflowStepType>(['open', 'snapshot', 'action', 'wait', 'assert', 'evidence'])
+const STEP_TYPES = new Set<MortiseUiWorkflowStepType>(['open', 'snapshot', 'action', 'wait', 'assert', 'evidence', 'extension-service'])
 
 export function workflowSchema(): Record<string, unknown> {
   return {
@@ -259,11 +260,21 @@ async function executeWorkflow(
         stepState.attempts = attempt
         stepState.requestId ??= randomUUID()
         try {
+          const params = step.type === 'extension-service'
+            ? { ...(step.params ?? {}), requestId: stepState.requestId }
+            : (step.params ?? {})
           response = await requestMortiseUiHost({
-            ...readRunManifest(manifest.runDir), command: hostCommandForStep(step.type), params: step.params ?? {},
+            ...readRunManifest(manifest.runDir), command: hostCommandForStep(step.type), params,
             timeoutMs: step.timeoutMs ?? loaded.document.defaults?.timeoutMs,
             minimumSeqExclusive: state.lastResponseSeq, requestId: stepState.requestId,
           })
+          const serviceResult = step.type === 'extension-service' && response.ok
+            ? extensionServiceResult(response.result)
+            : undefined
+          if (serviceResult?.status !== 'succeeded' && isRetryableExtensionServiceResult(serviceResult) && attempt < maxAttempts) {
+            await Bun.sleep(Math.min(1000, 100 * 2 ** (attempt - 1)))
+            continue
+          }
           if (response.ok || !isRetryableWorkflowResponse(response)) break
         } catch (error) {
           lastError = error
@@ -278,6 +289,7 @@ async function executeWorkflow(
       state.lastResponseSeq = response.seq
       state.lastRevision = response.revision
       state.verificationLevel = response.verificationLevel
+      stepState.result = response.ok ? response.result : undefined
       if (!response.ok) {
         stepState.status = 'failed'
         stepState.error = response.error
@@ -287,8 +299,23 @@ async function executeWorkflow(
         if (cleanup === 'always') await stopMortiseUiRunDetailed(manifest.runDir)
         return { execution: state.executionId, status: state.status, failedStep: step.id, state }
       }
+      const serviceResult = step.type === 'extension-service' ? extensionServiceResult(response.result) : undefined
+      if (serviceResult && serviceResult.status !== 'succeeded') {
+        const failure = {
+          code: serviceResult.error?.code ?? `extension_service_${serviceResult.status}`,
+          message: serviceResult.error?.message ?? `Extension service invocation ${serviceResult.status}.`,
+          details: { serviceResult },
+        }
+        stepState.status = 'failed'
+        stepState.error = failure
+        stepState.finishedAt = new Date().toISOString()
+        state.status = 'failed'
+        state.error = failure
+        writeWorkflowState(state)
+        if (cleanup === 'always') await stopMortiseUiRunDetailed(manifest.runDir)
+        return { execution: state.executionId, status: state.status, failedStep: step.id, state }
+      }
       stepState.status = 'succeeded'
-      stepState.result = response.result
       stepState.finishedAt = new Date().toISOString()
       state.currentStepIndex = index + 1
       writeWorkflowState(state)
@@ -308,7 +335,7 @@ async function executeWorkflow(
 }
 
 function hostCommandForStep(type: MortiseUiWorkflowStepType): string {
-  return { open: 'ui.open', snapshot: 'ui.snapshot', action: 'ui.action', wait: 'ui.wait', assert: 'ui.assert', evidence: 'evidence.capture' }[type]
+  return { open: 'ui.open', snapshot: 'ui.snapshot', action: 'ui.action', wait: 'ui.wait', assert: 'ui.assert', evidence: 'evidence.capture', 'extension-service': 'extension-services.invoke' }[type]
 }
 
 function isRetryableWorkflowResponse(response: UiValidationResponseEnvelope): boolean {
@@ -317,4 +344,15 @@ function isRetryableWorkflowResponse(response: UiValidationResponseEnvelope): bo
 
 function isRetryableWorkflowError(error: unknown): boolean {
   return error instanceof Error && /HOST_UNREACHABLE|ENDPOINT_NOT_READY|timed out|connection reset|fetch failed/i.test(error.message)
+}
+
+function extensionServiceResult(value: unknown): ExtensionServiceResultDTO | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const candidate = value as Partial<ExtensionServiceResultDTO>
+  if (candidate.protocolVersion !== 1 || typeof candidate.requestId !== 'string' || typeof candidate.runtimeId !== 'string' || typeof candidate.status !== 'string') return undefined
+  return candidate as ExtensionServiceResultDTO
+}
+
+function isRetryableExtensionServiceResult(result: ExtensionServiceResultDTO | undefined): boolean {
+  return result !== undefined && ['timed_out', 'unavailable', 'runtime_stale', 'failed'].includes(result.status)
 }

@@ -46,6 +46,7 @@ export function ExtensionDetailPanel({ extension, providers, defaultSlots, onPat
       </div>}
       {showMetadata && <ExtensionOverview extension={extension} t={t} />}
       {showMetadata && <ExtensionDependencyInfo extension={extension} t={t} />}
+      {showMetadata && <ExtensionCapabilityInfo extension={extension} />}
       {sections.map((section) => section.fields.length > 0 && (
         <SettingsSection key={section.id} title={section.title} description={section.description}>
           <SettingsCard>
@@ -81,6 +82,42 @@ export function ExtensionDetailPanel({ extension, providers, defaultSlots, onPat
         </SettingsSection>
       )}
     </div>
+  )
+}
+
+function ExtensionCapabilityInfo({ extension }: { extension: PiExtensionCatalogEntry }) {
+  const provides = Object.entries(extension.manifest?.provides ?? {})
+  const bindings = extension.capabilityBindings ?? []
+  if (provides.length === 0 && bindings.length === 0) return null
+  return (
+    <SettingsSection title="扩展能力">
+      <SettingsCard>
+        <div className="divide-y divide-border/60">
+          {provides.length > 0 && <div className="px-4 py-3.5">
+            <div className="text-xs font-medium text-muted-foreground">提供</div>
+            <div className="mt-2 space-y-2">
+              {provides.map(([id, declaration]) => <div key={id} className="flex flex-wrap items-center gap-2 text-sm">
+                <span>{id}</span><Badge variant="secondary">{declaration.version}</Badge><Badge variant="outline">{declaration.scope}</Badge>
+                {declaration.service && <Badge variant="outline">服务</Badge>}{declaration.ui && <Badge variant="outline">界面</Badge>}
+              </div>)}
+            </div>
+          </div>}
+          {bindings.length > 0 && <div className="px-4 py-3.5">
+            <div className="text-xs font-medium text-muted-foreground">消费与绑定</div>
+            <div className="mt-2 space-y-2">
+              {bindings.map(binding => <div key={binding.alias} className="text-sm">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span>{binding.alias}</span><span className="text-muted-foreground">{binding.capability} {binding.version}</span>
+                  <Badge variant={binding.status === 'bound' ? 'secondary' : binding.required ? 'destructive' : 'outline'}>{binding.status}</Badge>
+                </div>
+                {binding.providerExtensionId && <div className="mt-0.5 text-xs text-muted-foreground">提供者：{binding.providerExtensionId} {binding.providerVersion ?? ''}</div>}
+                {binding.candidateProviderIds && binding.candidateProviderIds.length > 1 && <div className="mt-0.5 text-xs text-muted-foreground">候选：{binding.candidateProviderIds.join(', ')}</div>}
+              </div>)}
+            </div>
+          </div>}
+        </div>
+      </SettingsCard>
+    </SettingsSection>
   )
 }
 

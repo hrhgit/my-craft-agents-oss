@@ -62,6 +62,10 @@ export interface SessionHeader {
 		tools?: string[];
 		background?: boolean;
 		backgroundOperationId?: string;
+		agent?: string;
+		forkTurns?: number | "all";
+		seedMessageCount?: number;
+		schema?: Record<string, unknown>;
 	};
 	/**
 	 * Opaque host-shell metadata. Pi preserves this object but does not interpret
@@ -237,6 +241,7 @@ export interface ChildSessionInfo extends SessionInfo {
 	parentSessionPath?: string;
 	status: "completed" | "interrupted" | "failed";
 	lastOutput?: string;
+	error?: string;
 	persistedClientMutationIds: string[];
 	history: Array<{
 		role: string;
@@ -2371,6 +2376,9 @@ export class SessionManager {
 								.join("\n")
 					).trim() || undefined
 				: undefined;
+			const error = lastAssistant?.stopReason === "error" && typeof lastAssistant.errorMessage === "string"
+				? lastAssistant.errorMessage
+				: undefined;
 			const history = messages.slice(-50).flatMap((message) => {
 				const record = message as unknown as Record<string, unknown>;
 				const content = record.content;
@@ -2415,6 +2423,7 @@ export class SessionManager {
 				parentSessionPath: header.parentSession,
 				status,
 				lastOutput,
+				error,
 				persistedClientMutationIds,
 				history,
 			});

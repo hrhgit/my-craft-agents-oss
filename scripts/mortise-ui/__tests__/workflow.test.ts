@@ -40,4 +40,44 @@ describe('mortise-ui workflow contract', () => {
     const result = await runWorkflowCommand(['schema'], join(tmpdir(), 'mortise-ui-workflow-schema'))
     expect(result.schema).toMatchObject({ schemaVersion: 1, steps: { action: { type: 'action' } } })
   })
+
+  it('persists extension service domain failures and retries only retryable statuses', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'mortise-ui-workflow-extension-service-')); roots.push(root)
+    const file = join(root, 'extension-service.json')
+    writeFileSync(file, JSON.stringify({
+      schemaVersion: 1,
+      run: {
+        surface: 'electron',
+        profile: 'fixture',
+        cleanup: 'always',
+        adapterCommand: [process.execPath, join(import.meta.dir, '..', 'test-host.fixture.ts')],
+      },
+      steps: [{
+        id: 'search',
+        type: 'extension-service',
+        maxAttempts: 3,
+        params: {
+          id: 'search.query',
+          operation: 'query',
+          fixtureResult: {
+            protocolVersion: 1,
+            requestId: 'fixture-request',
+            runtimeId: 'fixture-runtime',
+            status: 'invalid_input',
+            error: { code: 'extension_service_invalid_input', message: 'query is required' },
+          },
+        },
+      }],
+    }))
+
+    const result = await runWorkflowCommand(['run', '--file', file], root)
+    expect(result).toMatchObject({ status: 'failed', failedStep: 'search' })
+    const state = result.state as { steps: Array<Record<string, any>> }
+    expect(state.steps[0]).toMatchObject({
+      status: 'failed',
+      attempts: 1,
+      result: { status: 'invalid_input', runtimeId: 'fixture-runtime' },
+      error: { code: 'extension_service_invalid_input', message: 'query is required' },
+    })
+  }, 20_000)
 })

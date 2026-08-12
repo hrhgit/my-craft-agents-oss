@@ -15,12 +15,12 @@ describe('runPreToolUseChecks', () => {
     })).toEqual({ type: 'allow' })
   })
 
-  it('intercepts the canonical spawn_session host tool', () => {
+  it('intercepts the canonical subagent host tool', () => {
     expect(runPreToolUseChecks({
       ...base,
-      toolName: 'spawn_session',
+      toolName: 'subagent',
       input: { prompt: 'Inspect the module' },
-    })).toEqual({ type: 'spawn_session_intercept', input: { prompt: 'Inspect the module' } })
+    })).toEqual({ type: 'subagent_intercept', input: { prompt: 'Inspect the module' } })
   })
 
   it('blocks when a selected skill prerequisite is unresolved', () => {

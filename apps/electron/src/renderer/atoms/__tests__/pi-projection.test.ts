@@ -7,6 +7,7 @@ import {
   applyPiProjectionSnapshot,
   applyPiProjectionSnapshotAtom,
   createPiProjectionState,
+  getPiProjectionProcessingDelta,
   insertOptimisticPiUser,
   isPiProjectionProcessing,
   piProjectionAtomFamily,
@@ -315,5 +316,87 @@ describe('Pi projection reducer', () => {
       entityType: 'conversation', kind: 'agent_settled', payload: { status: 'completed' },
     }))
     expect(store.get(piProjectionIsProcessingAtomFamily('session-1'))).toBe(false)
+  })
+})
+
+describe('getPiProjectionProcessingDelta', () => {
+  const runningSnapshot = (): PiProjectionSnapshotV1 => ({
+    schemaVersion: 1, sessionId: 'session-1', runtimeId: 'runtime-1', lastSeq: 2,
+    entities: [
+      {
+        entityId: 'lifecycle:start', entityType: 'conversation', entityVersion: 1,
+        createdSeq: 1, kind: 'agent_start', payload: { status: 'running' },
+        lastEventId: 'event-1', lastSeq: 1,
+      },
+    ],
+  })
+  const idleSnapshot = (): PiProjectionSnapshotV1 => ({
+    schemaVersion: 1, sessionId: 'session-1', runtimeId: 'runtime-1', lastSeq: 2,
+    entities: [
+      {
+        entityId: 'lifecycle:end', entityType: 'conversation', entityVersion: 1,
+        createdSeq: 2, kind: 'agent_end', payload: { status: 'completed' },
+        lastEventId: 'event-2', lastSeq: 2,
+      },
+    ],
+  })
+
+  it('reports started when an empty state syncs to a running snapshot', () => {
+    const previous = createPiProjectionState('session-1')
+    const current = applyPiProjectionSnapshot(previous, runningSnapshot())
+    expect(getPiProjectionProcessingDelta(previous, current)).toBe('started')
+  })
+
+  it('reports ended when a running state settles to an idle snapshot', () => {
+    const previous = applyPiProjectionSnapshot(createPiProjectionState('session-1'), runningSnapshot())
+    const current = applyPiProjectionSnapshot(previous, idleSnapshot())
+    expect(getPiProjectionProcessingDelta(previous, current)).toBe('ended')
+  })
+
+  it('reports null while a retrying agent_end is still pending settlement', () => {
+    const previous = applyPiProjectionSnapshot(createPiProjectionState('session-1'), runningSnapshot())
+    const current = applyPiProjectionSnapshot(previous, {
+      schemaVersion: 1, sessionId: 'session-1', runtimeId: 'runtime-1', lastSeq: 3,
+      entities: [
+        ...runningSnapshot().entities,
+        {
+          entityId: 'lifecycle:attempt-end', entityType: 'conversation', entityVersion: 1,
+          createdSeq: 3, kind: 'agent_end',
+          payload: { status: 'failed', willRetry: true, settlementPending: true },
+          lastEventId: 'event-3', lastSeq: 3,
+        },
+      ],
+    })
+    expect(getPiProjectionProcessingDelta(previous, current)).toBeNull()
+  })
+
+  it('reports null when nothing changed', () => {
+    const previous = applyPiProjectionSnapshot(createPiProjectionState('session-1'), idleSnapshot())
+    expect(getPiProjectionProcessingDelta(previous, previous)).toBeNull()
+  })
+
+  it('leaves the flag untouched while the stream is desynced', () => {
+    const previous = applyPiProjectionSnapshot(createPiProjectionState('session-1'), runningSnapshot())
+    const desynced = applyPiProjectionEvent(previous, event({ eventId: 'event-4', seq: 4 }))
+    expect(desynced.syncState).toBe('desynced')
+    expect(getPiProjectionProcessingDelta(previous, desynced)).toBeNull()
+  })
+
+  it('trusts an authoritative snapshot after a desync, including the missed end', () => {
+    const running = applyPiProjectionSnapshot(createPiProjectionState('session-1'), runningSnapshot())
+    const desynced = applyPiProjectionEvent(running, event({ eventId: 'event-4', seq: 4 }))
+
+    // The agent ended while the stream was broken: the recovery snapshot is
+    // authoritative (it covers the observed gap seq) and must report the
+    // missed end instead of comparing against the unknown desynced state.
+    const recovered = applyPiProjectionSnapshot(desynced, { ...idleSnapshot(), lastSeq: 5 })
+    expect(recovered.syncState).toBe('synced')
+    expect(getPiProjectionProcessingDelta(desynced, recovered)).toBe('ended')
+
+    // And the reverse: a run started during the gap is reported as started.
+    const gapStart = applyPiProjectionEvent(running, event({ eventId: 'event-4', seq: 4 }))
+    const recoveredRunning = applyPiProjectionSnapshot(gapStart, { ...runningSnapshot(), lastSeq: 5 })
+    expect(recoveredRunning.syncState).toBe('synced')
+    expect(getPiProjectionProcessingDelta(gapStart, recoveredRunning)).toBe('started')
   })
 })

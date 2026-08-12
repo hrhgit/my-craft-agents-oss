@@ -38,6 +38,7 @@ import {
 	type ToolName,
 	withFileMutationQueue,
 } from "./tools/index.ts";
+import { VisionProxyService } from "./vision-proxy.ts";
 
 export interface CreateAgentSessionOptions {
 	/** Working directory for project-local discovery. Default: process.cwd() */
@@ -386,6 +387,13 @@ export async function createAgentSession(options: CreateAgentSessionOptions): Pr
 
 	const extensionRunnerRef: { current?: ExtensionRunner } = {};
 
+	// Vision proxy: image transcription for text-only models (dual-layer mechanism).
+	const visionProxyService = new VisionProxyService({
+		modelRegistry,
+		sessionDir: sessionManager.getSessionDir(),
+		isImageReadingBlocked: () => settingsManager.getBlockImages(),
+	});
+
 	agent = new Agent({
 		initialState: {
 			systemPrompt: "",
@@ -552,9 +560,12 @@ export async function createAgentSession(options: CreateAgentSessionOptions): Pr
 		},
 		sessionId: sessionManager.getSessionId(),
 		transformContext: async (messages) => {
+			// Layer B: transcribe user images with the vision proxy before extensions
+			// see the context, so the model and extensions observe the same transcript.
+			const transcribed = await visionProxyService.transcribeUserImages(messages, agent.state.model);
 			const runner = extensionRunnerRef.current;
-			if (!runner) return messages;
-			return runner.emitContext(messages);
+			if (!runner) return transcribed;
+			return runner.emitContext(transcribed);
 		},
 		steeringMode: settingsManager.getSteeringMode(),
 		followUpMode: settingsManager.getFollowUpMode(),
@@ -586,6 +597,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions): Pr
 		scopedModels: options.scopedModels,
 		resourceLoader,
 		customTools: options.customTools,
+		visionProxyService,
 		modelRegistry,
 		initialActiveToolNames,
 		allowedToolNames,

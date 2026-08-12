@@ -15,20 +15,32 @@ async function waitUntil(predicate: () => boolean, timeoutMs = 1_000): Promise<v
 }
 
 describe('SessionManager subagent completion delivery', () => {
-  it('persists completion delivery and sends each operation once', async () => {
+  it('persists completion delivery and emits each completion event once without sending a message', async () => {
     const root = mkdtempSync(join(tmpdir(), 'mortise-subagent-delivery-'))
     const ledgerPath = join(root, 'subagent-deliveries.json')
     const manager = new SessionManager()
     const managed = createManagedSession(
       { mortiseId: 'parent', name: 'Parent' },
-      { id: 'workspace', name: 'Workspace', rootPath: root, createdAt: Date.now() } as never,
+      {
+        schemaVersion: 2,
+        id: 'workspace',
+        revision: 0,
+        name: 'Workspace',
+        nameSource: 'custom',
+        slug: 'workspace',
+        primaryLocationId: 'primary',
+        locations: [{
+          id: 'primary',
+          name: 'Primary',
+          rootName: 'workspace',
+          endpoint: { kind: 'local', rootPath: root },
+        }],
+        createdAt: Date.now(),
+      } as never,
       { messagesLoaded: true },
     )
-    let acknowledge: (() => void) | undefined
-    const sendMessage = mock((...args: unknown[]) => {
-      acknowledge = args[7] as (() => void) | undefined
-      return new Promise<void>(() => {})
-    })
+    const sendMessage = mock(async () => undefined)
+    const sendEvent = mock(() => undefined)
     const internals = manager as unknown as {
       sessions: Map<string, TestManagedSession>
       getSubagentDeliveryLedgerPath: () => string
@@ -48,10 +60,12 @@ describe('SessionManager subagent completion delivery', () => {
         },
       ) => Promise<void>
       sendMessage: typeof sendMessage
+      sendEvent: typeof sendEvent
     }
     internals.sessions.set(managed.id, managed)
     internals.getSubagentDeliveryLedgerPath = () => ledgerPath
     internals.sendMessage = sendMessage
+    internals.sendEvent = sendEvent
     const operation = {
       operationId: 'operation-1',
       childSessionId: 'child-1',
@@ -72,10 +86,6 @@ describe('SessionManager subagent completion delivery', () => {
         output: 'Final child output',
         modified: '2026-07-27T00:00:00.000Z',
       })
-      await waitUntil(() => acknowledge !== undefined)
-
-      expect(sendMessage).toHaveBeenCalledTimes(1)
-      acknowledge?.()
       await Promise.all([firstDelivery, concurrentRecovery])
       await internals.settleBackgroundChildOperation(managed, {
         ...operation,
@@ -84,8 +94,18 @@ describe('SessionManager subagent completion delivery', () => {
         modified: '2026-07-27T00:00:00.000Z',
       })
 
-      expect(sendMessage).toHaveBeenCalledTimes(1)
-      expect(sendMessage.mock.calls[0]?.[1]).toContain('Final child output')
+      await waitUntil(() => sendEvent.mock.calls.length === 1)
+      expect(sendMessage).not.toHaveBeenCalled()
+      expect(sendEvent).toHaveBeenCalledTimes(1)
+      expect(sendEvent).toHaveBeenCalledWith({
+        type: 'subagent_event',
+        sessionId: 'parent',
+        taskId: 'child-1',
+        phase: 'completed',
+        status: 'completed',
+        summary: 'Final child output',
+        timestamp: Date.parse('2026-07-27T00:00:00.000Z'),
+      }, 'workspace')
       expect(JSON.parse(readFileSync(ledgerPath, 'utf8')).operations['operation-1']).toMatchObject({
         state: 'delivered',
         messageId: 'subagent-completion-operation-1',

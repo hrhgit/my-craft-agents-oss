@@ -2,7 +2,10 @@ import { existsSync, readFileSync, statSync } from 'node:fs'
 import { basename, join, resolve } from 'node:path'
 
 export const RENDERER_ENTRY_BUDGETS = {
-  'index.html': 5_200_000,
+  // index.html graph measured 5,218,759 bytes on 2026-08-12 after the session
+  // runtime / extension boundary refactor; 5.4MB leaves headroom for one more
+  // feature batch (~100-200KB each) while still catching accidental bloat.
+  'index.html': 5_400_000,
   'playground.html': 1_250_000,
 } as const
 

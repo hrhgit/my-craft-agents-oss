@@ -333,6 +333,9 @@ export interface UserAttachmentMetadata {
 	size?: number;
 }
 
+/** Structured product origin for a user message. It is metadata, not message content. */
+export type UserMessageOrigin = { type: "session"; sessionId: string };
+
 export interface UserMessage {
 	role: "user";
 	content: string | (TextContent | ImageContent)[];
@@ -341,6 +344,8 @@ export interface UserMessage {
 	clientMutationId?: string;
 	/** Sanitized host attachment references persisted with the user turn. */
 	attachments?: UserAttachmentMetadata[];
+	/** Calling product surface or Session, persisted without changing visible text. */
+	origin?: UserMessageOrigin;
 }
 
 export interface AssistantMessage {
@@ -655,6 +660,13 @@ export interface Model<TApi extends Api> {
 	 */
 	thinkingLevelMap?: ThinkingLevelMap;
 	input: ("text" | "image")[];
+	/**
+	 * Another configured model (provider + model id) used as the image-reading
+	 * proxy when this model lacks image input capability. Attached images are
+	 * transcribed by the proxy model and the description is injected into the
+	 * turn; an on-demand inspect tool routes targeted questions to it.
+	 */
+	visionProxy?: { provider: string; model: string };
 	cost: {
 		input: number; // $/million tokens
 		output: number; // $/million tokens

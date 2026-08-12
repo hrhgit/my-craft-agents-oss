@@ -45,6 +45,7 @@ export type {
   ChildAttemptRegistrationRequest,
   ChildAttemptRegistration,
   ChildTaskSettledOperation,
+  ChildTaskActivityEvent,
 } from './types.ts';
 
 // Enums need to be exported as values, not just types

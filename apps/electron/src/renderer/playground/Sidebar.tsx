@@ -1,18 +1,20 @@
 import * as React from 'react'
+import { useTranslation } from 'react-i18next'
 import { ChevronRight } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import type { CategoryGroup } from './registry'
+import type { CategoryGroup, PlaygroundLocale } from './registry'
 
 interface SidebarProps {
   categories: CategoryGroup[]
   selectedId: string | null
   onSelect: (id: string) => void
-  locale: 'zh-CN' | 'en'
+  locale: PlaygroundLocale
 }
 
 const STORAGE_KEY = 'playground-expanded-categories'
 
 export function Sidebar({ categories, selectedId, onSelect, locale }: SidebarProps) {
+  const { t } = useTranslation()
   const [query, setQuery] = React.useState('')
   const [expandedCategories, setExpandedCategories] = React.useState<Set<string>>(() => {
     // Try to restore from localStorage, otherwise collapse all by default
@@ -56,8 +58,10 @@ export function Sidebar({ categories, selectedId, onSelect, locale }: SidebarPro
         ...category,
         components: category.components.filter(component => [
           component.name,
+          component.nameZh,
           component.id,
           component.description,
+          component.descriptionZh,
           component.source?.file,
           component.source?.symbol,
         ].join(' ').toLocaleLowerCase().includes(normalizedQuery)),
@@ -71,8 +75,8 @@ export function Sidebar({ categories, selectedId, onSelect, locale }: SidebarPro
         <input
           value={query}
           onChange={event => setQuery(event.target.value)}
-          placeholder={locale === 'zh-CN' ? '搜索组件、来源或导出名' : 'Search UI'}
-          aria-label={locale === 'zh-CN' ? '搜索界面组件' : 'Search UI components'}
+          placeholder={t('playground.search.placeholder')}
+          aria-label={t('playground.search.aria')}
           className="mb-2 w-full rounded border border-border bg-foreground/5 px-2 py-1.5 text-sm outline-none focus:ring-1 focus:ring-ring"
         />
         {visibleCategories.map(category => {
@@ -91,7 +95,7 @@ export function Sidebar({ categories, selectedId, onSelect, locale }: SidebarPro
                     isExpanded && 'rotate-90'
                   )}
                 />
-                {category.name}
+                {t(`playground.category.${category.name}`, { defaultValue: category.name })}
                 <span className="ml-auto text-[10px] font-normal opacity-60">
                   {category.components.length}
                 </span>
@@ -111,7 +115,7 @@ export function Sidebar({ categories, selectedId, onSelect, locale }: SidebarPro
                           : 'text-muted-foreground hover:bg-foreground/5 hover:text-foreground'
                       )}
                     >
-                      {component.name}
+                      {locale === 'zh-CN' ? (component.nameZh ?? component.name) : component.name}
                     </button>
                   ))}
                 </div>
@@ -120,7 +124,7 @@ export function Sidebar({ categories, selectedId, onSelect, locale }: SidebarPro
           )
         })}
         {visibleCategories.length === 0 && (
-          <p className="px-2 py-4 text-sm text-muted-foreground">{locale === 'zh-CN' ? '没有匹配的组件。' : 'No matching UI.'}</p>
+          <p className="px-2 py-4 text-sm text-muted-foreground">{t('playground.search.noResults')}</p>
         )}
       </div>
     </nav>

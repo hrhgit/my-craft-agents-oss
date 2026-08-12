@@ -110,4 +110,44 @@ describe("SessionManager.listChildrenBySpawnedFrom", () => {
 		expect(children[0]?.history[0]).toMatchObject({ role: "user", clientMutationId: "mutation-1" });
 		expect(children[0]?.persistedClientMutationIds).toEqual(["mutation-1"]);
 	});
+
+	it("projects the persisted assistant error for a failed child", async () => {
+		previousAgentDir = process.env[ENV_AGENT_DIR];
+		tempAgentDir = mkdtempSync(join(tmpdir(), "pi-child-session-error-"));
+		process.env[ENV_AGENT_DIR] = tempAgentDir;
+		const sessionsDir = join(tempAgentDir, "sessions", "workspace");
+		mkdirSync(sessionsDir, { recursive: true });
+		const childPath = join(sessionsDir, "failed.jsonl");
+		const timestamp = "2026-07-05T00:00:00.000Z";
+		writeFileSync(
+			childPath,
+			`${[
+				JSON.stringify({
+					type: "session", version: 3, id: "failed-child", timestamp,
+					cwd: "E:/project", spawnedFrom: "failed-parent",
+				}),
+				JSON.stringify({
+					type: "message", id: "msg-1", parentId: null, timestamp,
+					message: { role: "user", content: "fail", timestamp: Date.parse(timestamp) },
+				}),
+				JSON.stringify({
+					type: "message", id: "msg-2", parentId: "msg-1", timestamp,
+					message: {
+						role: "assistant", content: [{ type: "text", text: "partial" }],
+						api: "openai-completions", provider: "test", model: "model-a",
+						stopReason: "error", errorMessage: "provider unavailable", timestamp: Date.parse(timestamp),
+					},
+				}),
+			].join("\n")}\n`,
+		);
+
+		await expect(SessionManager.listChildrenBySpawnedFrom("failed-parent")).resolves.toEqual([
+			expect.objectContaining({
+				id: "failed-child",
+				status: "failed",
+				lastOutput: "partial",
+				error: "provider unavailable",
+			}),
+		]);
+	});
 });

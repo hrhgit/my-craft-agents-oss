@@ -8,6 +8,7 @@
 
 import * as React from 'react'
 import type { ReactNode } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Table2 } from 'lucide-react'
 import { PreviewOverlay, type BadgeVariant } from './PreviewOverlay'
 
@@ -40,6 +41,7 @@ export function DataTableOverlay({
   headerActions,
   children,
 }: DataTableOverlayProps) {
+  const { t } = useTranslation()
   return (
     <PreviewOverlay
       isOpen={isOpen}
@@ -47,7 +49,7 @@ export function DataTableOverlay({
       theme={theme}
       typeBadge={{
         icon: Table2,
-        label: 'Table',
+        label: t('overlay.table'),
         variant: badgeVariant,
       }}
       title={title}

@@ -1,5 +1,8 @@
 import type { ComponentType, ReactNode } from 'react'
 
+/** Language codes supported by the playground UI itself. */
+export type PlaygroundLocale = 'zh-CN' | 'en'
+
 export type ControlType =
   | { type: 'boolean' }
   | { type: 'string'; placeholder?: string }
@@ -9,14 +12,22 @@ export type ControlType =
 
 export interface PropDefinition {
   name: string
+  /** Chinese display name shown when the playground locale is zh-CN. */
+  nameZh?: string
   description?: string
+  /** Chinese description shown when the playground locale is zh-CN. */
+  descriptionZh?: string
   control: ControlType
   defaultValue: unknown
 }
 
 export interface ComponentVariant {
   name: string
+  /** Chinese display name shown when the playground locale is zh-CN. */
+  nameZh?: string
   description?: string
+  /** Chinese description shown when the playground locale is zh-CN. */
+  descriptionZh?: string
   props: Record<string, unknown>
 }
 
@@ -29,6 +40,8 @@ export interface ComponentSource {
 export interface PreviewScenePhase {
   id: string
   label: string
+  /** Chinese label shown when the playground locale is zh-CN. */
+  labelZh?: string
   durationMs?: number
   props?: Record<string, unknown>
 }
@@ -36,6 +49,8 @@ export interface PreviewScenePhase {
 export interface PreviewScene {
   kind: 'static' | 'timeline'
   label: string
+  /** Chinese label shown when the playground locale is zh-CN. */
+  labelZh?: string
   frameDurationMs?: number
   /** Timeline repeats from its first phase unless explicitly disabled. */
   loop?: boolean
@@ -50,14 +65,18 @@ export type Category = 'Automations' | 'Mobile WebUI' | 'Onboarding' | 'Agent Se
 export interface ComponentEntry {
   id: string
   name: string
+  /** Chinese display name shown when the playground locale is zh-CN. */
+  nameZh?: string
   category: Category
   description: string
+  /** Chinese description shown when the playground locale is zh-CN. */
+  descriptionZh?: string
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   component: ComponentType<any>
   props: PropDefinition[]
   variants?: ComponentVariant[]
-  /** Returns mock data to merge with props (callbacks, complex objects) */
-  mockData?: () => Record<string, unknown>
+  /** Returns mock data to merge with props (callbacks, complex objects). Receives the current playground locale so demos can produce localized fixtures. */
+  mockData?: (locale: PlaygroundLocale) => Record<string, unknown>
   /** Optional wrapper component for context providers */
   wrapper?: ComponentType<{ children: ReactNode }>
   /** Layout mode: 'centered' (default), 'top' for scrollable content, 'full' for full-height flex layout */

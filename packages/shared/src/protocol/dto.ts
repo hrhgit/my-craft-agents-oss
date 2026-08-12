@@ -174,6 +174,7 @@ export type SessionEvent =
   | { type: 'shell_backgrounded'; sessionId: string; toolUseId: string; shellId: string; intent?: string; command?: string; turnId?: string }
   | { type: 'task_progress'; sessionId: string; toolUseId: string; elapsedSeconds: number; turnId?: string }
   | { type: 'task_completed'; sessionId: string; taskId: string; status: 'completed' | 'failed' | 'stopped'; outputFile?: string; summary?: string; turnId?: string }
+  | { type: 'subagent_event'; sessionId: string; taskId: string; phase: 'started' | 'activity' | 'status' | 'completed'; status: 'running' | 'completed' | 'failed' | 'interrupted'; resultRef?: string; summary?: string; timestamp?: number }
   | { type: 'shell_killed'; sessionId: string; shellId: string }
   | { type: 'user_message'; sessionId: string; message: Message; status: 'accepted' | 'queued' | 'processing'; optimisticMessageId?: string }
   | { type: 'name_changed'; sessionId: string; name?: string }
@@ -197,6 +198,8 @@ export interface SendMessageOptions {
   optimisticMessageId?: string
   /** Use the configured Enter behavior, or its opposite for Ctrl/Cmd+Enter. */
   midStreamSendIntent?: MidStreamSendIntent
+  /** Structured origin metadata. It never changes message delivery semantics or user-visible content. */
+  source?: { type: 'session'; sessionId: string }
 }
 
 // ---------------------------------------------------------------------------

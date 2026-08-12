@@ -8,6 +8,112 @@ import { MORTISE_LOGO_HTML } from '../branding.ts';
 
 export type AppType = 'terminal' | 'electron';
 
+/** Locales the generated callback page can render (kept dependency-free / browser-safe). */
+export type CallbackPageLocale = 'en' | 'zh-Hans';
+
+/**
+ * Copy used by the callback page. Values mirror the flat dictionary keys in
+ * `oauth.callback.*` (output/i18n/overlay-wizard.{en,zh}.json) so the embedded
+ * table stays in sync with the i18n dictionaries.
+ */
+export interface CallbackPageCopy {
+  /** oauth.callback.title.success */
+  titleSuccess: string;
+  /** oauth.callback.title.complete */
+  titleComplete: string;
+  /** oauth.callback.title.failed */
+  titleFailed: string;
+  /** oauth.callback.title.security */
+  titleSecurity: string;
+  /** oauth.callback.title.error */
+  titleError: string;
+  /** oauth.callback.status.success */
+  statusSuccess: string;
+  /** oauth.callback.status.failed */
+  statusFailed: string;
+  /** oauth.callback.status.failedDetail ({{detail}} placeholder) */
+  statusFailedDetail: string;
+  /** oauth.callback.hint.success */
+  hintSuccess: string;
+  /** oauth.callback.hint.failed */
+  hintFailed: string;
+  /** oauth.callback.error.stateMismatch */
+  errorStateMismatch: string;
+  /** oauth.callback.error.noCode */
+  errorNoCode: string;
+  /** oauth.callback.error.internal */
+  errorInternal: string;
+}
+
+const CALLBACK_PAGE_COPY: Record<CallbackPageLocale, CallbackPageCopy> = {
+  en: {
+    titleSuccess: 'Authorization Successful',
+    titleComplete: 'Authorization Complete',
+    titleFailed: 'Authorization Failed',
+    titleSecurity: 'Security Error',
+    titleError: 'Error',
+    statusSuccess: 'Authorization successful',
+    statusFailed: 'Authorization failed',
+    statusFailedDetail: 'Authorization failed: {{detail}}',
+    hintSuccess: 'You can now return to the application.',
+    hintFailed: 'Please close this window and try again.',
+    errorStateMismatch: 'State mismatch - possible CSRF attack.',
+    errorNoCode: 'No authorization code received.',
+    errorInternal: 'Internal Server Error',
+  },
+  'zh-Hans': {
+    titleSuccess: '授权成功',
+    titleComplete: '授权完成',
+    titleFailed: '授权失败',
+    titleSecurity: '安全错误',
+    titleError: '错误',
+    statusSuccess: '授权成功',
+    statusFailed: '授权失败',
+    statusFailedDetail: '授权失败：{{detail}}',
+    hintSuccess: '现在可以返回应用了。',
+    hintFailed: '请关闭此窗口后重试。',
+    errorStateMismatch: '状态不匹配，可能存在 CSRF 攻击。',
+    errorNoCode: '未收到授权码。',
+    errorInternal: '服务器内部错误',
+  },
+};
+
+/** Map any BCP-47 language code to a supported callback page locale (defaults to 'en'). */
+export function resolveCallbackPageLocale(lang?: string | null): CallbackPageLocale {
+  if (lang && lang.toLowerCase().startsWith('zh')) return 'zh-Hans';
+  return 'en';
+}
+
+/** Get the callback page copy table for a locale (falls back to 'en'). */
+export function getCallbackPageCopy(locale: CallbackPageLocale = 'en'): CallbackPageCopy {
+  return CALLBACK_PAGE_COPY[locale] ?? CALLBACK_PAGE_COPY.en;
+}
+
+/**
+ * Localize app-authored copy passed in by callers (titles, known error details).
+ *
+ * Callers pass the English defaults (kept as the API contract); when they match
+ * a known entry they are mapped to the requested locale. Provider-supplied or
+ * dynamic details (OAuth `error` params, thrown Error messages) do not match and
+ * pass through unchanged.
+ */
+function localizeKnownCopy(text: string, copy: CallbackPageCopy): string {
+  const known: Array<[string, string]> = [
+    ['Authorization Successful', copy.titleSuccess],
+    ['Authorization Complete', copy.titleComplete],
+    ['Authorization Failed', copy.titleFailed],
+    ['Security Error', copy.titleSecurity],
+    ['Error', copy.titleError],
+    ['State mismatch - possible CSRF attack.', copy.errorStateMismatch],
+    ['No authorization code received.', copy.errorNoCode],
+    ['Internal Server Error', copy.errorInternal],
+  ];
+  for (const [en, localized] of known) {
+    if (text === en) return localized;
+  }
+  return text;
+}
+
 /**
  * Generate a minimal, clean callback page matching the app's design system.
  * Logo at top, status message in a card below.
@@ -18,15 +124,21 @@ export function generateCallbackPage(options: {
   errorDetail?: string;
   appType?: AppType;
   deeplinkUrl?: string;
+  locale?: CallbackPageLocale;
 }): string {
-  const { title, isSuccess, errorDetail, deeplinkUrl } = options;
+  const { title, isSuccess, errorDetail, deeplinkUrl, locale = 'en' } = options;
+  const copy = getCallbackPageCopy(locale);
+
+  // Localize app-authored copy; dynamic details pass through as-is.
+  const pageTitle = localizeKnownCopy(title, copy);
+  const localizedErrorDetail = errorDetail ? localizeKnownCopy(errorDetail, copy) : undefined;
 
   // Status message based on success/error
   const statusMessage = isSuccess
-    ? 'Authorization successful'
-    : errorDetail
-      ? `Authorization failed: ${errorDetail}`
-      : 'Authorization failed';
+    ? copy.statusSuccess
+    : localizedErrorDetail
+      ? copy.statusFailedDetail.replace('{{detail}}', localizedErrorDetail)
+      : copy.statusFailed;
 
   // Generate deeplink redirect and auto-close for success
   const autoCloseScript = isSuccess
@@ -39,11 +151,11 @@ export function generateCallbackPage(options: {
 
 
   return `<!DOCTYPE html>
-<html lang="en">
+<html lang="${locale}">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Mortise - ${title}</title>
+  <title>Mortise - ${pageTitle}</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -174,7 +286,7 @@ export function generateCallbackPage(options: {
     <div class="card">
       <div class="status">${statusMessage}</div>
     </div>
-    <div class="hint">${isSuccess ? 'You can now return to the application.' : 'Please close this window and try again.'}</div>
+    <div class="hint">${isSuccess ? copy.hintSuccess : copy.hintFailed}</div>
     ${deeplinkUrl ? `<a href="${deeplinkUrl}" class="return-link">Mortise</a>` : ''}
   </div>
   <script>${autoCloseScript}</script>

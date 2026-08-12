@@ -1,13 +1,14 @@
 import * as React from 'react'
+import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
-import type { RegisteredComponentEntry } from './registry'
+import type { PlaygroundLocale, RegisteredComponentEntry } from './registry'
 import { TooltipProvider } from '@mortise/ui'
 import { PreviewSceneControls, PreviewSceneFrame, usePreviewScene } from './scene-runtime'
 
 interface ComponentPreviewProps {
   component: RegisteredComponentEntry
   props: Record<string, unknown>
-  locale: 'zh-CN' | 'en'
+  locale: PlaygroundLocale
 }
 
 const MIN_WIDTH = 100
@@ -35,6 +36,7 @@ function loadSavedSize(): { width: number; height: number } {
 }
 
 export function ComponentPreview({ component, props, locale }: ComponentPreviewProps) {
+  const { t } = useTranslation()
   const [size, setSize] = React.useState(loadSavedSize)
   const containerRef = React.useRef<HTMLDivElement>(null)
   const isDraggingRef = React.useRef<'right' | 'bottom' | 'corner' | null>(null)
@@ -48,9 +50,9 @@ export function ComponentPreview({ component, props, locale }: ComponentPreviewP
     for (const prop of component.props) {
       defaults[prop.name] = prop.defaultValue
     }
-    const mockData = component.mockData?.() ?? {}
+    const mockData = component.mockData?.(locale) ?? {}
     return { ...defaults, ...mockData, ...scene.phase.props, ...props }
-  }, [component, props, scene.phase.props])
+  }, [component, locale, props, scene.phase.props])
 
   // Render with optional wrapper
   const Component = component.component
@@ -114,10 +116,10 @@ export function ComponentPreview({ component, props, locale }: ComponentPreviewP
       {/* Header */}
       <div className="border-b border-border px-4 pt-3 pb-3">
         <h2 className="text-lg font-semibold text-foreground font-sans">
-          {component.name}
+          {locale === 'zh-CN' ? (component.nameZh ?? component.name) : component.name}
         </h2>
         <div className="mt-1 flex flex-wrap items-center gap-4 text-sm text-muted-foreground">
-          <p>{component.description}</p>
+          <p>{locale === 'zh-CN' ? (component.descriptionZh ?? component.description) : component.description}</p>
           <span className="font-mono text-xs">{component.source.file} · {component.source.symbol}</span>
           <span className="rounded border border-border px-1.5 py-0.5 text-xs">{component.source.coverage}</span>
           <div className="flex items-center gap-2">
@@ -131,13 +133,15 @@ export function ComponentPreview({ component, props, locale }: ComponentPreviewP
               }}
               className="px-2 py-1 rounded text-xs text-muted-foreground hover:text-foreground hover:bg-foreground/5 transition-colors"
             >
-              {locale === 'zh-CN' ? '重置' : 'Reset'}
+              {t('playground.resetSize')}
             </button>
           </div>
           <PreviewSceneControls
-            label={component.scene.label}
+            label={locale === 'zh-CN' ? (component.scene.labelZh ?? component.scene.label) : component.scene.label}
+            labelZh={component.scene.labelZh}
             scene={component.scene}
             phase={scene.phase}
+            phaseLabelZh={scene.phase.labelZh}
             playing={scene.playing}
             onReplay={scene.replay}
             onPrevious={scene.previous}

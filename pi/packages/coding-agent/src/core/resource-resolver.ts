@@ -10,6 +10,8 @@ import { getProjectConfigDir } from "../config.ts";
 import { canonicalizePath, resolvePath } from "../utils/paths.ts";
 import {
 	assertValidExtensionManifest,
+	type ExtensionCapabilityBindingV1,
+	type ExtensionCapabilityFacetV1,
 	type ExtensionManifestDiagnostic,
 	type ExtensionManifestStatus,
 	type ExtensionManifestV1,
@@ -38,6 +40,7 @@ export interface PathMetadata {
 	extensionManifest?: ExtensionManifestV1;
 	extensionManifestStatus?: ExtensionManifestStatus;
 	extensionManifestDiagnostics?: ExtensionManifestDiagnostic[];
+	extensionCapabilityBindings?: ExtensionCapabilityBindingV1[];
 	extensionLoadable?: boolean;
 }
 
@@ -1479,14 +1482,18 @@ export class ResourceResolver {
 		if (!target.has(key)) target.set(key, { metadata: { ...metadata }, enabled });
 	}
 
-	resolveExtensionManifestGraph(entries: ResolvedResource[]): ResolvedResource[] {
+	static resolveExtensionManifestGraph(entries: ResolvedResource[]): ResolvedResource[] {
 		const originalIndex = new Map(entries.map((entry, index) => [entry, index]));
 		const byId = new Map<string, ResolvedResource>();
 		const addDiagnostic = (entry: ResolvedResource, diagnostic: ExtensionManifestDiagnostic): void => {
 			const diagnostics = entry.metadata.extensionManifestDiagnostics ?? [];
 			if (
 				!diagnostics.some(
-					(item) => item.code === diagnostic.code && item.relatedExtensionId === diagnostic.relatedExtensionId,
+					(item) =>
+						item.code === diagnostic.code &&
+						item.relatedExtensionId === diagnostic.relatedExtensionId &&
+						item.capability === diagnostic.capability &&
+						item.consumerAlias === diagnostic.consumerAlias,
 				)
 			) {
 				diagnostics.push(diagnostic);
@@ -1500,6 +1507,7 @@ export class ResourceResolver {
 
 		for (const entry of entries) {
 			entry.metadata.extensionManifestDiagnostics = [];
+			entry.metadata.extensionCapabilityBindings = [];
 			const id = entry.metadata.extensionId;
 			if (!id) continue;
 			const winner = byId.get(id);
@@ -1598,6 +1606,167 @@ export class ResourceResolver {
 				});
 		}
 
+		for (const entry of entries) {
+			if (!entry.enabled) continue;
+			const manifest = entry.metadata.extensionManifest;
+			const ui = entry.metadata.extensionUI;
+			if (!manifest?.provides) continue;
+			const moduleIds = new Set(ui?.schemaVersion === 2 ? (ui.modules ?? []).map((item) => item.id) : []);
+			const frontendIds = new Set(ui?.schemaVersion === 2 ? (ui.frontends ?? []).map((item) => item.id) : []);
+			for (const [capabilityId, provide] of Object.entries(manifest.provides)) {
+				for (const moduleId of provide.ui?.modules ?? []) {
+					if (!moduleIds.has(moduleId)) {
+						block(entry, {
+							code: "capability-ui-reference-missing",
+							severity: "error",
+							message: `Capability ${capabilityId} references missing UI module ${moduleId}`,
+							capability: capabilityId,
+						});
+					}
+				}
+				for (const frontendId of provide.ui?.frontends ?? []) {
+					if (!frontendIds.has(frontendId)) {
+						block(entry, {
+							code: "capability-ui-reference-missing",
+							severity: "error",
+							message: `Capability ${capabilityId} references missing frontend ${frontendId}`,
+							capability: capabilityId,
+						});
+					}
+				}
+			}
+		}
+
+		const requiredCapabilityEdges = new Map<string, Set<string>>();
+		const resolveCapabilityBindings = (): boolean => {
+			requiredCapabilityEdges.clear();
+			let blockedAny = false;
+			const providers = new Map<
+				string,
+				Array<{ entry: ResolvedResource; provide: NonNullable<ExtensionManifestV1["provides"]>[string] }>
+			>();
+			for (const providerEntry of entries) {
+				if (!providerEntry.enabled) continue;
+				for (const [capabilityId, provide] of Object.entries(
+					providerEntry.metadata.extensionManifest?.provides ?? {},
+				)) {
+					const list = providers.get(capabilityId) ?? [];
+					list.push({ entry: providerEntry, provide });
+					providers.set(capabilityId, list);
+				}
+			}
+			for (const consumer of entries) {
+				if (!consumer.enabled) continue;
+				const consumerId = consumer.metadata.extensionId;
+				const bindings: ExtensionCapabilityBindingV1[] = [];
+				for (const [alias, use] of Object.entries(consumer.metadata.extensionManifest?.uses ?? {})) {
+					const required = use.required !== false;
+					const requestedFacets = [...(use.facets ?? [])] as ExtensionCapabilityFacetV1[];
+					const capabilityProviders = (providers.get(use.capability) ?? []).filter(
+						(candidate) => candidate.entry.metadata.extensionId !== consumerId,
+					);
+					const pinned = use.provider
+						? capabilityProviders.filter((candidate) => candidate.entry.metadata.extensionId === use.provider)
+						: capabilityProviders;
+					const versionMatches = pinned.filter((candidate) =>
+						satisfies(candidate.provide.version, use.version, { includePrerelease: true }),
+					);
+					const facetMatches = versionMatches.filter((candidate) =>
+						requestedFacets.every((facet) =>
+							facet === "service" ? Boolean(candidate.provide.service) : Boolean(candidate.provide.ui),
+						),
+					);
+					let status: ExtensionCapabilityBindingV1["status"] = "bound";
+					if (use.provider && pinned.length === 0) status = "provider-mismatch";
+					else if (capabilityProviders.length === 0) status = "missing";
+					else if (versionMatches.length === 0) status = "version-mismatch";
+					else if (facetMatches.length === 0) status = "facet-missing";
+					else if (facetMatches.length > 1) status = "ambiguous";
+					const selected = status === "bound" ? facetMatches[0] : undefined;
+					bindings.push({
+						alias,
+						capability: use.capability,
+						version: use.version,
+						required,
+						requestedFacets,
+						status,
+						providerExtensionId: selected?.entry.metadata.extensionId,
+						providerVersion: selected?.provide.version,
+						scope: selected?.provide.scope,
+						candidateProviderIds: facetMatches.map((candidate) => candidate.entry.metadata.extensionId!).sort(),
+					});
+					if (selected && required && consumerId) {
+						const providerId = selected.entry.metadata.extensionId!;
+						const targets = requiredCapabilityEdges.get(providerId) ?? new Set<string>();
+						targets.add(consumerId);
+						requiredCapabilityEdges.set(providerId, targets);
+					}
+					if (status !== "bound") {
+						const code = (
+							{
+								missing: "missing-capability",
+								"version-mismatch": "capability-version-mismatch",
+								"provider-mismatch": "capability-provider-mismatch",
+								ambiguous: "capability-provider-ambiguous",
+								"facet-missing": "capability-facet-missing",
+							} as const
+						)[status];
+						const diagnostic: ExtensionManifestDiagnostic = {
+							code,
+							severity: required ? "error" : "warning",
+							message: `${required ? "Required" : "Optional"} capability ${use.capability} (${alias}) is ${status}`,
+							capability: use.capability,
+							consumerAlias: alias,
+							providerExtensionId: use.provider,
+						};
+						if (required) {
+							block(consumer, diagnostic);
+							blockedAny = true;
+						} else addDiagnostic(consumer, diagnostic);
+					}
+				}
+				consumer.metadata.extensionCapabilityBindings = bindings;
+			}
+			return blockedAny;
+		};
+		while (resolveCapabilityBindings()) {
+			// Keep resolving until failures of required providers have propagated.
+		}
+
+		const capabilityCycleIds = new Set<string>();
+		const capabilityVisiting = new Set<string>();
+		const capabilityVisited = new Set<string>();
+		const capabilityStack: string[] = [];
+		const visitCapability = (id: string): void => {
+			if (capabilityVisited.has(id)) return;
+			if (capabilityVisiting.has(id)) {
+				for (const cycleId of capabilityStack.slice(Math.max(0, capabilityStack.lastIndexOf(id))))
+					capabilityCycleIds.add(cycleId);
+				return;
+			}
+			capabilityVisiting.add(id);
+			capabilityStack.push(id);
+			for (const consumerId of requiredCapabilityEdges.get(id) ?? []) visitCapability(consumerId);
+			capabilityStack.pop();
+			capabilityVisiting.delete(id);
+			capabilityVisited.add(id);
+		};
+		for (const [id, entry] of byId) if (entry.enabled) visitCapability(id);
+		for (const id of capabilityCycleIds) {
+			const entry = byId.get(id);
+			if (entry)
+				block(entry, {
+					code: "capability-dependency-cycle",
+					severity: "error",
+					message: `Required capability dependency cycle includes ${Array.from(capabilityCycleIds).sort().join(", ")}`,
+				});
+		}
+		if (capabilityCycleIds.size > 0) {
+			while (resolveCapabilityBindings()) {
+				// A consumer of a provider blocked by the cycle must also be blocked.
+			}
+		}
+
 		const active = entries.filter((entry) => entry.enabled && entry.metadata.extensionId);
 		const activeIds = new Set(active.map((entry) => entry.metadata.extensionId!));
 		const outgoing = new Map<string, Set<string>>();
@@ -1614,6 +1783,10 @@ export class ResourceResolver {
 			const id = entry.metadata.extensionId!;
 			const manifest = entry.metadata.extensionManifest;
 			for (const dependency of Object.keys(manifest?.dependencies ?? {})) addEdge(dependency, id);
+			for (const binding of entry.metadata.extensionCapabilityBindings ?? []) {
+				if (binding.required && binding.status === "bound" && binding.providerExtensionId)
+					addEdge(binding.providerExtensionId, id);
+			}
 			for (const after of manifest?.loadOrder?.after ?? []) addEdge(after, id);
 			for (const before of manifest?.loadOrder?.before ?? []) addEdge(id, before);
 		}
@@ -1664,6 +1837,10 @@ export class ResourceResolver {
 		return [...ordered, ...inactive];
 	}
 
+	resolveExtensionManifestGraph(entries: ResolvedResource[]): ResolvedResource[] {
+		return ResourceResolver.resolveExtensionManifestGraph(entries);
+	}
+
 	private toResolvedPaths(accumulator: ResourceAccumulator, resolveGraph = true): ResolvedPaths {
 		const convert = (entries: Map<string, { metadata: PathMetadata; enabled: boolean }>): ResolvedResource[] =>
 			Array.from(entries.entries()).map(([path, value]) => ({ path, ...value }));
@@ -1671,9 +1848,14 @@ export class ResourceResolver {
 			(a, b) => resourcePrecedenceRank(a.metadata) - resourcePrecedenceRank(b.metadata),
 		);
 		return {
-			extensions: resolveGraph ? this.resolveExtensionManifestGraph(extensions) : extensions,
+			extensions: resolveGraph ? resolveExtensionManifestGraph(extensions) : extensions,
 			skills: convert(accumulator.skills),
 			prompts: convert(accumulator.prompts),
 		};
 	}
+}
+
+/** Resolve one complete extension set without reading settings or global extension sources. */
+export function resolveExtensionManifestGraph(entries: ResolvedResource[]): ResolvedResource[] {
+	return ResourceResolver.resolveExtensionManifestGraph(entries);
 }

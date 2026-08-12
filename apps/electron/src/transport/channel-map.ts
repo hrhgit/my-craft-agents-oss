@@ -181,8 +181,6 @@ export const CHANNEL_MAP = {
   // Agent settings
   getAgentSettings: invoke(RPC_CHANNELS.agentSettings.GET),
   updateMainAgentSettings: invoke(RPC_CHANNELS.agentSettings.UPDATE_MAIN),
-  upsertSubagent: invoke(RPC_CHANNELS.agentSettings.UPSERT_SUBAGENT),
-  deleteSubagent: invoke(RPC_CHANNELS.agentSettings.DELETE_SUBAGENT),
 
   // Pi provider discovery
   getPiApiKeyProviders: invoke(RPC_CHANNELS.pi.GET_API_KEY_PROVIDERS),
@@ -314,6 +312,8 @@ export const CHANNEL_MAP = {
   setMessagingToolEnabled: invoke(RPC_CHANNELS.tools.SET_MESSAGING_TOOL_ENABLED),
   getWebSearchMode: invoke(RPC_CHANNELS.tools.GET_WEB_SEARCH_MODE),
   setWebSearchMode: invoke(RPC_CHANNELS.tools.SET_WEB_SEARCH_MODE),
+  getShowTaggedModelsOnly: invoke(RPC_CHANNELS.settings.GET_SHOW_TAGGED_MODELS_ONLY),
+  setShowTaggedModelsOnly: invoke(RPC_CHANNELS.settings.SET_SHOW_TAGGED_MODELS_ONLY),
 
   // Mortise 扩展集成开关（控制 Mortise Agent 扩展加载与 automation 委托）
   getPiExtensionSettings: invoke(RPC_CHANNELS.piExtensions.GET_SETTINGS),
@@ -338,7 +338,7 @@ export const CHANNEL_MAP = {
   setExtensionFileState: invoke(RPC_CHANNELS.extensions.SET_FILE_STATE),
   sendExtensionFrontendMessage: invoke(RPC_CHANNELS.extensions.FRONTEND_MESSAGE),
 
-  // Pi session tree — list child sessions spawned via spawn_session tool
+  // Pi session tree — list private child tasks started via subagent
   listChildSessions: invoke(RPC_CHANNELS.sessions.LIST_CHILD_SESSIONS),
 
   // Badge

@@ -548,6 +548,50 @@ sessionId: session-1
     })
   })
 
+  it('cancels Host-queued user entities through the same sequence owner', () => {
+    const builder = new PiProjectionBuilder('session-1', 'runtime-1')
+    const queued = builder.acceptHostQueuedUser({
+      message: 'queued input', clientMutationId: 'mutation-1', messageId: 'message-1', timestamp: 9,
+      attachments: [{ id: 'att-1', name: 'note.txt', mediaType: 'text/plain', size: 5 }],
+    })
+    expect(queued[1]?.seq).toBe(2)
+
+    const cancelled = builder.acceptHostQueueCancellation({ clientMutationId: 'mutation-1', messageId: 'message-1', timestamp: 10 })
+    expect(cancelled.map(event => event.entityId).sort()).toEqual([
+      'artifact:attachment:mutation-1:att-1',
+      'content:user:mutation-1',
+    ])
+    const contentCancelled = cancelled.find(event => event.entityId === 'content:user:mutation-1')!
+    const attachmentCancelled = cancelled.find(event => event.entityId === 'artifact:attachment:mutation-1:att-1')!
+    expect(contentCancelled).toMatchObject({
+      seq: 3, entityId: 'content:user:mutation-1', entityVersion: 2, origin: 'host',
+      payload: {
+        messageId: 'message-1', clientMutationId: 'mutation-1',
+        queueStatus: 'cancelled', source: 'host', timestamp: 9,
+      },
+    })
+    expect(attachmentCancelled).toMatchObject({
+      seq: 4, entityId: 'artifact:attachment:mutation-1:att-1', entityVersion: 2,
+      payload: { ownerMessageId: 'message-1', queueStatus: 'cancelled' },
+    })
+
+    // The runtime can keep streaming without a sequence collision.
+    const next = builder.acceptRuntimeEvent({
+      type: 'message_end',
+      message: {
+        role: 'assistant', id: 'assistant-1', timestamp: 11,
+        content: [{ type: 'text', text: 'still streaming' }],
+        stopReason: 'end_turn',
+      },
+    })
+    expect(next[0]?.seq).toBe(5)
+  })
+
+  it('cancelling an unknown mutation emits no events', () => {
+    const builder = new PiProjectionBuilder('session-1', 'runtime-1')
+    expect(builder.acceptHostQueueCancellation({ clientMutationId: 'missing' })).toEqual([])
+  })
+
   it('projects Host runtime errors through the current sequence owner', () => {
     const builder = new PiProjectionBuilder('session-1', 'runtime-1')
     builder.accept({ type: 'tool_start', toolName: 'Write', toolUseId: 'call-1', input: {} })

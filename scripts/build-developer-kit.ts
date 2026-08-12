@@ -16,7 +16,6 @@ import {
   activeDeveloperKitBuildIdsLocked,
   cleanupDeveloperKitBuildCacheLocked,
   readValidDeveloperKitBuildManifest,
-  resolveReusableDeveloperKitBuild,
   writeDeveloperKitStagingOwner,
   type DeveloperKitBuildManifest,
 } from './build/developer-kit-build-manifest.ts'
@@ -62,36 +61,27 @@ if (freshSource || sourceIdOption !== undefined) {
 }
 
 if (sourceIdOption) assertMaterializedBuildSourceIdentity(repoRoot, sourceIdOption)
-const reusable = sourceIdOption === undefined && !freshSource
-  ? resolveReusableDeveloperKitBuild({
-      buildRoot,
-      bunExecutableSha256,
-      preferredBuildId: readLatestDeveloperKitBuildId(outputRoot),
-      verification: 'fast',
-    })
-  : undefined
-if (sourceIdOption === undefined && !freshSource && !reusable) {
-  throw new Error('No reusable Developer Kit build is available. Run again with --fresh-source to build the current source.')
-}
-if (reusable) {
-  process.stdout.write(`[Mortise Developer Kit] Reusing build ${reusable.buildId.slice(0, 12)}.\n`)
-}
-const captured = sourceIdOption === undefined && freshSource
+// 默认按当前源码内容寻址：捕获源码身份，命中既有不可变构建则复用，未命中则构建。
+// --source-id 显式指定外部源码身份时按编号固定复用或校验。
+const captured = sourceIdOption === undefined
   ? captureBuildSource({
       repoRoot,
       scratchRoot: join(buildRoot, 'sources'),
       extraPaths: ['node_modules/@vscode/ripgrep', 'node_modules/electron/dist'],
     })
   : undefined
-const sourceId = sourceIdOption ?? reusable?.sourceId ?? captured!.sourceId
+const sourceId = sourceIdOption ?? captured!.sourceId
 try {
   // The immutable content build is always directory-only. Archives are derived
   // publications and must not force a second compilation of identical content.
-  const buildId = reusable?.buildId ?? computeDeveloperKitBuildId(sourceId, true, bunExecutableSha256)
+  const buildId = computeDeveloperKitBuildId(sourceId, true, bunExecutableSha256)
   const finalBuildDir = join(buildRoot, 'builds', buildId)
-  const manifest = reusable ?? withFileLock(join(buildRoot, 'locks', buildId), () => {
+  const manifest = withFileLock(join(buildRoot, 'locks', buildId), () => {
     const cached = readValidDeveloperKitBuildManifest(finalBuildDir, buildId, 'fast')
-    if (cached) return cached
+    if (cached) {
+      process.stdout.write(`[Mortise Developer Kit] Reusing build ${buildId.slice(0, 12)} (source unchanged).\n`)
+      return cached
+    }
     if (existsSync(finalBuildDir)) removeDirectory(finalBuildDir)
 
     const source = captured
@@ -158,16 +148,14 @@ try {
   }, { timeoutMs: LOCK_TIMEOUT_MS, staleMs: 60_000 })
 
   if (!sourceIdOption) writeJsonAtomic(join(outputRoot, 'developer-kit-latest.json'), manifest)
-  if (!reusable) {
-    withFileLock(join(buildRoot, 'coordinator'), () => cleanupDeveloperKitBuildCacheLocked(
-      buildRoot,
-      new Set([manifest.buildId, ...activeDeveloperKitBuildIdsLocked(buildRoot)]),
-      { retainCount: developerKitRetainCount(), verification: 'fast' },
-    ), {
-      timeoutMs: LOCK_TIMEOUT_MS,
-      staleMs: 60_000,
-    })
-  }
+  withFileLock(join(buildRoot, 'coordinator'), () => cleanupDeveloperKitBuildCacheLocked(
+    buildRoot,
+    new Set([manifest.buildId, ...activeDeveloperKitBuildIdsLocked(buildRoot)]),
+    { retainCount: developerKitRetainCount(), verification: 'fast' },
+  ), {
+    timeoutMs: LOCK_TIMEOUT_MS,
+    staleMs: 60_000,
+  })
   const resultPath = noArchive
     ? manifest.artifactDirectory
     : ensureDeveloperKitArchive(outputRoot, manifest)

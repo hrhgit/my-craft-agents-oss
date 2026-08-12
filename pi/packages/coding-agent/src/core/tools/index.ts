@@ -78,6 +78,7 @@ export {
 
 import type { AgentTool } from "@mortise/pi-agent-core";
 import type { ToolDefinition } from "../extensions/types.ts";
+import { createInspectImageTool, type VisionProxyService } from "../vision-proxy.ts";
 import { type BashToolOptions, createBashTool, createBashToolDefinition } from "./bash.ts";
 import { createEditTool, createEditToolDefinition, type EditToolOptions } from "./edit.ts";
 import { createFindTool, createFindToolDefinition, type FindToolOptions } from "./find.ts";
@@ -89,7 +90,17 @@ import { createWriteTool, createWriteToolDefinition, type WriteToolOptions } fro
 
 export type Tool = AgentTool<any>;
 export type ToolDef = ToolDefinition<any, any>;
-export type ToolName = "read" | "bash" | "pwsh" | "edit" | "write" | "grep" | "find" | "ls" | "web_fetch";
+export type ToolName =
+	| "read"
+	| "bash"
+	| "pwsh"
+	| "edit"
+	| "write"
+	| "grep"
+	| "find"
+	| "ls"
+	| "web_fetch"
+	| "inspect_image";
 export const allToolNames: Set<ToolName> = new Set([
 	"read",
 	"bash",
@@ -100,6 +111,7 @@ export const allToolNames: Set<ToolName> = new Set([
 	"find",
 	"ls",
 	"web_fetch",
+	"inspect_image",
 ]);
 
 export interface ToolsOptions {
@@ -111,6 +123,8 @@ export interface ToolsOptions {
 	find?: FindToolOptions;
 	ls?: LsToolOptions;
 	webFetch?: WebFetchToolOptions;
+	/** Vision proxy service; when provided, the inspect_image tool is registered. */
+	visionProxy?: VisionProxyService;
 }
 
 export function createToolDefinition(toolName: ToolName, cwd: string, options?: ToolsOptions): ToolDef {
@@ -132,6 +146,9 @@ export function createToolDefinition(toolName: ToolName, cwd: string, options?: 
 			return createLsToolDefinition(cwd, options?.ls);
 		case "web_fetch":
 			return createWebFetchToolDefinition(cwd, options?.webFetch);
+		case "inspect_image":
+			if (!options?.visionProxy) throw new Error("inspect_image requires a visionProxy service");
+			return createInspectImageTool(options.visionProxy);
 		default:
 			throw new Error(`Unknown tool name: ${toolName}`);
 	}
@@ -156,6 +173,9 @@ export function createTool(toolName: ToolName, cwd: string, options?: ToolsOptio
 			return createLsTool(cwd, options?.ls);
 		case "web_fetch":
 			return createWebFetchTool(cwd, options?.webFetch);
+		case "inspect_image":
+			if (!options?.visionProxy) throw new Error("inspect_image requires a visionProxy service");
+			return createInspectImageTool(options.visionProxy) as unknown as Tool;
 		default:
 			throw new Error(`Unknown tool name: ${toolName}`);
 	}
@@ -192,6 +212,7 @@ export function createAllToolDefinitions(cwd: string, options?: ToolsOptions): R
 		find: createFindToolDefinition(cwd, options?.find),
 		ls: createLsToolDefinition(cwd, options?.ls),
 		web_fetch: createWebFetchToolDefinition(cwd, options?.webFetch),
+		...(options?.visionProxy ? { inspect_image: createInspectImageTool(options.visionProxy) } : {}),
 	};
 }
 
@@ -226,5 +247,8 @@ export function createAllTools(cwd: string, options?: ToolsOptions): Record<stri
 		find: createFindTool(cwd, options?.find),
 		ls: createLsTool(cwd, options?.ls),
 		web_fetch: createWebFetchTool(cwd, options?.webFetch),
+		...(options?.visionProxy
+			? { inspect_image: createInspectImageTool(options.visionProxy) as unknown as Tool }
+			: {}),
 	};
 }

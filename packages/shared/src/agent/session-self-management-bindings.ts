@@ -14,8 +14,7 @@
  * Design rules:
  * - Each getter calls getSessionScopedToolCallbacks() fresh — NO memoization
  * - Returns undefined when the callback is missing — NO no-ops, NO fake data
- * - getSessionInfo is the only field that wraps (for sid ?? sessionId defaulting)
- * - All other fields return the raw registry callback directly (signatures match)
+ * - All fields return the raw registry callback directly (signatures match)
  */
 
 import type { SessionToolContext } from '@mortise/session-tools-core';
@@ -24,10 +23,10 @@ import { getSessionScopedToolCallbacks } from './session-scoped-tool-callback-re
 /**
  * Attach session self-management bindings to a SessionToolContext.
  *
- * Defines lazy getters for getSessionInfo and listSessions.
+ * Defines lazy getters for ordinary Session coordination operations.
  *
  * @param context - The SessionToolContext to augment (mutated in place)
- * @param sessionId - The session ID for registry lookup and getSessionInfo defaulting
+ * @param sessionId - The current Session ID used for registry lookup
  */
 export function attachSessionSelfManagementBindings(
   context: SessionToolContext,
@@ -44,9 +43,25 @@ export function attachSessionSelfManagementBindings(
     enumerable: true,
   });
 
-  Object.defineProperty(context, 'sendAgentMessage', {
+  Object.defineProperty(context, 'createSession', {
     get() {
-      return getSessionScopedToolCallbacks(sessionId)?.sendAgentMessageFn;
+      return getSessionScopedToolCallbacks(sessionId)?.createSessionFn;
+    },
+    configurable: true,
+    enumerable: true,
+  });
+
+  Object.defineProperty(context, 'readSession', {
+    get() {
+      return getSessionScopedToolCallbacks(sessionId)?.readSessionFn;
+    },
+    configurable: true,
+    enumerable: true,
+  });
+
+  Object.defineProperty(context, 'sendMessageToSession', {
+    get() {
+      return getSessionScopedToolCallbacks(sessionId)?.sendMessageToSessionFn;
     },
     configurable: true,
     enumerable: true,
@@ -73,14 +88,4 @@ export function attachSessionSelfManagementBindings(
     enumerable: true,
   });
 
-  // getSessionInfo needs wrapping to default sid → sessionId
-  Object.defineProperty(context, 'getSessionInfo', {
-    get() {
-      const fn = getSessionScopedToolCallbacks(sessionId)?.getSessionInfoFn;
-      if (!fn) return undefined;
-      return (sid?: string) => fn(sid ?? sessionId);
-    },
-    configurable: true,
-    enumerable: true,
-  });
 }

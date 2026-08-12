@@ -38,6 +38,7 @@ import type {
 	HostCapabilityInvokeOptions,
 	HostCapabilityResult,
 } from "../../core/extensions/index.ts";
+import { ExtensionServiceError } from "../../core/extensions/index.ts";
 import { runWithExtensionInvocationOrigin } from "../../core/extensions/invocation-context.ts";
 import { type ExtensionFrontendChannelOptions, isSerializableFrontendValue } from "../../core/extensions/types.ts";
 import { getProcessGlobalBackgroundTaskCoordinator } from "../../core/global-background-tasks.ts";
@@ -74,6 +75,7 @@ import type {
 	RpcCapabilities,
 	RpcChildSessionInfo,
 	RpcCommand,
+	RpcEnvelope,
 	RpcExtensionHostCapabilityCancel,
 	RpcExtensionHostCapabilityDeclaration,
 	RpcExtensionHostCapabilityProgress,
@@ -259,6 +261,7 @@ function toRpcChildSessionInfo(
 		firstMessage: session.firstMessage,
 		status: runtime?.isStreaming ? "running" : session.status,
 		lastOutput: runtime?.lastOutput ?? session.lastOutput,
+		error: session.error,
 		persistedClientMutationIds: session.persistedClientMutationIds,
 		history: session.history,
 	};
@@ -414,10 +417,13 @@ export async function runRpcMode(
 		toolExecutionInterceptorEnabled: boolean;
 		toolResultsEnabled: boolean;
 		pendingExtensionReload: boolean;
+		extensionServiceScope?: "global" | "workspace" | "session";
+		extensionServiceWorkspaceKey?: string;
 		unsubscribe?: () => void;
 		unsubscribeBackpressure?: () => void;
 	};
 	const runtimeBindings = new Map<string, RuntimeBinding>();
+	const workspaceServiceOwners = new Map<string, RuntimeBinding>();
 	const socketClients = new Map<string, Socket>();
 	const retiredRuntimes = new Set<AgentSessionRuntime>();
 	const backgroundTasks = getProcessGlobalBackgroundTaskCoordinator();
@@ -437,6 +443,7 @@ export async function runRpcMode(
 				toolExecutionInterceptorEnabled: false,
 				toolResultsEnabled: false,
 				pendingExtensionReload: false,
+				extensionServiceScope: "global",
 			}
 		: undefined;
 	if (defaultBinding) runtimeBindings.set(defaultRuntimeId, defaultBinding);
@@ -996,6 +1003,96 @@ export async function runRpcMode(
 	const isOptionalBoolean = (value: unknown): boolean => value === undefined || typeof value === "boolean";
 	const isOptionalBoundedInteger = (value: unknown, min: number, max: number): boolean =>
 		value === undefined || (Number.isInteger(value) && Number(value) >= min && Number(value) <= max);
+	const validResponseRoute = (response: RpcEnvelope & { id?: unknown }): boolean =>
+		typeof response.id === "string" &&
+		isOptionalBoundedString(response.clientId, 256) &&
+		isOptionalBoundedString(response.runtimeId, 256) &&
+		isOptionalBoundedString(response.sessionId, 256);
+	const isValidHostCapabilityProgress = (progress: RpcExtensionHostCapabilityProgress): boolean =>
+		validResponseRoute(progress) &&
+		hasOnlyKeys(progress, ["type", "version", "id", "clientId", "runtimeId", "sessionId", "sequence", "progress"]) &&
+		progress.version === 1 &&
+		Number.isSafeInteger(progress.sequence) &&
+		progress.sequence >= 0;
+	const isValidHostCapabilityResponse = (response: RpcExtensionHostCapabilityResponse): boolean => {
+		if (!validResponseRoute(response) || response.version !== 1) return false;
+		const allowedKeys = ["type", "version", "id", "clientId", "runtimeId", "sessionId", "status"];
+		if (response.status === "success") {
+			return hasOnlyKeys(response, [...allowedKeys, "output"]);
+		}
+		if (!["denied", "cancelled", "unsupported", "failed"].includes(response.status)) return false;
+		if (!hasOnlyKeys(response, [...allowedKeys, "error"])) return false;
+		if (response.error === undefined) return true;
+		return (
+			typeof response.error === "object" &&
+			response.error !== null &&
+			hasOnlyKeys(response.error, ["code", "message", "recoverable"]) &&
+			isBoundedString(response.error.code, 256) &&
+			isBoundedString(response.error.message, 20_000, true) &&
+			isOptionalBoolean(response.error.recoverable)
+		);
+	};
+	const isRpcToolResultContent = (value: unknown): value is RpcToolResultContent => {
+		if (typeof value !== "object" || value === null) return false;
+		const content = value as Record<string, unknown>;
+		if (content.type === "text") {
+			return hasOnlyKeys(content, ["type", "text", "textSignature"]) && typeof content.text === "string";
+		}
+		return (
+			content.type === "image" &&
+			hasOnlyKeys(content, ["type", "data", "mimeType"]) &&
+			typeof content.data === "string" &&
+			typeof content.mimeType === "string"
+		);
+	};
+	const validToolResponseRoute = (response: RpcEnvelope & { id?: unknown; attemptId?: unknown }): boolean =>
+		validResponseRoute(response) && typeof response.attemptId === "string";
+	const isValidToolExecutionResponse = (response: RpcToolExecutionResponse): boolean => {
+		if (!validToolResponseRoute(response)) return false;
+		const allowedKeys = ["type", "id", "clientId", "runtimeId", "sessionId", "attemptId", "action"];
+		if (response.action === "allow") return hasOnlyKeys(response, allowedKeys);
+		if (response.action === "block") {
+			return (
+				hasOnlyKeys(response, [...allowedKeys, "reason"]) &&
+				(response.reason === undefined || typeof response.reason === "string")
+			);
+		}
+		return (
+			response.action === "modify" &&
+			hasOnlyKeys(response, [...allowedKeys, "input"]) &&
+			typeof response.input === "object" &&
+			response.input !== null &&
+			!Array.isArray(response.input)
+		);
+	};
+	const isValidToolResultResponse = (response: RpcToolResultResponse): boolean => {
+		if (!validToolResponseRoute(response)) return false;
+		const allowedKeys = ["type", "id", "clientId", "runtimeId", "sessionId", "attemptId", "status"];
+		if (response.status === "acknowledged") return hasOnlyKeys(response, allowedKeys);
+		return (
+			response.status === "failed" &&
+			hasOnlyKeys(response, [...allowedKeys, "error"]) &&
+			typeof response.error === "string"
+		);
+	};
+	const isValidToolExecuteResponse = (response: RpcToolExecuteResponse): boolean =>
+		validToolResponseRoute(response) &&
+		hasOnlyKeys(response, [
+			"type",
+			"id",
+			"clientId",
+			"runtimeId",
+			"sessionId",
+			"attemptId",
+			"content",
+			"details",
+			"isError",
+			"terminate",
+		]) &&
+		(typeof response.content === "string" ||
+			(Array.isArray(response.content) && response.content.every(isRpcToolResultContent))) &&
+		(response.isError === undefined || typeof response.isError === "boolean") &&
+		(response.terminate === undefined || typeof response.terminate === "boolean");
 
 	function assertValidInteractionRequest(request: ExtensionInteractionRequestV1): void {
 		if (
@@ -1756,6 +1853,7 @@ export async function runRpcMode(
 			const runtime = await createAgentSessionRuntime(globalHostFactory.createRuntime, {
 				...globalHostFactory.defaultRuntime,
 				agentDir: globalHostFactory.agentDir,
+				extensionServiceScope: "global",
 			});
 			const binding: RuntimeBinding = {
 				runtimeId: defaultRuntimeId,
@@ -1766,6 +1864,7 @@ export async function runRpcMode(
 				toolExecutionInterceptorEnabled: false,
 				toolResultsEnabled: false,
 				pendingExtensionReload: false,
+				extensionServiceScope: "global",
 			};
 			runtimeBindings.set(defaultRuntimeId, binding);
 			try {
@@ -1837,7 +1936,20 @@ export async function runRpcMode(
 				}
 				return success(id, "open_runtime", runtimeSummary(binding));
 			}
+			const requestedExtensionServiceScope = command.extensionServiceScope ?? "session";
+			const requestedWorkspaceServiceKey = command.extensionServiceWorkspaceKey;
+			if (requestedExtensionServiceScope === "workspace" && requestedWorkspaceServiceKey) {
+				const existingOwner = workspaceServiceOwners.get(requestedWorkspaceServiceKey);
+				if (existingOwner && existingOwner.runtimeId !== runtimeId) {
+					return error(
+						id,
+						"open_runtime",
+						`Workspace Extension service runtime already exists: ${requestedWorkspaceServiceKey}`,
+					);
+				}
+			}
 			let sessionManager: SessionManager;
+			let createdNewSession = false;
 			if (command.inMemory) {
 				if (command.sessionPath || command.forkFromSessionPath || command.sessionDir || command.sessionId) {
 					return error(
@@ -1868,6 +1980,32 @@ export async function runRpcMode(
 							spawnedFrom: command.spawnedFrom,
 							spawnConfig: command.spawnConfig,
 						});
+				createdNewSession = !existing;
+			}
+			if (createdNewSession && command.seedMessages?.length) {
+				for (const message of command.seedMessages) sessionManager.appendMessage(message);
+				await sessionManager.flush();
+			}
+			const extensionServiceScope = requestedExtensionServiceScope;
+			const workspaceServiceKey = requestedWorkspaceServiceKey;
+			let extensionServiceParentRegistry: import("../../core/extensions/service-registry.ts").ExtensionServiceRegistry | undefined;
+			if (globalHostFactory) {
+				const globalBinding = await ensureDefaultBinding();
+				const globalRegistry = globalBinding.session.extensionRunner.getExtensionServiceRegistry();
+				if (extensionServiceScope === "workspace") {
+					if (!workspaceServiceKey) {
+						return error(id, "open_runtime", "Workspace Extension service runtimes require extensionServiceWorkspaceKey");
+					}
+					extensionServiceParentRegistry = globalRegistry;
+				} else if (workspaceServiceKey) {
+					const workspaceOwner = workspaceServiceOwners.get(workspaceServiceKey);
+					if (!workspaceOwner) {
+						return error(id, "open_runtime", `Workspace Extension service runtime is not prepared: ${workspaceServiceKey}`);
+					}
+					extensionServiceParentRegistry = workspaceOwner.session.extensionRunner.getExtensionServiceRegistry();
+				} else {
+					extensionServiceParentRegistry = globalRegistry;
+				}
 			}
 			const runtime = runtimeHost
 				? await runtimeHost.createSibling({
@@ -1886,6 +2024,8 @@ export async function runRpcMode(
 						deferResourceLoad: command.deferResourceLoad,
 						persistInitialState: command.persistInitialState,
 						extensionPaths: command.extensionPaths,
+						extensionServiceScope,
+						extensionServiceParentRegistry,
 					})
 				: await createAgentSessionRuntime(globalHostFactory!.createRuntime, {
 						cwd: sessionManager.getCwd(),
@@ -1903,6 +2043,8 @@ export async function runRpcMode(
 						deferResourceLoad: command.deferResourceLoad,
 						persistInitialState: command.persistInitialState,
 						extensionPaths: command.extensionPaths,
+						extensionServiceScope,
+						extensionServiceParentRegistry,
 					});
 			binding = {
 				runtimeId,
@@ -1913,12 +2055,20 @@ export async function runRpcMode(
 				toolExecutionInterceptorEnabled: false,
 				toolResultsEnabled: false,
 				pendingExtensionReload: false,
+				extensionServiceScope,
+				extensionServiceWorkspaceKey: workspaceServiceKey,
 			};
 			runtimeBindings.set(runtimeId, binding);
+			if (extensionServiceScope === "workspace" && workspaceServiceKey) {
+				workspaceServiceOwners.set(workspaceServiceKey, binding);
+			}
 			try {
 				await registerRuntime(binding);
 			} catch (bindError) {
 				runtimeBindings.delete(runtimeId);
+				if (workspaceServiceKey && workspaceServiceOwners.get(workspaceServiceKey) === binding) {
+					workspaceServiceOwners.delete(workspaceServiceKey);
+				}
 				await runtime.dispose();
 				throw bindError;
 			}
@@ -1950,6 +2100,12 @@ export async function runRpcMode(
 			}
 			resetRuntimeContributions(binding);
 			runtimeBindings.delete(runtimeId);
+			if (
+				binding.extensionServiceWorkspaceKey &&
+				workspaceServiceOwners.get(binding.extensionServiceWorkspaceKey) === binding
+			) {
+				workspaceServiceOwners.delete(binding.extensionServiceWorkspaceKey);
+			}
 			cancelToolExecutionRequests(
 				(pending) => pending.runtimeId === runtimeId && pending.clientId === binding.clientId,
 				"Runtime closed before the host authorized tool execution",
@@ -2003,6 +2159,7 @@ export async function runRpcMode(
 						clientMutationId: command.clientMutationId,
 						interruptedAttempt: command.interruptedAttempt,
 						attachments: command.attachments,
+						origin: command.origin,
 						systemPrompt: command.systemPrompt,
 						clearSystemPrompt: command.clearSystemPrompt,
 						appendSystemPrompt: command.appendSystemPrompt,
@@ -2023,13 +2180,10 @@ export async function runRpcMode(
 			case "continue": {
 				let commandAcknowledged = false;
 				void session
-					.continueFromHistory(
-						(result) => {
-							commandAcknowledged = true;
-							output(success(id, "continue", result), binding);
-						},
-						command.systemPrompt,
-					)
+					.continueFromHistory((result) => {
+						commandAcknowledged = true;
+						output(success(id, "continue", result), binding);
+					}, command.systemPrompt)
 					.catch((cause) => {
 						if (!commandAcknowledged) output(error(id, "continue", cause.message), binding);
 					});
@@ -2047,6 +2201,7 @@ export async function runRpcMode(
 			case "steer": {
 				const result = await session.steer(command.message, command.images, {
 					clientMutationId: command.clientMutationId,
+					origin: command.origin,
 				});
 				return success(id, "steer", result);
 			}
@@ -2055,6 +2210,7 @@ export async function runRpcMode(
 				const result = await session.followUp(command.message, command.images, {
 					clientMutationId: command.clientMutationId,
 					attachments: command.attachments,
+					origin: command.origin,
 				});
 				return success(id, "follow_up", result);
 			}
@@ -2449,6 +2605,74 @@ export async function runRpcMode(
 				return success(id, "get_model_catalog", getModelCatalog({ provider: command.provider }));
 			}
 
+			case "extension_services_list":
+				return success(id, "extension_services_list", session.extensionRunner.getExtensionServiceCatalog());
+			case "extension_services_describe":
+				return success(
+					id,
+					"extension_services_describe",
+					session.extensionRunner
+						.getExtensionServiceCatalog()
+						.providers.filter((provider) => provider.capability === command.capability),
+				);
+			case "extension_services_invoke":
+				{
+					const runtimeId = session.extensionRunner.getExtensionServiceCatalog().runtimeId;
+				try {
+					const progress: unknown[] = [];
+					const output = await session.extensionRunner.invokeExtensionService(
+						command.capability,
+						command.operation,
+						command.input,
+						{
+							requestId: command.requestId,
+							runtimeId: command.runtimeId,
+							provider: command.provider,
+							timeoutMs: command.timeoutMs,
+							onProgress: (item) => progress.push(item),
+						},
+					);
+					return success(id, "extension_services_invoke", {
+						protocolVersion: 1,
+						requestId: command.requestId,
+						runtimeId,
+						status: "succeeded",
+						output,
+						progress,
+					});
+				} catch (invokeError) {
+					const extensionError = invokeError instanceof ExtensionServiceError ? invokeError : undefined;
+					const status = extensionError
+						? ({
+								extension_service_unavailable: "unavailable",
+								extension_service_ambiguous: "ambiguous",
+								extension_service_operation_unknown: "failed",
+								extension_service_invalid_input: "invalid_input",
+								extension_service_invalid_output: "invalid_output",
+								extension_service_cancelled: "cancelled",
+								extension_service_timed_out: "timed_out",
+								extension_service_runtime_stale: "runtime_stale",
+								extension_service_failed: "failed",
+							} as const)[extensionError.code]
+						: "failed";
+					return success(id, "extension_services_invoke", {
+						protocolVersion: 1,
+						requestId: command.requestId,
+						runtimeId,
+						status,
+						error: {
+							code: extensionError?.code ?? "extension_service_failed",
+							message: invokeError instanceof Error ? invokeError.message : String(invokeError),
+							...(extensionError?.details ? { details: extensionError.details } : {}),
+						},
+					});
+				}
+				}
+			case "extension_services_cancel":
+				return success(id, "extension_services_cancel", {
+					cancelled: session.extensionRunner.cancelExtensionService(command.requestId),
+				});
+
 			case "enable_tool_execution_interceptor": {
 				binding.toolExecutionInterceptorEnabled = command.enabled;
 				if (!command.enabled) {
@@ -2514,6 +2738,7 @@ export async function runRpcMode(
 		const bindings = Array.from(runtimeBindings.values());
 		for (const binding of bindings) resetRuntimeContributions(binding);
 		runtimeBindings.clear();
+		workspaceServiceOwners.clear();
 		unsubscribeBackgroundTasks();
 		for (const binding of bindings) {
 			binding.unsubscribe?.();
@@ -2537,6 +2762,12 @@ export async function runRpcMode(
 		for (const binding of bindings) {
 			resetRuntimeContributions(binding);
 			runtimeBindings.delete(binding.runtimeId);
+			if (
+				binding.extensionServiceWorkspaceKey &&
+				workspaceServiceOwners.get(binding.extensionServiceWorkspaceKey) === binding
+			) {
+				workspaceServiceOwners.delete(binding.extensionServiceWorkspaceKey);
+			}
 			cancelToolExecutionRequests(
 				(pending) => pending.runtimeId === binding.runtimeId && pending.clientId === binding.clientId,
 				"Host disconnected before authorizing tool execution",
@@ -2605,7 +2836,9 @@ export async function runRpcMode(
 						progress.clientId === undefined ||
 						progress.clientId === forcedClientId),
 			);
-			if (matches && pending) pending.onProgress?.(progress.progress, progress.sequence);
+			if (matches && pending && isValidHostCapabilityProgress(progress)) {
+				pending.onProgress?.(progress.progress, progress.sequence);
+			}
 			if (!matches) reportHostCapabilityRouteRejected("progress", progress, pending, forcedClientId);
 			return;
 		}
@@ -2620,19 +2853,17 @@ export async function runRpcMode(
 			const pending = pendingExtensionRequests.get(response.id);
 			if (!pending) return;
 			const actualClientId = forcedClientId ?? response.clientId;
-			if (pending.clientId !== undefined && actualClientId !== pending.clientId) return;
+			const matches =
+				response.runtimeId === pending.runtimeId &&
+				response.sessionId === pending.sessionId &&
+				actualClientId === pending.clientId &&
+				(forcedClientId === undefined || response.clientId === undefined || response.clientId === forcedClientId);
+			if (!matches) return;
 			const rejectMalformedResponse = () => {
 				pendingExtensionRequests.delete(response.id);
 				pending.reject(new Error(`Host returned an invalid ${pending.method} response`));
 			};
-			if (
-				(forcedClientId !== undefined && response.clientId !== undefined && response.clientId !== forcedClientId) ||
-				("extensionId" in response && response.extensionId !== pending.extensionId)
-			) {
-				rejectMalformedResponse();
-				return;
-			}
-			if (response.runtimeId !== pending.runtimeId || response.sessionId !== pending.sessionId) {
+			if ("extensionId" in response && response.extensionId !== pending.extensionId) {
 				rejectMalformedResponse();
 				return;
 			}
@@ -2678,7 +2909,23 @@ export async function runRpcMode(
 						response.clientId === undefined ||
 						response.clientId === forcedClientId),
 			);
-			if (matches && pending) pending.resolve(response);
+			if (matches && pending && isValidHostCapabilityResponse(response)) {
+				pending.resolve(response);
+			} else if (matches && pending) {
+				pending.resolve({
+					type: "extension_host_capability_response",
+					version: 1,
+					id: response.id,
+					runtimeId: pending.runtimeId,
+					sessionId: pending.sessionId,
+					clientId: pending.clientId,
+					status: "failed",
+					error: {
+						code: "invalid_host_capability_response",
+						message: "Host returned an invalid capability response",
+					},
+				});
+			}
 			if (!matches) reportHostCapabilityRouteRejected("response", response, pending, forcedClientId);
 			return;
 		}
@@ -2693,14 +2940,22 @@ export async function runRpcMode(
 			const response = parsed as RpcToolExecutionResponse;
 			const pending = pendingToolExecutionRequests.get(response.id);
 			const actualClientId = forcedClientId ?? response.clientId;
-			if (
+			const matches = Boolean(
 				pending &&
-				response.runtimeId === pending.runtimeId &&
-				response.sessionId === pending.sessionId &&
-				response.attemptId === pending.attemptId &&
-				actualClientId === pending.clientId &&
-				(forcedClientId === undefined || response.clientId === undefined || response.clientId === forcedClientId)
-			) {
+					response.runtimeId === pending.runtimeId &&
+					response.sessionId === pending.sessionId &&
+					response.attemptId === pending.attemptId &&
+					actualClientId === pending.clientId &&
+					(forcedClientId === undefined ||
+						response.clientId === undefined ||
+						response.clientId === forcedClientId),
+			);
+			if (matches && pending && !isValidToolExecutionResponse(response)) {
+				pendingToolExecutionRequests.delete(response.id);
+				pending.reject(new Error("Host returned an invalid tool execution response"));
+				return;
+			}
+			if (matches && pending) {
 				pendingToolExecutionRequests.delete(response.id);
 				pending.resolve(response);
 			}
@@ -2712,14 +2967,22 @@ export async function runRpcMode(
 			const response = parsed as RpcToolResultResponse;
 			const pending = pendingToolResultRequests.get(response.id);
 			const actualClientId = forcedClientId ?? response.clientId;
-			if (
+			const matches = Boolean(
 				pending &&
-				response.runtimeId === pending.runtimeId &&
-				response.sessionId === pending.sessionId &&
-				response.attemptId === pending.attemptId &&
-				actualClientId === pending.clientId &&
-				(forcedClientId === undefined || response.clientId === undefined || response.clientId === forcedClientId)
-			) {
+					response.runtimeId === pending.runtimeId &&
+					response.sessionId === pending.sessionId &&
+					response.attemptId === pending.attemptId &&
+					actualClientId === pending.clientId &&
+					(forcedClientId === undefined ||
+						response.clientId === undefined ||
+						response.clientId === forcedClientId),
+			);
+			if (matches && pending && !isValidToolResultResponse(response)) {
+				pendingToolResultRequests.delete(response.id);
+				pending.reject(new Error("Host returned an invalid tool result response"));
+				return;
+			}
+			if (matches && pending) {
 				pendingToolResultRequests.delete(response.id);
 				pending.resolve(response);
 			}
@@ -2736,14 +2999,22 @@ export async function runRpcMode(
 			const response = parsed as RpcToolExecuteResponse;
 			const pending = pendingToolExecuteRequests.get(response.id);
 			const actualClientId = forcedClientId ?? response.clientId;
-			if (
+			const matches = Boolean(
 				pending &&
-				response.runtimeId === pending.runtimeId &&
-				response.sessionId === pending.sessionId &&
-				response.attemptId === pending.attemptId &&
-				actualClientId === pending.clientId &&
-				(forcedClientId === undefined || response.clientId === undefined || response.clientId === forcedClientId)
-			) {
+					response.runtimeId === pending.runtimeId &&
+					response.sessionId === pending.sessionId &&
+					response.attemptId === pending.attemptId &&
+					actualClientId === pending.clientId &&
+					(forcedClientId === undefined ||
+						response.clientId === undefined ||
+						response.clientId === forcedClientId),
+			);
+			if (matches && pending && !isValidToolExecuteResponse(response)) {
+				pendingToolExecuteRequests.delete(response.id);
+				pending.reject(new Error("Host returned an invalid tool execute response"));
+				return;
+			}
+			if (matches && pending) {
 				pendingToolExecuteRequests.delete(response.id);
 				pending.resolve(response);
 			}

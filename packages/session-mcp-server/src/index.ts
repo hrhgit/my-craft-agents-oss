@@ -208,10 +208,10 @@ function isDocsUpstreamTool(name: string): boolean {
 }
 
 // ============================================================
-// spawn_session Handler (backend-specific)
+// subagent Handler (backend-specific)
 // ============================================================
 
-async function handleSpawnSession(
+async function handleSubagent(
   args: Record<string, unknown>,
   config: McpServerConfig,
 ): Promise<ToolResult> {
@@ -222,21 +222,21 @@ async function handleSpawnSession(
     try {
       const parsed = JSON.parse(precomputed);
       if (parsed.error) {
-        return errorResponse(`spawn_session failed: ${parsed.error}`);
+        return errorResponse(`subagent failed: ${parsed.error}`);
       }
       // Return the full result (could be help info or spawn result)
       return {
         content: [{ type: 'text' as const, text: JSON.stringify(parsed, null, 2) }],
       };
     } catch {
-      return errorResponse(`spawn_session: Failed to parse _precomputedResult: ${precomputed.slice(0, 200)}`);
+      return errorResponse(`subagent: Failed to parse _precomputedResult: ${precomputed.slice(0, 200)}`);
     }
   }
 
   // Fallback path: HTTP callback to agent (for Copilot where PreToolUse doesn't fire for MCP tools).
   if (config.callbackPort) {
     try {
-      const resp = await fetch(`http://127.0.0.1:${config.callbackPort}/spawn-session`, {
+      const resp = await fetch(`http://127.0.0.1:${config.callbackPort}/subagent`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(args),
@@ -244,18 +244,18 @@ async function handleSpawnSession(
       });
       const result = await resp.json() as Record<string, unknown>;
       if (result.error) {
-        return errorResponse(`spawn_session failed: ${result.error}`);
+        return errorResponse(`subagent failed: ${result.error}`);
       }
       return {
         content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
       };
     } catch (err) {
-      return errorResponse(`spawn_session callback failed: ${err instanceof Error ? err.message : String(err)}`);
+      return errorResponse(`subagent callback failed: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
   return errorResponse(
-    'spawn_session requires either PreToolUse intercept (_precomputedResult) or ' +
+    'subagent requires either PreToolUse intercept (_precomputedResult) or ' +
     'HTTP callback (MORTISE_LLM_CALLBACK_PORT). Neither is available.'
   );
 }
@@ -343,14 +343,14 @@ async function main() {
     tools: [...createSessionTools(), ...docsTools],
   }));
 
-  // Handle tool calls — route via canonical registry, spawn_session, or docs upstream
+  // Handle tool calls — route via canonical registry, subagent, or docs upstream
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: toolArgs } = request.params;
 
     try {
-      // spawn_session has backend-specific execution (precomputed result / HTTP callback)
-      if (name === 'spawn_session') {
-        return await handleSpawnSession(toolArgs as Record<string, unknown>, config);
+      // subagent has backend-specific execution (precomputed result / HTTP callback)
+      if (name === 'subagent') {
+        return await handleSubagent(toolArgs as Record<string, unknown>, config);
       }
 
       // Check canonical session tool registry first (feature-filtered)

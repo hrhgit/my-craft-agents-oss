@@ -5,6 +5,8 @@
  * These handlers are used by both Claude and Codex implementations.
  */
 
-// Session Queries
-export type { GetSessionInfoArgs } from './get-session-info.ts';
+// Session coordination
 export type { ListSessionsArgs } from './list-sessions.ts';
+export type { CreateSessionArgs } from './create-session.ts';
+export type { ReadSessionArgs } from './read-session.ts';
+export type { SendMessageToSessionArgs } from './send-message-to-session.ts';

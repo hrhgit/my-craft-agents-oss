@@ -2431,6 +2431,13 @@
       }
     },
     {
+      "sourcePath": "apps/electron/src/renderer/pages/settings/ModelEditDialog.tsx",
+      "exportName": "ModelEditDialog",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene (PiProvidersSection)."
+      }
+    },
+    {
       "sourcePath": "apps/electron/src/renderer/pages/settings/PreferencesPage.tsx",
       "exportName": "default",
       "exemption": {

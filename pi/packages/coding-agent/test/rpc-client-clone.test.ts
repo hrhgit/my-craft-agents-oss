@@ -15,6 +15,7 @@ type RpcClientInternals = {
 		stdin: { destroyed: boolean; writable: boolean; write: (line: string) => void };
 	};
 	toolExecutor: (request: unknown) => Promise<unknown>;
+	toolExecutionHandler: (request: unknown) => Promise<unknown>;
 	handleLine: (line: string) => void;
 };
 
@@ -359,6 +360,37 @@ describe("RpcClient Pi shell API methods", () => {
 			details: { diff: "+done" },
 			isError: false,
 			terminate: true,
+		});
+	});
+
+	it("blocks an invalid runtime tool interceptor decision", async () => {
+		const client = new RpcClient();
+		const internals = client as unknown as RpcClientInternals;
+		const write = vi.fn();
+		internals.process = {
+			stdin: { destroyed: false, writable: true, write },
+		};
+		internals.toolExecutionHandler = vi.fn(async () => ({ action: "unexpected" }) as never);
+
+		internals.handleLine(
+			JSON.stringify({
+				type: "tool_execution_request",
+				id: "execution-1",
+				attemptId: "attempt-1",
+				toolName: "write",
+				toolCallId: "tool-1",
+				input: {},
+				assistantTimestamp: 1,
+			}),
+		);
+
+		await vi.waitFor(() => expect(write).toHaveBeenCalledTimes(1));
+		expect(JSON.parse(write.mock.calls[0][0])).toEqual({
+			type: "tool_execution_response",
+			id: "execution-1",
+			attemptId: "attempt-1",
+			action: "block",
+			reason: "Tool execution interceptor failed: Host execution interceptor returned an invalid action",
 		});
 	});
 });

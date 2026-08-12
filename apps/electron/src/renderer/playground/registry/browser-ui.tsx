@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import * as Icons from 'lucide-react'
-import type { ComponentEntry } from './types'
+import { useTranslation } from 'react-i18next'
+import type { ComponentEntry, PlaygroundLocale } from './types'
 import {
   BrowserControls,
   TurnCard,
@@ -26,6 +27,12 @@ type Scenario = BrowserTraceSidebarSampleProps['scenario']
 type AgentVisualState = 'idle' | 'active' | 'failed'
 
 const now = Date.now()
+
+/** Maps the global i18n language to the playground locale used by mock data generators. */
+function toPlaygroundLocale(language: string): PlaygroundLocale {
+  return language === 'zh-Hans' ? 'zh-CN' : 'en'
+}
+
 const PLAYGROUND_LIVE_FX_CORNERS = getBrowserLiveFxCornerRadii(
   isMac
     ? 'darwin'
@@ -36,77 +43,86 @@ const PLAYGROUND_LIVE_FX_CORNERS = getBrowserLiveFxCornerRadii(
         : 'other',
 )
 
-const CORE_TURN: ActivityItem[] = [
-  {
-    id: 'browser-open-1',
-    type: 'tool',
-    status: 'completed',
-    toolName: 'browser_tool',
-    toolInput: { command: 'open' },
-    intent: 'Open in-app browser window',
-    timestamp: now - 5000,
-  },
-  {
-    id: 'browser-navigate-1',
-    type: 'tool',
-    status: 'completed',
-    toolName: 'browser_tool',
-    toolInput: { command: 'navigate https://news.ycombinator.com' },
-    intent: 'Navigate to Hacker News',
-    timestamp: now - 4200,
-  },
-  {
-    id: 'browser-snapshot-1',
-    type: 'tool',
-    status: 'completed',
-    toolName: 'browser_tool',
-    toolInput: { command: 'snapshot' },
-    intent: 'Get accessibility refs for interactive elements',
-    timestamp: now - 3500,
-  },
-  {
-    id: 'browser-click-1',
-    type: 'tool',
-    status: 'completed',
-    toolName: 'browser_tool',
-    toolInput: { command: 'click @e12' },
-    intent: 'Open top story',
-    timestamp: now - 3000,
-  },
-  {
-    id: 'browser-screenshot-1',
-    type: 'tool',
-    status: 'completed',
-    toolName: 'browser_tool',
-    toolInput: { command: 'screenshot --mode agent --ref @e12' },
-    intent: 'Capture agent-mode screenshot with semantic annotation',
-    timestamp: now - 2500,
-  },
-]
+const CORE_TURN = (locale: PlaygroundLocale): ActivityItem[] => {
+  const zh = locale === 'zh-CN'
+  return [
+    {
+      id: 'browser-open-1',
+      type: 'tool',
+      status: 'completed',
+      toolName: 'browser_tool',
+      toolInput: { command: 'open' },
+      intent: zh ? '打开应用内浏览器窗口' : 'Open in-app browser window',
+      timestamp: now - 5000,
+    },
+    {
+      id: 'browser-navigate-1',
+      type: 'tool',
+      status: 'completed',
+      toolName: 'browser_tool',
+      toolInput: { command: 'navigate https://news.ycombinator.com' },
+      intent: zh ? '导航到 Hacker News' : 'Navigate to Hacker News',
+      timestamp: now - 4200,
+    },
+    {
+      id: 'browser-snapshot-1',
+      type: 'tool',
+      status: 'completed',
+      toolName: 'browser_tool',
+      toolInput: { command: 'snapshot' },
+      intent: zh ? '获取可交互元素的无障碍引用' : 'Get accessibility refs for interactive elements',
+      timestamp: now - 3500,
+    },
+    {
+      id: 'browser-click-1',
+      type: 'tool',
+      status: 'completed',
+      toolName: 'browser_tool',
+      toolInput: { command: 'click @e12' },
+      intent: zh ? '打开置顶故事' : 'Open top story',
+      timestamp: now - 3000,
+    },
+    {
+      id: 'browser-screenshot-1',
+      type: 'tool',
+      status: 'completed',
+      toolName: 'browser_tool',
+      toolInput: { command: 'screenshot --mode agent --ref @e12' },
+      intent: zh ? '以 Agent 模式截屏并附带语义标注' : 'Capture agent-mode screenshot with semantic annotation',
+      timestamp: now - 2500,
+    },
+  ]
+}
 
-const ALL_NATIVE_TOOLS_TURN: ActivityItem[] = [
-  { id: 'native-open', type: 'tool', status: 'completed', toolName: 'browser_tool', toolInput: { command: 'open' }, intent: 'Open browser window', timestamp: now - 5200 },
-  { id: 'native-navigate', type: 'tool', status: 'completed', toolName: 'browser_tool', toolInput: { command: 'navigate https://example.com' }, intent: 'Navigate to target URL', timestamp: now - 4900 },
-  { id: 'native-snapshot', type: 'tool', status: 'completed', toolName: 'browser_tool', toolInput: { command: 'snapshot' }, intent: 'Capture a11y tree refs', timestamp: now - 4600 },
-  { id: 'native-click', type: 'tool', status: 'completed', toolName: 'browser_tool', toolInput: { command: 'click @e12' }, intent: 'Click interactive element', timestamp: now - 4300 },
-  { id: 'native-fill', type: 'tool', status: 'completed', toolName: 'browser_tool', toolInput: { command: 'fill @e5 balint@example.com' }, intent: 'Fill input field', timestamp: now - 4000 },
-  { id: 'native-select', type: 'tool', status: 'completed', toolName: 'browser_tool', toolInput: { command: 'select @e9 pro' }, intent: 'Select dropdown option', timestamp: now - 3700 },
-  { id: 'native-scroll', type: 'tool', status: 'completed', toolName: 'browser_tool', toolInput: { command: 'scroll down 800' }, intent: 'Scroll for more content', timestamp: now - 3400 },
-  { id: 'native-back', type: 'tool', status: 'completed', toolName: 'browser_tool', toolInput: { command: 'back' }, intent: 'Navigate back in history', timestamp: now - 3100 },
-  { id: 'native-forward', type: 'tool', status: 'completed', toolName: 'browser_tool', toolInput: { command: 'forward' }, intent: 'Navigate forward in history', timestamp: now - 2800 },
-  { id: 'native-evaluate', type: 'tool', status: 'completed', toolName: 'browser_tool', toolInput: { command: 'evaluate document.title' }, intent: 'Run JS extraction in page context', timestamp: now - 2500 },
-  { id: 'native-screenshot', type: 'tool', status: 'completed', toolName: 'browser_tool', toolInput: { command: 'screenshot --mode agent' }, intent: 'Capture visual proof with metadata', timestamp: now - 2200 },
-]
+const ALL_NATIVE_TOOLS_TURN = (locale: PlaygroundLocale): ActivityItem[] => {
+  const zh = locale === 'zh-CN'
+  return [
+    { id: 'native-open', type: 'tool', status: 'completed', toolName: 'browser_tool', toolInput: { command: 'open' }, intent: zh ? '打开浏览器窗口' : 'Open browser window', timestamp: now - 5200 },
+    { id: 'native-navigate', type: 'tool', status: 'completed', toolName: 'browser_tool', toolInput: { command: 'navigate https://example.com' }, intent: zh ? '导航到目标 URL' : 'Navigate to target URL', timestamp: now - 4900 },
+    { id: 'native-snapshot', type: 'tool', status: 'completed', toolName: 'browser_tool', toolInput: { command: 'snapshot' }, intent: zh ? '获取无障碍树引用' : 'Capture a11y tree refs', timestamp: now - 4600 },
+    { id: 'native-click', type: 'tool', status: 'completed', toolName: 'browser_tool', toolInput: { command: 'click @e12' }, intent: zh ? '点击交互元素' : 'Click interactive element', timestamp: now - 4300 },
+    { id: 'native-fill', type: 'tool', status: 'completed', toolName: 'browser_tool', toolInput: { command: 'fill @e5 balint@example.com' }, intent: zh ? '填充输入框' : 'Fill input field', timestamp: now - 4000 },
+    { id: 'native-select', type: 'tool', status: 'completed', toolName: 'browser_tool', toolInput: { command: 'select @e9 pro' }, intent: zh ? '选择下拉选项' : 'Select dropdown option', timestamp: now - 3700 },
+    { id: 'native-scroll', type: 'tool', status: 'completed', toolName: 'browser_tool', toolInput: { command: 'scroll down 800' }, intent: zh ? '滚动查看更多内容' : 'Scroll for more content', timestamp: now - 3400 },
+    { id: 'native-back', type: 'tool', status: 'completed', toolName: 'browser_tool', toolInput: { command: 'back' }, intent: zh ? '历史记录后退' : 'Navigate back in history', timestamp: now - 3100 },
+    { id: 'native-forward', type: 'tool', status: 'completed', toolName: 'browser_tool', toolInput: { command: 'forward' }, intent: zh ? '历史记录前进' : 'Navigate forward in history', timestamp: now - 2800 },
+    { id: 'native-evaluate', type: 'tool', status: 'completed', toolName: 'browser_tool', toolInput: { command: 'evaluate document.title' }, intent: zh ? '在页面上下文中执行 JS 提取' : 'Run JS extraction in page context', timestamp: now - 2500 },
+    { id: 'native-screenshot', type: 'tool', status: 'completed', toolName: 'browser_tool', toolInput: { command: 'screenshot --mode agent' }, intent: zh ? '截取带元数据的视觉证据' : 'Capture visual proof with metadata', timestamp: now - 2200 },
+  ]
+}
 
-const WRAPPER_COMMANDS_TURN: ActivityItem[] = [
-  { id: 'wrapper-open', type: 'tool', status: 'completed', toolName: 'browser_tool', toolInput: { command: 'open' }, intent: 'Wrapper: open browser', timestamp: now - 4200 },
-  { id: 'wrapper-navigate', type: 'tool', status: 'completed', toolName: 'browser_tool', toolInput: { command: 'navigate https://example.com' }, intent: 'Wrapper: navigate to URL', timestamp: now - 3900 },
-  { id: 'wrapper-snapshot', type: 'tool', status: 'completed', toolName: 'browser_tool', toolInput: { command: 'snapshot' }, intent: 'Wrapper: list refs', timestamp: now - 3600 },
-  { id: 'wrapper-fill', type: 'tool', status: 'completed', toolName: 'browser_tool', toolInput: { command: 'fill @e5 hello@mortise.do' }, intent: 'Wrapper: fill text field', timestamp: now - 3300 },
-  { id: 'wrapper-click', type: 'tool', status: 'completed', toolName: 'browser_tool', toolInput: { command: 'click @e8' }, intent: 'Wrapper: click target', timestamp: now - 3000 },
-  { id: 'wrapper-scroll', type: 'tool', status: 'completed', toolName: 'browser_tool', toolInput: { command: 'scroll down 600' }, intent: 'Wrapper: scroll viewport', timestamp: now - 2700 },
-  { id: 'wrapper-evaluate', type: 'tool', status: 'completed', toolName: 'browser_tool', toolInput: { command: 'evaluate document.title' }, intent: 'Wrapper: evaluate expression', timestamp: now - 2400 },
-]
+const WRAPPER_COMMANDS_TURN = (locale: PlaygroundLocale): ActivityItem[] => {
+  const zh = locale === 'zh-CN'
+  return [
+    { id: 'wrapper-open', type: 'tool', status: 'completed', toolName: 'browser_tool', toolInput: { command: 'open' }, intent: zh ? '包装器：打开浏览器' : 'Wrapper: open browser', timestamp: now - 4200 },
+    { id: 'wrapper-navigate', type: 'tool', status: 'completed', toolName: 'browser_tool', toolInput: { command: 'navigate https://example.com' }, intent: zh ? '包装器：导航到 URL' : 'Wrapper: navigate to URL', timestamp: now - 3900 },
+    { id: 'wrapper-snapshot', type: 'tool', status: 'completed', toolName: 'browser_tool', toolInput: { command: 'snapshot' }, intent: zh ? '包装器：列出引用' : 'Wrapper: list refs', timestamp: now - 3600 },
+    { id: 'wrapper-fill', type: 'tool', status: 'completed', toolName: 'browser_tool', toolInput: { command: 'fill @e5 hello@mortise.do' }, intent: zh ? '包装器：填充文本框' : 'Wrapper: fill text field', timestamp: now - 3300 },
+    { id: 'wrapper-click', type: 'tool', status: 'completed', toolName: 'browser_tool', toolInput: { command: 'click @e8' }, intent: zh ? '包装器：点击目标' : 'Wrapper: click target', timestamp: now - 3000 },
+    { id: 'wrapper-scroll', type: 'tool', status: 'completed', toolName: 'browser_tool', toolInput: { command: 'scroll down 600' }, intent: zh ? '包装器：滚动视口' : 'Wrapper: scroll viewport', timestamp: now - 2700 },
+    { id: 'wrapper-evaluate', type: 'tool', status: 'completed', toolName: 'browser_tool', toolInput: { command: 'evaluate document.title' }, intent: zh ? '包装器：执行表达式' : 'Wrapper: evaluate expression', timestamp: now - 2400 },
+  ]
+}
 
 function applyRunState(activities: ActivityItem[], runState: RunState): ActivityItem[] {
   if (runState === 'completed') return activities
@@ -122,49 +138,53 @@ function applyRunState(activities: ActivityItem[], runState: RunState): Activity
   })
 }
 
-function getScenarioTurns(scenario: Scenario): ActivityItem[][] {
+function getScenarioTurns(scenario: Scenario, locale: PlaygroundLocale): ActivityItem[][] {
   switch (scenario) {
     case 'core':
-      return [CORE_TURN]
+      return [CORE_TURN(locale)]
     case 'all-native-tools':
-      return [ALL_NATIVE_TOOLS_TURN]
+      return [ALL_NATIVE_TOOLS_TURN(locale)]
     case 'browser-tool-wrapper':
-      return [WRAPPER_COMMANDS_TURN]
+      return [WRAPPER_COMMANDS_TURN(locale)]
     case 'full-matrix':
-      return [ALL_NATIVE_TOOLS_TURN, WRAPPER_COMMANDS_TURN]
+      return [ALL_NATIVE_TOOLS_TURN(locale), WRAPPER_COMMANDS_TURN(locale)]
     default:
-      return [CORE_TURN]
+      return [CORE_TURN(locale)]
   }
 }
 
-function getScenarioResponse(scenario: Scenario, runState: RunState): ResponseContent {
+function getScenarioResponse(scenario: Scenario, runState: RunState, locale: PlaygroundLocale): ResponseContent {
+  const zh = locale === 'zh-CN'
+
   if (runState === 'failed') {
     return {
-      text: 'One browser action failed in this turn. Verify refs/inputs and retry.',
+      text: zh ? '本轮中有一个浏览器操作失败。请核对引用/输入后重试。' : 'One browser action failed in this turn. Verify refs/inputs and retry.',
       isStreaming: false,
     }
   }
 
   if (runState === 'running') {
     return {
-      text: 'Browser action in progress… waiting for completion.',
+      text: zh ? '浏览器操作进行中……等待完成。' : 'Browser action in progress… waiting for completion.',
       isStreaming: true,
     }
   }
 
   return {
     text: scenario === 'full-matrix'
-      ? 'Rendered all native browser_* tools and browser_tool wrapper command flows.'
-      : 'Rendered browser tool flow for this scenario.',
+      ? zh ? '已渲染全部原生 browser_* 工具与 browser_tool 包装命令流程。' : 'Rendered all native browser_* tools and browser_tool wrapper command flows.'
+      : zh ? '已渲染此场景的浏览器工具流程。' : 'Rendered browser tool flow for this scenario.',
     isStreaming: false,
   }
 }
 
-function getLiveFxPayload(scenario: Scenario, runState: RunState): { active: boolean; label: string; cursor: { x: number; y: number } | null } {
+function getLiveFxPayload(scenario: Scenario, runState: RunState, locale: PlaygroundLocale): { active: boolean; label: string; cursor: { x: number; y: number } | null } {
+  const zh = locale === 'zh-CN'
+
   if (runState === 'failed') {
     return {
       active: true,
-      label: 'Action failed — verify refs and retry',
+      label: zh ? '操作失败 — 请核对引用后重试' : 'Action failed — verify refs and retry',
       cursor: null,
     }
   }
@@ -179,7 +199,7 @@ function getLiveFxPayload(scenario: Scenario, runState: RunState): { active: boo
 
     return {
       active: true,
-      label: 'Mortise are working…',
+      label: zh ? 'Mortise 正在工作…' : 'Mortise are working…',
       cursor: cursorByScenario[scenario],
     }
   }
@@ -194,15 +214,16 @@ function getLiveFxPayload(scenario: Scenario, runState: RunState): { active: boo
 function getLiveFxPayloadFromAgentState(
   scenario: Scenario,
   agentState: AgentVisualState,
+  locale: PlaygroundLocale,
 ): { active: boolean; label: string; cursor: { x: number; y: number } | null } {
   switch (agentState) {
     case 'failed':
-      return getLiveFxPayload(scenario, 'failed')
+      return getLiveFxPayload(scenario, 'failed', locale)
     case 'active':
-      return getLiveFxPayload(scenario, 'running')
+      return getLiveFxPayload(scenario, 'running', locale)
     case 'idle':
     default:
-      return getLiveFxPayload(scenario, 'completed')
+      return getLiveFxPayload(scenario, 'completed', locale)
   }
 }
 
@@ -247,7 +268,12 @@ function BrowserEdgeShaderFx({ className = 'absolute inset-0 pointer-events-none
 }
 
 function BrowserTraceSidebarSample({ scenario, runState, sidebarWidth, hdrEffect, cursorPulse }: BrowserTraceSidebarSampleProps) {
-  const turns = getScenarioTurns(scenario).map((items, index) => applyRunState(items, runState))
+  const { t, i18n } = useTranslation()
+  const locale = toPlaygroundLocale(i18n.language)
+  const turns = useMemo(
+    () => getScenarioTurns(scenario, locale).map((items) => applyRunState(items, runState)),
+    [scenario, runState, locale],
+  )
 
   return (
     <div className="w-full h-[700px] rounded-xl border border-border overflow-hidden bg-background shadow-sm flex">
@@ -296,7 +322,7 @@ function BrowserTraceSidebarSample({ scenario, runState, sidebarWidth, hdrEffect
       >
         {turns.map((activities, index) => {
           const isRunning = runState === 'running' && index === turns.length - 1
-          const response = getScenarioResponse(scenario, runState)
+          const response = getScenarioResponse(scenario, runState, locale)
 
           return (
             <TurnCard
@@ -305,7 +331,7 @@ function BrowserTraceSidebarSample({ scenario, runState, sidebarWidth, hdrEffect
               turnId={`browser-trace-turn-${index + 1}`}
               activities={activities}
               response={response}
-              intent={index === 0 ? 'Tool execution trace' : 'Wrapper command trace'}
+              intent={index === 0 ? t('playground.browserUi.toolExecutionTrace') : t('playground.browserUi.wrapperCommandTrace')}
               isStreaming={isRunning}
               isComplete={!isRunning}
               onOpenFile={(path) => console.log('[Playground] Open file:', path)}
@@ -331,8 +357,13 @@ function BrowserFramePlayground({
   themeColor: string
 }) {
   const [url, setUrl] = useState(initialUrl)
+  const { i18n } = useTranslation()
+  const locale = toPlaygroundLocale(i18n.language)
   const scenario: Scenario = 'full-matrix'
-  const liveFx = getLiveFxPayloadFromAgentState(scenario, agentState)
+  const liveFx = useMemo(
+    () => getLiveFxPayloadFromAgentState(scenario, agentState, locale),
+    [scenario, agentState, locale],
+  )
 
   return (
     <div className="w-full h-[700px] rounded-xl border border-border overflow-hidden bg-background shadow-sm flex">
@@ -728,6 +759,33 @@ const MOCK_BROWSER_PRESETS: Record<BrowserTabStripMockPreset, BrowserInstanceInf
   ],
 }
 
+/** Chinese titles for mock instances whose labels carry natural-language copy (brand/product names stay as-is). */
+const MOCK_TITLES_ZH: Record<string, string> = {
+  'long-1': 'Mortise 多会话浏览器注册表设计评审帖（2026 年 Q1）',
+  'long-2': 'CHA-999 — 验证省略号与徽章宽度约束的超长问题标题',
+  'long-3': '季度平台可靠性回顾 — 工作草案 — 仅限内部',
+  'run-2': 'Linear 活跃问题',
+  'run-3': 'GitHub 拉取请求',
+  'run-4': 'BambooHR 报表',
+  'mix-2': '添加团队',
+  'mix-3': 'Péter Bobula - 请假',
+  'mix-4': '名称意外地长的 Mortise OSS 仓库分支与对比视图',
+  'mix-5': 'Figma 设计系统',
+  'mix-6': 'Google 日历',
+}
+
+function getMockBrowserPresets(locale: PlaygroundLocale): Record<BrowserTabStripMockPreset, BrowserInstanceInfo[]> {
+  if (locale !== 'zh-CN') return MOCK_BROWSER_PRESETS
+
+  const presets = {} as Record<BrowserTabStripMockPreset, BrowserInstanceInfo[]>
+  Object.keys(MOCK_BROWSER_PRESETS).forEach((preset) => {
+    presets[preset as BrowserTabStripMockPreset] = MOCK_BROWSER_PRESETS[preset as BrowserTabStripMockPreset].map(
+      (instance) => (MOCK_TITLES_ZH[instance.id] ? { ...instance, title: MOCK_TITLES_ZH[instance.id] } : instance),
+    )
+  })
+  return presets
+}
+
 function BrowserTabStripPlayground({
   activeSessionId,
   mode,
@@ -737,13 +795,16 @@ function BrowserTabStripPlayground({
   mode: BrowserTabStripMode
   mockPreset: BrowserTabStripMockPreset
 }) {
+  const { t, i18n } = useTranslation()
+  const locale = toPlaygroundLocale(i18n.language)
   const hasBrowserPaneBridge = typeof window !== 'undefined' && !!window.electronAPI?.browserPane
   const resolvedMode: Exclude<BrowserTabStripMode, 'auto'> = mode === 'auto'
     ? (hasBrowserPaneBridge ? 'live' : 'mock')
     : mode
 
   const mockInstances = useMemo(() => {
-    const items = [...(MOCK_BROWSER_PRESETS[mockPreset] ?? MOCK_BROWSER_PRESETS.default)]
+    const presets = getMockBrowserPresets(locale)
+    const items = [...(presets[mockPreset] ?? presets.default)]
     if (!activeSessionId) return items
 
     items.sort((a, b) => {
@@ -754,15 +815,14 @@ function BrowserTabStripPlayground({
     })
 
     return items
-  }, [activeSessionId, mockPreset])
+  }, [activeSessionId, mockPreset, locale])
 
   if (resolvedMode === 'live' && !hasBrowserPaneBridge) {
     return (
       <div className="w-full max-w-[900px] p-6 rounded-xl border border-border bg-background shadow-sm">
-        <div className="text-sm font-medium mb-2">Top Bar Browser Strip</div>
+        <div className="text-sm font-medium mb-2">{t('playground.browserUi.topBarBrowserStrip')}</div>
         <p className="text-xs text-foreground/60">
-          Live mode requires Electron preload APIs (`window.electronAPI.browserPane`), which are not available in plain browser context.
-          Switch mode to Auto or Mock for visual review here.
+          {t('playground.browserUi.liveModeRequiresPreload')}
         </p>
       </div>
     )
@@ -771,14 +831,19 @@ function BrowserTabStripPlayground({
   return (
     <div className="w-full max-w-[900px] p-6 rounded-xl border border-border bg-background shadow-sm">
       <div className="flex items-center justify-between mb-3">
-        <h3 className="text-sm font-medium">Top Bar Browser Strip</h3>
+        <h3 className="text-sm font-medium">{t('playground.browserUi.topBarBrowserStrip')}</h3>
         <span className="text-xs text-foreground/50">
-          {resolvedMode === 'live' ? 'Live data from browser registry' : 'Mock preview states'}
+          {resolvedMode === 'live' ? t('playground.browserUi.liveDataFromRegistry') : t('playground.browserUi.mockPreviewStates')}
         </span>
       </div>
       {resolvedMode === 'mock' && (
         <div className="text-xs text-foreground/50 mb-2">
-          {mockInstances.length} tabs • {mockInstances.filter(i => i.isLoading).length} loading • {mockInstances.filter(i => !i.isVisible).length} hidden • {mockInstances.filter(i => i.agentControlActive).length} agent-controlled
+          {t('playground.browserUi.mockStats', {
+            tabs: mockInstances.length,
+            loading: mockInstances.filter(i => i.isLoading).length,
+            hidden: mockInstances.filter(i => !i.isVisible).length,
+            agentControlled: mockInstances.filter(i => i.agentControlActive).length,
+          })}
         </div>
       )}
       <div className="h-[48px] px-3 rounded-lg border border-foreground/[0.08] bg-background flex items-center justify-end gap-1">
@@ -788,7 +853,7 @@ function BrowserTabStripPlayground({
         />
       </div>
       <p className="text-xs text-foreground/50 mt-3">
-        Accent 1px border indicates a browser currently controlled by an agent.
+        {t('playground.browserUi.accentBorderHint')}
       </p>
     </div>
   )
@@ -798,20 +863,24 @@ export const browserUiComponents: ComponentEntry[] = [
   {
     id: 'browser-frame-playground',
     name: 'Browser Frame (Dedicated Controls)',
+    nameZh: '浏览器框架（专用控件）',
     category: 'Browser',
     description: 'Dedicated always-visible browser controls frame for iterating visual design before wiring to native window.',
+    descriptionZh: '始终可见的专用浏览器控件框架，用于在接入原生窗口前迭代视觉设计。',
     component: BrowserFramePlayground,
     layout: 'top',
     props: [
       {
         name: 'initialUrl',
         description: 'Initial URL value shown in the address field.',
+        descriptionZh: '地址栏中显示的初始 URL 值。',
         control: { type: 'string' },
         defaultValue: 'https://www.iana.org/help',
       },
       {
         name: 'loading',
         description: 'Website loading state only (URL bar spinner + Stop/Reload).',
+        descriptionZh: '仅网站加载状态（地址栏加载指示器 + 停止/刷新）。',
         control: { type: 'boolean' },
         defaultValue: false,
       },
@@ -820,6 +889,7 @@ export const browserUiComponents: ComponentEntry[] = [
       {
         name: 'agentState',
         description: 'Agent activity state only (independent from website loading).',
+        descriptionZh: '仅 Agent 活动状态（与网站加载状态相互独立）。',
         control: {
           type: 'select',
           options: [
@@ -833,6 +903,7 @@ export const browserUiComponents: ComponentEntry[] = [
       {
         name: 'themeColor',
         description: 'Website theme color (hex). Simulates <meta name="theme-color">.',
+        descriptionZh: '网站主题色（十六进制）。模拟 <meta name="theme-color">。',
         control: {
           type: 'select',
           options: [
@@ -855,13 +926,16 @@ export const browserUiComponents: ComponentEntry[] = [
   {
     id: 'browser-tab-strip-playground',
     name: 'Browser Tab Strip (Top Bar)',
+    nameZh: '浏览器标签栏（顶栏）',
     category: 'Browser',
     description: 'Live BrowserTabStrip used in the main top bar, including global registry and agent-control accent border.',
+    descriptionZh: '主顶栏中使用的真实 BrowserTabStrip，包含全局注册表与 Agent 控制强调边框。',
     component: BrowserTabStripPlayground,
     props: [
       {
         name: 'mode',
         description: 'Auto: use live in Electron and mock in plain browser. Live: force bridge usage. Mock: always show sample badges.',
+        descriptionZh: '自动：Electron 中使用实时数据，普通浏览器中使用模拟数据。实时：强制使用桥接。模拟：始终显示示例徽章。',
         control: {
           type: 'select',
           options: [
@@ -875,6 +949,7 @@ export const browserUiComponents: ComponentEntry[] = [
       {
         name: 'mockPreset',
         description: 'Mock state bundle for visual QA: long names, multiple running tabs, hidden tabs, and agent-controlled accents.',
+        descriptionZh: '用于视觉 QA 的模拟状态组合：长名称、多个加载中的标签、隐藏标签与 Agent 控制强调。',
         control: {
           type: 'select',
           options: [
@@ -889,6 +964,7 @@ export const browserUiComponents: ComponentEntry[] = [
       {
         name: 'activeSessionId',
         description: 'Session used for ordering preference (session-local windows first) in both live and mock modes.',
+        descriptionZh: '用于排序偏好的会话（会话本地窗口优先），实时与模拟模式均适用。',
         control: { type: 'string', placeholder: '260228-high-comet' },
         defaultValue: '260228-high-comet',
       },

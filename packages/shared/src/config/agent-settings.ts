@@ -12,6 +12,7 @@ import {
   PI_EXTENSION_OWNED_SESSION_TOOL_NAMES,
 } from '../agent/backend/pi/session-tool-defs.ts';
 import { atomicWriteFileSync } from '../utils/files.ts';
+import { MORTISE_PROJECT_DIR } from './paths.ts';
 import {
   getPiAgentDir,
   getPiExtensionCatalog,
@@ -50,17 +51,27 @@ export interface SubagentDefinition {
   tools: string[];
   /** Semantic model reference. Omitted means current session model. */
   model?: string;
+  thinkingLevel?: import('../agent/thinking-levels.ts').ThinkingLevel;
 }
 
 export type SubagentTemplate = SubagentDefinition & (
-  | { source: 'user'; editable: true }
+  | { source: 'global' | 'workspace'; editable: true; path: string }
   | { source: 'extension'; editable: false; extensionId: string }
 );
+
+export interface SubagentConfigDiagnostic {
+  path: string;
+  message: string;
+}
+
+export interface SubagentConfigResult {
+  agents: SubagentTemplate[];
+  diagnostics: SubagentConfigDiagnostic[];
+}
 
 export interface AgentSettingsSnapshot {
   schemaVersion: 1;
   mainAgent: MainAgentSettings;
-  subagents: SubagentTemplate[];
 }
 
 export interface MainAgentSettingsUpdate {
@@ -70,16 +81,9 @@ export interface MainAgentSettingsUpdate {
   disabledTools: string[];
 }
 
-export interface SubagentUpsert {
-  schemaVersion: 1;
-  previousId?: string;
-  agent: SubagentDefinition;
-}
-
 const PI_AGENT_DIR = getPiAgentDir();
 const SYSTEM_PROMPT_FILE = join(PI_AGENT_DIR, 'SYSTEM.md');
 const COMPACTION_PROMPT_FILE = join(PI_AGENT_DIR, 'COMPACTION.md');
-const SUBAGENTS_DIR = join(PI_AGENT_DIR, 'agents');
 const SUBAGENT_ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 const BUILTIN_TOOL_DESCRIPTIONS: Record<string, string> = {
@@ -171,12 +175,12 @@ function mergeToolCatalog(runtime: AgentRuntimeProfile, disabledTools: Set<strin
     .sort((left, right) => left.name.localeCompare(right.name));
 }
 
-function parseSubagentFile(filePath: string): SubagentDefinition | null {
+function parseSubagentFile(filePath: string): { agent?: SubagentDefinition; diagnostic?: SubagentConfigDiagnostic } {
   try {
     const content = readFileSync(filePath, 'utf8');
     const { frontmatter, body } = parseFrontmatter<Record<string, unknown>>(content);
     const id = basename(filePath, extname(filePath));
-    if (!SUBAGENT_ID_PATTERN.test(id)) return null;
+    if (!SUBAGENT_ID_PATTERN.test(id)) return { diagnostic: { path: filePath, message: 'Agent file name must be a lowercase slug' } };
     if (
       typeof frontmatter.name !== 'string'
       || !frontmatter.name.trim()
@@ -184,69 +188,92 @@ function parseSubagentFile(filePath: string): SubagentDefinition | null {
       || typeof frontmatter.description !== 'string'
       || !frontmatter.description.trim()
       || frontmatter.description.length > 16_000
+      || !Object.hasOwn(frontmatter, 'tools')
       || !body.trim()
       || body.length > 16_000
-    ) return null;
+    ) return { diagnostic: { path: filePath, message: 'Agent requires name, description, tools, and a non-empty system prompt' } };
     const tools = typeof frontmatter.tools === 'string'
       ? frontmatter.tools.trim() === 'none'
         ? []
         : normalizeToolNames(frontmatter.tools.split(',').map((tool) => tool.trim()).filter(Boolean))
-      : [];
-    return {
+      : normalizeToolNames(frontmatter.tools);
+    const thinkingLevel = typeof frontmatter.thinkingLevel === 'string'
+      && ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(frontmatter.thinkingLevel)
+      ? frontmatter.thinkingLevel as import('../agent/thinking-levels.ts').ThinkingLevel
+      : undefined;
+    return { agent: {
       id,
       name: frontmatter.name.trim(),
       description: frontmatter.description.trim(),
       systemPrompt: body.trim(),
       tools,
       ...(typeof frontmatter.model === 'string' && frontmatter.model.trim() ? { model: frontmatter.model.trim() } : {}),
-    };
-  } catch {
-    return null;
+      ...(thinkingLevel ? { thinkingLevel } : {}),
+    } };
+  } catch (error) {
+    return { diagnostic: { path: filePath, message: error instanceof Error ? error.message : String(error) } };
   }
 }
 
-export function listSubagents(): SubagentDefinition[] {
-  if (!existsSync(SUBAGENTS_DIR)) return [];
-  return readdirSync(SUBAGENTS_DIR, { withFileTypes: true })
-    .filter((entry) => entry.isFile() && entry.name.endsWith('.md'))
-    .map((entry) => parseSubagentFile(join(SUBAGENTS_DIR, entry.name)))
-    .filter((agent): agent is SubagentDefinition => agent !== null)
-    .sort((left, right) => left.name.localeCompare(right.name));
+function readSubagentDirectory(dir: string, source: 'global' | 'workspace'): SubagentConfigResult {
+  if (!existsSync(dir)) return { agents: [], diagnostics: [] };
+  const agents: SubagentTemplate[] = [];
+  const diagnostics: SubagentConfigDiagnostic[] = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (!entry.isFile() || !entry.name.endsWith('.md')) continue;
+    const path = join(dir, entry.name);
+    const parsed = parseSubagentFile(path);
+    if (parsed.agent) agents.push({ ...parsed.agent, source, editable: true, path });
+    if (parsed.diagnostic) diagnostics.push(parsed.diagnostic);
+  }
+  return { agents, diagnostics };
 }
 
 export function normalizeSubagentTemplates(
-  userTemplates: SubagentDefinition[],
+  globalTemplates: SubagentTemplate[],
+  workspaceTemplates: SubagentTemplate[],
   extensionCatalog: PiExtensionCatalogEntry[],
 ): SubagentTemplate[] {
-  const templates: SubagentTemplate[] = userTemplates.map((template) => ({
-    ...template,
-    source: 'user',
-    editable: true,
-  }));
+  const templates = new Map(globalTemplates.map(template => [template.id, template]));
+  for (const template of workspaceTemplates) templates.set(template.id, template);
 
   for (const extension of extensionCatalog) {
     if (!extension.loadable || extension.manifestStatus === 'blocked') continue;
     for (const template of extension.manifest?.subagents ?? []) {
-      templates.push({
+      const namespaced = {
         ...template,
         id: `${extension.id}:${template.id}`,
         tools: normalizeToolNames(template.tools),
         source: 'extension',
         editable: false,
         extensionId: extension.id,
-      });
+      } satisfies SubagentTemplate;
+      templates.set(namespaced.id, namespaced);
     }
   }
 
-  return templates.sort((left, right) =>
+  return [...templates.values()].sort((left, right) =>
     left.name.localeCompare(right.name) || left.id.localeCompare(right.id));
 }
 
 export async function listSubagentTemplates(
   options: { cwd?: string; agentDir?: string } = {},
 ): Promise<SubagentTemplate[]> {
+  return (await resolveSubagentConfigs(options)).agents;
+}
+
+export async function resolveSubagentConfigs(
+  options: { cwd?: string; agentDir?: string } = {},
+): Promise<SubagentConfigResult> {
+  const globalDir = join(options.agentDir ?? getPiAgentDir(), 'agents');
+  const workspaceDir = join(options.cwd ?? process.cwd(), MORTISE_PROJECT_DIR, 'agents');
+  const global = readSubagentDirectory(globalDir, 'global');
+  const workspace = readSubagentDirectory(workspaceDir, 'workspace');
   const catalog = await getPiExtensionCatalog(options);
-  return normalizeSubagentTemplates(listSubagents(), catalog.extensions);
+  return {
+    agents: normalizeSubagentTemplates(global.agents, workspace.agents, catalog.extensions),
+    diagnostics: [...global.diagnostics, ...workspace.diagnostics],
+  };
 }
 
 export async function getAgentSettingsSnapshot(
@@ -267,7 +294,6 @@ export async function getAgentSettingsSnapshot(
       compactionPromptSource: customCompactionPrompt === null ? 'default' : 'custom',
       tools: mergeToolCatalog(runtime, disabledTools),
     },
-    subagents: await listSubagentTemplates(options),
   };
 }
 
@@ -294,43 +320,4 @@ export function updateMainAgentSettings(update: MainAgentSettingsUpdate): void {
   writeOptionalTextFile(SYSTEM_PROMPT_FILE, update.systemPrompt ?? getPiNativeSystemPrompt());
   writeOptionalTextFile(COMPACTION_PROMPT_FILE, update.compactionPrompt ?? '');
   writePiMortiseSettingsBulk({ disabledTools: normalizeToolNames(update.disabledTools) });
-}
-
-function assertSubagent(agent: SubagentDefinition): void {
-  if (!SUBAGENT_ID_PATTERN.test(agent.id)) throw new Error('Subagent id must be a lowercase slug');
-  if (!agent.name.trim()) throw new Error('Subagent name is required');
-  if (!agent.description.trim()) throw new Error('Subagent description is required');
-  if (!agent.systemPrompt.trim()) throw new Error('Subagent system prompt is required');
-}
-
-function serializeSubagent(agent: SubagentDefinition): string {
-  const frontmatter = [
-    '---',
-    `name: ${JSON.stringify(agent.name.trim())}`,
-    `description: ${JSON.stringify(agent.description.trim())}`,
-    `tools: ${JSON.stringify(normalizeToolNames(agent.tools).join(', ') || 'none')}`,
-    ...(agent.model?.trim() ? [`model: ${JSON.stringify(agent.model.trim())}`] : []),
-    '---',
-  ];
-  return `${frontmatter.join('\n')}\n\n${agent.systemPrompt.trim()}\n`;
-}
-
-export function upsertSubagent(update: SubagentUpsert): SubagentDefinition {
-  if (update.schemaVersion !== 1) throw new Error('Unsupported subagent schema version');
-  assertSubagent(update.agent);
-  mkdirSync(SUBAGENTS_DIR, { recursive: true });
-  const targetPath = join(SUBAGENTS_DIR, `${update.agent.id}.md`);
-  if (existsSync(targetPath) && update.previousId !== update.agent.id) {
-    throw new Error(`Subagent id already exists: ${update.agent.id}`);
-  }
-  atomicWriteFileSync(targetPath, serializeSubagent(update.agent));
-  if (update.previousId && update.previousId !== update.agent.id && SUBAGENT_ID_PATTERN.test(update.previousId)) {
-    rmSync(join(SUBAGENTS_DIR, `${update.previousId}.md`), { force: true });
-  }
-  return { ...update.agent, tools: normalizeToolNames(update.agent.tools) };
-}
-
-export function deleteSubagent(id: string): void {
-  if (!SUBAGENT_ID_PATTERN.test(id)) throw new Error('Invalid subagent id');
-  rmSync(join(SUBAGENTS_DIR, `${id}.md`), { force: true });
 }

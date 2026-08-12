@@ -31,6 +31,7 @@
  */
 
 import { useEffect, useLayoutEffect, useRef, type ReactNode } from 'react'
+import { useTranslation } from 'react-i18next'
 import * as Dialog from '@radix-ui/react-dialog'
 import { usePlatform } from '../../context/PlatformContext'
 import { cn } from '../../lib/utils'
@@ -111,7 +112,7 @@ export function FullscreenOverlayBase({
   onClose,
   children,
   className,
-  accessibleTitle = 'Overlay',
+  accessibleTitle,
   dismissOnOutsideClick = false,
   typeBadge,
   filePath,
@@ -122,7 +123,11 @@ export function FullscreenOverlayBase({
   copyContent,
   error,
 }: FullscreenOverlayBaseProps) {
+  const { t } = useTranslation()
   const { onSetTrafficLightsVisible } = usePlatform()
+
+  // Accessible (visually hidden) dialog title — translated default, caller can override.
+  const effectiveAccessibleTitle = accessibleTitle ?? t('overlay.fullscreen.accessibleTitle')
 
   // Determine if we should render the structured header.
   // Any header-related prop triggers header rendering.
@@ -181,7 +186,7 @@ export function FullscreenOverlayBase({
           }}
         >
           {/* Visually hidden title for accessibility - required by Radix Dialog */}
-          <Dialog.Title className="sr-only">{accessibleTitle}</Dialog.Title>
+          <Dialog.Title className="sr-only">{effectiveAccessibleTitle}</Dialog.Title>
 
           {/* Full-viewport masked scroll area — covers the entire dialog including behind the header.
               The CSS mask gradient fades content at both edges (starting from y=0).

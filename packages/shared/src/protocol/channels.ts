@@ -225,6 +225,8 @@ export const RPC_CHANNELS = {
     SET_DEFAULT_THINKING_LEVEL: 'settings:setDefaultThinkingLevel',
     GET_MID_STREAM_BEHAVIOR: 'settings:getMidStreamBehavior',
     SET_MID_STREAM_BEHAVIOR: 'settings:setMidStreamBehavior',
+    GET_SHOW_TAGGED_MODELS_ONLY: 'settings:getShowTaggedModelsOnly',
+    SET_SHOW_TAGGED_MODELS_ONLY: 'settings:setShowTaggedModelsOnly',
     GET_NETWORK_PROXY: 'settings:getNetworkProxy',
     SET_NETWORK_PROXY: 'settings:setNetworkProxy',
     GET_DEVELOPER_KIT: 'settings:getDeveloperKit',
@@ -237,8 +239,6 @@ export const RPC_CHANNELS = {
   agentSettings: {
     GET: 'agentSettings:get',
     UPDATE_MAIN: 'agentSettings:updateMain',
-    UPSERT_SUBAGENT: 'agentSettings:upsertSubagent',
-    DELETE_SUBAGENT: 'agentSettings:deleteSubagent',
   },
   workspaceCoordination: {
     GET_STATUS: 'workspaceCoordination:getStatus',

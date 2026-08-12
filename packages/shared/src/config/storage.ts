@@ -627,6 +627,20 @@ export function getWebSearchMode(): WebSearchMode {
   return readPiWebSearchMode();
 }
 
+/**
+ * Whether the session model picker shows only tagged models (single-level
+ * list). Mortise UI preference persisted in Pi settings.json under
+ * `shellGui.mortise.showTaggedModelsOnly`; the pi CLI ignores it.
+ */
+export function getShowTaggedModelsOnly(): boolean {
+  return readPiShellGuiBoolean('mortise', 'showTaggedModelsOnly', false);
+}
+
+/** Persist the "仅显示标签模型" model-picker preference. */
+export async function setShowTaggedModelsOnly(enabled: boolean): Promise<void> {
+  await writePiShellGuiBoolean('mortise', 'showTaggedModelsOnly', enabled);
+}
+
 /** Persist both the new policy and the legacy boolean through Pi SettingsManager. */
 export async function setWebSearchMode(mode: WebSearchMode): Promise<void> {
   await writePiWebSearchMode(mode);

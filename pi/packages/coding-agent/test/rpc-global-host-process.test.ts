@@ -316,4 +316,5 @@ describe("Pi RPC GlobalHost process", () => {
 		});
 		await runtime.close();
 	});
+
 });

@@ -1,6 +1,7 @@
 import * as React from 'react'
+import { useTranslation } from 'react-i18next'
 import type { ComponentEntry } from './types'
-import { generateCallbackPage, type AppType } from '@mortise/shared/auth/callback-page'
+import { generateCallbackPage, resolveCallbackPageLocale, type AppType } from '@mortise/shared/auth/callback-page'
 
 /**
  * Preview component that renders OAuth callback HTML in a sandboxed iframe.
@@ -16,21 +17,23 @@ function OAuthCallbackPreview({
   errorDetail?: string
   appType: AppType
 }) {
+  const { t, i18n } = useTranslation()
   const html = React.useMemo(() => {
     return generateCallbackPage({
-      title: isSuccess ? 'Authorization Complete' : 'Authorization Failed',
+      title: isSuccess ? t('playground.oauth.successTitle') : t('playground.oauth.failureTitle'),
       isSuccess,
       errorDetail,
       appType,
+      locale: resolveCallbackPageLocale(i18n.language),
     })
-  }, [isSuccess, errorDetail, appType])
+  }, [isSuccess, errorDetail, appType, t, i18n])
 
   return (
     <iframe
       srcDoc={html}
       sandbox="allow-scripts"
       className="w-full h-full border-0"
-      title="OAuth Callback Preview"
+      title={t('playground.oauth.iframeTitle')}
     />
   )
 }
@@ -39,20 +42,24 @@ export const oauthComponents: ComponentEntry[] = [
   {
     id: 'oauth-callback',
     name: 'OAuth Callback Page',
+    nameZh: 'OAuth 回调页面',
     category: 'OAuth',
     description: 'Page shown in browser after OAuth authorization redirect',
+    descriptionZh: 'OAuth 授权重定向后在浏览器中显示的页面',
     component: OAuthCallbackPreview,
     layout: 'full',
     props: [
       {
         name: 'isSuccess',
         description: 'Whether authorization was successful',
+        descriptionZh: '授权是否成功',
         control: { type: 'boolean' },
         defaultValue: true,
       },
       {
         name: 'appType',
         description: 'App type (electron or terminal)',
+        descriptionZh: '应用类型（electron 或 terminal）',
         control: {
           type: 'select',
           options: [
@@ -65,6 +72,7 @@ export const oauthComponents: ComponentEntry[] = [
       {
         name: 'errorDetail',
         description: 'Error message (only shown when isSuccess is false)',
+        descriptionZh: '错误消息（仅当 isSuccess 为 false 时显示）',
         control: { type: 'string', placeholder: 'Error message' },
         defaultValue: '',
       },
@@ -73,11 +81,13 @@ export const oauthComponents: ComponentEntry[] = [
       // Success states
       {
         name: 'Success',
+        nameZh: '成功',
         props: { isSuccess: true, appType: 'electron' },
       },
       // Error states
       {
         name: 'Error - Access Denied',
+        nameZh: '错误 - 拒绝访问',
         props: {
           isSuccess: false,
           appType: 'electron',
@@ -86,6 +96,7 @@ export const oauthComponents: ComponentEntry[] = [
       },
       {
         name: 'Error - Invalid Scope',
+        nameZh: '错误 - 无效范围',
         props: {
           isSuccess: false,
           appType: 'electron',
@@ -94,6 +105,7 @@ export const oauthComponents: ComponentEntry[] = [
       },
       {
         name: 'Error - Server Error',
+        nameZh: '错误 - 服务器错误',
         props: {
           isSuccess: false,
           appType: 'electron',
@@ -102,6 +114,7 @@ export const oauthComponents: ComponentEntry[] = [
       },
       {
         name: 'Error - Expired Token',
+        nameZh: '错误 - 令牌已过期',
         props: {
           isSuccess: false,
           appType: 'electron',
@@ -110,6 +123,7 @@ export const oauthComponents: ComponentEntry[] = [
       },
       {
         name: 'Error - Generic',
+        nameZh: '错误 - 通用',
         props: {
           isSuccess: false,
           appType: 'electron',

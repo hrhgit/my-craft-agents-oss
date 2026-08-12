@@ -14,6 +14,7 @@ import { readFile } from 'node:fs/promises';
 import { createHash, randomUUID } from 'node:crypto';
 import { basename, isAbsolute, join } from 'node:path';
 import type { AgentEvent } from '@mortise/core/types';
+import type { AgentMessage } from '@mortise/pi-agent-core';
 import type { FileAttachment } from '../utils/files.ts';
 import { atomicWriteFile } from '../utils/files.ts';
 import { createSanitizedEnv } from '../utils/env.ts';
@@ -37,8 +38,10 @@ import type {
   BackendRuntimeUpdate,
   ChatOptions,
   ChildAttemptRegistration,
+  ChildTaskActivityEvent,
   ExtensionBridgeEvent,
   HostQueuedUserProjection,
+  HostQueuedCancellationProjection,
   HostRuntimeErrorProjection,
   PiExtensionCommand,
 } from './backend/types.ts';
@@ -46,6 +49,7 @@ import { AbortReason } from './backend/types.ts';
 import { getBackendRuntime } from './backend/internal/driver-types.ts';
 import type { ExtensionContributionV1 } from '../protocol/extension-contributions.ts';
 import type { ExtensionUIValidationDeltaV1 } from '../protocol/extension-ui-validation.ts';
+import type { ExtensionServiceCatalogDTO, ExtensionServiceProviderDTO, ExtensionServiceResultDTO } from '../protocol/extension-services.ts';
 import {
   validateExtensionInteractionRequestV1,
   validateExtensionInteractionResponseV1,
@@ -136,7 +140,7 @@ import {
 
 /** Backend-executed session tools currently supported by PiAgent. */
 export const PI_BACKEND_SESSION_TOOL_NAMES = new Set<string>([
-  'spawn_session',
+  'subagent',
 ]);
 
 const PI_ABORT_ACK_TIMEOUT_MS = 5_000;
@@ -222,7 +226,7 @@ export function mapBrowserToolErrorCode(code: string): string | null {
 }
 
 // ============================================================
-// Pi session tree types (spawn_session tool → pi spawnChildSession)
+// Pi session tree types (subagent tool -> Pi spawnChildSession)
 // ============================================================
 
 /** Options for spawning a child session — matches pi's SpawnChildSessionOptions. */
@@ -237,6 +241,9 @@ export interface PiSpawnChildSessionOptions {
   systemPrompt?: string;
   tools?: string[];
   background?: boolean;
+  agent?: string;
+  forkTurns?: number | 'all';
+  schema?: Record<string, unknown>;
 }
 
 /** Result of spawning a child session in the pi session tree. */
@@ -259,6 +266,7 @@ export interface PiChildSessionInfo {
   firstMessage: string;
   status: 'running' | 'completed' | 'interrupted' | 'failed';
   lastOutput?: string;
+  error?: string;
   persistedClientMutationIds: string[];
   history: Array<{
     role: string;
@@ -276,7 +284,39 @@ export interface PiChildSessionInfo {
     tools?: string[];
     background?: boolean;
     backgroundOperationId?: string;
+    agent?: string;
+    forkTurns?: number | 'all';
+    seedMessageCount?: number;
+    schema?: Record<string, unknown>;
   };
+}
+
+type ReliableForkMessage = Extract<AgentMessage, { role: 'user' | 'assistant' }>;
+
+function selectReliableForkMessages(messages: AgentMessage[], forkTurns?: number | 'all'): ReliableForkMessage[] {
+  if (forkTurns === undefined) return [];
+  const reliable = messages.flatMap((message): ReliableForkMessage[] => {
+    if (message.role === 'user') return [message];
+    if (message.role !== 'assistant' || (message.stopReason !== 'stop' && message.stopReason !== 'length')) return [];
+    const content = message.content.filter(block => block.type === 'text');
+    if (content.length === 0) return [];
+    return [{ ...message, content }];
+  });
+  const firstUserIndex = reliable.findIndex(message => message.role === 'user');
+  if (firstUserIndex < 0) return [];
+  const completeHistory = reliable.slice(firstUserIndex);
+  if (forkTurns === 'all') return completeHistory;
+  let remaining = forkTurns;
+  let start = completeHistory.length;
+  for (let index = completeHistory.length - 1; index >= 0; index -= 1) {
+    if (completeHistory[index]?.role !== 'user') continue;
+    remaining -= 1;
+    if (remaining === 0) {
+      start = index;
+      break;
+    }
+  }
+  return completeHistory.slice(start);
 }
 
 interface ChildInboxMessage {
@@ -309,6 +349,11 @@ export class PiAgent extends BaseAgent {
   private rpcClient: PiSessionRpcClient | null = null;
   private rpcHostLease: PiHostLease | null = null;
   private readonly childRuntimeLeases = new Set<PiHostLease>();
+  private readonly childRuntimeClientSubscriptions = new Map<string, {
+    refCount: number;
+    unsubscribe: () => void;
+  }>();
+  private readonly childCoordinationBridges = new Map<string, WorkspaceCoordinationBridge>();
   private readonly childRuntimeAcquisitions = new Set<Promise<void>>();
   private readonly childInboxWrites = new Map<string, Promise<void>>();
   private childRuntimeEpoch = 0;
@@ -737,6 +782,8 @@ export class PiAgent extends BaseAgent {
         agentDir: PI_AGENT_DIR,
         projectConfigDir: MORTISE_PROJECT_DIR,
         extensionPaths: this.getMortiseExtensionPaths(),
+		extensionServiceScope: this.config.extensionServiceScope ?? 'session',
+		extensionServiceWorkspaceKey: this.config.workspace.id,
         sessionDir,
         sessionId: this.config.session?.mortiseId,
         forkFromSessionPath: this.config.session?.branchFromPiSessionFile,
@@ -797,7 +844,7 @@ export class PiAgent extends BaseAgent {
     await coordinationClient.setToolResultHandler(request => this.handleCoordinatedToolResult(request));
 
     // Register canonical session-scoped host tools in Pi.
-    // These tools (spawn_session, etc.)
+    // These tools (subagent, etc.)
     // are executed in the main process when the LLM calls them.
     this.assertBackendSessionToolParity();
     let sessionToolDefs = getSessionHostToolDefs();
@@ -1038,13 +1085,16 @@ export class PiAgent extends BaseAgent {
     }
   }
 
-  private handlePiClientEvent(event: PiRpcClientEvent): void {
+  private handlePiClientEvent(
+    event: PiRpcClientEvent,
+    sourceRuntime: PiSessionRpcClient | null = this.rpcClient,
+  ): void {
     if (
       event.type === 'process_exit' ||
       event.type === 'process_error' ||
       event.type === 'stdin_error'
     ) {
-      this.handleRpcClientLifecycleFailure(event);
+      if (sourceRuntime === this.rpcClient) this.handleRpcClientLifecycleFailure(event);
       return;
     }
 
@@ -1137,7 +1187,7 @@ export class PiAgent extends BaseAgent {
     }
 
     if (event.type === 'extension_host_capability_request') {
-      void this.handleExtensionHostCapabilityRequest(event);
+      if (sourceRuntime) void this.handleExtensionHostCapabilityRequest(event, sourceRuntime);
       return;
     }
 
@@ -1162,9 +1212,8 @@ export class PiAgent extends BaseAgent {
     }
 
     if (event.type === 'extension_host_capability_declaration') {
-      const sessionId = this.config.session?.mortiseId ?? this._sessionId;
-      const runtimeId = this.currentRpcRuntimeId();
-      if (!runtimeId) return;
+      if (!sourceRuntime) return;
+      const { runtimeId, sessionId } = this.hostCapabilityRoute(sourceRuntime);
       this.config.onHostCapabilityDeclaration?.({
         version: 1,
         sessionId,
@@ -1176,9 +1225,7 @@ export class PiAgent extends BaseAgent {
     }
 
     if (event.type === 'extension_host_capability_cancel') {
-      const runtimeId = this.currentRpcRuntimeId();
-      if (!runtimeId) return;
-      this.config.onHostCapabilityCancel?.(event.id, runtimeId);
+      if (sourceRuntime) this.config.onHostCapabilityCancel?.(event.id, sourceRuntime.runtimeId);
       return;
     }
 
@@ -1239,13 +1286,11 @@ export class PiAgent extends BaseAgent {
 
   private async handleExtensionHostCapabilityRequest(
     event: Extract<PiRpcClientEvent, { type: 'extension_host_capability_request' }>,
+    client: PiSessionRpcClient,
   ): Promise<void> {
-    const client = this.rpcClient;
-    if (!client) return;
-    const sessionId = this.config.session?.mortiseId ?? this._sessionId;
     // Runtime identity is assigned by the Host client. Never accept an extension-supplied
     // route value here: capability authorization and cleanup depend on this boundary.
-    const runtimeId = client.runtimeId;
+    const { runtimeId, sessionId } = this.hostCapabilityRoute(client);
     const responseRoute = {
       runtimeId,
       sessionId: event.sessionId ?? sessionId,
@@ -1324,6 +1369,15 @@ export class PiAgent extends BaseAgent {
         data: { error, durationMs: Date.now() - startedAt },
       });
     }
+  }
+
+  private hostCapabilityRoute(runtime: PiSessionRpcClient): { runtimeId: string; sessionId: string } {
+    return {
+      runtimeId: runtime.runtimeId,
+      sessionId: runtime === this.rpcClient
+        ? this.config.session?.mortiseId ?? this._sessionId
+        : runtime.runtimeSummary.sessionId,
+    };
   }
 
   private extensionEventRoute(extensionId: string, runtimeId?: string): Pick<ExtensionBridgeEvent, 'extensionId' | 'runtimeId' | 'sessionId'> {
@@ -1701,6 +1755,8 @@ export class PiAgent extends BaseAgent {
 
 	if (this.onBeforeToolExecution) {
 	  const coordination = await this.onBeforeToolExecution({
+		attemptId: req.attemptId,
+		runtimeId: req.runtimeId,
 		toolCallId,
 		toolName,
 		input,
@@ -1761,7 +1817,7 @@ export class PiAgent extends BaseAgent {
         return { action: 'block', reason: checkResult.reason };
       }
 
-      case 'spawn_session_intercept':
+      case 'subagent_intercept':
         // These tools are proxy tools handled via tool_execute_request — just allow
         return { action: 'allow' };
 
@@ -1840,14 +1896,14 @@ export class PiAgent extends BaseAgent {
     args: Record<string, unknown>,
   ): Promise<{ content: string; isError: boolean }> {
     try {
-      // spawn_session uses the shared pre-execution pipeline from BaseAgent
-      if (toolName === 'spawn_session') {
+      // subagent uses the shared pre-execution pipeline from BaseAgent
+      if (toolName === 'subagent') {
         try {
-          const result = await this.preExecuteSpawnSession(args);
+          const result = await this.preExecuteSubagent(args);
           return { content: JSON.stringify(result, null, 2), isError: false };
         } catch (error) {
           const msg = error instanceof Error ? error.message : String(error);
-          return { content: `spawn_session failed: ${msg}`, isError: true };
+          return { content: `subagent failed: ${msg}`, isError: true };
         }
       }
 
@@ -1917,11 +1973,75 @@ export class PiAgent extends BaseAgent {
         throw error;
       }
       this.childRuntimeLeases.add(lease);
+      this.retainChildRuntimeClientEvents(lease);
       return { lease, epoch };
     } finally {
       this.childRuntimeAcquisitions.delete(barrier);
       releaseBarrier();
     }
+  }
+
+  private retainChildRuntimeClientEvents(lease: PiHostLease): void {
+    const runtimeId = lease.runtime.runtimeId;
+    const existing = this.childRuntimeClientSubscriptions.get(runtimeId);
+    if (existing) {
+      existing.refCount++;
+      return;
+    }
+    const unsubscribeClient = lease.runtime.onClientEvent(event => {
+      this.handlePiClientEvent(event, lease.runtime);
+    });
+    const unsubscribeActivity = lease.runtime.onEvent(event => {
+      const childSessionId = lease.runtime.runtimeSummary.sessionId;
+      if (!childSessionId) return;
+      let activity: ChildTaskActivityEvent | undefined;
+      if (event.type === 'tool_execution_start') {
+        activity = {
+          childSessionId,
+          phase: 'activity',
+          status: 'running',
+          summary: `Started tool ${event.toolName}`,
+          timestamp: Date.now(),
+        };
+      } else if (event.type === 'tool_execution_end') {
+        activity = {
+          childSessionId,
+          phase: 'activity',
+          status: 'running',
+          summary: `${event.isError ? 'Failed' : 'Completed'} tool ${event.toolName}`,
+          timestamp: Date.now(),
+        };
+      } else if (event.type === 'agent_start') {
+        activity = {
+          childSessionId,
+          phase: 'status',
+          status: 'running',
+          summary: 'Subagent is running',
+          timestamp: Date.now(),
+        };
+      }
+      if (activity) this.config.onChildTaskActivity?.(activity);
+    });
+    this.childRuntimeClientSubscriptions.set(runtimeId, {
+      refCount: 1,
+      unsubscribe: () => {
+        unsubscribeClient();
+        unsubscribeActivity();
+      },
+    });
+    for (const event of lease.startupEvents) this.handlePiClientEvent(event, lease.runtime);
+  }
+
+  private releaseChildRuntimeClientEvents(runtimeId: string): void {
+    const subscription = this.childRuntimeClientSubscriptions.get(runtimeId);
+    if (!subscription) return;
+    subscription.refCount--;
+    if (subscription.refCount > 0) return;
+    this.childRuntimeClientSubscriptions.delete(runtimeId);
+    subscription.unsubscribe();
+    this.childCoordinationBridges.get(runtimeId)?.close();
+    this.childCoordinationBridges.delete(runtimeId);
+    this.config.onHostCapabilityRuntimeReleased?.(runtimeId);
   }
 
   private async startChildExecution(
@@ -1982,7 +2102,7 @@ export class PiAgent extends BaseAgent {
    * Delegates to Pi's native new-session RPC with the current session file as
    * parent metadata so Pi can preserve lineage in its own session tree.
    *
-   * This is the thin-wrapper path used by the spawn_session tool: mortise no longer
+   * This is the thin-wrapper path used by the subagent tool: Mortise no longer
    * creates an independent session file/manager; it just asks pi to branch the
    * active session tree.
    *
@@ -2003,6 +2123,7 @@ export class PiAgent extends BaseAgent {
     const parentLease = this.rpcHostLease;
     if (!parentLease) throw new Error('Pi multi-runtime host is unavailable for child task execution');
     const previous = await parent.getState();
+    const seedMessages = selectReliableForkMessages(await parent.getMessages(), options.forkTurns);
     const resolvedOptions = this.resolveChildRuntimeOptions(options, previous);
     const spawnConfig = {
       connection: resolvedOptions.connection,
@@ -2012,6 +2133,10 @@ export class PiAgent extends BaseAgent {
       systemPrompt: options.systemPrompt,
       tools: options.tools,
       background: options.background,
+      agent: options.agent,
+      forkTurns: options.forkTurns,
+      seedMessageCount: seedMessages.length,
+      schema: options.schema,
     };
     const childSessionId = randomUUID();
     const { lease, epoch } = await this.acquireChildRuntimeLease(() => parentLease.acquireRuntime({
@@ -2020,11 +2145,14 @@ export class PiAgent extends BaseAgent {
       agentDir: PI_AGENT_DIR,
       projectConfigDir: MORTISE_PROJECT_DIR,
       extensionPaths: this.getMortiseExtensionPaths(),
+	  extensionServiceScope: 'session',
+	  extensionServiceWorkspaceKey: this.config.workspace.id,
       sessionDir: this.getChildSessionDir(),
       sessionId: childSessionId,
       parentSession: previous.sessionFile,
       spawnedFrom: parentSessionId,
       spawnConfig,
+      seedMessages,
       persistInitialState: true,
       uiCapabilities: {
         kind: 'none',
@@ -2051,7 +2179,10 @@ export class PiAgent extends BaseAgent {
       const attachmentContext = options.attachments?.map(attachment =>
         `[Attached file: ${attachment.name ?? basename(attachment.path)}]\n[Path: ${attachment.path}]`,
       ) ?? [];
-      const childPrompt = [...attachmentContext, options.prompt].join('\n\n');
+      const schemaInstruction = options.schema
+        ? `Return only JSON that satisfies this JSON Schema:\n${JSON.stringify(options.schema, null, 2)}`
+        : undefined;
+      const childPrompt = [...attachmentContext, options.prompt, schemaInstruction].filter(Boolean).join('\n\n');
       this.assertChildRuntimeActive(epoch);
       const disposition = await runtime.prompt(childPrompt, undefined, {
         systemPrompt: options.systemPrompt,
@@ -2161,7 +2292,20 @@ export class PiAgent extends BaseAgent {
     const thinkingLevel = options.thinkingLevel ?? semanticModel?.thinkingLevel ?? parentState.thinkingLevel;
     if (thinkingLevel) await runtime.setThinkingLevel(thinkingLevel);
 
-    await runtime.setToolExecutionHandler(request => this.handleToolExecutionBoundary(request));
+    await runtime.setToolExecutionHandler(async request => {
+      const decision = await this.handleToolExecutionBoundary(request);
+      return this.getChildCoordinationBridge(runtime).beforeTool({
+        toolName: request.toolName,
+        toolCallId: request.toolCallId,
+        input: request.input,
+        ...('assistantResponseId' in request && typeof request.assistantResponseId === 'string'
+          ? { assistantResponseId: request.assistantResponseId }
+          : {}),
+        assistantTimestamp: 'assistantTimestamp' in request && typeof request.assistantTimestamp === 'number'
+          ? request.assistantTimestamp
+          : Date.now(),
+      }, decision);
+    });
     await runtime.setToolResultHandler(result => this.handleCoordinatedToolResult(result));
     this.assertBackendSessionToolParity();
     const sessionToolDefs = getSessionHostToolDefs()
@@ -2219,6 +2363,14 @@ export class PiAgent extends BaseAgent {
     for (const event of this.getProjectionBuilder()?.acceptHostQueuedUser(message) ?? []) {
       this.config.onPiProjectionEvent?.(event);
     }
+  }
+
+  projectQueuedCancellation(message: HostQueuedCancellationProjection): number {
+    const events = this.getProjectionBuilder()?.acceptHostQueueCancellation(message) ?? [];
+    for (const event of events) {
+      this.config.onPiProjectionEvent?.(event);
+    }
+    return events.length;
   }
 
   projectRuntimeError(error: HostRuntimeErrorProjection): void {
@@ -2279,6 +2431,7 @@ export class PiAgent extends BaseAgent {
         firstMessage: session.firstMessage,
         status: session.status,
         lastOutput: session.lastOutput,
+        error: session.error,
         persistedClientMutationIds: session.persistedClientMutationIds,
         history: session.history,
         spawnConfig: session.spawnConfig,
@@ -2295,55 +2448,44 @@ export class PiAgent extends BaseAgent {
     message: string,
     options: { background?: boolean; systemPrompt?: string; tools?: string[] } = {},
   ): Promise<PiSpawnChildSessionResult> {
+    const child = (await this.listChildSessions(parentSessionId)).find(item => item.sessionId === childSessionId);
+    if (!child) throw new Error(`Child task not found: ${childSessionId}`);
+    if (child.status === 'completed' || child.status === 'failed') {
+      throw new Error(`Cannot message terminal child task: ${childSessionId}`);
+    }
+    const messageId = randomUUID();
+    if (child.status === 'interrupted') {
+      await this.queueChildInboxMessage(child, messageId, message);
+      return {
+        sessionId: child.sessionId,
+        sessionPath: child.sessionPath,
+        status: 'interrupted',
+        ...(child.lastOutput ? { output: child.lastOutput } : {}),
+      };
+    }
     const opened = await this.acquireChildRuntime(parentSessionId, childSessionId, options);
     let persistence: { promise: Promise<boolean>; cancel: () => void } | undefined;
     let settlement: { promise: Promise<void>; cancel: () => void } | undefined;
     let accepted = false;
     let childExecution: ChildAttemptRegistration | undefined;
-    let startedNewExecution = false;
-    const messageId = randomUUID();
     try {
       const isStreaming = (await opened.runtime.getState()).isStreaming;
       await this.queueChildInboxMessage(opened.child, messageId, message, opened.epoch);
-      persistence = this.watchChildMessagePersistence(opened.runtime, [messageId]);
       this.assertChildRuntimeActive(opened.epoch);
-      if (isStreaming) {
-		const disposition = await opened.runtime.followUp(message, undefined, { clientMutationId: messageId });
-		if (disposition.status !== 'queued') throw new Error(`Child follow-up was not queued: ${disposition.status}`);
-		childExecution = await this.startChildExecution(
-		  opened.runtime,
-		  opened.child.sessionId,
-		  opened.child.sessionPath,
-		  true,
-		  disposition.attemptId,
-		);
-		const { attemptId, operationId: backgroundOperationId } = childExecution;
-		settlement = this.watchChildSettlement(opened.runtime, opened.child.sessionId, attemptId);
-        accepted = true;
-        return await this.finishChildOperation(
-          parentSessionId,
-          opened,
-          settlement.promise,
-          childExecution,
-          true,
-          backgroundOperationId,
-          [messageId],
-          persistence,
-        );
+      if (!isStreaming) {
+        await this.releaseChildRuntimeLease(opened.lease);
+        return { sessionId: opened.child.sessionId, sessionPath: opened.child.sessionPath, status: 'interrupted' };
       }
-      const disposition = await opened.runtime.prompt(message, undefined, {
-        systemPrompt: options.systemPrompt ?? opened.child.spawnConfig?.systemPrompt,
-        clientMutationId: messageId,
-      });
-      if (disposition.status !== 'started') throw new Error(`Child prompt was not started: ${disposition.status}`);
+      persistence = this.watchChildMessagePersistence(opened.runtime, [messageId]);
+      const disposition = await opened.runtime.steer(message, undefined, { clientMutationId: messageId });
+      if (disposition.status !== 'queued') throw new Error(`Child steer was not queued: ${disposition.status}`);
       childExecution = await this.startChildExecution(
         opened.runtime,
         opened.child.sessionId,
         opened.child.sessionPath,
-        options.background === true,
+        true,
         disposition.attemptId,
       );
-      startedNewExecution = true;
       const { attemptId, operationId: backgroundOperationId } = childExecution;
       settlement = this.watchChildSettlement(opened.runtime, opened.child.sessionId, attemptId);
       accepted = true;
@@ -2352,7 +2494,7 @@ export class PiAgent extends BaseAgent {
         opened,
         settlement.promise,
         childExecution,
-        options.background === true,
+        true,
         backgroundOperationId,
         [messageId],
         persistence,
@@ -2362,19 +2504,13 @@ export class PiAgent extends BaseAgent {
       persistence?.cancel();
       if (!accepted) {
         await this.removeChildInboxMessages(opened.child, [messageId], opened.epoch).catch(() => undefined);
-        if (startedNewExecution && childExecution) {
-          await this.abandonChildExecution(
-            opened.runtime,
-            opened.child.sessionId,
-            childExecution.attemptId,
-          ).catch(() => undefined);
-        } else if (childExecution) {
+        if (childExecution) {
           await this.failChildOperation(
             opened.runtime,
             opened.child.sessionId,
             opened.child.sessionPath,
             childExecution,
-            `Child follow-up was rejected before Pi accepted it: ${error instanceof Error ? error.message : String(error)}`,
+            `Child steer was rejected before Pi accepted it: ${error instanceof Error ? error.message : String(error)}`,
           ).catch(() => undefined);
         }
       }
@@ -2492,6 +2628,8 @@ export class PiAgent extends BaseAgent {
       cwd: active.cwd,
       agentDir: PI_AGENT_DIR,
       projectConfigDir: MORTISE_PROJECT_DIR,
+	  extensionServiceScope: 'session',
+	  extensionServiceWorkspaceKey: this.config.workspace.id,
     }));
     try {
       this.assertChildRuntimeActive(epoch);
@@ -2540,12 +2678,16 @@ export class PiAgent extends BaseAgent {
       cwd: active.cwd,
       agentDir: PI_AGENT_DIR,
       projectConfigDir: MORTISE_PROJECT_DIR,
+	  extensionServiceScope: 'session',
+	  extensionServiceWorkspaceKey: this.config.workspace.id,
     } : {
       runtimeId: `subagent-${childSessionId}`,
       cwd: this.resolvedWorkspaceRoot(),
       agentDir: PI_AGENT_DIR,
       projectConfigDir: MORTISE_PROJECT_DIR,
       extensionPaths: this.getMortiseExtensionPaths(),
+	  extensionServiceScope: 'session',
+	  extensionServiceWorkspaceKey: this.config.workspace.id,
       sessionPath: child.sessionPath,
       uiCapabilities: {
         kind: 'none',
@@ -2940,8 +3082,24 @@ export class PiAgent extends BaseAgent {
     return this.coordinationBridge;
   }
 
+  private getChildCoordinationBridge(runtime: PiRuntimeHandle): WorkspaceCoordinationBridge {
+    let bridge = this.childCoordinationBridges.get(runtime.runtimeId);
+    if (!bridge) {
+      bridge = new WorkspaceCoordinationBridge({
+        workspaceRoot: this.workspaceRoot,
+        workspaceId: this.config.workspace.id,
+        sessionId: runtime.runtimeSummary.sessionId,
+      });
+      this.childCoordinationBridges.set(runtime.runtimeId, bridge);
+    }
+    return bridge;
+  }
+
   private async handleCoordinatedToolResult(request: PiRpcToolResultRequest): Promise<void> {
-    await this.coordinationBridge?.recordResult(request);
+    const coordination = request.runtimeId && this.childCoordinationBridges.has(request.runtimeId)
+      ? this.childCoordinationBridges.get(request.runtimeId)
+      : this.coordinationBridge;
+    await coordination?.recordResult(request);
     if (!request.runtimeId) return;
     await this.config.onChildToolExecutionCompleted?.({
       runtimeId: request.runtimeId,
@@ -3194,8 +3352,9 @@ export class PiAgent extends BaseAgent {
           clearSystemPrompt: piShellPassthrough,
           // Clear any suffix retained by a runtime that handled an earlier turn.
           appendSystemPrompt: '',
-          clientMutationId: options?.clientMutationId,
-          interruptedAttempt: options?.interruptedAttempt,
+		  clientMutationId: options?.clientMutationId,
+		  origin: options?.origin,
+		  interruptedAttempt: options?.interruptedAttempt,
           attachments: options?.attachmentRefs,
         },
       );
@@ -3426,6 +3585,7 @@ export class PiAgent extends BaseAgent {
   override async redirect(
     message: string,
     clientMutationId?: string,
+    options: ChatOptions = {},
   ): Promise<boolean> {
     if (!this._isProcessing || !this.rpcClient) {
       // Not streaming or no client — fall back to abort
@@ -3438,6 +3598,7 @@ export class PiAgent extends BaseAgent {
 	  if (!activeAttemptId) return false;
 	  const disposition = await this.rpcClient.steer(message, undefined, {
 		clientMutationId,
+		origin: options.origin,
 	  });
       return disposition.status === 'accepted' && disposition.attemptId === activeAttemptId;
     } catch (error) {
@@ -3484,6 +3645,7 @@ export class PiAgent extends BaseAgent {
         images.length > 0 ? images : undefined,
 		{
 		  clientMutationId: options.clientMutationId,
+		  origin: options.origin,
 		  attachments: options.attachmentRefs,
 		},
       );
@@ -3606,7 +3768,6 @@ export class PiAgent extends BaseAgent {
     const teardown = (async () => {
       await Promise.all([...this.childRuntimeAcquisitions]);
       const leases = [...this.childRuntimeLeases];
-      this.childRuntimeLeases.clear();
       const runtimes = new Map(leases.map(lease => [lease.runtime.runtimeId, lease.runtime]));
       const runtimeResults = await Promise.allSettled([...runtimes.values()].map(async (runtime) => {
 		const state = await runtime.getState();
@@ -3620,7 +3781,7 @@ export class PiAgent extends BaseAgent {
 		}
         await settled;
       }));
-      const releaseResults = await Promise.allSettled(leases.map(lease => lease.release()));
+      const releaseResults = await Promise.allSettled(leases.map(lease => this.releaseChildRuntimeLease(lease)));
       const inboxResults = await Promise.allSettled([...this.childInboxWrites.values()]);
       const failures = [...runtimeResults, ...releaseResults, ...inboxResults]
         .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
@@ -3639,8 +3800,25 @@ export class PiAgent extends BaseAgent {
   }
 
   private async releaseChildRuntimeLease(lease: PiHostLease): Promise<void> {
-    await lease.release();
-    this.childRuntimeLeases.delete(lease);
+    try {
+      await lease.release();
+    } finally {
+      this.childRuntimeLeases.delete(lease);
+      this.releaseChildRuntimeClientEvents(lease.runtime.runtimeId);
+    }
+  }
+
+  async extensionServicesList(): Promise<ExtensionServiceCatalogDTO> {
+    return await (await this.ensureRpcClient()).extensionServicesList() as ExtensionServiceCatalogDTO
+  }
+  async extensionServicesDescribe(capability: string): Promise<ExtensionServiceProviderDTO[]> {
+    return await (await this.ensureRpcClient()).extensionServicesDescribe(capability) as ExtensionServiceProviderDTO[]
+  }
+  async extensionServicesInvoke(input: { requestId: string; runtimeId?: string; sessionId?: string; capability: string; operation: string; provider?: string; input: unknown; timeoutMs?: number }): Promise<ExtensionServiceResultDTO> {
+    return await (await this.ensureRpcClient()).extensionServicesInvoke(input) as ExtensionServiceResultDTO
+  }
+  async extensionServicesCancel(requestId: string): Promise<boolean> {
+    return await (await this.ensureRpcClient()).extensionServicesCancel(requestId)
   }
 
   private async stopRpcClient(): Promise<void> {

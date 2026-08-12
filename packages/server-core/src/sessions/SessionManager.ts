@@ -34,7 +34,8 @@ import {
   type ExtensionBridgeEvent,
 } from '@mortise/shared/agent/backend'
 type ChildToolExecutionCompleted = Parameters<NonNullable<CoreBackendConfig['onChildToolExecutionCompleted']>>[0]
-import { alternateMidStreamBehavior, readPiGlobalProviders, readPiGlobalSettings, getDefaultThinkingLevel, getMidStreamBehavior, resetManagedAnthropicAuthEnvVars, getPersistedUiLanguage, resolveTitleLanguageName, listSubagentTemplates, type PiExtensionReloadActiveSession, type PiExtensionReloadResult } from '@mortise/shared/config'
+import { alternateMidStreamBehavior, readPiGlobalProviders, readPiGlobalSettings, getDefaultThinkingLevel, getMidStreamBehavior, resetManagedAnthropicAuthEnvVars, getPersistedUiLanguage, resolveTitleLanguageName, resolveSubagentConfigs, type PiExtensionReloadActiveSession, type PiExtensionReloadResult } from '@mortise/shared/config'
+import { AgentRunService, type AgentRunRecord } from '../agent-runs'
 import { SessionShareTransferService } from '@mortise/server-core/services'
 import { InitGate, WorkspaceLocationActivityRegistry, type WorkspaceTopologySessionCoordinator } from '@mortise/server-core/domain'
 import { i18n } from '@mortise/shared/i18n'
@@ -125,6 +126,7 @@ import {
 } from '@mortise/shared/automations'
 import { createAutomationWebhookExecutor } from '../services/automation-webhook-executor'
 import { buildBackendRuntimeSignature, buildRestartRequiredSignature, filterAttachmentsForModelInput, normalizeProviderRuntimeBaseUrl } from './runtime-config'
+import { SessionCoordinator } from './SessionCoordinator'
 import {
   FileToolSideEffectLedger,
   type ToolSideEffectRecorder,
@@ -599,11 +601,12 @@ async function getBrowserToolIconDataUrl(): Promise<string | undefined> {
 }
 
 const SESSION_TOOL_DISPLAY_NAMES: Record<string, string> = {
-  spawn_session: 'Spawn Session',
+  subagent: 'Subagent',
   browser_tool: 'Browser',
-  get_session_info: 'Session Info',
   list_sessions: 'List Sessions',
-  send_agent_message: 'Send Agent Message',
+  create_session: 'Create Session',
+  read_session: 'Read Session',
+  send_message_to_session: 'Send Message to Session',
   list_messaging_channels: 'List Messaging Channels',
   unbind_messaging_channel: 'Unbind Messaging Channel',
 }
@@ -1558,6 +1561,7 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
     sessionId: string
     topicName: string
   }) => Promise<void>
+  private readonly sessionCoordinator: SessionCoordinator
 
   constructor(options: SessionManagerOptions = {}) {
     this.resolveWorkspaceByNameOrId = options.resolveWorkspaceByNameOrId ?? getWorkspaceByNameOrId
@@ -1575,6 +1579,19 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
     this.toolSideEffectRecorderFactory = options.toolSideEffectRecorderFactory
       ?? ((workspaceId, sessionId) => new FileToolSideEffectLedger(workspaceId, sessionId))
     this.extensionOperationCoordinator = options.operationCoordinator ?? createDefaultOperationCoordinator()
+    this.sessionCoordinator = new SessionCoordinator(this, {
+      resolveAttachments: async (workspaceId, attachments) => {
+        const builtAttachments: FileAttachment[] = []
+        for (const attachmentInput of attachments) {
+          const safePath = await validateFilePath(attachmentInput.path, getWorkspaceAllowedDirs(workspaceId))
+          const attachment = readFileAttachment(safePath)
+          if (!attachment) continue
+          if (attachmentInput.name) attachment.name = attachmentInput.name
+          builtAttachments.push(attachment)
+        }
+        return builtAttachments.length > 0 ? builtAttachments : undefined
+      },
+    })
     for (const provider of createSessionRuntimeCapabilityProviders({
       getSession: sessionId => this.getSession(sessionId),
       listSessions: workspaceId => this.getSessions(workspaceId),
@@ -2118,6 +2135,14 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
       sessionLog.warn(`Failed to rebuild Pi projection snapshot for ${sessionId}: ${error instanceof Error ? error.message : error}`)
       return null
     }
+  }
+
+  async readPiProjection(
+    workspaceId: string,
+    workspaceRootPath: string,
+    sessionId: string,
+  ): Promise<{ leafId: string | null; entries: PiBranchProjectionEntry[] } | null> {
+    return findPiSessionProjectionById(workspaceId, workspaceRootPath, sessionId)
   }
 
   private installRestoredPiProjection(
@@ -2734,6 +2759,7 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
         }
         const coreConfig: CoreBackendConfig = {
           workspace,
+		  extensionServiceScope: 'workspace',
           model: context.resolvedModel,
           miniModel: providerConfig?.models?.[0]?.id,
           thinkingLevel: getDefaultThinkingLevel(),
@@ -3437,36 +3463,15 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
     const record = (await this.readSubagentDeliveryLedger(managed)).operations[operationId]
     if (!record || record.state !== 'ready' || !record.status) return
 
-    await this.ensureMessagesLoaded(managed)
-    if (managed.deleting || this.sessions.get(managed.id) !== managed) return
-    if (!managed.messages.some(message => message.id === record.messageId)) {
-      const output = record.output?.trim() || '(No final text output)'
-      const message = [
-        `<subagent_completion operation_id="${record.operationId}" child_task_id="${record.childSessionId}" status="${record.status}">`,
-        output,
-        '</subagent_completion>',
-      ].join('\n')
-      await new Promise<void>((resolve, reject) => {
-        let acknowledged = false
-        const acknowledge = () => {
-          if (acknowledged) return
-          acknowledged = true
-          resolve()
-        }
-        void this.sendMessage(
-          managed.id,
-          message,
-          undefined,
-          undefined,
-          { optimisticMessageId: record.messageId },
-          undefined,
-          undefined,
-          acknowledge,
-          undefined,
-          false,
-        ).then(acknowledge, reject)
-      })
-    }
+    this.sendEvent({
+      type: 'subagent_event',
+      sessionId: managed.id,
+      taskId: record.childSessionId,
+      phase: 'completed',
+      status: record.status,
+      summary: record.output?.trim().slice(0, 2_000) || undefined,
+      timestamp: Date.parse(record.modified ?? record.updatedAt),
+    }, managed.workspace.id)
 
     await this.mutateSubagentDeliveryLedger(managed, (ledger) => {
       const current = ledger.operations[operationId]
@@ -4594,6 +4599,17 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
           }),
         )
       }
+      const onChildTaskActivity = (event: import('@mortise/shared/agent').ChildTaskActivityEvent) => {
+        this.sendEvent({
+          type: 'subagent_event',
+          sessionId: managed.id,
+          taskId: event.childSessionId,
+          phase: event.phase,
+          status: event.status,
+          summary: event.summary,
+          timestamp: event.timestamp,
+        }, managed.workspace.id)
+      }
       const onChildToolExecutionCompleted = (result: ChildToolExecutionCompleted) => (
         this.trackSubagentLifecycleTask(managed, this.completeChildToolSideEffect(managed, result))
       )
@@ -4714,6 +4730,7 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
         onChildAttemptAbandoned,
         onChildAttemptSettled,
         onChildTaskSettled,
+        onChildTaskActivity,
         onChildToolExecutionCompleted,
         onHostCapabilityRequest,
         onHostCapabilityDeclaration,
@@ -4827,207 +4844,95 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
         }
       }
 
-      // Wire up onSpawnSession. When the backend exposes spawnChildSession
-      // (PiAgent), delegate to pi's session tree as a thin wrapper — pi creates
-      // the child session file (header + spawnedFrom + spawnConfig + optional
-      // initial prompt/name) and mortise no longer instantiates its own
-      // SessionManager or writes session files. The SubagentPanel lists these
-      // children via listChildSessions(spawnedFrom filter).
-      // Backends without spawnChildSession are unsupported — onSpawnSession throws.
-      managed.agent.onSpawnSession = async (request) => {
+      const mapChildRun = (child: import('@mortise/shared/agent').PiChildSessionInfo): AgentRunRecord => ({
+        taskId: child.sessionId,
+        status: child.status,
+        ...(child.spawnConfig?.agent ? { agent: child.spawnConfig.agent } : {}),
+        ...(child.lastOutput ? { output: child.lastOutput } : {}),
+        ...(child.error ? { error: child.error } : {}),
+        ...(child.spawnConfig?.schema ? { schema: child.spawnConfig.schema } : {}),
+      })
+      const subagentRuns = new AgentRunService({
+        resolveAgents: () => resolveSubagentConfigs({ cwd: requirePrimaryLocalWorkspaceRoot(managed.workspace) }),
+        adapter: {
+          list: async () => {
+            const parentSessionId = managed.agent?.getSessionId()
+            if (!parentSessionId) return []
+            return (await managed.agent?.listChildSessions?.(parentSessionId) ?? []).map(mapChildRun)
+          },
+          start: async options => {
+            const agent = managed.agent
+            const parentSessionId = agent?.getSessionId()
+            if (!agent?.spawnChildSession || !parentSessionId) throw new Error('Subagent execution is unavailable')
+            const result = await agent.spawnChildSession(parentSessionId, {
+              prompt: options.prompt,
+              connection: managed.provider,
+              model: options.model ?? managed.model,
+              thinkingLevel: options.thinkingLevel,
+              template: options.agent,
+              agent: options.agent,
+              forkTurns: options.forkTurns,
+              systemPrompt: options.systemPrompt,
+              tools: options.tools,
+              schema: options.schema,
+              background: true,
+            })
+            this.sendEvent({ type: 'subagent_event', sessionId: managed.id, taskId: result.sessionId, phase: 'started', status: result.status }, managed.workspace.id)
+            return { taskId: result.sessionId, status: result.status, ...(options.agent ? { agent: options.agent } : {}) }
+          },
+          message: async (taskId, prompt) => {
+            const agent = managed.agent
+            const parentSessionId = agent?.getSessionId()
+            if (!agent?.sendChildSessionMessage || !parentSessionId) throw new Error('Subagent messaging is unavailable')
+            const result = await agent.sendChildSessionMessage(parentSessionId, taskId, prompt, { background: true })
+            this.sendEvent({ type: 'subagent_event', sessionId: managed.id, taskId, phase: 'status', status: result.status, summary: 'Subagent received a new message' }, managed.workspace.id)
+            return { taskId: result.sessionId, status: result.status, ...(result.output ? { output: result.output } : {}) }
+          },
+          resume: async taskId => {
+            const agent = managed.agent
+            const parentSessionId = agent?.getSessionId()
+            if (!agent?.resumeChildSession || !parentSessionId) throw new Error('Subagent resume is unavailable')
+            const current = (await agent.listChildSessions?.(parentSessionId) ?? []).find(child => child.sessionId === taskId)
+            if (!current) throw new Error(`Subagent task not found: ${taskId}`)
+            if (current.status !== 'interrupted') throw new Error(`Only interrupted subagent tasks can be resumed: ${taskId}`)
+            const result = await agent.resumeChildSession(parentSessionId, taskId, { background: true })
+            this.sendEvent({ type: 'subagent_event', sessionId: managed.id, taskId, phase: 'status', status: result.status, summary: 'Subagent resumed' }, managed.workspace.id)
+            return { taskId: result.sessionId, status: result.status, ...(result.output ? { output: result.output } : {}) }
+          },
+          interrupt: async taskId => {
+            const agent = managed.agent
+            const parentSessionId = agent?.getSessionId()
+            if (!agent?.interruptChildSession || !parentSessionId) throw new Error('Subagent interruption is unavailable')
+            const result = await agent.interruptChildSession(parentSessionId, taskId)
+            this.sendEvent({ type: 'subagent_event', sessionId: managed.id, taskId, phase: 'status', status: result.status, summary: 'Subagent interrupted' }, managed.workspace.id)
+            return { taskId: result.sessionId, status: result.status, ...(result.output ? { output: result.output } : {}) }
+          },
+          persistResult: async (taskId, result) => {
+            const dir = join(getSessionStoragePath(managed.workspace.id, managed.id), 'subagent-results')
+            await mkdir(dir, { recursive: true })
+            const path = join(dir, `${taskId}.json`)
+            await atomicWriteFile(path, `${JSON.stringify(result, null, 2)}\n`)
+            return path
+          },
+        },
+      })
+      managed.agent.onSubagent = async (request) => {
         if (managed.deleting || this.sessions.get(managed.id) !== managed) {
           throw new Error(`Session ${managed.id} is being deleted`)
         }
-        sessionLog.info(`Child task ${request.action} request from session ${managed.id}:`, request.name || request.sessionId || '(unnamed)')
-
-        // Thin-wrapper path: delegate to pi's session tree.
-        const agent = managed.agent
-        if (!agent || !agent.spawnChildSession) {
-          throw new Error('spawnChildSession not supported by current agent backend')
-        }
-
-        const parentSessionId = agent.getSessionId()
-        if (!parentSessionId) {
-          throw new Error('Cannot spawn child session: parent pi session ID is not available yet')
-        }
-
-        if (request.action === 'list') {
-          return { children: await agent.listChildSessions?.(parentSessionId) ?? [] }
-        }
-
-        if (request.action === 'inspect') {
-          const child = (await agent.listChildSessions?.(parentSessionId) ?? [])
-            .find(candidate => candidate.sessionId === request.sessionId)
-          if (!child) throw new Error(`Child task not found: ${request.sessionId}`)
-          return { child }
-        }
-
-        if (request.action === 'message') {
-          if (!agent.sendChildSessionMessage || !request.sessionId || !request.prompt) {
-            throw new Error('Child task messaging is not supported by the current agent backend')
-          }
-          const result = await agent.sendChildSessionMessage(parentSessionId, request.sessionId, request.prompt, {
-            background: request.background,
-          })
-          return {
-            sessionId: result.sessionId,
-            name: request.name || result.sessionId,
-            status: result.status,
-            connection: request.provider ?? managed.provider,
-            model: request.model ?? managed.model,
-            output: result.output,
-          }
-        }
-
-        if (request.action === 'resume') {
-          if (!agent.resumeChildSession || !request.sessionId) {
-            throw new Error('Child task resume is not supported by the current agent backend')
-          }
-          const result = await agent.resumeChildSession(parentSessionId, request.sessionId, {
-            background: request.background,
-          })
-          return {
-            sessionId: result.sessionId,
-            name: request.name || result.sessionId,
-            status: result.status,
-            connection: request.provider ?? managed.provider,
-            model: request.model ?? managed.model,
-            output: result.output,
-          }
-        }
-
-        if (request.action === 'interrupt') {
-          if (!agent.interruptChildSession || !request.sessionId) {
-            throw new Error('Child task interruption is not supported by the current agent backend')
-          }
-          const result = await agent.interruptChildSession(parentSessionId, request.sessionId)
-          return {
-            sessionId: result.sessionId,
-            name: request.name || result.sessionId,
-            status: result.status,
-            connection: request.provider ?? managed.provider,
-            model: request.model ?? managed.model,
-            output: result.output,
-          }
-        }
-
-        const templates = await listSubagentTemplates({ cwd: requirePrimaryLocalWorkspaceRoot(managed.workspace) })
-        const template = request.template
-          ? templates.find(candidate => candidate.id === request.template)
-          : undefined
-        if (request.template && !template) {
-          throw new Error(`Child task template not found: ${request.template}`)
-        }
-        if (request.attachments?.length && template && !template.tools.includes('read')) {
-          throw new Error(`Child task template cannot receive file paths without the read tool: ${template.id}`)
-        }
-
-        const result = await agent.spawnChildSession(parentSessionId, {
-          prompt: request.prompt!,
-          connection: request.provider ?? managed.provider,
-          model: request.model ?? template?.model ?? managed.model,
-          thinkingLevel: request.thinkingLevel,
-          name: request.name,
-          attachments: request.attachments,
-          template: template?.id,
-          systemPrompt: template?.systemPrompt,
-          tools: template?.tools,
-          background: request.background,
-        })
-
-        sessionLog.info(
-          `Spawned child session in pi tree: parent=${parentSessionId} child=${result.sessionId} path=${result.sessionPath}`,
-        )
-
-        return {
-          sessionId: result.sessionId,
-          name: request.name || result.sessionId,
-          status: result.status,
-          connection: request.provider ?? managed.provider,
-          model: request.model ?? template?.model ?? managed.model,
-          output: result.output,
-        }
+        sessionLog.info(`Subagent ${request.action} request from Session ${managed.id}:`, request.taskId || request.agent || '(default)')
+        return subagentRuns.execute(request)
       }
       void this.recoverBackgroundChildOperations(managed).catch(error => {
         sessionLog.error(`Failed to recover child task deliveries for ${managed.id}:`, error)
       })
 
-      // Wire up session query and messaging tools.
+      // Wire ordinary Session tools to the shared coordination service.
       mergeSessionScopedToolCallbacks(managed.id, {
-        getSessionInfoFn: (sessionId?: string) => {
-          const targetId = sessionId ?? managed.id
-          const session = this.sessions.get(targetId)
-          if (!session) return null
-          return {
-            id: session.id,
-            name: session.name ?? session.id,
-            createdAt: session.createdAt ?? 0,
-            provider: session.provider,
-            model: session.model,
-            isActive: session.agent != null,
-          }
-        },
-        listSessionsFn: (options) => {
-          const DEFAULT_LIMIT = 20
-          const MAX_LIMIT = 100
-          const limit = Math.min(options?.limit ?? DEFAULT_LIMIT, MAX_LIMIT)
-          const offset = options?.offset ?? 0
-
-          let sessions = this.getSessions(managed.workspace.id)
-
-          // Filter
-          if (options?.search) {
-            const needle = options.search.toLowerCase()
-            sessions = sessions.filter(s => s.name?.toLowerCase().includes(needle))
-          }
-
-          // Sort
-          const sortBy = options?.sortBy ?? 'recent'
-          if (sortBy === 'recent') {
-            sessions.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))
-          } else if (sortBy === 'name') {
-            sessions.sort((a, b) => (a.name ?? '').localeCompare(b.name ?? ''))
-          }
-
-          const total = sessions.length
-
-          // Paginate
-          const page = sessions.slice(offset, offset + limit)
-
-          return {
-            total,
-            returned: page.length,
-            sessions: page.map(s => ({
-              id: s.id,
-              name: s.name ?? s.id,
-              createdAt: s.createdAt ?? 0,
-            })),
-          }
-        },
-        sendAgentMessageFn: async (sessionId: string, message: string, attachments?: Array<{ path: string; name?: string }>) => {
-          // Build FileAttachment[] from paths (same pattern as spawn_session)
-          let fileAttachments: FileAttachment[] | undefined
-          if (attachments?.length) {
-            const builtAttachments: FileAttachment[] = []
-            for (const a of attachments) {
-              try {
-                const extraDirs = getWorkspaceAllowedDirs(managed.workspace.id)
-                const safePath = await validateFilePath(a.path, extraDirs)
-                const attachment = readFileAttachment(safePath)
-                if (attachment) {
-                  if (a.name) attachment.name = a.name
-                  builtAttachments.push(attachment)
-                }
-              } catch (error) {
-                const msg = error instanceof Error ? error.message : String(error)
-                sessionLog.warn(`send_agent_message: blocked attachment path ${a.path}: ${msg}`)
-              }
-            }
-            if (builtAttachments.length > 0) fileAttachments = builtAttachments
-          }
-
-          await this.sendMessage(sessionId, message, fileAttachments)
-        },
+        listSessionsFn: options => this.sessionCoordinator.list(managed.workspace.id, options),
+        createSessionFn: request => this.sessionCoordinator.create(managed.workspace.id, request),
+        readSessionFn: (sessionId, options) => this.sessionCoordinator.read(managed.workspace.id, sessionId, options),
+        sendMessageToSessionFn: request => this.sessionCoordinator.send(managed.workspace.id, request),
       })
 
       managed.backendRuntimeSignature = runtimeSignature
@@ -5199,6 +5104,56 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
       }
     }
     return null
+  }
+
+  async getExtensionServiceCatalog(sessionId?: string): Promise<import('@mortise/shared/protocol').ExtensionServiceCatalogDTO> {
+    const candidates = sessionId ? [this.sessions.get(sessionId)] : [...this.sessions.values()]
+    for (const managed of candidates) {
+      if (managed?.agent?.extensionServicesList) return await managed.agent.extensionServicesList()
+    }
+    return { protocolVersion: 1, runtimeId: '', scope: 'session', providers: [], consumers: [] }
+  }
+
+  async invokeExtensionService(input: { requestId: string; runtimeId?: string; sessionId?: string; capability: string; operation: string; provider?: string; input: unknown; timeoutMs?: number; signal?: AbortSignal }): Promise<import('@mortise/shared/protocol').ExtensionServiceResultDTO> {
+    const candidates = input.sessionId ? [this.sessions.get(input.sessionId)] : [...this.sessions.values()]
+    for (const managed of candidates) {
+      if (!managed) continue
+      const agent = managed.agent
+      if (agent?.extensionServicesInvoke) {
+        if (input.runtimeId && agent.extensionServicesList) {
+          const catalog = await agent.extensionServicesList()
+          if (catalog.runtimeId !== input.runtimeId) {
+            return {
+              protocolVersion: 1,
+              requestId: input.requestId,
+              runtimeId: catalog.runtimeId,
+              status: 'runtime_stale',
+              error: {
+                code: 'extension_service_runtime_stale',
+                message: `Extension service runtime is stale: expected ${input.runtimeId}, current ${catalog.runtimeId}`,
+              },
+            }
+          }
+        }
+        const cancel = () => void agent.extensionServicesCancel?.(input.requestId)
+        input.signal?.addEventListener('abort', cancel, { once: true })
+        try {
+          return await agent.extensionServicesInvoke({ requestId: input.requestId, runtimeId: input.runtimeId, sessionId: input.sessionId, capability: input.capability, operation: input.operation, input: input.input, provider: input.provider, timeoutMs: input.timeoutMs })
+        } finally {
+          input.signal?.removeEventListener('abort', cancel)
+        }
+      }
+    }
+    return {
+      protocolVersion: 1,
+      requestId: input.requestId,
+      runtimeId: '',
+      status: 'unavailable',
+      error: {
+        code: 'extension_service_runtime_unavailable',
+        message: 'No active Pi session is available for extension services.',
+      },
+    }
   }
 
   /**
@@ -6204,11 +6159,14 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
       let steered = false
       let followedUp = false
       if (behavior === 'steer') {
-        steered = await (agent?.redirect(message, messageId) ?? false)
+        steered = await (agent?.redirect(message, messageId, {
+          origin: options?.source,
+        }) ?? false)
       }
       if (!steered) {
         followedUp = await (agent?.followUp(message, attachments, {
           clientMutationId: messageId,
+          origin: options?.source,
           attachmentRefs: storedAttachments?.map(attachment => ({
             id: attachment.id,
             name: attachment.name,
@@ -6461,6 +6419,7 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
       sendSpan.mark('chat.starting')
       const chatIterator = agent.chat(message, modelInputAttachments.attachments, {
 		clientMutationId: messageId,
+        origin: options?.source,
         isRetry: _isAuthRetry === true,
         interruptedAttempt,
         attachmentRefs: storedAttachments?.map(attachment => ({
@@ -8357,26 +8316,35 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
 
     const projector = this.piProjectionBySession.get(sessionId)
     if (projector) {
-      const snapshot = projector.createSnapshot()
-      let seq = snapshot.lastSeq + 1
-      for (const entity of snapshot.entities) {
-        if (!entity.payload || typeof entity.payload !== 'object') continue
-        const payload = entity.payload as Record<string, unknown>
-        if (payload.queueStatus !== 'queued') continue
-        if (payload.messageId !== messageId && payload.clientMutationId !== messageId && payload.ownerMessageId !== messageId) continue
-        this.applyPiProjectionEvent({
-          schemaVersion: 1,
-          eventId: `${snapshot.runtimeId}:host-queue-cancelled:${seq}`,
-          seq,
-          sessionId,
-          runtimeId: snapshot.runtimeId,
-          entityId: entity.entityId,
-          entityType: entity.entityType,
-          entityVersion: entity.entityVersion + 1,
-          kind: entity.kind,
-          payload: { ...payload, queueStatus: 'cancelled' },
-        })
-        seq++
+      // Route the cancellation through the agent's sequence-owning builder so
+      // the next runtime event cannot collide with the cancellation seq and be
+      // dropped as stale (which would interrupt live stream rendering).
+      const cancelledByAgent = managed.agent?.projectQueuedCancellation?.({
+        clientMutationId: mutationId,
+        messageId: queued?.messageId ?? messageId,
+      })
+      if (!cancelledByAgent) {
+        const snapshot = projector.createSnapshot()
+        let seq = snapshot.lastSeq + 1
+        for (const entity of snapshot.entities) {
+          if (!entity.payload || typeof entity.payload !== 'object') continue
+          const payload = entity.payload as Record<string, unknown>
+          if (payload.queueStatus !== 'queued') continue
+          if (payload.messageId !== messageId && payload.clientMutationId !== messageId && payload.ownerMessageId !== messageId) continue
+          this.applyPiProjectionEvent({
+            schemaVersion: 1,
+            eventId: `${snapshot.runtimeId}:host-queue-cancelled:${seq}`,
+            seq,
+            sessionId,
+            runtimeId: snapshot.runtimeId,
+            entityId: entity.entityId,
+            entityType: entity.entityType,
+            entityVersion: entity.entityVersion + 1,
+            kind: entity.kind,
+            payload: { ...payload, queueStatus: 'cancelled' },
+          })
+          seq++
+        }
       }
     }
 

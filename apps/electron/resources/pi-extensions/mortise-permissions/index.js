@@ -14,8 +14,8 @@ const READ_ONLY_TOOLS = new Set([
   "webfetch",
   "web_search",
   "websearch",
-  "get_session_info",
   "list_sessions",
+  "read_session",
   "list_messaging_channels",
 ]);
 

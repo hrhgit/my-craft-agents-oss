@@ -14,7 +14,6 @@ const RECENT_DIR_SCENARIO_DATA: Record<RecentDirScenario, string[]> = {
     '/Users/demo/projects/mortise/apps/cli',
     '/Users/demo/projects/mortise/packages/shared',
     '/Users/demo/projects/mortise/packages/server-core',
-    '/Users/demo/projects/mortise/packages/shared',
     '/Users/demo/projects/mortise/packages/ui',
     '/Users/demo/projects/mortise/scripts',
   ],

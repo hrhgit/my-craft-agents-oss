@@ -50,6 +50,9 @@ export interface AppShellContextType {
   piProviders: PiGlobalProviderForDisplay[]
   piGlobalSettings: PiGlobalSettings
   refreshPiGlobalConfig: () => Promise<void>
+  /** "仅显示标签模型" model-picker preference (single-level tagged list). */
+  showTaggedModelsOnly: boolean
+  setShowTaggedModelsOnly: (enabled: boolean) => Promise<void>
   /** Get draft input text for a session - reads from ref without triggering re-renders */
   getDraft: (sessionId: string) => string
   /** Get persisted attachment refs (path + name) for a session's draft - no file IO */

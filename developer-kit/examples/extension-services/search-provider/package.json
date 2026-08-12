@@ -1,0 +1,42 @@
+{
+  "name": "example-search-provider",
+  "private": true,
+  "type": "module",
+  "pi": {
+    "extensions": [{
+      "id": "example-search-provider",
+      "path": "./index.js",
+      "activation": "startup",
+      "manifest": {
+        "schemaVersion": 1,
+        "name": "Example Search Provider",
+        "version": "1.0.0",
+        "author": { "name": "Mortise Developer Kit" },
+        "description": "Deterministic local search capability for composition examples.",
+        "permissions": [],
+        "provides": {
+          "search.query": {
+            "version": "1.0.0",
+            "scope": "workspace",
+            "service": {
+              "operations": {
+                "query": {
+                  "inputSchema": { "type": "object", "required": ["query"], "properties": { "query": { "type": "string", "minLength": 1 } }, "additionalProperties": false },
+                  "outputSchema": { "type": "object", "required": ["results"], "properties": { "results": { "type": "array", "items": { "type": "object", "required": ["title", "snippet"], "properties": { "title": { "type": "string" }, "snippet": { "type": "string" } }, "additionalProperties": false } } }, "additionalProperties": false }
+                }
+              }
+            },
+            "ui": { "modules": ["search-result-view"] }
+          }
+        }
+      },
+      "ui": {
+        "schemaVersion": 2,
+        "title": "Example Search Provider",
+        "category": "ui",
+        "compatibility": { "uiApi": "^2.0.0", "mortise": ">=0.1.0 <0.2.0" },
+        "modules": [{ "id": "search-result-view", "entry": "./search-result-view.js", "styles": ["./search-result-view.css"], "apiVersion": "1.0.0" }]
+      }
+    }]
+  }
+}

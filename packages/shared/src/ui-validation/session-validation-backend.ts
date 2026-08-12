@@ -450,10 +450,10 @@ function deterministicBackend(
     abort: async () => undefined, forceAbort: () => undefined, interruptForHandoff: () => undefined, redirect: async () => false,
     followUp: async () => false, runMiniCompletion: async () => null, dispose: () => undefined, destroy: () => undefined,
     updateRuntimeConfig: async () => false,
-    projectQueuedUser: () => undefined, projectRuntimeError: () => undefined, getSummarizeCallback: () => async () => null,
+    projectQueuedUser: () => undefined, projectQueuedCancellation: () => 0, projectRuntimeError: () => undefined, getSummarizeCallback: () => async () => null,
     updateSdkCwd: () => undefined, setWorkspace: () => undefined, generateTitle: async () => null, regenerateTitle: async () => null,
     sendExtensionCommandInvoke: async () => ({ invoked: false, customMessages: [] }),
-    onPlanSubmitted: null, onDebug: null, onBackendAuthRequired: null, onSpawnSession: null,
+    onPlanSubmitted: null, onDebug: null, onBackendAuthRequired: null, onSubagent: null,
   }
 }
 

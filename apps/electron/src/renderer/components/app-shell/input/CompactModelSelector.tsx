@@ -25,7 +25,7 @@ import {
   getModelDisplayName,
   getModelShortName,
 } from '@config/models'
-import { piProviderModelSupportsImages } from '@mortise/shared/config/pi-provider-models'
+import { piProviderModelSupportsImages, piProviderModelTags } from '@mortise/shared/config/pi-provider-models'
 import {
   THINKING_LEVELS,
   type ThinkingLevel,
@@ -37,6 +37,7 @@ import {
   groupProviders,
   resolveEffectiveProvider,
   stripPiPrefixForDisplay,
+  collectTaggedModels,
 } from './model-picker-helpers'
 import { useModelVisionToggle } from './useModelVisionToggle'
 
@@ -76,6 +77,7 @@ export function CompactModelSelector({
   const appShellCtx = useOptionalAppShellContext()
   const providerItems = appShellCtx?.piProviders ?? []
   const defaultProvider = appShellCtx?.piGlobalSettings.defaultProvider
+  const showTaggedModelsOnly = appShellCtx?.showTaggedModelsOnly ?? false
 
   const toggleVision = useModelVisionToggle()
 
@@ -131,6 +133,13 @@ export function CompactModelSelector({
     [providerItems],
   )
 
+  // "仅显示标签模型": single-level list of tagged models across providers.
+  const taggedEntries = React.useMemo(
+    () => (showTaggedModelsOnly ? collectTaggedModels(providerItems) : []),
+    [showTaggedModelsOnly, providerItems],
+  )
+  const taggedMode = taggedEntries.length > 0
+
   const showProviderIcon =
     !!effectiveProviderDetails &&
     providerItems.length > 1 &&
@@ -156,6 +165,18 @@ export function CompactModelSelector({
         onProviderChange(connSlug)
       }
       onModelChange(modelId, connSlug)
+      setOpen(false)
+    },
+    [onModelChange, onProviderChange, effectiveProvider],
+  )
+
+  const handlePickTaggedModel = React.useCallback(
+    (providerKey: string, modelId: string) => {
+      const isCurrentProvider = effectiveProvider === providerKey
+      if (!isCurrentProvider && onProviderChange) {
+        onProviderChange(providerKey)
+      }
+      onModelChange(modelId, providerKey)
       setOpen(false)
     },
     [onModelChange, onProviderChange, effectiveProvider],
@@ -188,7 +209,7 @@ export function CompactModelSelector({
                 <ProviderIcon provider={effectiveProviderDetails} size={14} />
               )}
               <span className="truncate min-w-0">{currentModelDisplayName}</span>
-              {pickerMode !== 'locked-single' && (
+              {(pickerMode !== 'locked-single' || taggedMode) && (
                 <ChevronDown className="h-3 w-3 opacity-50 shrink-0" />
               )}
             </>
@@ -223,6 +244,37 @@ export function CompactModelSelector({
                 {t('chat.modelPicker.openAiSettings')}
               </button>
             </div>
+          ) : taggedMode ? (
+            // "仅显示标签模型": single-level list, no provider→model two-level.
+            taggedEntries.map(entry => {
+              const isSelected =
+                effectiveProvider === entry.providerKey && currentModel === entry.modelId
+              return (
+                <DrawerClose asChild key={`${entry.providerKey}/${entry.modelId}`}>
+                  <button
+                    type="button"
+                    onClick={() => handlePickTaggedModel(entry.providerKey, entry.modelId)}
+                    className={cn(
+                      'flex items-center justify-between w-full px-3 py-2 rounded-lg text-left transition-colors',
+                      isSelected ? 'bg-foreground/5' : 'hover:bg-foreground/5',
+                    )}
+                  >
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium truncate">{entry.modelName}</div>
+                      <div className="text-xs text-foreground/50 truncate">
+                        {entry.providerKey}
+                      </div>
+                      <ModelTagChips tags={entry.tags} />
+                    </div>
+                    <div className="flex items-center gap-1 ml-3 shrink-0">
+                      {isSelected && (
+                        <Check className="h-3 w-3 text-foreground/60" />
+                      )}
+                    </div>
+                  </button>
+                </DrawerClose>
+              )
+            })
           ) : pickerMode === 'locked-single' && providerDefaultModel ? (
             <LockedSingleRow
               modelId={providerDefaultModel}
@@ -298,7 +350,10 @@ export function CompactModelSelector({
                                       : 'hover:bg-foreground/5',
                                   )}
                                 >
-                                  <span className="text-sm font-medium truncate">{modelName}</span>
+                                  <span className="flex items-center gap-1.5 min-w-0">
+                                    <span className="text-sm font-medium truncate">{modelName}</span>
+                                    <ModelTagChips tags={tagsOf(conn.provider, modelId)} />
+                                  </span>
                                   <div className="flex items-center gap-1 ml-3 shrink-0">
                                     {showVision && (
                                       <VisionToggle
@@ -358,7 +413,10 @@ export function CompactModelSelector({
                     )}
                   >
                     <div className="min-w-0">
-                      <div className="text-sm font-medium truncate">{modelName}</div>
+                      <div className="flex items-center gap-1.5">
+                        <div className="text-sm font-medium truncate">{modelName}</div>
+                        <ModelTagChips tags={effectiveProviderDetails ? tagsOf(effectiveProviderDetails.provider, modelId) : []} />
+                      </div>
                       {description && (
                         <div className="text-xs text-foreground/50 truncate">
                           {description}
@@ -482,6 +540,26 @@ function LockedSingleRow({
         <Check className="h-3 w-3 text-foreground/60" />
       </div>
     </div>
+  )
+}
+
+function tagsOf(provider: { models?: Array<{ id: string; tags?: unknown }> } | undefined, modelId: string): string[] {
+  return piProviderModelTags(provider as Parameters<typeof piProviderModelTags>[0], modelId)
+}
+
+function ModelTagChips({ tags }: { tags: string[] }) {
+  if (tags.length === 0) return null
+  return (
+    <span className="inline-flex items-center gap-1 shrink-0">
+      {tags.map(tag => (
+        <span
+          key={tag}
+          className="inline-flex items-center h-4 px-1.5 text-[10px] font-medium leading-none rounded-[3px] bg-foreground/10 text-foreground/70"
+        >
+          {tag}
+        </span>
+      ))}
+    </span>
   )
 }
 

@@ -1,5 +1,6 @@
 import * as React from 'react'
-import type { ComponentEntry } from './types'
+import { useTranslation } from 'react-i18next'
+import type { ComponentEntry, PlaygroundLocale } from './types'
 import { DragDropManager } from '@dnd-kit/dom'
 import { Sortable } from '@dnd-kit/dom/sortable'
 import {
@@ -103,23 +104,278 @@ interface PlannerProject {
   memberCount: number
 }
 
-const projects: PlannerProject[] = [
-  { id: 'p1', name: 'Personal', status: 'open', sortOrder: 1, installationHint: 'MacBook · my-workspace', memberCount: 1 },
-  { id: 'p2', name: 'Planner V2', status: 'open', sortOrder: 2, installationHint: 'MacBook · my-workspace', memberCount: 3 },
-  { id: 'p3', name: 'Mortise App', status: 'open', sortOrder: 3, installationHint: 'Import mounted locally', memberCount: 4 },
-  { id: 'p4', name: 'Markdown Samples', status: 'open', sortOrder: 4, installationHint: 'Editor test fixtures', memberCount: 1 },
-]
+function buildProjects(locale: PlaygroundLocale): PlannerProject[] {
+  if (locale === 'zh-CN') {
+    return [
+      { id: 'p1', name: '个人', status: 'open', sortOrder: 1, installationHint: 'MacBook · my-workspace', memberCount: 1 },
+      { id: 'p2', name: 'Planner V2', status: 'open', sortOrder: 2, installationHint: 'MacBook · my-workspace', memberCount: 3 },
+      { id: 'p3', name: 'Mortise App', status: 'open', sortOrder: 3, installationHint: '本地挂载的导入', memberCount: 4 },
+      { id: 'p4', name: 'Markdown 示例', status: 'open', sortOrder: 4, installationHint: '编辑器测试夹具', memberCount: 1 },
+    ]
+  }
 
-const initialHeadings: PlannerHeading[] = [
-  { id: 'h1', projectId: 'p2', title: 'Today', sortOrder: 1 },
-  { id: 'h2', projectId: 'p2', title: 'Upcoming', sortOrder: 2 },
-  { id: 'h3', projectId: 'p2', title: 'Later', sortOrder: 3 },
-  { id: 'h4', projectId: 'p4', title: 'Diagrams & Visuals', sortOrder: 1 },
-  { id: 'h5', projectId: 'p4', title: 'Code & Math', sortOrder: 2 },
-  { id: 'h6', projectId: 'p4', title: 'Long-form & Mixed', sortOrder: 3 },
-]
+  return [
+    { id: 'p1', name: 'Personal', status: 'open', sortOrder: 1, installationHint: 'MacBook · my-workspace', memberCount: 1 },
+    { id: 'p2', name: 'Planner V2', status: 'open', sortOrder: 2, installationHint: 'MacBook · my-workspace', memberCount: 3 },
+    { id: 'p3', name: 'Mortise App', status: 'open', sortOrder: 3, installationHint: 'Import mounted locally', memberCount: 4 },
+    { id: 'p4', name: 'Markdown Samples', status: 'open', sortOrder: 4, installationHint: 'Editor test fixtures', memberCount: 1 },
+  ]
+}
 
-const initialTasks: PlannerTask[] = [
+function buildHeadings(locale: PlaygroundLocale): PlannerHeading[] {
+  if (locale === 'zh-CN') {
+    return [
+      { id: 'h1', projectId: 'p2', title: '今天', sortOrder: 1 },
+      { id: 'h2', projectId: 'p2', title: '即将到来', sortOrder: 2 },
+      { id: 'h3', projectId: 'p2', title: '以后', sortOrder: 3 },
+      { id: 'h4', projectId: 'p4', title: '图表与可视化', sortOrder: 1 },
+      { id: 'h5', projectId: 'p4', title: '代码与数学', sortOrder: 2 },
+      { id: 'h6', projectId: 'p4', title: '长文与混合', sortOrder: 3 },
+    ]
+  }
+
+  return [
+    { id: 'h1', projectId: 'p2', title: 'Today', sortOrder: 1 },
+    { id: 'h2', projectId: 'p2', title: 'Upcoming', sortOrder: 2 },
+    { id: 'h3', projectId: 'p2', title: 'Later', sortOrder: 3 },
+    { id: 'h4', projectId: 'p4', title: 'Diagrams & Visuals', sortOrder: 1 },
+    { id: 'h5', projectId: 'p4', title: 'Code & Math', sortOrder: 2 },
+    { id: 'h6', projectId: 'p4', title: 'Long-form & Mixed', sortOrder: 3 },
+  ]
+}
+
+function buildTasks(locale: PlaygroundLocale): PlannerTask[] {
+  if (locale === 'zh-CN') {
+    return [
+      {
+        id: 't1',
+        headingId: 'h1',
+        title: '在 Playground 中搭建 Planner 外壳',
+        notes: '三栏布局，包含**项目**、**分组**、**任务**和详情视图。\n\n## 需求\n- 保持节奏沉稳轻量\n- 面板应与主应用外观一致\n- 调整大小手柄带渐变反馈\n\n> 详情面板应像 Linear 的问题视图一样。',
+        state: 'in_progress',
+        due: '今天 · 21:00',
+      },
+      {
+        id: 't2',
+        headingId: 'h1',
+        title: '添加带同步状态徽章的链接会话卡片',
+        notes: '即使会话无法解析，快照也应保持可用。\n\n**同步状态：**\n1. \`local_only\` — 尚未上传\n2. \`pending_upload\` — 已排队等待同步\n3. \`uploaded\` — 已在服务器确认\n4. \`remote_only\` — 仅存在于服务器端\n5. \`unavailable\` — 会话已删除\n6. \`upload_failed\` — 需要重试',
+        state: 'todo',
+        due: '今天 · 22:00',
+      },
+      {
+        id: 't5',
+        headingId: 'h1',
+        title: '接通分组间的拖拽排序',
+        notes: '跨越分组边界拖动的任务应更新其 headingId。',
+        state: 'done',
+        due: '今天 · 14:00',
+      },
+      {
+        id: 't6',
+        headingId: 'h1',
+        title: '任务列表的键盘导航',
+        notes: '方向键移动选择，Enter 打开详情，Escape 取消选择。',
+        state: 'todo',
+        due: '今天 · 23:00',
+      },
+      {
+        id: 't7',
+        headingId: 'h1',
+        title: 'Cmd+N 时快速添加输入框自动聚焦',
+        notes: '全局快捷键应聚焦输入框并全选文本。',
+        state: 'done',
+        due: '今天 · 12:00',
+      },
+      {
+        id: 't3',
+        headingId: 'h2',
+        title: '带追加式事件的任务时间线标签页',
+        notes: '将 task_events 表中的事件类型映射为可读的时间线行。',
+        state: 'todo',
+        due: '明天',
+      },
+      {
+        id: 't8',
+        headingId: 'h2',
+        title: '可移植核心：tasks + headings 的 SQLite 模式',
+        notes: '设计带有 **WAL 模式**、CRDT 友好 ID 和 \`sort_order\` 列的表。\n\n### 表\n- \`tasks\` — id, title, notes, state, heading_id, sort_order\n- \`headings\` — id, title, project_id, sort_order\n- \`task_events\` — id, task_id, type, payload, created_at\n- \`task_session_links\` — id, task_id, snapshot_id, sync_state',
+        state: 'todo',
+        due: '明天',
+      },
+      {
+        id: 't9',
+        headingId: 'h2',
+        title: '同步引擎：冲突解决策略',
+        notes: '每个字段使用带向量时钟的最后写入者获胜（LWW）。\n\n## 权衡\n- **LWW** 简单，但可能丢失并发编辑\n- **CRDT** 正确，但增加复杂性\n- *混合方案*：标量字段用 LWW，列表（sort_order）用 CRDT\n\n> 先从 LWW 开始，如有需要后续再增加冲突 UI。',
+        state: 'todo',
+        due: '3月2日',
+      },
+      {
+        id: 't10',
+        headingId: 'h2',
+        title: '打开任务时自动刷新会话快照',
+        notes: '选中带有链接会话的任务时，在后台刷新过期的快照。',
+        state: 'todo',
+        due: '3月3日',
+      },
+      {
+        id: 't11',
+        headingId: 'h2',
+        title: '支持自然语言输入的截止日期选择器',
+        notes: '将“明天”、“下周五”、“3 天后”解析为实际日期。',
+        state: 'todo',
+        due: '3月4日',
+      },
+      {
+        id: 't4',
+        headingId: 'h3',
+        title: '项目共享体验（成员 + 角色）',
+        notes: '项目 ACL 根，带所有者/编辑者/查看者提示。',
+        state: 'cancelled',
+        due: '下周',
+      },
+      {
+        id: 't12',
+        headingId: 'h3',
+        title: '多工作区任务视图',
+        notes: '将多个工作区的任务聚合到统一的“我的任务”视图。',
+        state: 'todo',
+        due: '3月10日',
+      },
+      {
+        id: 't13',
+        headingId: 'h3',
+        title: '带类 cron 调度的重复任务',
+        notes: '支持每日、每周、每月的重复，带跳过/稍后提醒选项。',
+        state: 'todo',
+        due: '3月15日',
+      },
+      {
+        id: 't14',
+        headingId: 'h3',
+        title: '从会话记录生成任务模板',
+        notes: '从会话中提取行动项，并创建带预填备注的任务。',
+        state: 'todo',
+        due: '3月20日',
+      },
+      {
+        id: 't15',
+        headingId: 'h3',
+        title: '7 天后归档已完成的任务',
+        notes: '自动归档并支持撤销。归档任务在单独的筛选视图中可见。',
+        state: 'todo',
+        due: '稍后',
+      },
+      {
+        id: 't16',
+        headingId: 'h3',
+        title: '逾期任务的通知徽章',
+        notes: '任务逾期时，在项目侧边栏项上显示红点。',
+        state: 'todo',
+        due: '稍后',
+      },
+      // ── Markdown Samples project (p4) ──
+      {
+        id: 'ms1',
+        headingId: 'h4',
+        title: 'Mermaid：数据流图',
+        notes: '记录从用户操作到持久化的完整数据管道。\n\n```mermaid\ngraph LR\n    A[User Action] --> B[React State]\n    B --> C[SQLite WAL]\n    C --> D[Sync Engine]\n    D --> E[Remote API]\n    E --> F[Conflict Resolution]\n    F --> C\n```\n\n![Planner 管道看板模拟](https://picsum.photos/seed/planner-pipeline/1200/620 "Planner 管道模拟")\n\n同步引擎应处理 **离线优先** 写入，并在连接恢复时排队上传。',
+        state: 'in_progress',
+        due: '',
+      },
+      {
+        id: 'ms2',
+        headingId: 'h4',
+        title: 'Mermaid：状态机',
+        notes: '以状态图展示任务生命周期。\n\n```mermaid\nstateDiagram-v2\n    [*] --> todo\n    todo --> in_progress: Start\n    in_progress --> done: Complete\n    in_progress --> todo: Pause\n    todo --> cancelled: Cancel\n    in_progress --> cancelled: Cancel\n    done --> todo: Reopen\n    cancelled --> todo: Reopen\n```\n\n每次转换都会向追加式的 \`task_events\` 表发出一个**事件**。',
+        state: 'todo',
+        due: '',
+      },
+      {
+        id: 'ms3',
+        headingId: 'h4',
+        title: 'Mermaid：时序图',
+        notes: '客户端与服务器之间的同步协议。\n\n```mermaid\nsequenceDiagram\n    participant C as Client\n    participant S as Server\n    C->>S: POST /sync (events[])\n    S-->>C: 200 OK (ack + remote events)\n    C->>C: Apply remote events\n    C->>C: Resolve conflicts (LWW)\n    Note over C,S: Retry with exponential backoff on failure\n```',
+        state: 'done',
+        due: '',
+      },
+      {
+        id: 'ms4',
+        headingId: 'h5',
+        title: '代码：TypeScript — 分数索引',
+        notes: '使用分数索引作为 \`sort_order\`，避免每次重排时重新编号。\n\n```typescript\nfunction midpoint(a: string, b: string): string {\n  // Generate a string between a and b lexicographically\n  const aCode = a.charCodeAt(0) || 96 // \'a\' - 1\n  const bCode = b.charCodeAt(0) || 123 // \'z\' + 1\n  const mid = Math.floor((aCode + bCode) / 2)\n  if (mid === aCode) {\n    return a + String.fromCharCode(\n      Math.floor((97 + (b.charCodeAt(1) || 123)) / 2)\n    )\n  }\n  return String.fromCharCode(mid)\n}\n```\n\n### 边界情况\n- 在最前面插入（在 \`"a"\` 之前）\n- 在最后面插入（在 \`"z"\` 之后）\n- 单字符键空间耗尽 → 必须用第二个字符扩展\n\n> 另见：[Implementing Fractional Indexing](https://observablehq.com/@dgreensp/implementing-fractional-indexing)（David Greenspan 著）。',
+        state: 'todo',
+        due: '',
+      },
+      {
+        id: 'ms5',
+        headingId: 'h5',
+        title: '代码：SQL — 查询基准',
+        notes: '为关键 SQLite 查询做基准测试。\n\n```sql\n-- Tasks by heading (hot path)\nSELECT id, title, state, sort_order\nFROM tasks\nWHERE heading_id = ?\nORDER BY sort_order;\n\n-- Overdue tasks across all projects\nSELECT t.id, t.title, t.due_at, h.title AS heading\nFROM tasks t\nJOIN headings h ON h.id = t.heading_id\nWHERE t.due_at < datetime(\'now\')\n  AND t.state NOT IN (\'done\', \'cancelled\')\nORDER BY t.due_at ASC;\n\n-- Event timeline for a task\nSELECT type, payload, created_at\nFROM task_events\nWHERE task_id = ?\nORDER BY created_at DESC\nLIMIT 50;\n```\n\n目标：在 \`heading_id\`、\`due_at\` 和 \`task_id\` 上建索引后，所有查询低于 **5ms**。',
+        state: 'todo',
+        due: '',
+      },
+      {
+        id: 'ms6',
+        headingId: 'h5',
+        title: '代码：JSON — API 契约',
+        notes: '任务 CRUD 的 REST API 表面。\n\n```json\n{\n  "POST /tasks": {\n    "body": { "title": "string", "headingId": "string", "notes?": "string" },\n    "response": { "id": "string", "createdAt": "ISO8601" }\n  },\n  "PATCH /tasks/:id": {\n    "body": { "title?": "string", "state?": "TaskState", "notes?": "string" },\n    "response": { "updatedAt": "ISO8601" }\n  },\n  "DELETE /tasks/:id": {\n    "response": 204\n  }\n}\n```\n\n所有变更都返回 \`ETag\` 头，用于**乐观并发控制**。',
+        state: 'done',
+        due: '',
+      },
+      {
+        id: 'ms7',
+        headingId: 'h5',
+        title: '数学：优先级评分公式',
+        notes: '设计一个结合紧迫性与重要性的优先级评分系统。\n\n**艾森豪威尔权重**可以建模为：\n\n$$P = w_u \\cdot U + w_i \\cdot I + \\lambda \\cdot e^{-\\Delta t / \\tau}$$\n\n其中：\n- $$U$$ = 紧迫度评分（0–10）\n- $$I$$ = 重要度评分（0–10）\n- $$\\Delta t$$ = 距截止日期的时间\n- $$\\tau$$ = 衰减常数（例如 7 天）\n- $$w_u, w_i$$ = 可调权重\n- $$\\lambda$$ = 截止压力系数\n\n默认权重：$$w_u = 0.4$$，$$w_i = 0.6$$，$$\\lambda = 2.0$$，$$\\tau = 7$$。',
+        state: 'in_progress',
+        due: '',
+      },
+      {
+        id: 'ms8',
+        headingId: 'h5',
+        title: '数学：信息熵',
+        notes: '用香农熵衡量任务在各分组间的分布。\n\n$$H(X) = -\\sum_{i=1}^{n} p(x_i) \\log_2 p(x_i)$$\n\n对于在 $$n$$ 个分组间的均衡分布：\n\n$$H_{max} = \\log_2(n)$$\n\n可以推导出**失衡分数**：\n\n$$\\text{imbalance} = 1 - \\frac{H(X)}{H_{max}}$$\n\n接近 0 表示任务分布均匀；接近 1 表示所有任务都堆在同一个分区。',
+        state: 'todo',
+        due: '',
+      },
+      {
+        id: 'ms9',
+        headingId: 'h6',
+        title: '长文：完整架构规格',
+        notes: '# Planner V2 架构\n\n本文档概述 **Planner V2 系统**的**完整架构**。\n\n## 概述\n\nPlanner 是一个*三层*系统：\n\n1. **表现层** — 带 Tiptap 编辑器的 React 组件\n2. **状态层** — 启用 WAL 模式的 SQLite，通过类型化查询暴露\n3. **同步层** — 离线优先的 CRDT 同步与冲突解决\n\n![架构概念草图](https://picsum.photos/seed/planner-arch-spec/1280/720 "架构概念")\n\n## 数据模型\n\n核心实体：\n- **Project** — 带 ACL 的顶层容器\n- **Heading** — 项目内的有序分区\n- **Task** — 带状态机的独立工作项\n- **Event** — 追加式审计日志\n- **SessionLink** — 对代理会话的引用\n\n## 任务状态机\n\n```mermaid\nstateDiagram-v2\n    [*] --> todo\n    todo --> in_progress: Start\n    in_progress --> done: Complete\n    in_progress --> todo: Pause\n    todo --> cancelled: Cancel\n    in_progress --> cancelled: Cancel\n    done --> todo: Reopen\n    cancelled --> todo: Reopen\n```\n\n## 同步协议\n\n每次变更都会产生一个**同步事件**：\n1. 本地应用（乐观更新）\n2. 在 \`sync_outbox\` 表中排队\n3. 在线时发送到服务器\n4. 以服务器时间戳确认\n5. 按字段通过 LWW 解决冲突\n\n> 同步引擎必须优雅地处理**网络分区**。离线创建的任务应在连接恢复后无数据丢失地同步。\n\n## 性能目标\n\n| 指标 | 目标 |\n|--------|--------|\n| 任务列表渲染 | < 16ms |\n| 任务创建（本地） | < 5ms |\n| 同步往返 | < 200ms |\n| 离线队列容量 | 10,000 事件 |\n\n## 待解决问题\n\n- 是否支持**实时协作**（多个用户同时编辑同一任务）？\n- 如何处理 SQLite 数据库的**模式迁移**？\n- 事件的**保留策略**是什么？',
+        state: 'todo',
+        due: '',
+      },
+      {
+        id: 'ms10',
+        headingId: 'h6',
+        title: '混合：无障碍审计',
+        notes: '确保任务列表符合 **WCAG 2.1 AA** 标准。\n\n### 检查清单\n- [ ] 所有交互元素都有 \`aria-label\` 或可见标签\n- [ ] 拖放有键盘替代方案\n- [ ] 任务创建/删除后的焦点管理\n- [ ] 文本颜色对比度 ≥ 4.5:1\n- [ ] 屏幕阅读器播报状态变化\n- [ ] 任务列表使用 \`role="listbox"\`，项目使用 \`role="option"\`\n\n### 键盘快捷键\n| 按键 | 操作 |\n|-----|--------|\n| \`↑\` / \`↓\` | 移动选择 |\n| \`Enter\` | 打开详情 |\n| \`Escape\` | 关闭详情 |\n| \`Space\` | 切换状态 |\n| \`Cmd+N\` | 新建任务 |\n| \`Delete\` | 取消任务 |\n\n> 每次发布前运行 [axe-core](https://www.deque.com/axe/) 扫描。',
+        state: 'todo',
+        due: '',
+      },
+      {
+        id: 'ms11',
+        headingId: 'h6',
+        title: '混合：代码 + 图表 + 数学结合',
+        notes: '## 同步冲突解决\n\n当两个客户端编辑同一字段时，我们使用带 Lamport 时间戳的**最后写入者获胜**。\n\n### 算法\n\n```typescript\nfunction resolve<T>(local: Versioned<T>, remote: Versioned<T>): T {\n  if (remote.timestamp > local.timestamp) return remote.value\n  if (remote.timestamp < local.timestamp) return local.value\n  // Tie-break by client ID (lexicographic)\n  return remote.clientId > local.clientId\n    ? remote.value\n    : local.value\n}\n```\n\n### 收敛性证明\n\n对于具有唯一 ID 的 $$n$$ 个客户端，解析函数是：\n- **可交换**：$$f(a, b) = f(b, a)$$（时间戳相等时）\n- **幂等**：$$f(a, a) = a$$\n- **可结合**：$$f(f(a, b), c) = f(a, f(b, c))$$\n\n这保证所有副本收敛到相同状态。\n\n### 流程\n\n```mermaid\ngraph TD\n    A[Local Write] --> B{Conflict?}\n    B -->|No| C[Apply directly]\n    B -->|Yes| D[Compare timestamps]\n    D --> E{Remote wins?}\n    E -->|Yes| F[Apply remote]\n    E -->|No| G[Keep local]\n    F --> H[Emit reconciled event]\n    G --> H\n```\n\n> 这种方法用**简单性**换取*并发编辑下的正确性*。未来版本可以使用基于操作的 CRDT 获得更丰富的合并语义。',
+        state: 'in_progress',
+        due: '',
+      },
+      {
+        id: 'ms12',
+        headingId: 'h6',
+        title: '散文：富格式展示',
+        notes: '此任务演示所有**基础**格式。\n\n## 标题生效\n\n### 子标题也可以\n\n这里有一些*斜体文本*、一些**粗体文本**和***粗斜体***。我们还有 \`行内代码\` 和 ~~删除线~~。\n\n## 列表\n\n无序：\n- 第一项\n- 第二项，内含**粗体**\n  - 嵌套项\n  - 另一个嵌套项\n- 第三项\n\n有序：\n1. 第一步\n2. 第二步\n3. 第三步\n\n## 引用\n\n> 这是一条引用。\n> 它可以跨多行。\n>\n> 甚至可以包含**格式**。\n\n## 链接、图片和代码\n\n访问 [Mortise](https://mortise.do) 了解更多信息。\n\n![富格式示例图片](https://picsum.photos/seed/planner-rich-formatting/1100/520 "富格式示例")\n\n```bash\n# A simple shell script\nfor i in $(seq 1 5); do\n  echo "Task $i completed"\ndone\n```\n\n---\n\n上面的水平线很好地分隔了各节。',
+        state: 'done',
+        due: '',
+      },
+    ]
+  }
+
+  return [
   {
     id: 't1',
     headingId: 'h1',
@@ -346,21 +602,41 @@ const initialTasks: PlannerTask[] = [
     due: '',
   },
 ]
+}
 
-const snapshots: SessionSnapshot[] = [
-  {
-    id: 's1',
-    title: 'Planner architecture review',
-    summary: 'Validated portable core + local integration split; queued DB schema migration checklist.',
-    lastUpdated: '5 min ago',
-  },
-  {
-    id: 's2',
-    title: 'Drag interaction tuning',
-    summary: 'Following the same dnd-kit/dom path as the vertical sample for consistency.',
-    lastUpdated: '1 hour ago',
-  },
-]
+function buildSnapshots(locale: PlaygroundLocale): SessionSnapshot[] {
+  if (locale === 'zh-CN') {
+    return [
+      {
+        id: 's1',
+        title: 'Planner 架构评审',
+        summary: '验证了可移植核心与本地集成的拆分；已排队数据库模式迁移检查清单。',
+        lastUpdated: '5 分钟前',
+      },
+      {
+        id: 's2',
+        title: '拖拽交互调优',
+        summary: '与垂直示例保持一致，沿用相同的 dnd-kit/dom 路径。',
+        lastUpdated: '1 小时前',
+      },
+    ]
+  }
+
+  return [
+    {
+      id: 's1',
+      title: 'Planner architecture review',
+      summary: 'Validated portable core + local integration split; queued DB schema migration checklist.',
+      lastUpdated: '5 min ago',
+    },
+    {
+      id: 's2',
+      title: 'Drag interaction tuning',
+      summary: 'Following the same dnd-kit/dom path as the vertical sample for consistency.',
+      lastUpdated: '1 hour ago',
+    },
+  ]
+}
 
 const sessionLinks: TaskSessionLinkLocal[] = [
   { id: 'l1', taskId: 't1', snapshotId: 's1', syncState: 'uploaded' },
@@ -368,12 +644,23 @@ const sessionLinks: TaskSessionLinkLocal[] = [
   { id: 'l3', taskId: 't2', snapshotId: 's1', syncState: 'unavailable' },
 ]
 
-const events: PlannerTaskEvent[] = [
-  { id: 'e1', taskId: 't1', type: 'task.created', at: 'Today · 18:12', actor: 'Balint', payloadSummary: 'Task created in Today heading' },
-  { id: 'e2', taskId: 't1', type: 'task.session_linked', at: 'Today · 18:20', actor: 'Balint', payloadSummary: 'Linked session snapshot s1' },
-  { id: 'e3', taskId: 't1', type: 'task.updated', at: 'Today · 18:27', actor: 'Balint', payloadSummary: 'Updated notes and due date' },
-  { id: 'e4', taskId: 't1', type: 'task.session_snapshot_updated', at: 'Today · 18:42', actor: 'Mortise Agent', payloadSummary: 'Refreshed snapshot summary' },
-]
+function buildEvents(locale: PlaygroundLocale): PlannerTaskEvent[] {
+  if (locale === 'zh-CN') {
+    return [
+      { id: 'e1', taskId: 't1', type: 'task.created', at: '今天 · 18:12', actor: 'Balint', payloadSummary: '在“今天”分组中创建任务' },
+      { id: 'e2', taskId: 't1', type: 'task.session_linked', at: '今天 · 18:20', actor: 'Balint', payloadSummary: '已链接会话快照 s1' },
+      { id: 'e3', taskId: 't1', type: 'task.updated', at: '今天 · 18:27', actor: 'Balint', payloadSummary: '更新了备注和截止日期' },
+      { id: 'e4', taskId: 't1', type: 'task.session_snapshot_updated', at: '今天 · 18:42', actor: 'Mortise Agent', payloadSummary: '刷新了快照摘要' },
+    ]
+  }
+
+  return [
+    { id: 'e1', taskId: 't1', type: 'task.created', at: 'Today · 18:12', actor: 'Balint', payloadSummary: 'Task created in Today heading' },
+    { id: 'e2', taskId: 't1', type: 'task.session_linked', at: 'Today · 18:20', actor: 'Balint', payloadSummary: 'Linked session snapshot s1' },
+    { id: 'e3', taskId: 't1', type: 'task.updated', at: 'Today · 18:27', actor: 'Balint', payloadSummary: 'Updated notes and due date' },
+    { id: 'e4', taskId: 't1', type: 'task.session_snapshot_updated', at: 'Today · 18:42', actor: 'Mortise Agent', payloadSummary: 'Refreshed snapshot summary' },
+  ]
+}
 
 const stateStyles: Record<TaskState, string> = {
   todo: 'text-foreground/45',
@@ -382,20 +669,20 @@ const stateStyles: Record<TaskState, string> = {
   cancelled: 'text-destructive/70',
 }
 
-const stateLabels: Record<TaskState, string> = {
-  todo: 'Todo',
-  in_progress: 'In Progress',
-  done: 'Done',
-  cancelled: 'Cancelled',
+const stateLabelKeys: Record<TaskState, string> = {
+  todo: 'playground.planner.stateTodo',
+  in_progress: 'playground.planner.stateInProgress',
+  done: 'playground.planner.stateDone',
+  cancelled: 'playground.planner.stateCancelled',
 }
 
-const syncMeta: Record<SyncState, { label: string; icon: React.ComponentType<{ className?: string }>; cls: string }> = {
-  local_only: { label: 'Local only', icon: CloudOff, cls: 'text-foreground/55 bg-foreground/7' },
-  pending_upload: { label: 'Pending upload', icon: CloudUpload, cls: 'text-info bg-info/12' },
-  uploaded: { label: 'Uploaded', icon: CloudCheck, cls: 'text-success bg-success/12' },
-  remote_only: { label: 'Remote only', icon: CloudCheck, cls: 'text-accent bg-accent/12' },
-  unavailable: { label: 'Unavailable', icon: CloudAlert, cls: 'text-warning bg-warning/12' },
-  upload_failed: { label: 'Upload failed', icon: CloudAlert, cls: 'text-destructive bg-destructive/12' },
+const syncMeta: Record<SyncState, { labelKey: string; icon: React.ComponentType<{ className?: string }>; cls: string }> = {
+  local_only: { labelKey: 'playground.planner.syncLocalOnly', icon: CloudOff, cls: 'text-foreground/55 bg-foreground/7' },
+  pending_upload: { labelKey: 'playground.planner.syncPendingUpload', icon: CloudUpload, cls: 'text-info bg-info/12' },
+  uploaded: { labelKey: 'playground.planner.syncUploaded', icon: CloudCheck, cls: 'text-success bg-success/12' },
+  remote_only: { labelKey: 'playground.planner.syncRemoteOnly', icon: CloudCheck, cls: 'text-accent bg-accent/12' },
+  unavailable: { labelKey: 'playground.planner.syncUnavailable', icon: CloudAlert, cls: 'text-warning bg-warning/12' },
+  upload_failed: { labelKey: 'playground.planner.syncUploadFailed', icon: CloudAlert, cls: 'text-destructive bg-destructive/12' },
 }
 
 interface PlannerSortableEntry {
@@ -435,9 +722,11 @@ function uniqueOrdered(values: string[]): string[] {
 }
 
 function PlannerBoard() {
+  const { t, i18n } = useTranslation()
+  const locale: PlaygroundLocale = i18n.language === 'zh-Hans' ? 'zh-CN' : 'en'
   const [activeProjectId, setActiveProjectId] = React.useState('p2')
-  const [headingsState, setHeadingsState] = React.useState<PlannerHeading[]>(initialHeadings)
-  const [tasksState, setTasksState] = React.useState<PlannerTask[]>(initialTasks)
+  const [headingsState, setHeadingsState] = React.useState<PlannerHeading[]>(() => buildHeadings(locale))
+  const [tasksState, setTasksState] = React.useState<PlannerTask[]>(() => buildTasks(locale))
   const [selectedTaskId, setSelectedTaskId] = React.useState('t1')
   const [quickAdd, setQuickAdd] = React.useState('')
   const [sidebarWidth, setSidebarWidth] = React.useState(220)
@@ -448,10 +737,10 @@ function PlannerBoard() {
   const sidebarHandleRef = React.useRef<HTMLDivElement>(null)
   const navigatorHandleRef = React.useRef<HTMLDivElement>(null)
   const [flatOrder, setFlatOrder] = React.useState<string[]>(() => {
-    const initialProjectHeadings = initialHeadings
+    const initialProjectHeadings = buildHeadings(locale)
       .filter(h => h.projectId === 'p2')
       .sort((a, b) => a.sortOrder - b.sortOrder)
-    return buildFlatOrder(initialProjectHeadings, initialTasks)
+    return buildFlatOrder(initialProjectHeadings, buildTasks(locale))
   })
 
   const flatListRef = React.useRef<HTMLDivElement | null>(null)
@@ -462,6 +751,10 @@ function PlannerBoard() {
   const tasksStateRef = React.useRef(tasksState)
   const activeProjectIdRef = React.useRef(activeProjectId)
   const isDraggingRef = React.useRef(false)
+
+  const projects = React.useMemo(() => buildProjects(locale), [locale])
+  const snapshots = React.useMemo(() => buildSnapshots(locale), [locale])
+  const events = React.useMemo(() => buildEvents(locale), [locale])
 
   const project = projects.find(p => p.id === activeProjectId) ?? projects[0]
   const projectHeadings = React.useMemo(
@@ -529,6 +822,12 @@ function PlannerBoard() {
       setSelectedTaskId(firstTask?.id ?? '')
     }
   }, [projectHeadings, tasksState, selectedTask])
+
+  // Rebuild fixture data when the playground language switches.
+  React.useEffect(() => {
+    setHeadingsState(buildHeadings(locale))
+    setTasksState(buildTasks(locale))
+  }, [locale])
 
   const applyFlatOrderToState = React.useCallback((orderedKeys: string[]) => {
     const activeProject = activeProjectIdRef.current
@@ -752,7 +1051,7 @@ function PlannerBoard() {
       title,
       notes: '',
       state: 'todo',
-      due: 'Inbox',
+      due: t('playground.planner.inbox'),
     }
 
     setTasksState(prev => [task, ...prev])
@@ -766,7 +1065,7 @@ function PlannerBoard() {
     })
     setSelectedTaskId(task.id)
     setQuickAdd('')
-  }, [projectHeadings, quickAdd])
+  }, [projectHeadings, quickAdd, t])
 
   return (
     <div className="w-full h-full flex relative" style={{ gap: 6, padding: 4 }}>
@@ -776,7 +1075,7 @@ function PlannerBoard() {
       >
           <div className="mb-3 flex items-center gap-2 px-2 py-1">
             <ListTodo className="h-4 w-4 text-foreground/60" />
-            <span className="text-sm font-semibold">Planner</span>
+            <span className="text-sm font-semibold">{t('playground.planner.sidebarTitle')}</span>
           </div>
 
           <div className="space-y-1">
@@ -811,10 +1110,10 @@ function PlannerBoard() {
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') addTask()
                 }}
-                placeholder="Quick add task…"
+                placeholder={t('playground.planner.quickAddPlaceholder')}
                 className="h-8 text-sm"
               />
-              <Button size="sm" className="h-8" onClick={addTask}>Add</Button>
+              <Button size="sm" className="h-8" onClick={addTask}>{t('playground.planner.addButton')}</Button>
             </div>
           </div>
 
@@ -863,20 +1162,20 @@ function PlannerBoard() {
                                 onPointerDown={(e) => e.stopPropagation()}
                                 onClick={(e) => e.stopPropagation()}
                                 className="h-6 w-6 inline-flex items-center justify-center rounded-[6px] hover:bg-foreground/5 data-[state=open]:bg-foreground/5"
-                                aria-label={`Open ${heading.title} menu`}
+                                aria-label={t('playground.planner.openSectionMenu', { title: heading.title })}
                               >
                                 <MoreHorizontal className="h-4 w-4 text-foreground/45" />
                               </button>
                             </DropdownMenuTrigger>
                             <StyledDropdownMenuContent align="end" minWidth="min-w-44">
                               <StyledDropdownMenuItem onClick={(e) => e.preventDefault()}>
-                                <span className="flex-1">Rename section</span>
+                                <span className="flex-1">{t('playground.planner.renameSection')}</span>
                               </StyledDropdownMenuItem>
                               <StyledDropdownMenuItem onClick={(e) => e.preventDefault()}>
-                                <span className="flex-1">Add task below</span>
+                                <span className="flex-1">{t('playground.planner.addTaskBelow')}</span>
                               </StyledDropdownMenuItem>
                               <StyledDropdownMenuItem onClick={(e) => e.preventDefault()}>
-                                <span className="flex-1">Delete section</span>
+                                <span className="flex-1">{t('playground.planner.deleteSection')}</span>
                               </StyledDropdownMenuItem>
                             </StyledDropdownMenuContent>
                           </DropdownMenu>
@@ -930,7 +1229,7 @@ function PlannerBoard() {
 
       <aside className="bg-foreground-2 shadow-middle rounded-[10px] overflow-hidden flex-1 min-w-0 flex flex-col">
           {!selectedTask ? (
-            <div className="p-5 text-sm text-foreground/50">Select a task to inspect details.</div>
+            <div className="p-5 text-sm text-foreground/50">{t('playground.planner.selectTaskHint')}</div>
           ) : (
             <ScrollArea className="flex-1">
               <div className="w-full max-w-[720px] mx-auto px-6 pt-8 pb-5">
@@ -952,20 +1251,20 @@ function PlannerBoard() {
                     icon={selectedTask.state === 'done'
                       ? <CheckCircle2 className={cn('h-3.5 w-3.5', stateStyles[selectedTask.state])} />
                       : <Circle className={cn('h-3.5 w-3.5', stateStyles[selectedTask.state])} />}
-                    label={stateLabels[selectedTask.state]}
+                    label={t(stateLabelKeys[selectedTask.state])}
                   />
 
                   <MetadataBadge
                     interactive={false}
                     icon={<CalendarDays className="h-3.5 w-3.5 text-foreground/55" />}
-                    label="Due"
+                    label={t('playground.planner.dueLabel')}
                     value={selectedTask.due}
                   />
 
                   {selectedHeading && (
                     <MetadataBadge
                       interactive={false}
-                      label="Section"
+                      label={t('playground.planner.sectionLabel')}
                       value={selectedHeading.title}
                     />
                   )}
@@ -973,7 +1272,7 @@ function PlannerBoard() {
                   <MetadataBadge
                     interactive={false}
                     icon={<Link2 className="h-3.5 w-3.5 text-foreground/55" />}
-                    label="Sessions"
+                    label={t('playground.planner.sessionsLabel')}
                     value={String(selectedLinks.length)}
                   />
                 </div>
@@ -983,7 +1282,7 @@ function PlannerBoard() {
                   key={selectedTask.id + '-notes'}
                   content={selectedTask.notes}
                   onUpdate={(md) => updateTaskNotes(selectedTask.id, md)}
-                  placeholder="Add notes..."
+                  placeholder={t('playground.planner.notesPlaceholder')}
                   className="text-sm leading-relaxed text-foreground/75"
                 />
 
@@ -991,10 +1290,10 @@ function PlannerBoard() {
                 <div className="border-t border-border/60 mt-5 mb-1" />
 
                 {/* Attached Sessions */}
-                <div className="mb-1 text-sm font-semibold">Attached Sessions</div>
+                <div className="mb-1 text-sm font-semibold">{t('playground.planner.attachedSessions')}</div>
                 <div className="space-y-2 mt-3">
                   {selectedLinks.length === 0 ? (
-                    <div className="text-xs text-foreground/40">No sessions linked.</div>
+                    <div className="text-xs text-foreground/40">{t('playground.planner.noSessionsLinked')}</div>
                   ) : (
                     selectedLinks.map(link => {
                       const snap = snapshots.find(s => s.id === link.snapshotId)
@@ -1010,11 +1309,11 @@ function PlannerBoard() {
                             </div>
                             <span className={cn('inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px]', meta.cls)}>
                               <Icon className="h-3 w-3" />
-                              {meta.label}
+                              {t(meta.labelKey)}
                             </span>
                           </div>
                           <p className="text-[11px] text-foreground/60 leading-relaxed">{snap.summary}</p>
-                          <div className="mt-1 text-[10px] text-foreground/45">Updated {snap.lastUpdated}</div>
+                          <div className="mt-1 text-[10px] text-foreground/45">{t('playground.planner.updatedAt', { time: snap.lastUpdated })}</div>
                         </div>
                       )
                     })
@@ -1025,7 +1324,7 @@ function PlannerBoard() {
                 <div className="border-t border-border/60 my-5" />
 
                 {/* Activity */}
-                <div className="mb-3 text-sm font-semibold">Activity</div>
+                <div className="mb-3 text-sm font-semibold">{t('playground.planner.activity')}</div>
                 <div className="space-y-3">
                   {selectedEvents.map(ev => (
                     <div key={ev.id} className="flex items-start gap-2.5">
@@ -1102,11 +1401,12 @@ function PlannerBoard() {
 }
 
 function PlannerSyncStatePalette() {
+  const { t } = useTranslation()
   return (
     <div className="w-[820px] rounded-[14px] border border-border bg-background p-4">
       <div className="mb-3 flex items-center gap-2 text-sm font-semibold">
         <CalendarDays className="h-4 w-4 text-foreground/60" />
-        Sync States (task_session_links_local)
+        {t('playground.planner.syncPaletteTitle')}
       </div>
       <div className="grid grid-cols-2 gap-2.5">
         {(Object.keys(syncMeta) as SyncState[]).map((state) => {
@@ -1116,10 +1416,10 @@ function PlannerSyncStatePalette() {
             <div key={state} className="rounded-[10px] border border-border/60 bg-foreground/[0.015] p-3">
               <div className="mb-1.5 flex items-center gap-1.5 text-sm font-medium">
                 <Icon className={cn('h-4 w-4', meta.cls.split(' ')[0])} />
-                {meta.label}
+                {t(meta.labelKey)}
               </div>
               <div className="text-xs text-foreground/60">
-                Snapshot card always visible; live session resolution is optional enhancement.
+                {t('playground.planner.syncPaletteDescription')}
               </div>
             </div>
           )
@@ -1133,8 +1433,10 @@ export const plannerComponents: ComponentEntry[] = [
   {
     id: 'planner-things-board',
     name: 'Planner Board',
+    nameZh: 'Planner 看板',
     category: 'Planner',
     description: 'Planner surface with @dnd-kit/dom sortable behavior matching the vertical sample path.',
+    descriptionZh: '使用 @dnd-kit/dom 可排序行为、与垂直示例路径一致的 Planner 界面。',
     component: PlannerBoard,
     layout: 'full',
     props: [],
@@ -1142,8 +1444,10 @@ export const plannerComponents: ComponentEntry[] = [
   {
     id: 'planner-sync-palette',
     name: 'Planner Sync Palette',
+    nameZh: 'Planner 同步状态调色板',
     category: 'Planner',
     description: 'Visual language for task_session_links_local sync states.',
+    descriptionZh: 'task_session_links_local 同步状态的视觉语言。',
     component: PlannerSyncStatePalette,
     props: [],
   },

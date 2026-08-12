@@ -34,6 +34,16 @@ describe('Electron Test Host public request parsing', () => {
     expect(source).not.toContain('const snapshot = await compositeSnapshot(selector)\n    if (!browserSurfaces)')
   })
 
+  it('keeps app readiness independent from the extension service directory', () => {
+    const source = readFileSync(join(import.meta.dir, '..', 'test-host.ts'), 'utf8')
+    const statusBranch = source.slice(
+      source.indexOf("if (command === 'status')"),
+      source.indexOf("if (command === 'windows')"),
+    )
+    expect(statusBranch).not.toContain('extensionServices.list')
+    expect(source).toContain("if (command === 'extension-services.list') return options.extensionServices.list()")
+  })
+
   it('normalizes legacy wait predicates and rejects multiple node selectors', () => {
     expect(parseElectronWaitParams({ kind: 'app-phase', phase: 'ready' }).predicate)
       .toEqual({ kind: 'app-phase', phase: 'ready' })

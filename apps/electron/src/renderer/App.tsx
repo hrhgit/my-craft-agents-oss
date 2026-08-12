@@ -24,6 +24,7 @@ import { ModalProvider } from '@/context/ModalContext'
 import { DismissibleLayerProvider } from '@/context/DismissibleLayerContext'
 import { useWindowCloseHandler } from '@/hooks/useWindowCloseHandler'
 import { usePiGlobalConfig } from '@/hooks/usePiGlobalConfig'
+import { useShowTaggedModelsOnly } from '@/hooks/useShowTaggedModelsOnly'
 import { useNotifications } from '@/hooks/useNotifications'
 import { useSessionSelectionStore } from '@/hooks/useSession'
 import { createInitialState } from '@/hooks/useMultiSelect'
@@ -74,9 +75,11 @@ import {
   type SessionMeta,
 } from '@/atoms/sessions'
 import {
+  getPiProjectionProcessingDelta,
   insertOptimisticPiUser,
   piProjectionAtomFamily,
   removeOptimisticPiUser,
+  type PiProjectionState,
 } from '@/atoms/pi-projection'
 import { skillsAtom } from '@/atoms/skills'
 import { focusedPanelIdAtom, panelStackAtom } from '@/atoms/panel-stack'
@@ -100,7 +103,7 @@ import { useLinkInterceptor, type FilePreviewState } from '@/hooks/useLinkInterc
 import { useTransportConnectionState } from '@/hooks/useTransportConnectionState'
 import { useUiValidationStateBridge } from '@/ui-validation/state-bridge'
 import { useStaleSessionRecovery } from '@/hooks/useStaleSessionRecovery'
-import { usePiProjectionSync, type PiProjectionEventApplied } from '@/hooks/usePiProjectionSync'
+import { usePiProjectionSync, type PiProjectionEventApplied, type PiProjectionSnapshotApplied } from '@/hooks/usePiProjectionSync'
 import { TransportConnectionBanner, shouldShowTransportConnectionBanner } from '@/components/app-shell/TransportConnectionBanner'
 import { getPrimaryRemoteWorkspaceId } from '@/components/RemoteConnectionPanel'
 import type { WorkspaceSwitchDestination } from '@/components/workspace/useWorkspaceNavigation'
@@ -343,6 +346,11 @@ export default function App() {
     settings: piGlobalSettings,
     refresh: refreshPiGlobalConfig,
   } = usePiGlobalConfig()
+
+  const {
+    showTaggedModelsOnly,
+    setShowTaggedModelsOnly,
+  } = useShowTaggedModelsOnly()
 
   const [menuNewChatTrigger, setMenuNewChatTrigger] = useState(0)
   // Draft composer state per session (text + attachment refs), preserved across mode
@@ -658,7 +666,37 @@ export default function App() {
     enabled: notificationsEnabled,
   })
 
+  /**
+   * Mirror the Pi runtime's real processing state (agent_start / agent_end /
+   * agent_settled / compaction / snapshot recovery) into the session atom and
+   * sidebar metadata. This is what lets sessions started outside this window
+   * (other windows, automations, messaging, CLI) show the running icon.
+   */
+  const syncPiProjectionProcessing = useCallback((sessionId: string, previous: PiProjectionState, current: PiProjectionState) => {
+    const delta = getPiProjectionProcessingDelta(previous, current)
+    if (!delta) return
+    const session = store.get(sessionAtomFamily(sessionId))
+    if (!session) return
+    const updatedSession: Session = {
+      ...session,
+      isProcessing: delta === 'started',
+    }
+    updateSessionDirect(sessionId, () => updatedSession)
+  }, [store, updateSessionDirect])
+
+  const handlePiProjectionSnapshotApplied = useCallback<PiProjectionSnapshotApplied>((sessionId, previous, current) => {
+    // A snapshot is authoritative: it covers sessions that were already running
+    // before this window (re)loaded or before the live stream was recovered.
+    syncPiProjectionProcessing(sessionId, previous, current)
+  }, [syncPiProjectionProcessing])
+
   const handlePiProjectionEventApplied = useCallback<PiProjectionEventApplied>((event, previous, current) => {
+    // Any accepted projection event proves the Pi runtime is alive; keep the
+    // stale-session watchdog from force-refreshing a genuinely running session.
+    trackSessionActivity(event.sessionId)
+    // Keep the sidebar running icon in sync with the Pi runtime.
+    syncPiProjectionProcessing(event.sessionId, previous, current)
+
     const handoff = getPiAgentEndHandoff(previous, current, event)
     if (!handoff) return
 
@@ -694,9 +732,9 @@ export default function App() {
         : undefined
       showSessionNotification(updatedSession, preview)
     }
-  }, [isWindowFocused, showSessionNotification, store, trackSessionActivity, updateSessionDirect])
+  }, [isWindowFocused, showSessionNotification, store, trackSessionActivity, updateSessionDirect, syncPiProjectionProcessing])
 
-  usePiProjectionSync(sessionSelection.selected, handlePiProjectionEventApplied)
+  usePiProjectionSync(sessionSelection.selected, handlePiProjectionEventApplied, handlePiProjectionSnapshotApplied)
 
   // Load workspaces, sessions, model, notifications setting, and drafts when app is ready
   useEffect(() => {
@@ -1851,6 +1889,8 @@ export default function App() {
     piProviders,
     piGlobalSettings,
     refreshPiGlobalConfig,
+    showTaggedModelsOnly,
+    setShowTaggedModelsOnly,
     getDraft,
     getDraftAttachmentRefs,
     hydrateDraftAttachments,
@@ -1891,6 +1931,8 @@ export default function App() {
     piProviders,
     piGlobalSettings,
     refreshPiGlobalConfig,
+    showTaggedModelsOnly,
+    setShowTaggedModelsOnly,
     getDraft,
     getDraftAttachmentRefs,
     hydrateDraftAttachments,

@@ -1,7 +1,7 @@
 import * as React from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-import type { ExtensionFrontendDescriptorV2, ExtensionFrontendSurfaceV2 } from '@mortise/shared/protocol'
+import type { ExtensionFrontendDescriptorV2, ExtensionFrontendSurfaceV2, ExtensionUIModuleDescriptorV2, ExtensionUIOverrideDescriptorV2 } from '@mortise/shared/protocol'
 import type { ExtensionUIRoute, ExtensionUITheme } from '@mortise/extension-ui'
 import type { PiExtensionCatalogEntry } from '@mortise/shared/config'
 import { useTheme } from '@/hooks/useTheme'
@@ -109,14 +109,11 @@ export function ExtensionFrontendZone({ surface, sessionId, workspaceId, classNa
 
   const descriptors = React.useMemo(() => resolveFrontendDescriptors(extensions, surface, extensionId, frontendId),
   [extensionId, extensions, frontendId, surface])
-  const dependencies = React.useMemo(() => createExtensionUIDependencies(
-    extensions.flatMap(extension => extension.moduleDescriptors ?? []),
-    extensions.flatMap(extension => extension.overrideDescriptors ?? []),
-  ), [extensions])
-  React.useEffect(() => () => {
-    (dependencies as ExtensionFrontendRuntimeContext['dependencies'] & { dispose?: () => void }).dispose?.()
-  }, [dependencies])
-
+  const dependencyInputs = React.useMemo(() => ({
+    modules: extensions.flatMap(extension => extension.moduleDescriptors ?? []),
+    overrides: extensions.flatMap(extension => extension.overrideDescriptors ?? []),
+    bindings: extensions.map(extension => ({ extensionId: extension.id, capabilityBindings: extension.capabilityBindings })),
+  }), [extensions])
   const runtimeRoute = React.useMemo<ExtensionUIRoute>(() => ({
     ...route,
     workspaceId: route?.workspaceId ?? resolvedWorkspaceId,
@@ -137,7 +134,7 @@ export function ExtensionFrontendZone({ surface, sessionId, workspaceId, classNa
           descriptor={replaceDescriptor}
           route={runtimeRoute}
           theme={runtimeTheme}
-          dependencies={dependencies}
+          dependencyInputs={dependencyInputs}
           locale={i18n.resolvedLanguage ?? i18n.language}
         >
           {children}
@@ -149,7 +146,7 @@ export function ExtensionFrontendZone({ surface, sessionId, workspaceId, classNa
           descriptor={descriptor}
           route={runtimeRoute}
           theme={runtimeTheme}
-          dependencies={dependencies}
+          dependencyInputs={dependencyInputs}
           locale={i18n.resolvedLanguage ?? i18n.language}
         />
       ))}
@@ -199,17 +196,25 @@ function frontendCatalogKey(extensions: PiExtensionCatalogEntry[]): string {
       `module:${descriptor.extensionId}:${descriptor.moduleId}:${descriptor.revision}:${descriptor.entryUrl}:${descriptor.styleUrls.join(',')}`),
     ...(extension.overrideDescriptors ?? []).map((descriptor) =>
       `override:${descriptor.extensionId}:${descriptor.overrideId}:${descriptor.revision}:${descriptor.entryUrl}:${descriptor.styleUrls.join(',')}`),
+    ...(extension.capabilityBindings ?? []).map((binding) =>
+      `binding:${extension.id}:${binding.alias}:${binding.status}:${binding.providerExtensionId ?? ''}:${binding.providerVersion ?? ''}`),
   ]).join('|')
 }
 
-function MountedFrontend({ descriptor, route, theme, locale, dependencies, children }: {
+function MountedFrontend({ descriptor, route, theme, locale, dependencyInputs, children }: {
   descriptor: ExtensionFrontendDescriptorV2
   route: ExtensionUIRoute
   theme: ExtensionUITheme
   locale: string
-  dependencies: ExtensionFrontendRuntimeContext['dependencies']
+  dependencyInputs: { modules: ExtensionUIModuleDescriptorV2[]; overrides: ExtensionUIOverrideDescriptorV2[]; bindings: Array<{ extensionId: string; capabilityBindings?: PiExtensionCatalogEntry['capabilityBindings'] }> }
   children?: React.ReactNode
 }) {
+  const dependencies = React.useMemo(() => createExtensionUIDependencies(
+    dependencyInputs.modules, dependencyInputs.overrides, dependencyInputs.bindings, descriptor.extensionId,
+  ), [dependencyInputs, descriptor.extensionId])
+  React.useEffect(() => () => {
+    (dependencies as ExtensionFrontendRuntimeContext['dependencies'] & { dispose?: () => void }).dispose?.()
+  }, [dependencies])
   const runtime = React.useMemo<ExtensionFrontendRuntimeContext>(() => ({
     route,
     theme,

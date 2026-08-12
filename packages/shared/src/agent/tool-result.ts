@@ -3,7 +3,7 @@
  *
  * Unified across:
  * - packages/session-tools-core (session-scoped MCP tools)
- * - packages/shared/src/agent/spawn-session-tool.ts
+ * - packages/shared/src/agent/subagent-tool.ts
  * - packages/shared/src/agent/browser-tools.ts
  *
  * Content blocks support both text and image, matching MCP CallToolResult.
@@ -28,7 +28,7 @@ import type { ToolResult } from '@mortise/session-tools-core';
  * The model can then parse this prefix to understand the tool call failed.
  *
  * This covers all session host-tool errors (browser_tool,
- * spawn_session, etc.).
+ * subagent, etc.).
  *
  * stripErrorTags() in packages/ui/src/components/chat/turn-utils.ts
  * removes the prefix for clean UI display.

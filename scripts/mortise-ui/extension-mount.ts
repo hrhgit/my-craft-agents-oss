@@ -2,6 +2,7 @@ import { existsSync, readFileSync, realpathSync, statSync, writeFileSync } from 
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import {
   assertValidExtensionEntry,
+  resolveExtensionManifestGraph,
   type ExtensionManifestEntry,
 } from '../../pi/packages/coding-agent/src/core/resource-resolver.ts'
 import type { ExtensionManifestV1 } from '../../pi/packages/coding-agent/src/core/extension-manifest.ts'
@@ -28,6 +29,7 @@ export function mountMortiseUiExtensions(mortiseAgentDir: string, sourcePaths: s
       mountedIds.add(entry.id)
     }
   }
+  validateMountedCapabilityGraph(packages.flatMap(pkg => pkg.entries))
 
   if (packages.length === 0) return []
   const settingsPath = join(mortiseAgentDir, 'settings.json')
@@ -68,6 +70,33 @@ export function mountMortiseUiExtensions(mortiseAgentDir: string, sourcePaths: s
   ]
   writeFileSync(settingsPath, `${JSON.stringify(settings, null, 2)}\n`, 'utf8')
   return mounted
+}
+
+function validateMountedCapabilityGraph(entries: ExtensionEntry[]): void {
+  const resolved = resolveExtensionManifestGraph(entries.map(entry => ({
+    path: entry.path,
+    enabled: true,
+    metadata: {
+      source: 'runtime',
+      scope: 'temporary',
+      origin: 'top-level',
+      extensionId: entry.id,
+      extensionManifest: entry.manifest,
+      extensionUI: entry.ui,
+      extensionLoadable: true,
+    },
+  })))
+  const blocked = resolved.filter(entry => entry.metadata.extensionManifestStatus === 'blocked')
+  if (blocked.length === 0) return
+  const details = blocked.map(entry => {
+    const id = entry.metadata.extensionId ?? entry.path
+    const diagnostics = (entry.metadata.extensionManifestDiagnostics ?? [])
+      .filter(item => item.severity === 'error')
+      .map(item => item.message)
+      .join('; ')
+    return `${id}: ${diagnostics || 'blocked by extension capability graph'}`
+  })
+  throw new Error(`Mounted extension capability graph is invalid:\n${details.join('\n')}`)
 }
 
 function loadExtensionPackage(inputPath: string): LoadedExtensionPackage {

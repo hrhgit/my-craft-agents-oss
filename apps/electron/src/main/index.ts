@@ -1372,6 +1372,31 @@ app.whenReady().then(async () => {
         browserPaneManager: browserPaneManager ?? undefined,
         runtimeLogPath: join(CONFIG_DIR, 'logs', 'runtime.log'),
         probeWorkspaceCapability: workspaceServer?.probeCapability,
+        extensionServices: {
+          list: () => {
+            if (!sessionManager) throw new Error('No active Pi session is available for extension services.')
+            return sessionManager.getExtensionServiceCatalog()
+          },
+          describe: (capability) => {
+            if (!sessionManager) throw new Error('No active Pi session is available for extension services.')
+             return sessionManager.getExtensionServiceCatalog().then(catalog => catalog.providers.filter(provider => provider.capability === capability))
+          },
+          invoke: async (params, signal) => {
+            if (!sessionManager) throw new Error('No active Pi session is available for extension services.')
+            const capability = typeof params.id === 'string' ? params.id : typeof params.capability === 'string' ? params.capability : undefined
+            const operation = typeof params.operation === 'string' ? params.operation : undefined
+            if (!capability || !operation) throw new Error('extension-services.invoke requires id and operation')
+            return sessionManager.invokeExtensionService({
+              requestId: typeof params.requestId === 'string' ? params.requestId : randomUUID(),
+               capability, operation, input: params.input,
+               runtimeId: typeof params.runtimeId === 'string' ? params.runtimeId : undefined,
+               sessionId: typeof params.sessionId === 'string' ? params.sessionId : undefined,
+              provider: typeof params.provider === 'string' ? params.provider : undefined,
+              timeoutMs: typeof params.timeoutMs === 'number' ? params.timeoutMs : undefined,
+              signal,
+            })
+          },
+        },
         shutdown: () => app.quit(),
         openRoute: async (params, target) => {
           const resolvedRoute = resolveUiValidationRoute(params, String(target.webContentsId))

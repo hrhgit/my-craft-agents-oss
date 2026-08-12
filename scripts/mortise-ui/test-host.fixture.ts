@@ -60,6 +60,18 @@ server = Bun.serve({
         mode: 'semantic',
       }
     }
+    if (body.method === 'extension-services.invoke') {
+      const fixtureResult = body.params.fixtureResult
+      response.result = fixtureResult && typeof fixtureResult === 'object'
+        ? fixtureResult
+        : {
+            protocolVersion: 1,
+            requestId: typeof body.params.requestId === 'string' ? body.params.requestId : body.requestId,
+            runtimeId: 'fixture-extension-services',
+            status: 'succeeded',
+            output: { accepted: true },
+          }
+    }
     if (body.method === 'ui.snapshot' || body.method === 'evidence.capture') {
       const name = body.method === 'ui.snapshot' ? 'snapshot' : 'evidence'
       const path = join(artifactsDir, `${name}.json`)

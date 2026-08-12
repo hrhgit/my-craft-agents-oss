@@ -117,6 +117,39 @@ export function removeOptimisticPiUser(
   return { ...state, entitiesById, entityIds: state.entityIds.filter(id => !optimisticIds.includes(id)) }
 }
 
+/**
+ * Removes a queued user block on local withdrawal (edit/delete/steer). The
+ * authoritative host-projected entity carries no `optimistic` flag, so this
+ * matches by mutation identity on queued/cancelled entities as well — keeping
+ * the composer-adjacent queued strip in sync immediately, before the backend
+ * cancellation event lands.
+ */
+export function removeQueuedPiUser(
+  state: PiProjectionState,
+  clientMutationId: string,
+): PiProjectionState {
+  const matches = state.entityIds.filter(id => {
+    const candidate = state.entitiesById[id]
+    const candidatePayload = candidate?.payload as Record<string, unknown> | undefined
+    if (!candidatePayload) return false
+    if (candidatePayload.optimistic === true) {
+      return candidatePayload.clientMutationId === clientMutationId
+    }
+    const queueStatus = candidatePayload.queueStatus
+    if (queueStatus !== 'queued' && queueStatus !== 'cancelled') return false
+    return candidatePayload.clientMutationId === clientMutationId
+      || candidatePayload.messageId === clientMutationId
+      || candidatePayload.ownerMessageId === clientMutationId
+  })
+  if (matches.length === 0) return state
+  const entitiesById = Object.assign(
+    Object.create(null) as Record<string, PiProjectionEntityV1>,
+    state.entitiesById,
+  )
+  for (const id of matches) delete entitiesById[id]
+  return { ...state, entitiesById, entityIds: state.entityIds.filter(id => !matches.includes(id)) }
+}
+
 function markDesynced(
   state: PiProjectionState,
   receivedSeq: number,
@@ -257,6 +290,25 @@ const PI_PROCESSING_LIFECYCLE_KINDS = new Set([
   'compaction_end',
   'runtime_error',
 ])
+
+/**
+ * Reports whether the Pi runtime's processing state flipped between two
+ * projection states. Returns 'started'/'ended' only when the current state is
+ * authoritative (synced); a desynced stream is unknown, so the sidebar flag is
+ * left untouched. A desynced *previous* state is equally unreliable, so the
+ * freshly installed snapshot (or recovered stream) is trusted as truth.
+ */
+export function getPiProjectionProcessingDelta(
+  previous: PiProjectionState,
+  current: PiProjectionState,
+): 'started' | 'ended' | null {
+  if (current.syncState !== 'synced') return null
+  const now = isPiProjectionProcessing(current)
+  if (previous.syncState === 'desynced') return now ? 'started' : 'ended'
+  const was = isPiProjectionProcessing(previous)
+  if (was === now) return null
+  return now ? 'started' : 'ended'
+}
 
 /** Lightweight projection-owned processing state for shell-level actions. */
 export function isPiProjectionProcessing(state: PiProjectionState): boolean {

@@ -12,7 +12,7 @@ import type {
   PiProjectionSnapshotV1,
 } from '../../../protocol/pi-projection.ts'
 import { stripLeadingMortiseInjectedUserContext } from '../../../prompts/strip-injected-user-context.ts'
-import type { HostQueuedUserProjection, HostRuntimeErrorProjection } from '../types.ts'
+import type { HostQueuedUserProjection, HostRuntimeErrorProjection, HostQueuedCancellationProjection } from '../types.ts'
 
 type ProjectableAgentEvent = Extract<
   AgentEvent,
@@ -104,6 +104,45 @@ export class PiProjectionBuilder {
       ...this.finalizeRunningTools(true),
       this.errorEvent({ ...input, source: 'host' }),
     ]
+  }
+
+  /**
+   * Mark Host-queued user entities as withdrawn while keeping the sequence
+   * owned by this builder. Emitting the cancellation here (instead of a
+   * hand-built host event) guarantees the next runtime event cannot collide
+   * with the cancellation's sequence and get dropped as stale.
+   */
+  acceptHostQueueCancellation(input: HostQueuedCancellationProjection): PiProjectionEventV1[] {
+	this.eventOrigin = 'host'
+	this.activeAttemptId = undefined
+    const clientMutationId = input.clientMutationId.trim()
+    if (!clientMutationId) throw new TypeError('Queued Pi projection cancellation requires a clientMutationId')
+
+    const messageId = input.messageId?.trim() || clientMutationId
+    const timestamp = this.projectionTimestamp(input)
+    const events: PiProjectionEventV1[] = []
+    const matches: Array<{ entityId: string; state: EntityState }> = []
+    for (const [entityId, state] of this.entities) {
+      const payload = state.payload as Record<string, unknown> | undefined
+      if (!payload || payload.queueStatus !== 'queued') continue
+      if (payload.clientMutationId !== clientMutationId
+        && payload.messageId !== messageId
+        && payload.ownerMessageId !== messageId) continue
+      matches.push({ entityId, state })
+    }
+
+    for (const { entityId, state } of matches) {
+      const next = this.nextEntity(entityId)
+      const payload = { ...(state.payload as Record<string, unknown>), queueStatus: 'cancelled' }
+      next.payload = payload
+      if (entityId.startsWith('artifact:attachment:')) {
+        events.push(this.createEvent(entityId, 'artifact_ref', next.version, 'user_attachment', payload, undefined, timestamp))
+      } else {
+        events.push(this.createEvent(entityId, 'content_block', next.version, 'user_text', payload, undefined, timestamp))
+      }
+    }
+
+    return events
   }
 
   accept(event: AgentEvent, attemptId?: string): PiProjectionEventV1[] {

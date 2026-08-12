@@ -15,6 +15,7 @@ const batch = await runInteractionFlowBatch({
   flowIds: option('--flow') ? [option('--flow')!] : [],
   windowMode: argv.includes('--foreground') ? 'foreground' : surface === 'electron' ? 'background' : 'foreground',
   skipBuild: process.env.MORTISE_UI_SKIP_BUILD === '1',
+  requireFreshBuild: argv.includes('--require-fresh'),
   keep: argv.includes('--keep'),
 })
 process.stdout.write(`${JSON.stringify({ ok: true, runId: batch.run.runId, surface, flows: batch.flows, lifecycle: batch.lifecycle }, null, 2)}\n`)

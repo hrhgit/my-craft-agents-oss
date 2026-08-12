@@ -14,6 +14,13 @@ export type PiCustomApi =
 export interface PiGlobalModel {
   id: string;
   name?: string;
+  /** User-assigned display tags (e.g. 常用/快速/轻量). Tagged models appear
+   * in the session model picker with tag badges and can be surfaced alone via
+   * the "仅显示标签模型" mode. */
+  tags?: string[];
+  /** Another configured model (provider + model id) that acts as the
+   * image-reading proxy for this model when it lacks image input capability. */
+  visionProxy?: { provider: string; model: string };
   reasoning?: boolean;
   input?: ('text' | 'image')[];
   contextWindow?: number;
@@ -22,6 +29,73 @@ export interface PiGlobalModel {
   cost?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number };
   headers?: Record<string, string>;
   [key: string]: unknown;
+}
+
+export function piProviderModelTags(
+  provider: PiGlobalProvider | null | undefined,
+  modelId: string,
+): string[] {
+  const model = provider?.models?.find(candidate => candidate.id === modelId);
+  const tags = model?.tags;
+  return Array.isArray(tags) ? tags.filter((tag): tag is string => typeof tag === 'string' && tag.trim().length > 0) : [];
+}
+
+export function setPiProviderModelTags(
+  provider: PiGlobalProvider,
+  modelId: string,
+  tags: string[],
+): PiGlobalProvider {
+  if (!provider.models?.some(model => model.id === modelId)) return provider;
+  const normalized = [...new Set(tags.map(tag => tag.trim()).filter(Boolean))];
+  return {
+    ...provider,
+    models: provider.models.map(model => {
+      if (model.id !== modelId) return model;
+      const next = { ...model };
+      if (normalized.length > 0) next.tags = normalized;
+      else delete next.tags;
+      return next;
+    }),
+  };
+}
+
+export function piProviderModelVisionProxy(
+  provider: PiGlobalProvider | null | undefined,
+  modelId: string,
+): { provider: string; model: string } | undefined {
+  const model = provider?.models?.find(candidate => candidate.id === modelId);
+  const value = model?.visionProxy;
+  if (
+    value
+    && typeof value === 'object'
+    && typeof (value as { provider?: unknown }).provider === 'string'
+    && typeof (value as { model?: unknown }).model === 'string'
+  ) {
+    const { provider: proxyProvider, model: proxyModel } = value as { provider: string; model: string };
+    if (proxyProvider.trim() && proxyModel.trim()) return { provider: proxyProvider.trim(), model: proxyModel.trim() };
+  }
+  return undefined;
+}
+
+export function setPiProviderModelVisionProxy(
+  provider: PiGlobalProvider,
+  modelId: string,
+  visionProxy: { provider: string; model: string } | undefined,
+): PiGlobalProvider {
+  if (!provider.models?.some(model => model.id === modelId)) return provider;
+  return {
+    ...provider,
+    models: provider.models.map(model => {
+      if (model.id !== modelId) return model;
+      const next = { ...model };
+      if (visionProxy && visionProxy.provider.trim() && visionProxy.model.trim()) {
+        next.visionProxy = { provider: visionProxy.provider.trim(), model: visionProxy.model.trim() };
+      } else {
+        delete next.visionProxy;
+      }
+      return next;
+    }),
+  };
 }
 
 export interface PiGlobalProvider {

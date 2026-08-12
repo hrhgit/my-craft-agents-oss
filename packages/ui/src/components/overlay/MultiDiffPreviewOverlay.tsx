@@ -15,6 +15,7 @@
 
 import * as React from 'react'
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react'
+import { useTranslation } from 'react-i18next'
 import { PencilLine, FilePlus, X } from 'lucide-react'
 import { parseDiffFromFile, parsePatchFiles, type FileContents } from '@pierre/diffs'
 import { ShikiDiffViewer, getDiffStats } from '../code-viewer/ShikiDiffViewer'
@@ -151,6 +152,7 @@ export function MultiDiffPreviewOverlay({
   diffViewerSettings,
   onDiffViewerSettingsChange,
 }: MultiDiffPreviewOverlayProps) {
+  const { t } = useTranslation()
   const { onOpenFileExternal } = usePlatform()
 
   // Ref map for scroll-to-focused-change support
@@ -260,28 +262,32 @@ export function MultiDiffPreviewOverlay({
     if (isMultiFile) {
       return {
         icon: hasWrite ? FilePlus : PencilLine,
-        label: `${totalChangeCount} edit${totalChangeCount !== 1 ? 's' : ''}`,
+        label: t('overlay.multiDiff.edits', { count: totalChangeCount }),
         variant: hasWrite ? 'green' : 'orange',
       }
     }
     // Single file — show tool type and count if multiple changes
     const firstSection = fileSections[0]
-    if (!firstSection) return { icon: PencilLine, label: 'Edit', variant: 'orange' }
+    if (!firstSection) return { icon: PencilLine, label: t('overlay.multiDiff.edit'), variant: 'orange' }
     const sectionHasWrite = firstSection.changes.some(c => c.toolType === 'Write')
     const count = firstSection.changes.length
+    const toolLabel = sectionHasWrite ? t('overlay.multiDiff.write') : t('overlay.multiDiff.edit')
     return {
       icon: sectionHasWrite ? FilePlus : PencilLine,
       label: count > 1
-        ? `${count} ${sectionHasWrite ? 'Write' : 'Edit'}s`
-        : (sectionHasWrite ? 'Write' : 'Edit'),
+        ? t('overlay.multiDiff.toolCount', { count, tool: toolLabel })
+        : toolLabel,
       variant: sectionHasWrite ? 'green' : 'orange',
     }
-  }, [changes, isMultiFile, totalChangeCount, fileSections])
+  }, [changes, isMultiFile, totalChangeCount, fileSections, t])
 
   // Header file path (single file) or summary title (multi-file)
   const headerFilePath = !isMultiFile ? fileSections[0]?.filePath : undefined
   const headerTitle = isMultiFile
-    ? `${totalChangeCount} edit${totalChangeCount !== 1 ? 's' : ''} across ${fileSections.length} file${fileSections.length !== 1 ? 's' : ''}`
+    ? t('overlay.multiDiff.editsAcross', {
+        count: totalChangeCount,
+        files: t('overlay.multiDiff.fileCount', { count: fileSections.length }),
+      })
     : undefined
 
   // Header actions: total diff stats + viewer controls
@@ -349,7 +355,7 @@ export function MultiDiffPreviewOverlay({
                           <X className="w-4 h-4 text-destructive shrink-0 mt-0.5" />
                           <div className="flex-1 min-w-0">
                             <div className="text-xs font-semibold text-destructive/70 mb-0.5">
-                              {change.toolType} Failed
+                              {t('overlay.multiDiff.toolFailed', { tool: change.toolType === 'Write' ? t('overlay.multiDiff.write') : t('overlay.multiDiff.edit') })}
                             </div>
                             <p className="text-sm text-destructive whitespace-pre-wrap break-words">
                               {change.error}

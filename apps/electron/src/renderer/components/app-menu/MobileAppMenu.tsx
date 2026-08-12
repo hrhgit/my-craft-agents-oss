@@ -2,10 +2,11 @@ import * as React from 'react'
 import { createPortal } from 'react-dom'
 import { useEffect, useMemo, useReducer, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import * as Icons from 'lucide-react'
+import { Check, ExternalLink, FolderPlus, Trash2 } from 'lucide-react'
 import { motion, AnimatePresence } from 'motion/react'
 import { useRegisterDismissibleLayer } from '@/context/DismissibleLayerContext'
 import { MortiseSymbol } from '../icons/MortiseSymbol'
+import { getMenuIcon } from '../icons/MenuIcons'
 import { SquarePenRounded } from '../icons/SquarePenRounded'
 import { SETTINGS_ICONS } from '../icons/SettingsIcons'
 import { TopBarButton } from '../ui/TopBarButton'
@@ -60,8 +61,7 @@ function stackReducer(state: SheetState, action: StackAction): SheetState {
 }
 
 function getIcon(name: string): React.ComponentType<{ className?: string }> | null {
-  const IconComponent = Icons[name as keyof typeof Icons] as React.ComponentType<{ className?: string }> | undefined
-  return IconComponent ?? null
+  return getMenuIcon(name)
 }
 
 function renderRowIcon(iconName: string, rowId: string): React.ReactNode {
@@ -363,7 +363,7 @@ function MobileWorkspacePage({
                   />
                 </span>
                 {item.hasUnread && <span className="h-2 w-2 shrink-0 rounded-full bg-accent" />}
-                {item.isActive && <Icons.Check className="h-4 w-4 shrink-0 text-foreground/55" />}
+                {item.isActive && <Check className="h-4 w-4 shrink-0 text-foreground/55" />}
               </button>
               {!item.isActive && !item.isDisconnected && hasPlatformCapability('nativeWindowLifecycle') && (
                 <button
@@ -372,7 +372,7 @@ function MobileWorkspacePage({
                   aria-label={t('sidebarMenu.openInNewWindow')}
                   onClick={() => { void navigation.openWorkspaceInNewWindow(item.workspace.id).then(onClose) }}
                 >
-                  <Icons.ExternalLink className="h-4 w-4" />
+                  <ExternalLink className="h-4 w-4" />
                 </button>
               )}
               {!item.isActive && (
@@ -382,7 +382,7 @@ function MobileWorkspacePage({
                   aria-label={t('workspace.removeWorkspace')}
                   onClick={() => { void navigation.removeWorkspace(item.workspace) }}
                 >
-                  <Icons.Trash2 className="h-4 w-4" />
+                  <Trash2 className="h-4 w-4" />
                 </button>
               )}
             </div>
@@ -390,7 +390,7 @@ function MobileWorkspacePage({
         ))}
         <li className="mt-1 border-t border-foreground/5 pt-1">
           <MobileMenuItem
-            icon={<Icons.FolderPlus className="h-5 w-5" />}
+            icon={<FolderPlus className="h-5 w-5" />}
             label={t('workspace.addWorkspace')}
             onClick={() => { onClose(); navigation.openCreation() }}
           />

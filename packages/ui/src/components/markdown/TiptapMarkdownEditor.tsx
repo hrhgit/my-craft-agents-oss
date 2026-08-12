@@ -1,4 +1,5 @@
 import * as React from 'react'
+import { useTranslation } from 'react-i18next'
 import { useEditor, EditorContent } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import Placeholder from '@tiptap/extension-placeholder'
@@ -200,10 +201,12 @@ export interface TiptapMarkdownEditorProps {
 export function TiptapMarkdownEditor({
   content,
   onUpdate,
-  placeholder = 'Write something...',
+  placeholder,
   className,
   editable = true,
 }: TiptapMarkdownEditorProps) {
+  const { t } = useTranslation()
+  const resolvedPlaceholder = placeholder ?? t('editor.placeholder')
   const onUpdateRef = React.useRef(onUpdate)
   onUpdateRef.current = onUpdate
 
@@ -226,7 +229,7 @@ export function TiptapMarkdownEditor({
       }),
       MermaidBlock,
       LatexBlock,
-      Placeholder.configure({ placeholder }),
+      Placeholder.configure({ placeholder: resolvedPlaceholder }),
       Image.configure({
         inline: false,
         allowBase64: true,
@@ -268,7 +271,7 @@ export function TiptapMarkdownEditor({
         },
       }),
     ]
-  }, [placeholder, editable])
+  }, [resolvedPlaceholder, editable])
 
   const initialContent = preprocessMarkdownForOfficial(content)
 

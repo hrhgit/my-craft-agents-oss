@@ -1,5 +1,5 @@
 import * as React from 'react'
-import * as Icons from 'lucide-react'
+import { ChevronRight, ExternalLink } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 export type MobileMenuItemAffordance = 'chevron' | 'external' | 'none'
@@ -66,10 +66,10 @@ export function MobileMenuItem({
       </span>
       {accessory}
       {affordance === 'chevron' && (
-        <Icons.ChevronRight className="h-4 w-4 shrink-0 text-foreground/40" strokeWidth={1.75} />
+        <ChevronRight className="h-4 w-4 shrink-0 text-foreground/40" strokeWidth={1.75} />
       )}
       {affordance === 'external' && (
-        <Icons.ExternalLink className="h-4 w-4 shrink-0 text-foreground/40" strokeWidth={1.75} />
+        <ExternalLink className="h-4 w-4 shrink-0 text-foreground/40" strokeWidth={1.75} />
       )}
     </button>
   )

@@ -10,7 +10,6 @@ import {
   createElectronBuildCommandEnvironment,
   publishBuildBunToolchain,
   releaseElectronBuild,
-  resolveReusableElectronBuildId,
   withElectronBuildForPackaging,
   type ElectronBuildMode,
 } from './electron-build-cache.ts'
@@ -203,6 +202,7 @@ export function packageElectron(args = process.argv.slice(2)): void {
   const mode: ElectronBuildMode = args.includes('--development') ? 'development' : 'production'
   const expectedBuildId = resolveExpectedPackageBuildId(args)
   const freshSource = resolvePackageFreshSource(args)
+  void freshSource // --fresh-source 保留为兼容选项：默认行为已等价内容寻址
   const repoRoot = resolve(import.meta.dir, '..', '..')
   const buildSourceRoot = resolve(optionValue(args, '--build-source-root') ?? repoRoot)
   const electronDir = join(repoRoot, 'apps', 'electron')
@@ -263,36 +263,23 @@ export function packageElectron(args = process.argv.slice(2)): void {
   let capturedSource: ReturnType<typeof captureElectronBuildSource> | undefined
   let packageSource: ReturnType<ReturnType<typeof captureElectronBuildSource>['materialize']> | undefined
   try {
-    const reusableBuildResolutionStartedAt = performance.now()
-    const reusableBuildId = expectedBuildId ?? (!freshSource
-      ? resolveReusableElectronBuildId({ buildRoot, mode, verification: 'fast' })
-      : undefined)
-    timings.reusableBuildResolution = elapsedMs(reusableBuildResolutionStartedAt)
-    if (reusableBuildId) {
-      const source = expectedBuildId ? 'pinned' : 'latest reusable'
-      console.log(`[electron-package] Acquiring ${source} build ${reusableBuildId.slice(0, 12)}...`)
+    // 默认按当前源码内容寻址：捕获源码身份，命中既有不可变构建则复用，
+    // 未命中则冷构建（块级缓存只重建变动的块）。--expected-build-id 按编号固定复用。
+    if (expectedBuildId) {
+      console.log(`[electron-package] Acquiring pinned build ${expectedBuildId.slice(0, 12)}...`)
       const acquisitionStartedAt = performance.now()
-      try {
-        lease = acquireElectronBuild({
-          runId,
-          runDir,
-          repoRoot,
-          buildRoot,
-          mode,
-          expectedBuildId: reusableBuildId,
-          skipBuild: true,
-          verification: 'fast',
-        })
-      } catch (error) {
-        if (expectedBuildId) throw error
-        console.log('[electron-package] The reusable build changed before its lease was acquired.')
-      }
+      lease = acquireElectronBuild({
+        runId,
+        runDir,
+        repoRoot,
+        buildRoot,
+        mode,
+        expectedBuildId,
+        skipBuild: true,
+        verification: 'fast',
+      })
       timings.electronBuildAcquisition = elapsedMs(acquisitionStartedAt)
-    }
-    if (!lease) {
-      if (!freshSource) {
-        throw new Error('No reusable Electron build is available. Run again with --fresh-source to build the current source.')
-      }
+    } else {
       console.log('[electron-package] Capturing immutable source snapshot...')
       const sourceCaptureStartedAt = performance.now()
       capturedSource = captureElectronBuildSource({ repoRoot: buildSourceRoot, buildRoot })

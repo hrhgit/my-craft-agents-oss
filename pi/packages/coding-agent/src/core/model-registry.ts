@@ -150,6 +150,12 @@ const ModelDefinitionSchema = Type.Object({
 	reasoning: Type.Optional(Type.Boolean()),
 	thinkingLevelMap: Type.Optional(ThinkingLevelMapSchema),
 	input: Type.Optional(Type.Array(Type.Union([Type.Literal("text"), Type.Literal("image")]))),
+	visionProxy: Type.Optional(
+		Type.Object({
+			provider: Type.String({ minLength: 1 }),
+			model: Type.String({ minLength: 1 }),
+		}),
+	),
 	cost: Type.Optional(
 		Type.Object({
 			input: Type.Number(),
@@ -548,6 +554,7 @@ export class ModelRegistry {
 					reasoning: modelDef.reasoning ?? modelTemplate?.reasoning ?? true,
 					thinkingLevelMap: modelDef.thinkingLevelMap ?? modelTemplate?.thinkingLevelMap,
 					input: (modelDef.input ?? modelTemplate?.input ?? ["text"]) as ("text" | "image")[],
+					visionProxy: modelDef.visionProxy ?? modelTemplate?.visionProxy,
 					cost: modelDef.cost ?? modelTemplate?.cost ?? defaultCost,
 					contextWindow: modelDef.contextWindow ?? modelTemplate?.contextWindow ?? 128000,
 					maxTokens: modelDef.maxTokens ?? modelTemplate?.maxTokens ?? 16384,
@@ -852,6 +859,7 @@ export class ModelRegistry {
 					reasoning: modelDef.reasoning ?? true,
 					thinkingLevelMap: modelDef.thinkingLevelMap,
 					input: modelDef.input as ("text" | "image")[],
+					visionProxy: modelDef.visionProxy,
 					cost: modelDef.cost,
 					contextWindow: modelDef.contextWindow,
 					maxTokens: modelDef.maxTokens,
@@ -901,6 +909,7 @@ export interface ProviderConfigInput {
 		reasoning: boolean;
 		thinkingLevelMap?: Model<Api>["thinkingLevelMap"];
 		input: ("text" | "image")[];
+		visionProxy?: Model<Api>["visionProxy"];
 		cost: { input: number; output: number; cacheRead: number; cacheWrite: number };
 		contextWindow: number;
 		maxTokens: number;

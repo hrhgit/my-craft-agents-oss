@@ -12,6 +12,7 @@
  */
 
 import * as React from 'react'
+import { useTranslation } from 'react-i18next'
 import { WhatsAppConnectDialog } from '../../../components/messaging/WhatsAppConnectDialog'
 import { playgroundMessagingHandle } from '../../mock-utils'
 
@@ -29,6 +30,7 @@ export function WhatsAppConnectDialogPreview({
   phase,
   errorMessage,
 }: WhatsAppConnectDialogPreviewProps) {
+  const { t } = useTranslation()
   const [open, setOpen] = React.useState(true)
 
   // Reopen on any prop change so switching variants in the sidebar brings
@@ -56,13 +58,13 @@ export function WhatsAppConnectDialogPreview({
         case 'error':
           playgroundMessagingHandle.fireWAEvent({
             type: 'error',
-            message: errorMessage || 'Pairing failed: unknown error',
+            message: errorMessage || t('playground.messaging.pairingFailedUnknown'),
           })
           return
       }
     }, 50)
     return () => clearTimeout(handle)
-  }, [phase, errorMessage])
+  }, [phase, errorMessage, t])
 
   // Force remount when phase changes so internal timers don't leak between
   // variants (e.g. the "connected" auto-close would otherwise clobber a
@@ -76,13 +78,13 @@ export function WhatsAppConnectDialogPreview({
       />
       {!open && (
         <div className="p-6 text-sm text-foreground/60">
-          Dialog dismissed.{' '}
+          {t('playground.messaging.dialogDismissed')}{' '}
           <button
             type="button"
             className="underline hover:text-foreground"
             onClick={() => setOpen(true)}
           >
-            Reopen
+            {t('playground.messaging.reopen')}
           </button>
         </div>
       )}

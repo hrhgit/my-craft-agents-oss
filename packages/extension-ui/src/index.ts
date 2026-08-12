@@ -85,6 +85,7 @@ export interface ExtensionUIDependency {
 
 export interface ExtensionUIDependencies {
   extension(id: string): ExtensionUIDependency
+  use(alias: string): ExtensionUIDependency
 }
 
 export interface ExtensionUIMountContext {

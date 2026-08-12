@@ -100,18 +100,21 @@ export interface SessionToolContext {
   // Session Queries
   // ============================================================
 
-  /** Get detailed info about a session. Defaults to current session if no ID given. Injected by backend. */
-  getSessionInfo?(sessionId?: string): SessionInfo | null;
-
   /** List sessions in the workspace with pagination. Injected by backend. */
   listSessions?(options?: ListSessionsOptions): ListSessionsResult;
+
+  /** Create and publish an ordinary Session with its first user message. */
+  createSession?(request: CreateSessionRequest): Promise<CreateSessionResult>;
+
+  /** Read a bounded projection of one Session's current Pi tree branch. */
+  readSession?(sessionId: string, options?: ReadSessionOptions): Promise<ReadSessionResult>;
 
   // ============================================================
   // Inter-Session Messaging
   // ============================================================
 
-  /** Send a message to another session. Injected by backend (SessionManager). */
-  sendAgentMessage?(sessionId: string, message: string, attachments?: Array<{ path: string; name?: string }>): Promise<void>;
+  /** Send a normal user message to another Session through the shared delivery path. */
+  sendMessageToSession?(request: SendMessageToSessionRequest): Promise<SendMessageToSessionResult>;
 
   // ============================================================
   // Messaging Gateway (for list/unbind messaging channels)
@@ -135,37 +138,95 @@ export interface SessionToolContext {
 // Session Query Types
 // ============================================================
 
-/** Full metadata for a single session (returned by get_session_info). */
-export interface SessionInfo {
+export type SessionCoordinationStatus = 'idle' | 'running' | 'deleting'
+
+/** Compact metadata returned by list/read coordination operations. */
+export interface SessionSummary {
   id: string;
   name: string;
+  preview?: string;
   createdAt: number;
   updatedAt?: number;
+  status: SessionCoordinationStatus;
   provider?: string;
   model?: string;
-  isActive: boolean;
 }
 
-/** Compact session summary (returned by list_sessions). */
-export interface SessionListItem {
-  id: string;
-  name: string;
-  createdAt: number;
-}
+export type SessionListItem = SessionSummary
 
 /** Options for list_sessions filtering and pagination. */
 export interface ListSessionsOptions {
   search?: string;
   sortBy?: 'recent' | 'name';
   limit?: number;
-  offset?: number;
+  cursor?: string;
 }
 
 /** Paginated result from list_sessions. */
 export interface ListSessionsResult {
-  total: number;
-  returned: number;
   sessions: SessionListItem[];
+  nextCursor?: string;
+  hasMore: boolean;
+}
+
+export interface CreateSessionRequest {
+  message: string;
+  name?: string;
+  provider?: string;
+  model?: string;
+  thinkingLevel?: 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+  sourceSessionId: string;
+}
+
+export interface CreateSessionResult {
+  sessionId: string;
+  messageId: string;
+  operationId: string;
+  publication: 'pending' | 'published';
+}
+
+export interface ReadSessionOptions {
+  cursor?: string;
+  turnLimit?: number;
+  branchNodeId?: string;
+  maxCharsPerItem?: number;
+}
+
+export interface SessionReadTurn {
+  id: string;
+  user: string;
+  agent?: string;
+  userTruncated?: boolean;
+  agentTruncated?: boolean;
+  startedAt?: number;
+  completedAt?: number;
+}
+
+export interface ReadSessionResult {
+  session: SessionSummary;
+  branch: {
+    leafId: string | null;
+    currentLeafId: string | null;
+    isCurrent: boolean;
+  };
+  turns: SessionReadTurn[];
+  nextCursor?: string;
+  hasMore: boolean;
+}
+
+export interface SendMessageToSessionRequest {
+  sessionId: string;
+  message: string;
+  delivery?: 'followUp' | 'steer';
+  attachments?: Array<{ path: string; name?: string }>;
+  sourceSessionId: string;
+}
+
+export interface SendMessageToSessionResult {
+  accepted: true;
+  operationId: string;
+  messageId: string;
+  delivery: 'followUp' | 'steer';
 }
 
 // ============================================================

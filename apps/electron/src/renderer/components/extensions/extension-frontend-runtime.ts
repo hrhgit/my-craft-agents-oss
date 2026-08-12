@@ -4,6 +4,7 @@ import type {
   ExtensionUIModuleDescriptorV2,
   ExtensionUIOverrideDescriptorV2,
 } from '@mortise/shared/protocol'
+import type { PiExtensionCapabilityBindingV1 } from '@mortise/shared/config'
 import {
   disposeExtensionUI,
   type ExtensionUIBackend,
@@ -151,6 +152,8 @@ function releaseModuleStyles(acquired: Set<string>): void {
 export function createExtensionUIDependencies(
   modules: ExtensionUIModuleDescriptorV2[] = [],
   overrides: ModuleOverride[] = [],
+  bindings: Array<{ extensionId: string; capabilityBindings?: PiExtensionCapabilityBindingV1[] }> = [],
+  consumerExtensionId?: string,
 ): ExtensionUIDependencies {
   const cache = new Map<string, Promise<unknown>>()
   const acquiredStyles = new Set<string>()
@@ -191,6 +194,18 @@ export function createExtensionUIDependencies(
       return {
         module(moduleId) {
           return { load: <T = unknown>() => loadBase(extensionId, moduleId) as Promise<T> }
+        },
+      }
+    },
+    use(alias) {
+      return {
+        module(moduleId) {
+          return { load: <T = unknown>() => {
+            const key = bindings.find(extension => extension.extensionId === consumerExtensionId)?.capabilityBindings?.find(binding => binding.alias === alias && binding.status === 'bound')
+            const providerId = key?.providerExtensionId
+            if (!providerId) return Promise.reject(new Error(`UI capability alias ${alias} is unavailable`))
+            return loadBase(providerId, moduleId) as Promise<T>
+          } }
         },
       }
     },

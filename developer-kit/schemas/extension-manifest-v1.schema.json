@@ -30,6 +30,18 @@
     "optionalDependencies": { "$ref": "#/$defs/dependencyMap" },
     "conflicts": { "$ref": "#/$defs/dependencyMap" },
     "capabilities": { "$ref": "#/$defs/declarationList" },
+    "provides": {
+      "type": "object",
+      "maxProperties": 128,
+      "propertyNames": { "$ref": "#/$defs/declarationId" },
+      "additionalProperties": { "$ref": "#/$defs/capabilityProvide" }
+    },
+    "uses": {
+      "type": "object",
+      "maxProperties": 128,
+      "propertyNames": { "$ref": "#/$defs/declarationId" },
+      "additionalProperties": { "$ref": "#/$defs/capabilityUse" }
+    },
     "permissions": { "$ref": "#/$defs/declarationList" },
     "subagents": {
       "type": "array",
@@ -73,6 +85,85 @@
       "maxItems": 128,
       "uniqueItems": true,
       "items": { "$ref": "#/$defs/stableId" }
+    },
+    "jsonSchema": {
+      "type": "object",
+      "maxProperties": 256
+    },
+    "capabilityOperation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["inputSchema", "outputSchema"],
+      "properties": {
+        "inputSchema": { "$ref": "#/$defs/jsonSchema" },
+        "outputSchema": { "$ref": "#/$defs/jsonSchema" }
+      }
+    },
+    "capabilityProvide": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "scope"],
+      "properties": {
+        "version": { "$ref": "#/$defs/semver" },
+        "scope": { "enum": ["global", "workspace", "session"] },
+        "service": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["operations"],
+          "properties": {
+            "operations": {
+              "type": "object",
+              "minProperties": 1,
+              "maxProperties": 128,
+              "propertyNames": { "$ref": "#/$defs/operationId" },
+              "additionalProperties": { "$ref": "#/$defs/capabilityOperation" }
+            }
+          }
+        },
+        "ui": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "modules": { "$ref": "#/$defs/nonEmptyDeclarationList" },
+            "frontends": { "$ref": "#/$defs/nonEmptyDeclarationList" }
+          },
+          "anyOf": [{ "required": ["modules"] }, { "required": ["frontends"] }]
+        }
+      },
+      "anyOf": [{ "required": ["service"] }, { "required": ["ui"] }]
+    },
+    "capabilityUse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["capability", "version"],
+      "properties": {
+        "capability": { "$ref": "#/$defs/declarationId" },
+        "version": { "$ref": "#/$defs/semverRange" },
+        "required": { "type": "boolean", "default": true },
+        "provider": { "$ref": "#/$defs/stableId" },
+        "facets": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 2,
+          "uniqueItems": true,
+          "items": { "enum": ["service", "ui"] }
+        }
+      }
+    },
+    "semver": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$"
+    },
+    "operationId": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9._-]{0,127}$"
+    },
+    "nonEmptyDeclarationList": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 128,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/declarationId" }
     },
     "subagentTemplate": {
       "type": "object",

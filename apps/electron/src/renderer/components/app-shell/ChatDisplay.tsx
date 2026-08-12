@@ -72,7 +72,7 @@ import { CHAT_LAYOUT } from "@/config/layout"
 import { collectFileChangesFromActivities, getFirstFileChangeIdForActivity } from "@/lib/file-changes"
 import { resolveBranchNewPanelOption } from "./branching"
 import { handleErrorMessageAction } from "./error-message-actions"
-import { piProjectionAtomFamily, removeOptimisticPiUser } from "@/atoms/pi-projection"
+import { piProjectionAtomFamily, removeQueuedPiUser } from "@/atoms/pi-projection"
 import { updateSessionAtom } from "@/atoms/sessions"
 import { removePiUserOverlayCarrier } from "@/lib/pi-message-overlay"
 import { selectPiProcessingStatusMessage, selectPiRuntimeState } from "./pi-timeline-model"
@@ -1289,13 +1289,15 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
     })
   }
 
-  // Drop the renderer-only optimistic entity and overlay carrier after a
+  // Drop the renderer optimistic entity and overlay carrier after a
   // successful withdrawal. The backend cancellation events reconcile the
   // durable projection; this covers the case where no projection event lands
-  // (e.g. the runtime has no agent to project through).
+  // (e.g. the runtime has no agent to project through) and keeps the queued
+  // strip clear immediately. The authoritative host-projected queued entity
+  // carries no `optimistic` flag, so removal must match queued entities too.
   const clearQueuedMessageLocally = React.useCallback((messageId: string) => {
     const projectionAtom = piProjectionAtomFamily(session?.id ?? '')
-    store.set(projectionAtom, current => removeOptimisticPiUser(current, messageId))
+    store.set(projectionAtom, current => removeQueuedPiUser(current, messageId))
     if (session) {
       store.set(updateSessionAtom, session.id, current => current
         ? { ...current, messages: removePiUserOverlayCarrier(current.messages, messageId) }

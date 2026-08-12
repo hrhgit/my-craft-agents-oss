@@ -15,7 +15,7 @@ function inheritedEnvironment(overrides: Record<string, string>): Record<string,
 }
 
 describe('session MCP tools/list schema', () => {
-  it('publishes exactly the current spawn_session thinking levels over stdio MCP', async () => {
+  it('publishes exactly the current subagent thinking levels over stdio MCP', async () => {
     const root = mkdtempSync(resolve(tmpdir(), 'mortise-session-mcp-tools-'))
     const workspaceRoot = resolve(root, 'workspace')
     const plansFolder = resolve(workspaceRoot, '.mortise', 'plans')
@@ -34,8 +34,8 @@ describe('session MCP tools/list schema', () => {
     try {
       await client.connect(transport)
       const tools = await client.listTools()
-      const spawnSession = tools.tools.find(tool => tool.name === 'spawn_session')
-      const properties = spawnSession?.inputSchema.properties
+      const subagent = tools.tools.find(tool => tool.name === 'subagent')
+      const properties = subagent?.inputSchema.properties
       const thinkingLevel = properties?.thinkingLevel as { enum?: unknown } | undefined
 
       expect(thinkingLevel?.enum).toEqual(CURRENT_LEVELS)

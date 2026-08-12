@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'bun:test'
-import { runBuildBlock, type BuildBlockContext } from '../build-block-cache.ts'
+import { publishBlockDirectory, runBuildBlock, type BuildBlockContext } from '../build-block-cache.ts'
 import type { BuildBlockSpec } from '../build-inputs.ts'
 
 const roots: string[] = []
@@ -75,6 +75,65 @@ describe('build block cache', () => {
     } })
     expect(result.reused).toBe(false)
     expect(rebuilt).toBe(1)
+  })
+
+  it('retries transient EPERM publish renames', () => {
+    const root = tempRoot('mortise-build-block-publish-retry-')
+    const staging = join(root, 'block.staging')
+    const block = join(root, 'block')
+    mkdirSync(staging, { recursive: true })
+    writeFileSync(join(staging, 'value.txt'), 'ok\n')
+
+    let failures = 0
+    const flakyRename = (source: string, destination: string) => {
+      if (failures < 2) {
+        failures += 1
+        throw Object.assign(new Error('operation not permitted'), { code: 'EPERM' })
+      }
+      renameSync(source, destination)
+    }
+    publishBlockDirectory(staging, block, flakyRename)
+    expect(failures).toBe(2)
+    expect(readFileSync(join(block, 'value.txt'), 'utf8')).toBe('ok\n')
+  })
+
+  it('clears a stale destination before retrying the publish rename', () => {
+    const root = tempRoot('mortise-build-block-publish-stale-')
+    const staging = join(root, 'block.staging')
+    const block = join(root, 'block')
+    mkdirSync(staging, { recursive: true })
+    writeFileSync(join(staging, 'value.txt'), 'new\n')
+    mkdirSync(block, { recursive: true })
+    writeFileSync(join(block, 'old.txt'), 'old\n')
+
+    let attempts = 0
+    const rename = (source: string, destination: string) => {
+      attempts += 1
+      if (existsSync(destination)) throw Object.assign(new Error('access denied'), { code: 'EACCES' })
+      renameSync(source, destination)
+    }
+    publishBlockDirectory(staging, block, rename)
+    expect(attempts).toBeGreaterThanOrEqual(2)
+    expect(readFileSync(join(block, 'value.txt'), 'utf8')).toBe('new\n')
+    expect(existsSync(join(block, 'old.txt'))).toBe(false)
+  })
+
+  it('fails fast when the staging directory vanished', () => {
+    const root = tempRoot('mortise-build-block-publish-enoent-')
+    const staging = join(root, 'block.staging')
+    const block = join(root, 'block')
+    expect(() => publishBlockDirectory(staging, block, () => {
+      throw Object.assign(new Error('no such file'), { code: 'ENOENT' })
+    })).toThrow('no such file')
+  })
+
+  it('surfaces a persistent publish lock after the retry budget', () => {
+    const root = tempRoot('mortise-build-block-publish-locked-')
+    const staging = join(root, 'block.staging')
+    const block = join(root, 'block')
+    expect(() => publishBlockDirectory(staging, block, () => {
+      throw Object.assign(new Error('operation not permitted'), { code: 'EPERM' })
+    })).toThrow('operation not permitted')
   })
 })
 

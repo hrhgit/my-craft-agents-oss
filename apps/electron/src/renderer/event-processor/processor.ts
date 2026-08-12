@@ -111,6 +111,17 @@ export function processEvent(
     case 'info':
       return handleInfo(state, event)
 
+    case 'subagent_event':
+      return handleInfo(state, {
+        type: 'info',
+        sessionId: event.sessionId,
+        message: event.summary
+          ? `Subagent ${event.taskId} ${event.status}: ${event.summary}`
+          : `Subagent ${event.taskId} ${event.status}`,
+        level: event.status === 'failed' ? 'error' : event.status === 'completed' ? 'success' : 'info',
+        timestamp: event.timestamp,
+      })
+
     case 'interrupted':
       return handleInterrupted(state, event)
 

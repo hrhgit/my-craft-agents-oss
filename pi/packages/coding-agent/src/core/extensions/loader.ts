@@ -28,6 +28,7 @@ import type {
 import { getProcessGlobalBackgroundTaskCoordinator } from "../global-background-tasks.ts";
 import { createSyntheticSourceInfo } from "../source-info.ts";
 import { getExtensionInvocationOrigin } from "./invocation-context.ts";
+import { ExtensionServiceRegistry } from "./service-registry.ts";
 import type {
 	Extension,
 	ExtensionActivation,
@@ -53,6 +54,7 @@ export interface ExtensionLoadMetadata {
 	manifestUI?: ExtensionManifestUI;
 	frontendLoadable?: boolean;
 	frontendDiagnostics?: ExtensionFrontendDiagnostic[];
+	capabilityBindings?: import("../extension-manifest.ts").ExtensionCapabilityBindingV1[];
 }
 
 const require = createRequire(import.meta.url);
@@ -126,7 +128,10 @@ type HandlerFn = (...args: unknown[]) => Promise<unknown>;
  * Create a runtime with throwing stubs for action methods.
  * Runner.bindCore() replaces these with real implementations.
  */
-export function createExtensionRuntime(): ExtensionRuntime {
+export function createExtensionRuntime(options: {
+	scope?: import("../extension-manifest.ts").ExtensionCapabilityScopeV1;
+	parentServiceRegistry?: ExtensionServiceRegistry;
+} = {}): ExtensionRuntime {
 	const notInitialized = () => {
 		throw new Error("Extension runtime not initialized. Action methods cannot be called during extension loading.");
 	};
@@ -155,6 +160,10 @@ export function createExtensionRuntime(): ExtensionRuntime {
 		setThinkingLevel: notInitialized,
 		pendingProviderRegistrations: [],
 		pendingFrontendChannels: [],
+		serviceRegistry: new ExtensionServiceRegistry({
+			scope: options.scope ?? "session",
+			parent: options.parentServiceRegistry,
+		}),
 		assertActive,
 		invalidate: (message) => {
 			state.staleMessage ??=
@@ -226,6 +235,16 @@ function createExtensionAPI(
 				return { capability, operations };
 			});
 			extension.hostCapabilities = normalized;
+		},
+		services: {
+			provide: (capabilityId, implementation) => {
+				runtime.assertActive();
+				return runtime.serviceRegistry.provide(extension.id, capabilityId, implementation);
+			},
+			use: (alias) => {
+				runtime.assertActive();
+				return runtime.serviceRegistry.use(extension.id, alias);
+			},
 		},
 		// Registration methods - write to extension
 		on(event: string, handler: HandlerFn): void {
@@ -385,6 +404,7 @@ function createExtension(
 		| "manifestUI"
 		| "frontendLoadable"
 		| "frontendDiagnostics"
+		| "capabilityBindings"
 	>,
 	activation: ExtensionActivation = "beforeFirstRequest",
 ): Extension {
@@ -406,6 +426,7 @@ function createExtension(
 		manifestUI: identity.manifestUI,
 		frontendLoadable: identity.frontendLoadable,
 		frontendDiagnostics: [...(identity.frontendDiagnostics ?? [])],
+		capabilityBindings: [...(identity.capabilityBindings ?? [])],
 		hostCapabilities: [],
 		handlers: new Map(),
 		tools: new Map(),
@@ -440,11 +461,13 @@ async function loadExtension(
 		}
 
 		const extension = createExtension(extensionPath, resolvedPath, metadata, activation);
+		runtime.serviceRegistry.declareExtension(extension.id, extension.manifest);
 		const api = createExtensionAPI(extension, runtime, eventBus, metadata);
 		await factory(api);
 
 		return { extension, error: null };
 	} catch (err) {
+		runtime.serviceRegistry.unregisterExtension(metadata.id);
 		const message = err instanceof Error ? err.message : String(err);
 		return { extension: null, error: `Failed to load extension: ${message}` };
 	}
@@ -463,9 +486,15 @@ export async function loadExtensionFromFactory(
 	metadata: ExtensionLoadMetadata = { id: "inline", agentDir: getAgentDir() },
 ): Promise<Extension> {
 	const extension = createExtension(extensionPath, extensionPath, metadata, activation);
+	runtime.serviceRegistry.declareExtension(extension.id, extension.manifest);
 	const api = createExtensionAPI(extension, runtime, eventBus, metadata);
-	await factory(api);
-	return extension;
+	try {
+		await factory(api);
+		return extension;
+	} catch (error) {
+		runtime.serviceRegistry.unregisterExtension(extension.id);
+		throw error;
+	}
 }
 
 export async function loadExtensionsIntoRuntime(
@@ -512,12 +541,13 @@ export async function loadExtensions(
 	eventBus?: EventBus,
 	activationByPath?: Map<string, ExtensionActivation>,
 	metadataByPath?: Map<string, ExtensionLoadMetadata>,
+	runtimeOptions?: Parameters<typeof createExtensionRuntime>[0],
 ): Promise<LoadExtensionsResult> {
 	const extensions: Extension[] = [];
 	const errors: Array<{ path: string; error: string }> = [];
 	const resolvedCwd = resolvePath(cwd);
 	const resolvedEventBus = eventBus ?? createEventBus();
-	const runtime = createExtensionRuntime();
+	const runtime = createExtensionRuntime(runtimeOptions);
 
 	const loaded = await loadExtensionsIntoRuntime(
 		paths,

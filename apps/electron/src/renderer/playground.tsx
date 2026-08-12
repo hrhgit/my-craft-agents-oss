@@ -11,13 +11,17 @@ import { Provider as JotaiProvider } from 'jotai'
 import { setupI18n } from '@mortise/shared/i18n'
 import { initReactI18next } from 'react-i18next'
 import { ThemeProvider } from './context/ThemeContext'
-import { Toaster } from './components/ui/sonner'
 import { PlaygroundApp } from './playground/PlaygroundApp'
 import { EscapeInterruptProvider } from './context/EscapeInterruptContext'
 import { PlaygroundAppShellProvider } from './playground/PlaygroundAppShellProvider'
 import { installPlaygroundCloseHandler } from './ui-validation/playground-close-handler'
 import { playgroundReadyStates } from './ui-validation/playground-ready-state'
 import './index.css'
+
+const PlaygroundToaster = React.lazy(async () => {
+  const { Toaster } = await import('./components/ui/sonner')
+  return { default: Toaster }
+})
 
 if (__MORTISE_UI_VALIDATION_BUILD__) {
   void Promise.all([
@@ -49,7 +53,9 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         <EscapeInterruptProvider>
           <PlaygroundAppShellProvider>
             <PlaygroundApp />
-            <Toaster />
+            <React.Suspense fallback={null}>
+              <PlaygroundToaster />
+            </React.Suspense>
           </PlaygroundAppShellProvider>
         </EscapeInterruptProvider>
       </ThemeProvider>

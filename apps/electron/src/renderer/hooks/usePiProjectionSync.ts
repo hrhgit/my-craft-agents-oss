@@ -1,11 +1,11 @@
-import { useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import { useStore } from 'jotai'
 import {
   applyPiProjectionEventAtom,
   applyPiProjectionSnapshotAtom,
   piProjectionAtomFamily,
 } from '@/atoms/pi-projection'
-import type { PiProjectionEventV1 } from '@mortise/shared/protocol'
+import type { PiProjectionEventV1, PiProjectionSnapshotV1 } from '@mortise/shared/protocol'
 import type { PiProjectionState } from '@/atoms/pi-projection'
 import { useWorkspaceElectronApi } from '@/context/WorkspaceElectronApiContext'
 
@@ -15,16 +15,36 @@ export type PiProjectionEventApplied = (
   current: PiProjectionState,
 ) => void
 
+export type PiProjectionSnapshotApplied = (
+  sessionId: string,
+  previous: PiProjectionState,
+  current: PiProjectionState,
+) => void
+
 /** Owns the projection transport independently from the legacy session reducer. */
 export function usePiProjectionSync(
   activeSessionId: string | null,
   onEventApplied?: PiProjectionEventApplied,
+  onSnapshotApplied?: PiProjectionSnapshotApplied,
 ): void {
   const store = useStore()
   const electronApi = useWorkspaceElectronApi()
   const recovering = useRef(new Map<string, Promise<void>>())
   const onEventAppliedRef = useRef(onEventApplied)
   onEventAppliedRef.current = onEventApplied
+  const onSnapshotAppliedRef = useRef(onSnapshotApplied)
+  onSnapshotAppliedRef.current = onSnapshotApplied
+
+  // Apply an authoritative snapshot and notify listeners. The snapshot may be
+  // rejected by the reducer (stale/racing); listeners then see previous ===
+  // current and can no-op.
+  const applySnapshot = useCallback((sessionId: string, snapshot: PiProjectionSnapshotV1): void => {
+    const sessionAtom = piProjectionAtomFamily(sessionId)
+    const previous = store.get(sessionAtom)
+    store.set(applyPiProjectionSnapshotAtom, snapshot)
+    const current = store.get(sessionAtom)
+    onSnapshotAppliedRef.current?.(sessionId, previous, current)
+  }, [store])
 
   useEffect(() => {
     const recover = (sessionId: string): Promise<void> => {
@@ -32,7 +52,7 @@ export function usePiProjectionSync(
       if (existing) return existing
       const request = electronApi.getPiProjectionSnapshot(sessionId)
         .then((snapshot) => {
-          if (snapshot) store.set(applyPiProjectionSnapshotAtom, snapshot)
+          if (snapshot) applySnapshot(sessionId, snapshot)
         })
         .catch((error) => {
           console.error(`[PiProjection] Snapshot recovery failed for ${sessionId}:`, error)
@@ -55,20 +75,20 @@ export function usePiProjectionSync(
       }
     })
     return cleanup
-  }, [store, electronApi])
+  }, [store, electronApi, applySnapshot])
 
   useEffect(() => {
     if (!activeSessionId) return
     let cancelled = false
     void electronApi.getPiProjectionSnapshot(activeSessionId)
       .then((snapshot) => {
-        if (!cancelled && snapshot) store.set(applyPiProjectionSnapshotAtom, snapshot)
+        if (!cancelled && snapshot) applySnapshot(activeSessionId, snapshot)
       })
       .catch((error) => {
         if (!cancelled) console.error(`[PiProjection] Initial snapshot failed for ${activeSessionId}:`, error)
       })
     return () => { cancelled = true }
-  }, [activeSessionId, store, electronApi])
+  }, [activeSessionId, store, electronApi, applySnapshot])
 
   useEffect(() => {
     if (!activeSessionId) return
@@ -77,7 +97,7 @@ export function usePiProjectionSync(
       if (!isStale) return
       void electronApi.getPiProjectionSnapshot(activeSessionId)
         .then((snapshot) => {
-          if (!cancelled && snapshot) store.set(applyPiProjectionSnapshotAtom, snapshot)
+          if (!cancelled && snapshot) applySnapshot(activeSessionId, snapshot)
         })
         .catch((error) => {
           if (!cancelled) console.error(`[PiProjection] Reconnect recovery failed for ${activeSessionId}:`, error)
@@ -87,5 +107,5 @@ export function usePiProjectionSync(
       cancelled = true
       cleanup()
     }
-  }, [activeSessionId, store, electronApi])
+  }, [activeSessionId, store, electronApi, applySnapshot])
 }

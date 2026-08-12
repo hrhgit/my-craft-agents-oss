@@ -10,6 +10,8 @@
  */
 
 import * as React from 'react'
+import { useTranslation } from 'react-i18next'
+import type { TFunction } from 'i18next'
 import { motion, AnimatePresence } from 'motion/react'
 import { toast } from 'sonner'
 import {
@@ -51,31 +53,33 @@ const PRIMARY_OWNER: PlatformOwner = {
   addedAt: Date.now() - 12 * 60 * 60 * 1000,
 }
 
-const SAMPLE_PENDING: PendingSender[] = [
-  {
-    platform: 'telegram',
-    userId: '111222333',
-    displayName: 'Alex Müller',
-    username: 'alex_m',
-    lastAttemptAt: Date.now() - 2 * 60 * 1000,
-    attemptCount: 3,
-  },
-  {
-    platform: 'telegram',
-    userId: '444555666',
-    displayName: 'Sara Park',
-    username: 'sarap',
-    lastAttemptAt: Date.now() - 30 * 60 * 1000,
-    attemptCount: 1,
-  },
-  {
-    platform: 'telegram',
-    userId: '777888999',
-    displayName: 'Random Spammer',
-    lastAttemptAt: Date.now() - 4 * 60 * 60 * 1000,
-    attemptCount: 14,
-  },
-]
+function buildSamplePending(t: TFunction): PendingSender[] {
+  return [
+    {
+      platform: 'telegram',
+      userId: '111222333',
+      displayName: 'Alex Müller',
+      username: 'alex_m',
+      lastAttemptAt: Date.now() - 2 * 60 * 1000,
+      attemptCount: 3,
+    },
+    {
+      platform: 'telegram',
+      userId: '444555666',
+      displayName: 'Sara Park',
+      username: 'sarap',
+      lastAttemptAt: Date.now() - 30 * 60 * 1000,
+      attemptCount: 1,
+    },
+    {
+      platform: 'telegram',
+      userId: '777888999',
+      displayName: t('playground.messaging.fixtures.randomSpammer'),
+      lastAttemptAt: Date.now() - 4 * 60 * 60 * 1000,
+      attemptCount: 14,
+    },
+  ]
+}
 
 function buildOwners(preset: AccessModePreset): PlatformOwner[] {
   switch (preset) {
@@ -87,14 +91,15 @@ function buildOwners(preset: AccessModePreset): PlatformOwner[] {
   }
 }
 
-function buildPending(preset: PendingPreset): PendingSender[] {
+function buildPending(preset: PendingPreset, t: TFunction): PendingSender[] {
+  const sample = buildSamplePending(t)
   switch (preset) {
     case 'none':
       return []
     case 'one':
-      return SAMPLE_PENDING.slice(0, 1)
+      return sample.slice(0, 1)
     case 'three':
-      return SAMPLE_PENDING
+      return sample
   }
 }
 
@@ -126,8 +131,9 @@ export function AllowListPreview({
   dmBindingAccess,
   topicBindingAccess,
 }: AllowListPreviewProps) {
+  const { t } = useTranslation()
   const initialOwners = React.useMemo(() => buildOwners(accessMode), [accessMode])
-  const initialPending = React.useMemo(() => buildPending(pending), [pending])
+  const initialPending = React.useMemo(() => buildPending(pending, t), [pending, t])
   const platformAccessMode = presetToAccessMode(accessMode)
 
   const [owners, setOwners] = React.useState<PlatformOwner[]>(initialOwners)
@@ -171,12 +177,12 @@ export function AllowListPreview({
       // Best-effort seed with the current user (the most common case).
       setOwners([PRIMARY_OWNER])
     }
-    toast.success('Bot locked down to allowed users only')
+    toast.success(t('playground.messaging.toast.lockedDown'))
   }
 
   const handleRemoveOwner = (userId: string) => {
     setOwners((prev) => prev.filter((o) => o.userId !== userId))
-    toast.info('Removed from allowed users')
+    toast.info(t('playground.messaging.toast.ownerRemoved'))
   }
 
   const handleAllow = (sender: PendingSender) => {
@@ -190,7 +196,11 @@ export function AllowListPreview({
       },
     ])
     setPendingList((prev) => prev.filter((s) => s.userId !== sender.userId))
-    toast.success(`Allowed ${sender.displayName || sender.username || sender.userId}`)
+    toast.success(
+      t('playground.messaging.toast.senderAllowed', {
+        name: sender.displayName || sender.username || sender.userId,
+      }),
+    )
   }
 
   const handleIgnore = (sender: PendingSender) => {
@@ -208,7 +218,7 @@ export function AllowListPreview({
 
   return (
     <div className="space-y-6 p-6">
-      <SettingsSection title="Messaging">
+      <SettingsSection title={t('settings.messaging.title')}>
         <SettingsCard>
           <BotHeader />
 
@@ -226,8 +236,10 @@ export function AllowListPreview({
             <>
               <CardSeparator />
               <SectionHeader
-                title="Pending requests"
-                subtitle={`${pendingList.length} ${pendingList.length === 1 ? 'sender was' : 'senders were'} rejected — review to allow.`}
+                title={t('settings.messaging.telegram.access.pendingRequestsTitle')}
+                subtitle={t('settings.messaging.telegram.access.pendingRequestsSubtitle', {
+                  count: pendingList.length,
+                })}
               />
               <PendingSendersList
                 pending={pendingList}
@@ -240,8 +252,8 @@ export function AllowListPreview({
           <CardSeparator />
           <BindingRow
             icon={MessageSquare}
-            title="Direct message session"
-            subtitle="Gyula DM — Telegram chat"
+            title={t('settings.messaging.telegram.directSessionSubtitle')}
+            subtitle={t('playground.messaging.fixtures.gyulaDmChat')}
             access={dmAccess}
             workspaceOwners={owners}
             onChange={setDmAccess}
@@ -251,8 +263,8 @@ export function AllowListPreview({
           <BindingRow
             icon={Hash}
             indent
-            title="GitHub Issue Triage (mortise-oss)"
-            subtitle="GithubIssues · Topic #16"
+            title={t('playground.messaging.fixtures.githubIssueTriage')}
+            subtitle={`GithubIssues · ${t('playground.messaging.topicWithId', { id: 16 })}`}
             access={topicAccess}
             workspaceOwners={owners}
             onChange={setTopicAccess}
@@ -283,19 +295,21 @@ function SectionHeader({ title, subtitle }: { title: string; subtitle: string })
 }
 
 function BotHeader() {
+  const { t } = useTranslation()
   return (
     <div className="flex items-center gap-3 px-4 py-3.5">
       <MessagingPlatformIcon platform="telegram" size={ROW_ICON_SIZE} />
       <div className="min-w-0 flex-1">
-        <div className="text-sm font-medium">Telegram</div>
+        <div className="text-sm font-medium">{t('settings.messaging.telegram.title')}</div>
         <div className="mt-0.5 truncate text-xs text-foreground/50">
-          Bot API · Valid bot: @MortiseBot
+          {t('settings.messaging.telegram.apiType')} ·{' '}
+          {t('settings.messaging.telegram.validBot', { username: 'MortiseBot' })}
         </div>
       </div>
       <button
         type="button"
         className="rounded-md p-1.5 transition-colors hover:bg-foreground/[0.05]"
-        aria-label="More"
+        aria-label={t('common.more')}
       >
         <MoreHorizontal className="h-4 w-4 text-foreground/50" />
       </button>
@@ -304,6 +318,7 @@ function BotHeader() {
 }
 
 function SupergroupHeader() {
+  const { t } = useTranslation()
   return (
     <div className="flex items-center gap-3 px-4 py-2.5">
       <div
@@ -317,7 +332,9 @@ function SupergroupHeader() {
           <div className="truncate text-sm font-medium">Mortise</div>
           <div className="truncate text-xs text-foreground/50">(-1003783993623)</div>
         </div>
-        <div className="mt-0.5 truncate text-xs text-foreground/50">1 topic bound</div>
+        <div className="mt-0.5 truncate text-xs text-foreground/50">
+          {t('settings.messaging.telegram.supergroup.topicsBound', { count: 1 })}
+        </div>
       </div>
     </div>
   )
@@ -339,14 +356,15 @@ function AllowedUsersCollapsible({
   currentUserId: string
   onRemove: (userId: string) => void
 }) {
+  const { t } = useTranslation()
   const [isExpanded, setIsExpanded] = React.useState(owners.length > 0)
 
   const subtitle =
     mode === 'open'
-      ? 'Not enforced — bot is publicly accessible.'
+      ? t('settings.messaging.telegram.access.allowedUsersSubtitleOpen')
       : owners.length === 0
-        ? 'No one can use this bot yet — pair from Telegram or accept a pending request.'
-        : `${owners.length} ${owners.length === 1 ? 'user' : 'users'} allowed`
+        ? t('settings.messaging.telegram.access.allowedUsersSubtitleEmpty')
+        : t('settings.messaging.telegram.access.allowedUsersSubtitle', { count: owners.length })
 
   return (
     <div>
@@ -362,7 +380,7 @@ function AllowedUsersCollapsible({
           <Users className="h-4 w-4 text-foreground/50" strokeWidth={1.5} />
         </div>
         <div className="min-w-0 flex-1">
-          <div className="text-sm font-medium">Allowed users</div>
+          <div className="text-sm font-medium">{t('settings.messaging.telegram.access.allowedUsersTitle')}</div>
           <div className="mt-0.5 truncate text-xs text-foreground/50">{subtitle}</div>
         </div>
         {isExpanded ? (
@@ -413,6 +431,7 @@ function BindingRow({
   workspaceOwners: PlatformOwner[]
   onChange: (next: BindingAccess) => void
 }) {
+  const { t } = useTranslation()
   return (
     <div className="flex items-center gap-3 px-4 py-2.5">
       <div
@@ -432,9 +451,7 @@ function BindingRow({
         workspaceOwners={workspaceOwners}
         onChange={onChange}
       />
-      <Button variant="ghost" size="sm">
-        Open
-      </Button>
+      <Button variant="ghost" size="sm">{t('common.open')}</Button>
     </div>
   )
 }

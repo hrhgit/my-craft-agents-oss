@@ -308,6 +308,26 @@ describe('mortise-ui profiles', () => {
       })).rejects.toThrow('extension entry contains unknown fields')
     }
   })
+
+  it('validates capability UI references from mounted Manifest V1 packages', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'mortise-ui-profile-extension-services-')); roots.push(root)
+    const examplesRoot = resolve(import.meta.dir, '../../../developer-kit/examples/extension-services')
+    const profile = await prepareProfile({
+      profileDir: join(root, 'profile'),
+      mode: 'fixture',
+      extensionPaths: [
+        join(examplesRoot, 'search-provider'),
+        join(examplesRoot, 'knowledge-provider'),
+        join(examplesRoot, 'search-knowledge-compat'),
+      ],
+    })
+
+    expect(profile.mountedExtensions?.flatMap(pkg => pkg.entries.map(entry => entry.id))).toEqual([
+      'example-search-provider',
+      'example-knowledge-provider',
+      'example-search-knowledge-compat',
+    ])
+  })
 })
 
 function openStateStore(mortiseConfigDir: string): MultiWriterStore {

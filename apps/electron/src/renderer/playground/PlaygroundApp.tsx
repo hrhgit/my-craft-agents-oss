@@ -1,26 +1,19 @@
 import * as React from 'react'
-import { PanelRight } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
+import { PanelRight, Languages } from 'lucide-react'
 import { MortiseSymbol } from '@/components/icons/MortiseSymbol'
 import { cn } from '@/lib/utils'
 import { useTheme } from '@/context/ThemeContext'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import type { PresetTheme } from '@config/theme'
 import { ThemeToggle } from './ThemeToggle'
 import { Sidebar } from './Sidebar'
 import { ComponentPreview } from './ComponentPreview'
 import { VariantsSidebar } from './VariantsSidebar'
-import type { ComponentVariant } from './registry/types'
+import type { ComponentVariant, PlaygroundLocale } from './registry/types'
 
 const SELECTED_STORAGE_KEY = 'playground-selected-component'
 const VARIANTS_SIDEBAR_KEY = 'playground-variants-sidebar-open'
 const LOCALE_STORAGE_KEY = 'mortise.playground.global.locale.v1'
-type PlaygroundLocale = 'zh-CN' | 'en'
 
 function requestedScenario(): { componentId: string | null; variant: string | null } {
   const query = new URLSearchParams(window.location.search)
@@ -49,6 +42,7 @@ const FALLBACK_THEME_OPTIONS = [
 ] as const
 
 export function PlaygroundApp() {
+  const { t, i18n } = useTranslation()
   const [registry, setRegistry] = React.useState<typeof import('./registry') | null>(null)
   const categories = React.useMemo(() => registry?.getCategories() ?? [], [registry])
   const {
@@ -174,7 +168,10 @@ export function PlaygroundApp() {
   React.useEffect(() => {
     document.documentElement.lang = locale
     try { localStorage.setItem(LOCALE_STORAGE_KEY, locale) } catch { /* Ignore storage errors */ }
-  }, [locale])
+    // Keep the global i18n instance in sync so demo components that read
+    // `useTranslation()` re-render with the playground's chosen language.
+    void i18n.changeLanguage(locale === 'zh-CN' ? 'zh-Hans' : 'en')
+  }, [locale, i18n])
 
   const selectedComponent = selectedId && registry
     ? (registry.getComponentById(selectedId) ?? null)
@@ -236,32 +233,53 @@ export function PlaygroundApp() {
         <div className="flex items-center gap-3">
           <MortiseSymbol className="h-5 w-5" />
           <h1 className="font-semibold text-foreground font-sans">
-            {locale === 'zh-CN' ? '界面组件预览' : 'Design System Playground'}
+            {t('playground.title')}
           </h1>
         </div>
         <div className="flex items-center gap-2">
           <ThemeToggle />
-          <Select value={locale} onValueChange={value => setLocale(value as PlaygroundLocale)}>
-            <SelectTrigger className="h-8 w-[92px] bg-foreground/5 border-border/50 text-xs" aria-label="Playground language">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="zh-CN">中文</SelectItem>
-              <SelectItem value="en">English</SelectItem>
-            </SelectContent>
-          </Select>
-          <Select value={effectiveColorTheme ?? 'default'} onValueChange={handleThemeChange}>
-            <SelectTrigger className="h-8 w-[170px] bg-foreground/5 border-border/50 text-xs">
-              <SelectValue placeholder="Theme" />
-            </SelectTrigger>
-            <SelectContent>
-              {themeOptions.map((option) => (
-                <SelectItem key={option.value} value={option.value}>
-                  {option.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <div
+            className="flex items-center gap-2 rounded-lg bg-foreground/5 px-2.5 py-1.5"
+            role="group"
+            aria-label={t('playground.language.label')}
+          >
+            <Languages className="h-3.5 w-3.5 text-muted-foreground" />
+            <span
+              className={cn(
+                'text-xs font-medium transition-colors',
+                locale === 'zh-CN' ? 'text-foreground' : 'text-muted-foreground'
+              )}
+            >
+              中
+            </span>
+            <input
+              type="checkbox"
+              checked={locale === 'en'}
+              onChange={event => setLocale(event.target.checked ? 'en' : 'zh-CN')}
+              aria-label={t('playground.language.toggle')}
+              className="relative h-[1.35rem] w-8 cursor-pointer appearance-none rounded-full bg-muted transition-colors after:absolute after:left-0.5 after:top-0.5 after:h-4 after:w-4 after:rounded-full after:bg-background after:shadow-sm after:transition-transform checked:bg-foreground checked:after:translate-x-[0.65rem] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            />
+            <span
+              className={cn(
+                'text-xs font-medium transition-colors',
+                locale === 'en' ? 'text-foreground' : 'text-muted-foreground'
+              )}
+            >
+              EN
+            </span>
+          </div>
+          <select
+            value={effectiveColorTheme ?? 'default'}
+            onChange={event => handleThemeChange(event.target.value)}
+            aria-label="Theme"
+            className="h-8 w-[170px] rounded-md border border-border/50 bg-background px-2 text-xs text-foreground outline-none focus:ring-1 focus:ring-ring"
+          >
+            {themeOptions.map(option => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
           <button
             onClick={() => setVariantsSidebarOpen(!variantsSidebarOpen)}
             className={cn(
@@ -270,7 +288,7 @@ export function PlaygroundApp() {
                 ? 'bg-foreground/10 text-foreground'
                 : 'text-muted-foreground hover:text-foreground hover:bg-foreground/5'
             )}
-            title={variantsSidebarOpen ? (locale === 'zh-CN' ? '隐藏变体' : 'Hide variants') : (locale === 'zh-CN' ? '显示变体' : 'Show variants')}
+            title={variantsSidebarOpen ? t('playground.variants.hide') : t('playground.variants.show')}
           >
             <PanelRight className="w-4 h-4" />
           </button>
@@ -304,7 +322,7 @@ export function PlaygroundApp() {
           </section>
         ) : (
           <div className="flex-1 flex items-center justify-center text-muted-foreground" role={scenario.componentId ? 'alert' : undefined}>
-            {scenario.componentId ? `${locale === 'zh-CN' ? '未知场景' : 'Unknown scenario'}: ${scenario.componentId}` : (locale === 'zh-CN' ? '请从左侧选择一个组件' : 'Select a component from the sidebar')}
+            {scenario.componentId ? `${t('playground.unknownScenario')}: ${scenario.componentId}` : t('playground.selectComponent')}
           </div>
         )}
 

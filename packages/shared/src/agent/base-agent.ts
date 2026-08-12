@@ -20,8 +20,6 @@ import { buildTransferredSessionContext } from './conversation-summary.ts';
 import type { ThinkingLevel } from './thinking-levels.ts';
 import { DEFAULT_THINKING_LEVEL, normalizeThinkingLevel } from './thinking-levels.ts';
 import { type LLMQueryRequest, type LLMQueryResult } from './llm-tool.ts';
-import { readPiGlobalProviders, readPiGlobalSettings } from '../config/pi-global-config.ts';
-import { listSubagentTemplates } from '../config/agent-settings.ts';
 
 import type {
   AgentBackend,
@@ -70,54 +68,57 @@ export interface MiniAgentConfig {
 }
 
 // ============================================================
-// Spawn Session Types
+// Subagent Types
 // ============================================================
 
-export interface SpawnSessionRequest {
-  action: 'spawn' | 'list' | 'inspect' | 'message' | 'resume' | 'interrupt';
+export type SubagentAction = 'start' | 'list' | 'inspect' | 'message' | 'resume' | 'interrupt' | 'wait';
+
+export interface SubagentRequest {
+  action: SubagentAction;
   prompt?: string;
-  sessionId?: string;
-  template?: string;
-  background?: boolean;
-  name?: string;
-  provider?: string;
+  taskId?: string;
+  taskIds?: string[];
+  agent?: string;
+  forkTurns?: number | 'all';
+  systemPrompt?: string;
+  tools?: string[];
   model?: string;
   thinkingLevel?: ThinkingLevel;
-  attachments?: Array<{ path: string; name?: string }>;
+  schema?: Record<string, unknown>;
+  timeoutMs?: number;
 }
 
-export interface SpawnSessionResult {
-  sessionId: string;
+export interface SubagentTask {
+  taskId: string;
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'interrupted';
+  agent?: string;
+  result?: { text: string; data?: unknown };
+  resultRef?: string;
+  error?: string;
+}
+
+export interface SubagentAgentInfo {
+  id: string;
   name: string;
-  status: 'running' | 'completed' | 'interrupted' | 'failed';
-  provider?: string;
+  description: string;
+  source: 'global' | 'workspace' | 'extension';
   model?: string;
-  output?: string;
+  thinkingLevel?: ThinkingLevel;
+  tools: string[];
 }
 
-export interface SpawnSessionListResult {
-  children: import('./pi-agent.ts').PiChildSessionInfo[];
+export interface SubagentListResult {
+  agents: SubagentAgentInfo[];
+  tasks: SubagentTask[];
+  diagnostics: Array<{ path: string; message: string }>;
 }
 
-export interface SpawnSessionInspectResult {
-  child: import('./pi-agent.ts').PiChildSessionInfo;
+export interface SubagentWaitResult {
+  tasks: SubagentTask[];
+  timedOut: boolean;
 }
 
-export type SpawnSessionOperationResult = SpawnSessionResult | SpawnSessionListResult | SpawnSessionInspectResult;
-
-export interface SpawnSessionHelpResult {
-  providers: Array<{
-    key: string;
-    name: string;
-    isDefault: boolean;
-    models: string[];
-    defaultModel?: string;
-  }>;
-  defaults: {
-    defaultProvider: string | null;
-  };
-  templates: Array<{ id: string; name: string; description: string; model?: string }>;
-}
+export type SubagentOperationResult = SubagentTask | SubagentListResult | SubagentWaitResult;
 
 /** Tool list for mini agents - quick config edits only */
 export const MINI_AGENT_TOOLS = ['Read', 'Edit', 'Write', 'Glob', 'Grep', 'Bash'] as const;
@@ -188,7 +189,7 @@ export abstract class BaseAgent implements AgentBackend {
   // ============================================================
   onBeforeToolExecution: ((request: {
     runtimeId?: string;
-    attemptId?: string;
+    attemptId: string;
     toolCallId: string;
     toolName: string;
     input: Record<string, unknown>;
@@ -198,7 +199,7 @@ export abstract class BaseAgent implements AgentBackend {
   onDebug: ((message: string) => void) | null = null;
   onUsageUpdate: ((update: UsageUpdate) => void) | null = null;
   onBackendAuthRequired: ((reason: string) => void) | null = null;
-  onSpawnSession: ((request: SpawnSessionRequest) => Promise<SpawnSessionOperationResult>) | null = null;
+  onSubagent: ((request: SubagentRequest) => Promise<SubagentOperationResult>) | null = null;
 
   // ============================================================
   // Constructor
@@ -782,7 +783,7 @@ ${formattedMessages}
    * Redirect the agent mid-stream. Default: abort and let session layer re-send.
    * Override in backends that support native steering (e.g., Pi's steer()).
    */
-  async redirect(_message: string, _clientMutationId?: string): Promise<boolean> {
+  async redirect(_message: string, _clientMutationId?: string, _options?: ChatOptions): Promise<boolean> {
     this.forceAbort(AbortReason.Redirect);
     return false;
   }
@@ -824,74 +825,43 @@ ${formattedMessages}
   abstract queryLlm(request: LLMQueryRequest): Promise<LLMQueryResult>;
 
   /**
-   * Pre-execute a spawn_session request: handle help mode or delegate to onSpawnSession.
+   * Validate and execute the canonical subagent request.
    * Shared across all backends.
    */
-  protected async preExecuteSpawnSession(
+  protected async preExecuteSubagent(
     input: Record<string, unknown>
-  ): Promise<SpawnSessionOperationResult | SpawnSessionHelpResult> {
-    // Help mode — return available config info
-    if (input.help) {
-      return this.getSpawnSessionHelp();
-    }
-
-    const action = (input.action as SpawnSessionRequest['action'] | undefined) ?? 'spawn';
-    if (action !== 'spawn' && input.template !== undefined) {
-      throw new Error('template is only valid when spawning a child task');
-    }
+  ): Promise<SubagentOperationResult> {
+    const action = (input.action as SubagentAction | undefined) ?? 'start';
     const prompt = input.prompt as string | undefined;
-    if ((action === 'spawn' || action === 'message') && !prompt?.trim()) {
-      throw new Error('prompt is required when not in help mode. Call with help=true to see available options.');
+    if ((action === 'start' || action === 'message') && !prompt?.trim()) {
+      throw new Error(`prompt is required for ${action}`);
     }
-    const sessionId = input.sessionId as string | undefined;
-    if ((action === 'inspect' || action === 'message' || action === 'resume' || action === 'interrupt') && !sessionId?.trim()) {
-      throw new Error(`sessionId is required for ${action}`);
+    const taskId = input.taskId as string | undefined;
+    if ((action === 'inspect' || action === 'message' || action === 'resume' || action === 'interrupt') && !taskId?.trim()) {
+      throw new Error(`taskId is required for ${action}`);
     }
-
-    if (!this.onSpawnSession) {
-      throw new Error('spawn_session is not available in this context.');
+    const taskIds = input.taskIds as string[] | undefined;
+    if (action === 'wait' && (!Array.isArray(taskIds) || taskIds.length === 0)) {
+      throw new Error('taskIds must contain at least one task for wait');
     }
-
-    const request: SpawnSessionRequest = {
+    if (!this.onSubagent) {
+      throw new Error('subagent is not available in this context.');
+    }
+    const request: SubagentRequest = {
       action,
       prompt,
-      sessionId,
-      template: input.template as string | undefined,
-      background: input.background as boolean | undefined,
-      name: input.name as string | undefined,
-      provider: input.provider as string | undefined,
+      taskId,
+      taskIds,
+      agent: input.agent as string | undefined,
+      forkTurns: input.forkTurns as number | 'all' | undefined,
+      systemPrompt: input.systemPrompt as string | undefined,
+      tools: input.tools as string[] | undefined,
       model: input.model as string | undefined,
-      thinkingLevel: input.thinkingLevel as SpawnSessionRequest['thinkingLevel'],
-      attachments: input.attachments as SpawnSessionRequest['attachments'],
+      thinkingLevel: input.thinkingLevel as SubagentRequest['thinkingLevel'],
+      schema: input.schema as Record<string, unknown> | undefined,
+      timeoutMs: input.timeoutMs as number | undefined,
     };
-
-    return this.onSpawnSession(request);
-  }
-
-  /**
-   * Get available providers and models for spawn_session help mode.
-   */
-  protected async getSpawnSessionHelp(): Promise<SpawnSessionHelpResult> {
-    const providers = readPiGlobalProviders();
-    const settings = readPiGlobalSettings();
-    return {
-      providers: Object.entries(providers).map(([key, provider]) => ({
-        key,
-        name: key,
-        isDefault: key === settings.defaultProvider,
-        models: (provider.models || []).map(model => model.id),
-        defaultModel: key === settings.defaultProvider ? settings.defaultModel : undefined,
-      })),
-      defaults: {
-        defaultProvider: settings.defaultProvider ?? null,
-      },
-      templates: (await listSubagentTemplates({ cwd: this.workspaceRoot })).map(({ id, name, description, model }) => ({
-        id,
-        name,
-        description,
-        ...(model ? { model } : {}),
-      })),
-    };
+    return this.onSubagent(request);
   }
 
   // ============================================================

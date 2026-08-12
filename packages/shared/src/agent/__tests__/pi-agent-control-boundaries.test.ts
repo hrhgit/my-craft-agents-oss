@@ -56,12 +56,16 @@ describe('PiAgent Attempt boundaries', () => {
     })
     internals.ensureRpcClient = async () => ({ prompt })
 
-    const events = await collectEvents(internals.chatImpl('exact user text', undefined, { clientMutationId: 'mutation-1' }))
+    const origin = { type: 'session', sessionId: 'source-session' } as const
+    const events = await collectEvents(internals.chatImpl('exact user text', undefined, {
+      clientMutationId: 'mutation-1',
+      origin,
+    }))
 
     expect(prompt).toHaveBeenCalledWith(
       'exact user text',
       undefined,
-      expect.objectContaining({ appendSystemPrompt: '' }),
+      expect.objectContaining({ appendSystemPrompt: '', origin }),
     )
     expect(events).toEqual([{ type: 'pi_user_message_persisted', clientMutationId: 'mutation-1' }])
     expect(longLivedEvents).toEqual(events)
@@ -159,8 +163,9 @@ describe('PiAgent Attempt boundaries', () => {
     const steer = mock(async () => ({ status: 'accepted', attemptId: 'attempt-steer' } as const))
     internals.rpcClient = { steer }
 
-    await expect(agent.redirect('new direction', 'mutation-1')).resolves.toBe(true)
-    expect(steer).toHaveBeenCalledWith('new direction', undefined, { clientMutationId: 'mutation-1' })
+    const origin = { type: 'session', sessionId: 'source-session' } as const
+    await expect(agent.redirect('new direction', 'mutation-1', { origin })).resolves.toBe(true)
+    expect(steer).toHaveBeenCalledWith('new direction', undefined, { clientMutationId: 'mutation-1', origin })
     dispose(agent)
   })
 
@@ -173,9 +178,10 @@ describe('PiAgent Attempt boundaries', () => {
     const followUp = mock(async () => ({ status: 'queued', attemptId: 'attempt-follow-up' } as const))
     internals.rpcClient = { followUp }
 
-    await expect(agent.followUp('next', undefined, { clientMutationId: 'mutation-2' })).resolves.toBe(true)
+    const origin = { type: 'session', sessionId: 'source-session' } as const
+    await expect(agent.followUp('next', undefined, { clientMutationId: 'mutation-2', origin })).resolves.toBe(true)
     expect(followUp).toHaveBeenCalledWith('next', undefined, {
-      clientMutationId: 'mutation-2', attachments: undefined,
+      clientMutationId: 'mutation-2', origin, attachments: undefined,
     })
     dispose(agent)
   })
@@ -193,6 +199,24 @@ describe('PiAgent Attempt boundaries', () => {
 
     expect(result).toEqual({ content: 'executed', isError: false })
     expect(routeToolCall).toHaveBeenCalledTimes(1)
+    dispose(agent)
+  })
+
+  it('forwards Pi Attempt and runtime identity to the host tool boundary', async () => {
+    const agent = new PiAgent(createConfig())
+    const internals = agent as any
+    const onBeforeToolExecution = mock(async () => ({ allowed: true } as const))
+    agent.onBeforeToolExecution = onBeforeToolExecution
+
+    await expect(internals.handleToolExecutionBoundary({
+      type: 'tool_execution_request', id: 'request', runtimeId: 'runtime-child',
+      attemptId: 'attempt-pi', toolName: 'read', toolCallId: 'tool', input: { path: 'README.md' },
+    })).resolves.toEqual({ action: 'allow' })
+
+    expect(onBeforeToolExecution).toHaveBeenCalledWith({
+      runtimeId: 'runtime-child', attemptId: 'attempt-pi',
+      toolName: 'read', toolCallId: 'tool', input: { path: 'README.md' },
+    })
     dispose(agent)
   })
 })

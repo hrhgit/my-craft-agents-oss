@@ -70,6 +70,8 @@ pnpm-lock.yaml
 
 # Mortise local data (sessions, credentials, config)
 .mortise/
+pi/packages/coding-agent/host/instances/
+*.tmp.ts
 
 # Local agent instructions
 

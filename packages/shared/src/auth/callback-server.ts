@@ -1,6 +1,7 @@
 import { createServer as createHttpServer, type Server } from 'http';
 import { URL } from 'url';
-import { generateCallbackPage, type AppType } from './callback-page.ts';
+import { generateCallbackPage, resolveCallbackPageLocale, type AppType, type CallbackPageLocale } from './callback-page.ts';
+import { i18n } from '../i18n/index.ts';
 
 // Re-export for backwards compatibility
 export { generateCallbackPage, type AppType } from './callback-page.ts';
@@ -72,6 +73,9 @@ export async function createCallbackServer(options?: CreateCallbackServerOptions
   // Build the request handler. It closes over `boundPort` which is set before
   // any requests can arrive (the browser isn't opened until after we return).
   const requestHandler = async (req: import('http').IncomingMessage, res: import('http').ServerResponse) => {
+    // Render the callback page in the app's current UI language (falls back to 'en').
+    const locale: CallbackPageLocale = resolveCallbackPageLocale(i18n.resolvedLanguage ?? i18n.language);
+
     try {
       const url = new URL(req.url || '/', `http://localhost:${boundPort}`);
 
@@ -101,6 +105,7 @@ export async function createCallbackServer(options?: CreateCallbackServerOptions
         errorDetail: query.error_description || query.error,
         appType,
         deeplinkUrl: (hasCode && !hasError) ? deeplinkUrl : undefined,
+        locale,
       });
 
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
@@ -120,6 +125,7 @@ export async function createCallbackServer(options?: CreateCallbackServerOptions
         isSuccess: false,
         errorDetail: error instanceof Error ? error.message : 'Internal Server Error',
         appType,
+        locale,
       });
 
       res.writeHead(500, { 'Content-Type': 'text/html; charset=utf-8' });

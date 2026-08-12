@@ -54,13 +54,11 @@ export function MessagingSubmenuPreview({
 
   return (
     <div className="flex flex-col items-start gap-4 p-6">
-      <div className="text-xs text-muted-foreground">
-        Click the button to open the session menu. Hover &ldquo;Connect Messaging&rdquo; for the submenu.
-      </div>
+      <div className="text-xs text-muted-foreground">{t('playground.messaging.submenuHint')}</div>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <button className="rounded-md border border-border bg-background px-3 py-1.5 text-sm hover:bg-accent">
-            Session options
+            {t('playground.messaging.sessionOptions')}
           </button>
         </DropdownMenuTrigger>
         <StyledDropdownMenuContent align="start">

@@ -11,6 +11,7 @@ import {
   type UiValidationErrorPayload,
   type UiValidationResponseEnvelope,
 } from '@mortise/shared/ui-validation'
+import type { ExtensionServiceResultDTO } from '@mortise/shared/protocol'
 import { MortiseUiStartError, DEFAULT_MORTISE_UI_RUN_ROOT, DEFAULT_MORTISE_UI_START_WAIT_MS, MORTISE_UI_MAX_START_WAIT_MS, appendRunHistory, getDefaultAdapterCommand, getMortiseUiRunStatus, isMortiseUiRunProcessAlive, listMortiseUiRuns, pruneMortiseUiRuns, readPackagedDeveloperHostIdentity, readRunManifest, recordMortiseUiStartFailure, resolveRunDir, restartMortiseUiRun, startMortiseUiRun, stopMortiseUiRunDetailed, updateRunManifest } from './controller.ts'
 import { MortiseUiClientError, requestMortiseUiHost } from './client.ts'
 import { MORTISE_UI_PROTOCOL_VERSION, type MortiseUiArtifactManifest, type MortiseUiProfileMode, type MortiseUiRunManifest, type MortiseUiSurface, type MortiseUiWindowMode } from './protocol.ts'
@@ -52,6 +53,7 @@ const MORTISE_UI_KNOWN_OPTIONS = new Set([
   '--build-id',
   '--older-than-hours', '--keep', '--apply', '--kind', '--id', '--params', '--params-file', '--timeout-ms', '--ms',
   '--module', '--flow',
+  '--operation',
   '--json', '--help', '-h',
 ])
 
@@ -105,7 +107,7 @@ export function parseUiDevServers(values: string[]): Record<string, string> {
 function output(value: unknown): void { process.stdout.write(`${JSON.stringify(value)}\n`) }
 
 function help(): void {
-  process.stdout.write('AI workflow additions:\n  mortise-ui workflow schema\n  mortise-ui workflow validate --file <workflow.json>\n  mortise-ui workflow run --file <workflow.json>\n  mortise-ui workflow resume --execution <id>\n  mortise-ui workflow inspect --execution <id>\n  mortise-ui flows list [--module <module-id>] [--flow <flow-id>]\n  mortise-ui flows run [--module <module-id>]... [--flow <flow-id>]... [--surface electron|webui] [--build-id <sha256> | --skip-build] [--keep]\n  mortise-ui capabilities relevant [--run <id-or-label>] [--json]\n  Default responses disclose only information needed for the current decision and point to exact detail commands. Pass --full-observation, --full-evidence, or inspect commands for raw details.\n\n')
+  process.stdout.write('AI workflow additions:\n  mortise-ui workflow schema\n  mortise-ui workflow validate --file <workflow.json>\n  mortise-ui workflow run --file <workflow.json>\n  mortise-ui workflow resume --execution <id>\n  mortise-ui workflow inspect --execution <id>\n  mortise-ui flows list [--module <module-id>] [--flow <flow-id>]\n  mortise-ui flows run [--module <module-id>]... [--flow <flow-id>]... [--surface electron|webui] [--build-id <sha256> | --skip-build] [--keep]\n  mortise-ui extension-services list|describe|invoke [--run <id-or-label>] [--json]\n  mortise-ui capabilities relevant [--run <id-or-label>] [--json]\n  Default responses disclose only information needed for the current decision and point to exact detail commands. Pass --full-observation, --full-evidence, or inspect commands for raw details.\n\n')
   process.stdout.write('Use prepare once and pass its --build-id to Electron starts that should share one immutable build. Electron start also accepts --skip-build for current-source cache checks.\n')
   process.stdout.write(`mortise-ui - AI-facing Mortise UI validation assistant\n\nUsage:\n  mortise-ui fixture schema [--json]\n  mortise-ui prepare [--run-root <path>] [--json]\n  mortise-ui start [--label <semantic-label>] [--surface electron|webui] [--adapter-command-json '["bun","..."]'] [--profile fixture|isolated|clone]\n                 [--window-mode foreground|background] [--fixture <fixture.json>] [--extension <directory>]...\n                 [--ui-dev-server <extension-id=http://127.0.0.1:port/>]...\n                 [--scenario <id>] [--scenario-params <json>] [--wait-ms <1..900000>] [--no-wait] [--full]\n                 [--source-mortise-profile <path>] [--build-id <sha256> | --skip-build] [--json]\n  mortise-ui runs list [--limit <count> | --all] [--run-root <path>] [--json]\n  mortise-ui runs inspect|resume|history --run <id-or-label> [--run-root <path>] [--json]\n  mortise-ui runs prune [--older-than-hours <hours>] [--keep <count>] [--apply] [--run-root <path>] [--json]\n  mortise-ui resume [--run <id-or-label>] [--run-root <path>] [--json]\n  mortise-ui status [--run <id-or-label>] [--run-root <path>] [--full] [--json]\n  mortise-ui capabilities list [--kind route|scenario|action] [--run <id-or-label>] [--json]\n  mortise-ui capabilities describe --kind route|scenario|action --id <id> [--run <id-or-label>] [--json]\n  mortise-ui open|snapshot|action|wait|assert|windows|screenshot|logs|resize|native|window|browser-key\n                 [--params <json> | --params-file <path>] [--run <id-or-label>] [--json]\n  mortise-ui scenario apply|reset [--id <id>] [--params <json>] [--run <id-or-label>] [--json]\n  mortise-ui clock advance --ms <milliseconds> [--run <id-or-label>] [--json]\n  mortise-ui fault set|clear|status [--params <json>] [--run <id-or-label>] [--json]\n  mortise-ui evidence [--params <json>] [--run <id-or-label>] [--json]\n  mortise-ui request <command> [--params <json>] [--run <id-or-label>] [--json]\n  mortise-ui stop [--run <id-or-label>] [--full] [--json]\n\nSnapshot and action commands include an AI briefing, immediately actionable targets, and contextual next actions. Action automatically observes the settled UI. Runs retain a bounded activity history so another AI context can resume the workflow. All commands emit one V1 JSON response envelope. Host requests accept --timeout-ms <1..600000>.\n`)
 }
@@ -480,6 +482,39 @@ export async function main(argv = process.argv): Promise<number> {
       }))
       return 0
     }
+    if (command === 'extension-services') {
+      const operation = args[1] ?? 'list'
+      if (!['list', 'describe', 'invoke'].includes(operation)) throw new Error('extension-services requires list, describe, or invoke')
+      const runDir = resolveRunDir(runRoot, option(args, '--run'))
+      const manifest = readRunManifest(runDir)
+      const params = jsonOption(args, '--params')
+      if (operation === 'describe') params.id = option(args, '--id') ?? params.id
+      if (operation === 'invoke') {
+        params.requestId = typeof params.requestId === 'string' ? params.requestId : localRequestId
+        params.id = option(args, '--id') ?? params.id
+        params.operation = option(args, '--operation') ?? params.operation
+        params.timeoutMs = Number(option(args, '--timeout-ms') ?? params.timeoutMs ?? UI_VALIDATION_EXTENDED_TIMEOUT_MS)
+        if (params.input === undefined) params.input = {}
+      }
+      const response = await requestMortiseUiHost({ ...manifest, command: `extension-services.${operation}`, params, timeoutMs: Number(params.timeoutMs ?? UI_VALIDATION_EXTENDED_TIMEOUT_MS), minimumSeqExclusive: manifest.lastResponseSeq })
+      updateRunManifest(runDir, { lastResponseSeq: response.seq, lastRevision: response.revision, verificationLevel: response.verificationLevel })
+      if (!response.ok) {
+        output(localFailure(localRequestId, manifest, response.error.code, response.error.message, response.error.details))
+        return 2
+      }
+      if (operation === 'invoke' && isExtensionServiceResult(response.result) && response.result.status !== 'succeeded') {
+        output(localFailure(
+          localRequestId,
+          manifest,
+          extensionServiceUiErrorCode(response.result.status),
+          response.result.error?.message ?? `Extension service invocation ${response.result.status}.`,
+          { serviceResult: response.result },
+        ))
+        return 2
+      }
+      output(localSuccess(localRequestId, manifest, { ...response.result }))
+      return 0
+    }
     const directCommands = new Set(['capabilities', 'open', 'scenario', 'snapshot', 'action', 'wait', 'assert', 'evidence', 'clock', 'fault', 'session-validation', 'windows', 'screenshot', 'logs', 'resize', 'native', 'window', 'browser-key'])
     if (command === 'request' || directCommands.has(command)) {
       const scenarioOperation = command === 'scenario' ? args[1] : undefined
@@ -736,6 +771,30 @@ function localFailure(
     verificationLevel: manifest.verificationLevel ?? 'scenario-verified',
     ok: false,
     error: { code, message, ...(details ? { details } : {}) },
+  }
+}
+
+function isExtensionServiceResult(value: unknown): value is ExtensionServiceResultDTO {
+  if (!value || typeof value !== 'object') return false
+  const candidate = value as Partial<ExtensionServiceResultDTO>
+  return candidate.protocolVersion === 1
+    && typeof candidate.requestId === 'string'
+    && typeof candidate.runtimeId === 'string'
+    && typeof candidate.status === 'string'
+}
+
+function extensionServiceUiErrorCode(status: ExtensionServiceResultDTO['status']): UiValidationErrorCode {
+  switch (status) {
+    case 'ambiguous': return 'AMBIGUOUS_TARGET'
+    case 'invalid_input': return 'INVALID_REQUEST'
+    case 'cancelled': return 'ABORTED'
+    case 'timed_out': return 'TIMEOUT'
+    case 'runtime_stale': return 'STALE_REF'
+    case 'unavailable': return 'NOT_READY'
+    case 'invalid_output':
+    case 'failed':
+    case 'succeeded':
+      return 'INTERNAL_ERROR'
   }
 }
 

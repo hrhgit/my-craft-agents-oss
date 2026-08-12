@@ -75,8 +75,8 @@ import type { ExportResourcesOptions, ExportResult, ResourceImportMode, Resource
 export type { ExportResourcesOptions, ExportResult, ResourceImportMode, ResourceBundle, ResourceImportResult };
 
 // provider types
-import type { NetworkProxySettings, DeveloperKitStatus, MidStreamBehavior, PiGlobalProvider, PiGlobalModel, PiCustomApi, PiGlobalSettings, PiGlobalProviderForDisplay, FetchedEndpointModel, PiExtensionSettings, StoredPiExtensionSettings, PiExtensionCatalogEntry, PiExtensionCatalogResult, AgentSettingsSnapshot, MainAgentSettingsUpdate, SubagentUpsert } from '@mortise/shared/config';
-export type { NetworkProxySettings, DeveloperKitStatus, MidStreamBehavior, PiGlobalProvider, PiGlobalModel, PiCustomApi, PiGlobalSettings, PiGlobalProviderForDisplay, FetchedEndpointModel, PiExtensionSettings, StoredPiExtensionSettings, PiExtensionCatalogEntry, PiExtensionCatalogResult, AgentSettingsSnapshot, MainAgentSettingsUpdate, SubagentUpsert };
+import type { NetworkProxySettings, DeveloperKitStatus, MidStreamBehavior, PiGlobalProvider, PiGlobalModel, PiCustomApi, PiGlobalSettings, PiGlobalProviderForDisplay, FetchedEndpointModel, PiExtensionSettings, StoredPiExtensionSettings, PiExtensionCatalogEntry, PiExtensionCatalogResult, AgentSettingsSnapshot, MainAgentSettingsUpdate } from '@mortise/shared/config';
+export type { NetworkProxySettings, DeveloperKitStatus, MidStreamBehavior, PiGlobalProvider, PiGlobalModel, PiCustomApi, PiGlobalSettings, PiGlobalProviderForDisplay, FetchedEndpointModel, PiExtensionSettings, StoredPiExtensionSettings, PiExtensionCatalogEntry, PiExtensionCatalogResult, AgentSettingsSnapshot, MainAgentSettingsUpdate };
 
 // =============================================================================
 // GUI-only types (not used by server/handler code)
@@ -540,11 +540,13 @@ export interface ElectronAPI {
   getWebSearchMode(): Promise<'auto' | 'native' | 'extension' | 'disabled'>
   setWebSearchMode(mode: 'auto' | 'native' | 'extension' | 'disabled'): Promise<void>
 
+  // Model picker — only show tagged models (single-level list)
+  getShowTaggedModelsOnly(): Promise<boolean>
+  setShowTaggedModelsOnly(enabled: boolean): Promise<void>
+
   // Agent settings
   getAgentSettings(): Promise<AgentSettingsSnapshot>
   updateMainAgentSettings(update: MainAgentSettingsUpdate): Promise<AgentSettingsSnapshot>
-  upsertSubagent(update: SubagentUpsert): Promise<{ success: true; agent: import('@mortise/shared/config').SubagentDefinition }>
-  deleteSubagent(id: string): Promise<{ success: true }>
 
   // Pi Extensions 集成开关
   getPiExtensionSettings(): Promise<PiExtensionSettings>

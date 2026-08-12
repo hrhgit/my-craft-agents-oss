@@ -18,6 +18,48 @@ import type { BuildBlockSpec } from './build-inputs.ts'
 export const BUILD_BLOCK_SCHEMA_VERSION = 1
 export const BUILD_BLOCK_PRODUCER_VERSION = 'mortise-build-blocks-v1'
 
+const BLOCK_PUBLISH_RENAME_ATTEMPTS = 12
+const BLOCK_PUBLISH_RENAME_BASE_DELAY_MS = 25
+const BLOCK_PUBLISH_RENAME_MAX_DELAY_MS = 250
+
+function errorCode(error: unknown): string | undefined {
+  return (error as NodeJS.ErrnoException | undefined)?.code
+}
+
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
+}
+
+/**
+ * Publish a built block by renaming its staging directory into place. On Windows a
+ * transient handle on freshly written outputs (antivirus scan, indexer) makes the
+ * rename fail with EPERM/EACCES/EBUSY; retry with backoff so the build survives the
+ * transient lock. A leftover destination is cleared before retrying (the caller holds
+ * the block lock, so no other publisher can own it). Persistent locks and a vanished
+ * staging directory still fail the build.
+ */
+export function publishBlockDirectory(
+  stagingDir: string,
+  blockDir: string,
+  rename: (source: string, destination: string) => void = renameSync,
+): void {
+  for (let attempt = 1; attempt <= BLOCK_PUBLISH_RENAME_ATTEMPTS; attempt += 1) {
+    try {
+      rename(stagingDir, blockDir)
+      return
+    } catch (error) {
+      if (errorCode(error) === 'ENOENT') throw error
+      if (!['EPERM', 'EACCES', 'EBUSY'].includes(errorCode(error) ?? '') || attempt === BLOCK_PUBLISH_RENAME_ATTEMPTS) throw error
+      try {
+        if (existsSync(blockDir)) removeDirectory(blockDir)
+      } catch {
+        // Stale-destination cleanup is best-effort; the next attempt will re-check.
+      }
+      sleepSync(Math.min(BLOCK_PUBLISH_RENAME_MAX_DELAY_MS, BLOCK_PUBLISH_RENAME_BASE_DELAY_MS * 2 ** (attempt - 1)))
+    }
+  }
+}
+
 export interface BuildBlockArtifact {
   path: string
   sizeBytes: number
@@ -105,7 +147,7 @@ export function runBuildBlock(options: RunBuildBlockOptions): RunBuildBlockResul
       }
       writeFileSync(join(stagingDir, 'block.json'), `${JSON.stringify(manifest, null, 2)}\n`, 'utf8')
       mkdirSync(dirname(blockDir), { recursive: true })
-      renameSync(stagingDir, blockDir)
+      publishBlockDirectory(stagingDir, blockDir)
       return { manifest, reused: false }
     } finally {
       removeDirectory(stagingDir)

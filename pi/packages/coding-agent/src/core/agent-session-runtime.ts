@@ -43,6 +43,8 @@ export type CreateAgentSessionRuntimeFactory = (options: {
 	deferResourceLoad?: boolean;
 	persistInitialState?: boolean;
 	extensionPaths?: string[];
+	extensionServiceScope?: import("./extension-manifest.ts").ExtensionCapabilityScopeV1;
+	extensionServiceParentRegistry?: import("./extensions/service-registry.ts").ExtensionServiceRegistry;
 }) => Promise<CreateAgentSessionRuntimeResult>;
 
 /**
@@ -142,6 +144,8 @@ export class AgentSessionRuntime {
 		deferResourceLoad?: boolean;
 		persistInitialState?: boolean;
 		extensionPaths?: string[];
+		extensionServiceScope?: import("./extension-manifest.ts").ExtensionCapabilityScopeV1;
+		extensionServiceParentRegistry?: import("./extensions/service-registry.ts").ExtensionServiceRegistry;
 	}): Promise<AgentSessionRuntime> {
 		return createAgentSessionRuntime(this.createRuntime, {
 			cwd: options.cwd,
@@ -152,6 +156,8 @@ export class AgentSessionRuntime {
 			deferResourceLoad: options.deferResourceLoad ?? this.resourceLoadOptions.deferResourceLoad,
 			persistInitialState: options.persistInitialState ?? this.resourceLoadOptions.persistInitialState,
 			extensionPaths: options.extensionPaths ?? this.resourceLoadOptions.extensionPaths,
+			extensionServiceScope: options.extensionServiceScope,
+			extensionServiceParentRegistry: options.extensionServiceParentRegistry,
 		});
 	}
 
@@ -493,6 +499,8 @@ export async function createAgentSessionRuntime(
 		deferResourceLoad?: boolean;
 		persistInitialState?: boolean;
 		extensionPaths?: string[];
+		extensionServiceScope?: import("./extension-manifest.ts").ExtensionCapabilityScopeV1;
+		extensionServiceParentRegistry?: import("./extensions/service-registry.ts").ExtensionServiceRegistry;
 	},
 ): Promise<AgentSessionRuntime> {
 	assertSessionCwdExists(options.sessionManager, options.cwd);

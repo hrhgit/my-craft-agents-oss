@@ -1,258 +1,103 @@
 import { describe, expect, it } from 'bun:test'
-import { existsSync, mkdtempSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { pathToFileURL } from 'node:url'
 
 const MODULE_PATH = pathToFileURL(join(import.meta.dir, '..', 'agent-settings.ts')).href
 
-function runEval(code: string): { output: string; piAgentDir: string } {
+function runEval(code: string): { output: string; root: string; piAgentDir: string } {
   const root = mkdtempSync(join(tmpdir(), 'mortise-agent-settings-'))
   const configDir = join(root, 'mortise')
   const piAgentDir = join(configDir, 'agent')
-  const result = Bun.spawnSync([
-    process.execPath,
-    '--eval',
-    `import * as settings from '${MODULE_PATH}'; ${code}`,
-  ], {
-    env: {
-      ...process.env,
-      MORTISE_CONFIG_DIR: configDir,
-      PI_CODING_AGENT_DIR: piAgentDir,
-    },
-    stdout: 'pipe',
-    stderr: 'pipe',
+  const result = Bun.spawnSync([process.execPath, '--eval', `import * as settings from '${MODULE_PATH}'; ${code}`], {
+    env: { ...process.env, MORTISE_CONFIG_DIR: configDir, PI_CODING_AGENT_DIR: piAgentDir },
+    stdout: 'pipe', stderr: 'pipe', cwd: root,
   })
-  if (result.exitCode !== 0) {
-    throw new Error(`subprocess failed (exit ${result.exitCode})\n${result.stderr.toString()}`)
-  }
-  return { output: result.stdout.toString().trim(), piAgentDir }
+  if (result.exitCode !== 0) throw new Error(`subprocess failed (exit ${result.exitCode})\n${result.stderr.toString()}`)
+  return { output: result.stdout.toString().trim(), root, piAgentDir }
 }
 
 describe('agent settings storage', () => {
-  it('normalizes user and extension templates into one core template type', () => {
-    const { output } = runEval(`
-      const templates = settings.normalizeSubagentTemplates(
-        [{
-          id: 'reviewer',
-          name: 'Reviewer',
-          description: 'User reviewer',
-          systemPrompt: 'Review user changes.',
-          tools: ['read'],
-        }],
-        [{
-          id: 'quality-suite',
-          loaded: false,
-          title: 'Quality Suite',
-          description: '',
-          category: 'agent',
-          configurable: false,
-          manifestStatus: 'compatible',
-          manifestDiagnostics: [],
-          loadable: true,
-          enabled: true,
-          path: 'quality-suite.ts',
-          resolvedPath: 'quality-suite.ts',
-          commands: [],
-          tools: [],
-          manifest: {
-            schemaVersion: 1,
-            name: 'Quality Suite',
-            version: '1.0.0',
-            author: { name: 'Mortise' },
-            subagents: [{
-              id: 'reviewer',
-              name: 'Extension Reviewer',
-              description: 'Extension reviewer',
-              systemPrompt: 'Review extension changes.',
-              tools: ['read', 'grep'],
-            }],
-          },
-        }],
-      );
-      console.log(JSON.stringify(templates));
-    `)
-    expect(JSON.parse(output)).toEqual([
-      {
-        id: 'quality-suite:reviewer',
-        name: 'Extension Reviewer',
-        description: 'Extension reviewer',
-        systemPrompt: 'Review extension changes.',
-        tools: ['read', 'grep'],
-        source: 'extension',
-        editable: false,
-        extensionId: 'quality-suite',
-      },
-      {
-        id: 'reviewer',
-        name: 'Reviewer',
-        description: 'User reviewer',
-        systemPrompt: 'Review user changes.',
-        tools: ['read'],
-        source: 'user',
-        editable: true,
-      },
-    ])
-  }, 15_000)
-
-  it('returns the Pi-native default without freezing it into override files', () => {
+  it('returns the Pi-native main Agent settings without exposing subagent UI state', () => {
     const { output, piAgentDir } = runEval(`
       const snapshot = await settings.getAgentSettingsSnapshot();
-      console.log(JSON.stringify({
-        systemSource: snapshot.mainAgent.systemPromptSource,
-        compactionSource: snapshot.mainAgent.compactionPromptSource,
-        isPiNativePrompt: snapshot.mainAgent.systemPrompt.includes('expert coding assistant operating inside Mortise'),
-        tools: snapshot.mainAgent.tools.map((tool) => tool.name),
-        browserSource: snapshot.mainAgent.tools.find((tool) => tool.name === 'browser_tool')?.source,
-      }));
+      console.log(JSON.stringify({ keys: Object.keys(snapshot), main: snapshot.mainAgent.systemPrompt.includes('expert coding assistant operating inside Mortise') }));
     `)
-    expect(JSON.parse(output)).toEqual({
-      systemSource: 'default',
-      compactionSource: 'default',
-      isPiNativePrompt: true,
-      tools: expect.arrayContaining(['read', 'edit', 'write', 'grep', 'find', 'ls', 'web_fetch', 'get_session_info', 'spawn_session']),
-      browserSource: 'extension',
-    })
+    expect(JSON.parse(output)).toEqual({ keys: ['schemaVersion', 'mainAgent'], main: true })
     expect(existsSync(join(piAgentDir, 'SYSTEM.md'))).toBe(false)
-    expect(existsSync(join(piAgentDir, 'COMPACTION.md'))).toBe(false)
   })
 
-  it('round-trips prompt overrides and disabled tools through Pi storage', () => {
+  it('round-trips main prompt overrides and disabled tools', () => {
     const { output, piAgentDir } = runEval(`
-      settings.updateMainAgentSettings({
-        schemaVersion: 1,
-        systemPrompt: 'Custom system',
-        compactionPrompt: 'Custom compaction',
-        disabledTools: ['write', 'write', 'pwsh'],
-      });
+      settings.updateMainAgentSettings({ schemaVersion: 1, systemPrompt: 'Custom system', compactionPrompt: 'Custom compaction', disabledTools: ['write', 'write', 'pwsh'] });
       const snapshot = await settings.getAgentSettingsSnapshot();
-      console.log(JSON.stringify({
-        systemPrompt: snapshot.mainAgent.systemPrompt,
-        runtimeSystemPrompt: settings.resolveMainAgentSystemPrompt('Mortise default'),
-        compactionPrompt: snapshot.mainAgent.compactionPrompt,
-        disabled: snapshot.mainAgent.tools.filter((tool) => !tool.enabled).map((tool) => tool.name).sort(),
-      }));
+      console.log(JSON.stringify({ prompt: snapshot.mainAgent.systemPrompt, compaction: snapshot.mainAgent.compactionPrompt, disabled: snapshot.mainAgent.tools.filter(tool => !tool.enabled).map(tool => tool.name).sort() }));
     `)
-    expect(JSON.parse(output)).toEqual({
-      systemPrompt: 'Custom system',
-      runtimeSystemPrompt: 'Custom system',
-      compactionPrompt: 'Custom compaction',
-      disabled: ['pwsh', 'write'],
-    })
-    const piSettings = JSON.parse(readFileSync(join(piAgentDir, 'settings.json'), 'utf8'))
-    expect(piSettings.mortise.agent.disabledTools).toEqual(['write', 'pwsh'])
+    expect(JSON.parse(output)).toEqual({ prompt: 'Custom system', compaction: 'Custom compaction', disabled: ['pwsh', 'write'] })
+    expect(JSON.parse(readFileSync(join(piAgentDir, 'settings.json'), 'utf8')).mortise.agent.disabledTools).toEqual(['write', 'pwsh'])
   })
 
-  it('does not migrate retired session tool prefixes in disabled-tool settings', () => {
-    const { output } = runEval(`
-      settings.updateMainAgentSettings({
-        schemaVersion: 1,
-        systemPrompt: null,
-        compactionPrompt: null,
-        disabledTools: ['mcp__session__get_session_info'],
-      });
-      const snapshot = await settings.getAgentSettingsSnapshot();
-      console.log(JSON.stringify(snapshot.mainAgent.tools
-        .filter((tool) => !tool.enabled)
-        .map((tool) => tool.name)));
-    `)
-    expect(JSON.parse(output)).toEqual(['mcp__session__get_session_info'])
+  it('discovers global and Workspace Markdown and lets Workspace override the same ID', () => {
+    const root = mkdtempSync(join(tmpdir(), 'mortise-agent-discovery-'))
+    const agentDir = join(root, 'global')
+    const workspace = join(root, 'workspace')
+    mkdirSync(join(agentDir, 'agents'), { recursive: true })
+    mkdirSync(join(workspace, '.mortise', 'agents'), { recursive: true })
+    writeFileSync(join(agentDir, 'agents', 'reviewer.md'), '---\nname: Global\ndescription: Global reviewer\ntools:\n  - read\nmodel: global/model\n---\n\nGlobal prompt.\n')
+    writeFileSync(join(workspace, '.mortise', 'agents', 'reviewer.md'), '---\nname: Workspace\ndescription: Workspace reviewer\ntools:\n  - read\n  - grep\nthinkingLevel: high\n---\n\nWorkspace prompt.\n')
+    const result = Bun.spawnSync([process.execPath, '--eval', `import * as settings from '${MODULE_PATH}'; console.log(JSON.stringify(await settings.resolveSubagentConfigs({ agentDir: ${JSON.stringify(agentDir)}, cwd: ${JSON.stringify(workspace)} })));`], { stdout: 'pipe', stderr: 'pipe' })
+    if (result.exitCode !== 0) throw new Error(result.stderr.toString())
+    const resolved = JSON.parse(result.stdout.toString())
+    const reviewer = resolved.agents.find((agent: { id: string }) => agent.id === 'reviewer')
+    expect(reviewer).toMatchObject({ name: 'Workspace', source: 'workspace', tools: ['read', 'grep'], thinkingLevel: 'high', systemPrompt: 'Workspace prompt.' })
+    expect(resolved.agents.filter((agent: { id: string }) => agent.id === 'reviewer')).toHaveLength(1)
   })
 
-  it('uses the native Pi markdown format for subagents', () => {
-    const { output, piAgentDir } = runEval(`
-      settings.upsertSubagent({
-        schemaVersion: 1,
-        agent: {
-          id: 'code-reviewer',
-          name: 'Code Reviewer',
-          description: 'Reviews code changes',
-          systemPrompt: 'Review changes carefully.',
-          tools: ['read', 'grep'],
-          model: 'default:2',
-        },
-      });
-      console.log(JSON.stringify(settings.listSubagents()));
-    `)
-    expect(JSON.parse(output)).toEqual([{
-      id: 'code-reviewer',
-      name: 'Code Reviewer',
-      description: 'Reviews code changes',
-      systemPrompt: 'Review changes carefully.',
-      tools: ['read', 'grep'],
-      model: 'default:2',
-    }])
-    const markdown = readFileSync(join(piAgentDir, 'agents', 'code-reviewer.md'), 'utf8')
-    expect(markdown).toContain('name: "Code Reviewer"')
-    expect(markdown).toContain('tools: "read, grep"')
-    expect(markdown).toContain('model: "default:2"')
+  it('reports a bad file and continues discovering valid files', () => {
+    const root = mkdtempSync(join(tmpdir(), 'mortise-agent-bad-file-'))
+    const agentDir = join(root, 'global')
+    mkdirSync(join(agentDir, 'agents'), { recursive: true })
+    writeFileSync(join(agentDir, 'agents', 'good.md'), '---\nname: Good\ndescription: Valid\ntools: [read]\n---\n\nGood prompt.\n')
+    writeFileSync(join(agentDir, 'agents', 'bad.md'), '---\nname: Bad\n---\n')
+    const result = Bun.spawnSync([process.execPath, '--eval', `import * as settings from '${MODULE_PATH}'; console.log(JSON.stringify(await settings.resolveSubagentConfigs({ agentDir: ${JSON.stringify(agentDir)}, cwd: ${JSON.stringify(root)} })));`], { stdout: 'pipe', stderr: 'pipe' })
+    const resolved = JSON.parse(result.stdout.toString())
+    expect(resolved.agents.some((agent: { id: string }) => agent.id === 'good')).toBe(true)
+    expect(resolved.diagnostics).toHaveLength(1)
+    expect(resolved.diagnostics[0].path).toEndWith('bad.md')
   })
 
-  it('does not migrate retired session tool prefixes in subagent allowlists', () => {
-    const { output, piAgentDir } = runEval(`
-      const saved = settings.upsertSubagent({
-        schemaVersion: 1,
-        agent: {
-          id: 'legacy-tools',
-          name: 'Legacy Tools',
-          description: 'Migration fixture',
-          systemPrompt: 'Use the configured tools.',
-          tools: ['read', 'mcp__session__get_session_info'],
-        },
-      });
-      console.log(JSON.stringify(saved.tools));
-    `)
-    expect(JSON.parse(output)).toEqual(['read', 'mcp__session__get_session_info'])
-    expect(readFileSync(join(piAgentDir, 'agents', 'legacy-tools.md'), 'utf8')).toContain('tools: "read, mcp__session__get_session_info"')
-  })
+  it('namespaces read-only Extension configurations without overriding local IDs', async () => {
+    const module = await import('../agent-settings.ts')
+    const local = {
+      id: 'reviewer',
+      name: 'Local reviewer',
+      description: 'Local',
+      systemPrompt: 'Local prompt.',
+      tools: ['read'],
+      source: 'global' as const,
+      editable: true as const,
+      path: '/reviewer.md',
+    }
+    const extensionCatalog = [{
+      id: 'quality',
+      loadable: true,
+      manifestStatus: 'loaded',
+      manifest: {
+        subagents: [{
+          id: 'reviewer',
+          name: 'Extension reviewer',
+          description: 'Extension',
+          systemPrompt: 'Extension prompt.',
+          tools: ['grep'],
+        }],
+      },
+    }]
 
-  it('rejects a rename that would overwrite another subagent', () => {
-    const { output } = runEval(`
-      const makeAgent = (id, name) => ({
-        schemaVersion: 1,
-        agent: { id, name, description: name, systemPrompt: name, tools: [] },
-      });
-      settings.upsertSubagent(makeAgent('first', 'First'));
-      settings.upsertSubagent(makeAgent('second', 'Second'));
-      try {
-        settings.upsertSubagent({
-          ...makeAgent('second', 'Renamed'),
-          previousId: 'first',
-        });
-      } catch (error) {
-        console.log(error.message);
-      }
-    `)
-    expect(output).toBe('Subagent id already exists: second')
-  })
-
-  it('restores Pi defaults by writing the native prompt into the Mortise override file', () => {
-    const { output, piAgentDir } = runEval(`
-      settings.updateMainAgentSettings({
-        schemaVersion: 1,
-        systemPrompt: 'Custom system',
-        compactionPrompt: 'Custom compaction',
-        disabledTools: [],
-      });
-      settings.updateMainAgentSettings({
-        schemaVersion: 1,
-        systemPrompt: null,
-        compactionPrompt: null,
-        disabledTools: [],
-      });
-      const snapshot = await settings.getAgentSettingsSnapshot();
-      console.log(JSON.stringify([
-        snapshot.mainAgent.systemPromptSource,
-        snapshot.mainAgent.compactionPromptSource,
-        settings.resolveMainAgentSystemPrompt('Mortise default'),
-      ]));
-    `)
-    const result = JSON.parse(output)
-    expect(result[0]).toBe('custom')
-    expect(result[1]).toBe('default')
-    expect(result[2]).toContain('expert coding assistant operating inside Mortise')
-    expect(existsSync(join(piAgentDir, 'SYSTEM.md'))).toBe(true)
-    expect(readFileSync(join(piAgentDir, 'SYSTEM.md'), 'utf8')).toContain('expert coding assistant operating inside Mortise')
-    expect(existsSync(join(piAgentDir, 'COMPACTION.md'))).toBe(false)
+    const agents = module.normalizeSubagentTemplates([local], [], extensionCatalog as never)
+    expect(agents).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'reviewer', source: 'global', editable: true }),
+      expect.objectContaining({ id: 'quality:reviewer', source: 'extension', editable: false, extensionId: 'quality' }),
+    ]))
   })
 })

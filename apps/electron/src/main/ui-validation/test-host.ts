@@ -55,6 +55,11 @@ export interface UiTestHostOptions {
   browserPaneManager?: BrowserPaneManager
   runtimeLogPath: string
   probeWorkspaceCapability?: (request: CapabilityRequestV1) => Promise<{ output: unknown; progress: unknown[] }>
+  extensionServices?: {
+    list: () => Promise<unknown> | unknown
+    describe: (capability: string) => Promise<unknown> | unknown
+    invoke: (params: Record<string, unknown>, signal?: AbortSignal) => Promise<unknown>
+  }
   openRoute?: (params: Record<string, unknown>, target: { webContentsId: number; workspaceId: string | null }) => Promise<unknown>
   shutdown?: () => void
 }
@@ -341,6 +346,12 @@ export async function startUiTestHost(options: UiTestHostOptions): Promise<UiTes
         ...await options.probeWorkspaceCapability(request),
         verificationLevel: 'scenario-verified',
       }
+    }
+    if (command === 'extension-services.list' || command === 'extension-services.describe' || command === 'extension-services.invoke') {
+      if (!options.extensionServices) throw new ElectronUiDriverError('UNSUPPORTED', 'Extension services are unavailable in this runtime.')
+      if (command === 'extension-services.list') return options.extensionServices.list()
+      if (command === 'extension-services.describe') return options.extensionServices.describe(requiredString(params.id, 'id'))
+      return options.extensionServices.invoke(params, signal)
     }
     if (command === 'status') {
       const state = stateBridge.snapshot(selectedWindowId(options.windowManager, selector, false))
@@ -1413,6 +1424,9 @@ function normalizeMethod(method: string): string {
     'app.open': 'open',
     'ui.capabilities': 'capabilities',
     'capability.probe': 'capability-probe',
+    'extension-services.list': 'extension-services.list',
+    'extension-services.describe': 'extension-services.describe',
+    'extension-services.invoke': 'extension-services.invoke',
     'scenario.apply': 'scenario',
     'ui.windows': 'windows',
     'ui.window': 'window',

@@ -24,8 +24,6 @@ mock.module('@mortise/shared/config', () => ({
   setMidStreamBehavior: setMidStreamBehaviorMock,
   getAgentSettingsSnapshot: () => ({}),
   updateMainAgentSettings: updateMainAgentSettingsMock,
-  upsertSubagent: () => ({}),
-  deleteSubagent: () => {},
   readPiGlobalProviders: () => ({}),
 }))
 

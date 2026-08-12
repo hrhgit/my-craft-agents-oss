@@ -100,6 +100,7 @@ import { type BashOperations, createLocalBashOperations } from "./tools/bash.ts"
 import { createAllToolDefinitions } from "./tools/index.ts";
 import { cleanupReadHistoryStore, getReadHistoryStore } from "./tools/read-history.ts";
 import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapper.ts";
+import { needsVisionProxy, type VisionProxyService } from "./vision-proxy.ts";
 
 const INTERRUPTED_ATTEMPT_CONTEXT =
 	"The previous attempt was interrupted. Some tools or commands may still be running or may have partially executed. Check the current state before retrying.";
@@ -186,12 +187,7 @@ export type SessionCommandDisposition =
 	| { status: "queued"; attemptId: string }
 	| {
 			status: "rejected";
-			reason:
-				| "not-running"
-				| "already-running"
-				| "compaction-in-progress"
-				| "invalid-state"
-				| "preflight-failed";
+			reason: "not-running" | "already-running" | "compaction-in-progress" | "invalid-state" | "preflight-failed";
 	  };
 
 // ============================================================================
@@ -215,6 +211,8 @@ export interface AgentSessionConfig {
 	resourceLoader: ResourceLoader;
 	/** SDK custom tools registered outside extensions */
 	customTools?: ToolDefinition[];
+	/** Vision proxy service powering image transcription and the inspect_image tool. */
+	visionProxyService?: VisionProxyService;
 	/** Model registry for API key resolution and model discovery */
 	modelRegistry: ModelRegistry;
 	/** Initial active built-in tool names. Default: [read, shell, edit, write, web_fetch] */
@@ -319,6 +317,8 @@ export interface PromptOptions {
 	interruptedAttempt?: boolean;
 	/** Sanitized host attachment metadata persisted on the user message. */
 	attachments?: UserAttachmentMetadata[];
+	/** Structured product origin persisted without changing user-visible content. */
+	origin?: import("@mortise/pi-ai/types").UserMessageOrigin;
 	/** Whether to expand file-based prompt templates (default: true) */
 	expandPromptTemplates?: boolean;
 	/** Image attachments */
@@ -437,6 +437,7 @@ export class AgentSession {
 
 	private _resourceLoader: ResourceLoader;
 	private _customTools: ToolDefinition[];
+	private _visionProxyService?: VisionProxyService;
 	private _baseToolDefinitions: Map<string, ToolDefinition> = new Map();
 	private _cwd: string;
 	private _extensionRunnerRef?: { current?: ExtensionRunner };
@@ -488,6 +489,7 @@ export class AgentSession {
 		this._resourceLoader = config.resourceLoader;
 		this._requestResourcesReady = config.requestResourcesReady ?? false;
 		this._customTools = config.customTools ?? [];
+		this._visionProxyService = config.visionProxyService;
 		this._cwd = config.cwd;
 		this._modelRegistry = config.modelRegistry;
 		this._extensionRunnerRef = config.extensionRunnerRef;
@@ -1630,10 +1632,16 @@ export class AgentSession {
 					);
 				}
 				if (options.streamingBehavior === "followUp") {
-					await this._queueFollowUp(expandedText, currentImages, options?.clientMutationId);
+					await this._queueFollowUp(
+						expandedText,
+						currentImages,
+						options?.clientMutationId,
+						options?.attachments,
+						options?.origin,
+					);
 					commandResult?.({ status: "queued", attemptId: this._activeAttemptId! });
 				} else {
-					await this._queueSteer(expandedText, currentImages, options?.clientMutationId);
+					await this._queueSteer(expandedText, currentImages, options?.clientMutationId, options?.origin);
 					commandResult?.({ status: "accepted", attemptId: this._activeAttemptId! });
 				}
 				return;
@@ -1698,6 +1706,7 @@ export class AgentSession {
 				timestamp: promptTimestamp,
 				clientMutationId: options?.clientMutationId,
 				attachments: options?.attachments,
+				origin: options?.origin,
 			});
 
 			// Inject any pending "nextTurn" messages as context alongside the user message
@@ -1823,7 +1832,7 @@ export class AgentSession {
 	async steer(
 		text: string,
 		images?: ImageContent[],
-		options?: { clientMutationId?: string },
+		options?: { clientMutationId?: string; origin?: import("@mortise/pi-ai/types").UserMessageOrigin },
 	): Promise<SessionCommandDisposition> {
 		// Check for extension commands (cannot be queued) before the streaming guard:
 		// extension commands must reject with their specific error even while idle.
@@ -1839,7 +1848,7 @@ export class AgentSession {
 		let expandedText = this._expandSkillCommand(text);
 		expandedText = expandPromptTemplate(expandedText, [...this.promptTemplates]);
 
-		await this._queueSteer(expandedText, images, options?.clientMutationId);
+		await this._queueSteer(expandedText, images, options?.clientMutationId, options?.origin);
 		return { status: "accepted", attemptId: this._activeAttemptId! };
 	}
 
@@ -1853,7 +1862,11 @@ export class AgentSession {
 	async followUp(
 		text: string,
 		images?: ImageContent[],
-		options?: { clientMutationId?: string; attachments?: UserAttachmentMetadata[] },
+		options?: {
+			clientMutationId?: string;
+			attachments?: UserAttachmentMetadata[];
+			origin?: import("@mortise/pi-ai/types").UserMessageOrigin;
+		},
 	): Promise<SessionCommandDisposition> {
 		if (!this.isStreaming || !this._activeAttemptId) return { status: "rejected", reason: "not-running" };
 		// Check for extension commands (cannot be queued)
@@ -1865,12 +1878,14 @@ export class AgentSession {
 		let expandedText = this._expandSkillCommand(text);
 		expandedText = expandPromptTemplate(expandedText, [...this.promptTemplates]);
 
-		await this._queueFollowUp(expandedText, images, options?.clientMutationId, options?.attachments);
+		await this._queueFollowUp(expandedText, images, options?.clientMutationId, options?.attachments, options?.origin);
 		return { status: "queued", attemptId: this._activeAttemptId };
 	}
 
 	/** Withdraw one queued Session command before the Agent Loop consumes it. */
-	withdrawQueued(clientMutationId: string): { status: "removed" } | { status: "rejected"; reason: "already-consumed" } {
+	withdrawQueued(
+		clientMutationId: string,
+	): { status: "removed" } | { status: "rejected"; reason: "already-consumed" } {
 		const removed = this.agent.removeQueuedMessage(clientMutationId);
 		if (!removed) return { status: "rejected", reason: "already-consumed" };
 		const text = removed.role === "user" ? this._getUserMessageText(removed) : "";
@@ -1887,7 +1902,12 @@ export class AgentSession {
 	/**
 	 * Internal: Queue a steering message (already expanded, no extension command check).
 	 */
-	private async _queueSteer(text: string, images?: ImageContent[], clientMutationId?: string): Promise<void> {
+	private async _queueSteer(
+		text: string,
+		images?: ImageContent[],
+		clientMutationId?: string,
+		origin?: import("@mortise/pi-ai/types").UserMessageOrigin,
+	): Promise<void> {
 		this._steeringMessages.push(text);
 		this._emitQueueUpdate();
 		const content: (TextContent | ImageContent)[] = [{ type: "text", text }];
@@ -1899,6 +1919,7 @@ export class AgentSession {
 			content,
 			timestamp: Date.now(),
 			clientMutationId,
+			origin,
 		});
 	}
 
@@ -1910,6 +1931,7 @@ export class AgentSession {
 		images?: ImageContent[],
 		clientMutationId?: string,
 		attachments?: UserAttachmentMetadata[],
+		origin?: import("@mortise/pi-ai/types").UserMessageOrigin,
 	): Promise<void> {
 		this._followUpMessages.push(text);
 		this._emitQueueUpdate();
@@ -1923,6 +1945,7 @@ export class AgentSession {
 			timestamp: Date.now(),
 			clientMutationId,
 			attachments,
+			origin,
 		});
 	}
 
@@ -3274,7 +3297,9 @@ export class AgentSession {
 		const searchPlan = resolveWebSearchMode(searchMode, this.model);
 		const keepDormantFallback = searchMode === "auto" && searchPlan.native;
 		const filteredActiveToolNames = [...new Set(nextActiveToolNames)].filter(
-			(name) => name !== "web_search" || searchPlan.extension || keepDormantFallback,
+			(name) =>
+				(name !== "web_search" || searchPlan.extension || keepDormantFallback) &&
+				(name !== "inspect_image" || (this.model ? needsVisionProxy(this.model) : false)),
 		);
 		this.setActiveToolsByName(filteredActiveToolNames);
 	}
@@ -3299,6 +3324,7 @@ export class AgentSession {
 					grep: { readHistoryStore },
 					find: { readHistoryStore },
 					ls: { readHistoryStore },
+					visionProxy: this._visionProxyService,
 				});
 
 		this._baseToolDefinitions = new Map(
@@ -3322,7 +3348,7 @@ export class AgentSession {
 
 		const defaultActiveToolNames = this._baseToolsOverride
 			? Object.keys(this._baseToolsOverride)
-			: ["read", shellToolName, "edit", "write"];
+			: ["read", shellToolName, "edit", "write", ...(this._visionProxyService ? ["inspect_image"] : [])];
 		const baseActiveToolNames = options.activeToolNames ?? defaultActiveToolNames;
 		this._refreshToolRegistry({
 			activeToolNames: baseActiveToolNames,

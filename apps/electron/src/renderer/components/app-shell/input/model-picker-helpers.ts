@@ -33,3 +33,35 @@ export function resolveEffectiveProvider<T extends { key: string }>(
   if (defaultProvider && providers.some(entry => entry.key === defaultProvider)) return defaultProvider
   return providers[0]?.key
 }
+
+export interface TaggedModelEntry {
+  providerKey: string
+  modelId: string
+  modelName: string
+  tags: string[]
+}
+
+/**
+ * Collect every tagged model across providers for the single-level tagged
+ * model list ("仅显示标签模型" mode). Models without tags are excluded.
+ */
+export function collectTaggedModels<T extends { key: string; provider: { models?: Array<{ id: string; name?: string; tags?: unknown }> } }>(
+  providers: readonly T[],
+): TaggedModelEntry[] {
+  const entries: TaggedModelEntry[] = []
+  for (const entry of providers) {
+    for (const model of entry.provider.models ?? []) {
+      const tags = Array.isArray(model.tags)
+        ? model.tags.filter((tag): tag is string => typeof tag === 'string' && tag.trim().length > 0)
+        : []
+      if (tags.length === 0) continue
+      entries.push({
+        providerKey: entry.key,
+        modelId: model.id,
+        modelName: model.name ?? model.id,
+        tags,
+      })
+    }
+  }
+  return entries
+}

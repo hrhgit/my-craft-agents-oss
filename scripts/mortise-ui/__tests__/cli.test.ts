@@ -418,6 +418,46 @@ describe('mortise-ui CLI', () => {
     expect(pruned.json.result).toMatchObject({ applied: true, removedRunIds: [runId] })
     expect(existsSync(join(runRoot, runId))).toBe(false)
   }, 30_000)
+
+  it('returns a non-zero exit code when an extension service reports a domain failure', async () => {
+    const runRoot = mkdtempSync(join(tmpdir(), 'mortise-ui-cli-extension-service-')); roots.push(runRoot)
+    const adapter = JSON.stringify([process.execPath, join(import.meta.dir, '..', 'test-host.fixture.ts')])
+    const started = await runCli(['start', '--run-root', runRoot, '--adapter-command-json', adapter])
+    expect(started.code).toBe(0)
+    const runId = started.json.runId as string
+    try {
+      const failed = await runCli([
+        'extension-services', 'invoke', '--run-root', runRoot, '--run', runId,
+        '--id', 'search.query', '--operation', 'query', '--params', JSON.stringify({
+          fixtureResult: {
+            protocolVersion: 1,
+            requestId: 'fixture-request',
+            runtimeId: 'fixture-runtime',
+            status: 'unavailable',
+            error: { code: 'extension_service_unavailable', message: 'Search provider is unavailable.' },
+          },
+        }),
+      ])
+      expect(failed.code).toBe(2)
+      expect(failed.json).toMatchObject({
+        ok: false,
+        error: {
+          code: 'NOT_READY',
+          message: 'Search provider is unavailable.',
+          details: { serviceResult: { status: 'unavailable', runtimeId: 'fixture-runtime' } },
+        },
+      })
+
+      const succeeded = await runCli([
+        'extension-services', 'invoke', '--run-root', runRoot, '--run', runId,
+        '--id', 'search.query', '--operation', 'query',
+      ])
+      expect(succeeded.code).toBe(0)
+      expect(succeeded.json.result).toMatchObject({ status: 'succeeded', output: { accepted: true } })
+    } finally {
+      expect((await runCli(['stop', '--run-root', runRoot, '--run', runId])).code).toBe(0)
+    }
+  }, 20_000)
 })
 
 function expectEnvelope(value: any, runId?: string): void {

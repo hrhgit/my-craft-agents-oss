@@ -21,13 +21,15 @@ import {
   immutableRuntimeRequiredAppPaths,
 } from '@mortise/session-tools-core/runtime'
 import {
-  assertFrozenDependencyViewsContained,
   captureBuildSource,
-  prepareFrozenPiDependencies,
-  prepareFrozenRootDependencies,
   type CapturedBuildSource,
 } from '../build-source-snapshot.ts'
 import { getPlatformKey, publishVerifiedUvToolchain, resolveCachedUvToolchain, UV_VERSION, type Arch, type Platform } from './common.ts'
+import {
+  assertFrozenDependencyViewsContained,
+  prepareFrozenPiDependencies,
+  prepareFrozenRootDependencies,
+} from './dependency-view-cache.ts'
 import { withFileLock } from './file-lock.ts'
 import { writeJsonAtomic } from './files.ts'
 import { getProcessStartTime, matchesProcessIdentity } from './process-identity.ts'
@@ -1043,8 +1045,8 @@ function runElectronBuild(
     preparePiDependencies: () => prepareFrozenPiDependencies(repoRoot, join(buildRoot, 'sources')),
     buildPiWorkspace: () => runBlock('pi-workspace', () => runBuildCommand(repoRoot, ['run', 'pi:build'], 'Pi workspace build', mode, sourceId, buildRoot, bunExecutable)),
     buildPiBinary: () => runBlock('pi-binary', () => runBuildCommand(repoRoot, ['run', 'pi:build:binary'], 'Pi binary build', mode, sourceId, buildRoot, bunExecutable)),
-    prepareRootDependencies: () => prepareFrozenRootDependencies(repoRoot, bunExecutable),
-    assertDependencyViews: () => assertFrozenDependencyViewsContained(repoRoot),
+    prepareRootDependencies: () => prepareFrozenRootDependencies(repoRoot, join(buildRoot, 'sources'), bunExecutable),
+    assertDependencyViews: () => assertFrozenDependencyViewsContained(repoRoot, join(buildRoot, 'sources')),
     buildElectronSource: () => {
       runBlock('electron-main', () => runBuildCommand(repoRoot, ['run', 'electron:build:main'], 'Electron main build', mode, sourceId, buildRoot, bunExecutable))
       runBlock('electron-preload', () => runBuildCommand(repoRoot, ['run', 'electron:build:preload'], 'Electron preload build', mode, sourceId, buildRoot, bunExecutable))

@@ -1453,12 +1453,12 @@ export function getValidateSteps(): ValidateStep[] {
       },
     },
     {
-      name: 'session-tools:get_session_info',
+      name: 'session-tools:read_session',
       fn: async (client, ctx) => {
         if (!ctx.createdSessionId) return 'skipped (no session)'
         return await waitForSendEvents(client, ctx.createdSessionId,
-          'Use the get_session_info tool to get info about the current session. Do NOT use any other tool.',
-          90_000, true, undefined, ctx.onEvent, 'get_session_info')
+          `Use the read_session tool to read session ${ctx.createdSessionId}. Do NOT use any other tool.`,
+          90_000, true, undefined, ctx.onEvent, 'read_session')
       },
     },
     {

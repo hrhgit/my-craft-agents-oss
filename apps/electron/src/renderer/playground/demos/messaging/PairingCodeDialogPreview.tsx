@@ -11,6 +11,7 @@
  */
 
 import * as React from 'react'
+import { useTranslation } from 'react-i18next'
 import { PairingCodeDialog } from '../../../components/messaging/PairingCodeDialog'
 
 export interface PairingCodeDialogPreviewProps {
@@ -28,6 +29,7 @@ export function PairingCodeDialogPreview({
   botUsername,
   error,
 }: PairingCodeDialogPreviewProps) {
+  const { t } = useTranslation()
   const [open, setOpen] = React.useState(true)
 
   // Reopen on any prop change so switching variants in the sidebar brings
@@ -40,7 +42,6 @@ export function PairingCodeDialogPreview({
   const expiresAt = React.useMemo(() => {
     if (expiresInSeconds < 0) return null
     return Date.now() + expiresInSeconds * 1000
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [expiresInSeconds])
 
   return (
@@ -56,13 +57,13 @@ export function PairingCodeDialogPreview({
       />
       {!open && (
         <div className="p-6 text-sm text-foreground/60">
-          Dialog dismissed.{' '}
+          {t('playground.messaging.dialogDismissed')}{' '}
           <button
             type="button"
             className="underline hover:text-foreground"
             onClick={() => setOpen(true)}
           >
-            Reopen
+            {t('playground.messaging.reopen')}
           </button>
         </div>
       )}

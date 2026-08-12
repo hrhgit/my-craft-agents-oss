@@ -1001,6 +1001,7 @@ export async function getPiExtensionCatalog(options: { cwd?: string; agentDir?: 
             manifest,
             manifestStatus: metadata.extensionManifestStatus ?? 'legacy',
             manifestDiagnostics: metadata.extensionManifestDiagnostics ?? [],
+            capabilityBindings: metadata.extensionCapabilityBindings ?? [],
             loadable: metadata.extensionLoadable ?? resource.enabled,
             ui,
             frontendLoadable: metadata.extensionFrontendLoadable,

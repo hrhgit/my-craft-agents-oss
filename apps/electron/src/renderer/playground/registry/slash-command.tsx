@@ -1,4 +1,5 @@
 import * as React from 'react'
+import { Trans, useTranslation } from 'react-i18next'
 import type { ComponentEntry } from './types'
 import { SquareSlash } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -15,6 +16,7 @@ import {
 // ============================================================================
 
 function SlashCommandDemo() {
+  const { t } = useTranslation()
   const [activeCommands, setActiveCommands] = React.useState<SlashCommandId[]>([])
   const [buttonMenuOpen, setButtonMenuOpen] = React.useState(false)
   const [inputValue, setInputValue] = React.useState('')
@@ -44,18 +46,23 @@ function SlashCommandDemo() {
       {/* Description */}
       <div className="shrink-0 p-4 border-b border-border/50">
         <h2 className="text-sm font-medium text-foreground/80 mb-2">
-          Slash Command Menu Demo
+          {t('playground.slashCommand.title')}
         </h2>
         <p className="text-xs text-muted-foreground">
-          Type <code className="px-1 py-0.5 bg-muted rounded">/</code> to trigger inline autocomplete in the real input component, or click the button to open the standalone menu.
-          Active commands in the standalone menu show a checkmark.
+          <Trans
+            i18nKey="playground.slashCommand.description"
+            components={{ code: <code className="px-1 py-0.5 bg-muted rounded" /> }}
+          >
+            Type <code>/</code> to trigger inline autocomplete in the real input component, or click the button to open the standalone menu.
+            Active commands in the standalone menu show a checkmark.
+          </Trans>
         </p>
       </div>
 
       {/* Active Commands Display */}
       {activeCommands.length > 0 && (
         <div className="shrink-0 px-4 py-2 border-b border-border/50 flex flex-wrap gap-2">
-          <span className="text-xs text-muted-foreground">Standalone menu active:</span>
+          <span className="text-xs text-muted-foreground">{t('playground.slashCommand.standaloneActive')}</span>
           {activeCommands.map(id => {
             const cmd = DEFAULT_SLASH_COMMANDS.find(c => c.id === id)
             const color = cmd?.color || '#888'
@@ -84,7 +91,7 @@ function SlashCommandDemo() {
         {/* Left: Button Menu with Filter */}
         <div className="flex-1">
           <div className="text-xs font-medium text-muted-foreground mb-2">
-            Button Menu (with filter input)
+            {t('playground.slashCommand.buttonMenuTitle')}
           </div>
           <div className="relative">
             <Button
@@ -94,7 +101,7 @@ function SlashCommandDemo() {
               onClick={() => setButtonMenuOpen(!buttonMenuOpen)}
             >
               <SquareSlash className="h-4 w-4" />
-              Commands
+              {t('playground.slashCommand.commandsButton')}
             </Button>
             {buttonMenuOpen && (
               <div className="absolute top-full left-0 mt-2 z-10">
@@ -113,7 +120,7 @@ function SlashCommandDemo() {
         {/* Right: Static Menu (no filter) */}
         <div className="flex-1">
           <div className="text-xs font-medium text-muted-foreground mb-2">
-            Static Menu (no filter)
+            {t('playground.slashCommand.staticMenuTitle')}
           </div>
           <SlashCommandMenu
             commands={DEFAULT_SLASH_COMMANDS}
@@ -127,10 +134,10 @@ function SlashCommandDemo() {
       {/* Input Area using the real app input component */}
       <div className="shrink-0 p-4 border-t border-border/50">
         <div className="text-xs font-medium text-muted-foreground mb-2">
-          Real FreeFormInput (type / in the input)
+          {t('playground.slashCommand.realInputTitle')}
         </div>
         <FreeFormInput
-          placeholder="Type / to see commands..."
+          placeholder={t('playground.slashCommand.inputPlaceholder')}
           currentModel={model}
           onModelChange={setModel}
           inputValue={inputValue}
@@ -152,8 +159,10 @@ export const slashCommandComponents: ComponentEntry[] = [
   {
     id: 'slash-command-demo',
     name: 'Slash Command Demo',
+    nameZh: '斜杠命令演示',
     category: 'Chat Inputs',
     description: 'Interactive demo showing both button-triggered and inline slash command menus',
+    descriptionZh: '同时展示按钮触发与内联斜杠命令菜单的交互演示',
     component: SlashCommandDemo,
     layout: 'full',
     props: [],
