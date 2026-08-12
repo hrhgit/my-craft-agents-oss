@@ -85,6 +85,10 @@ export interface PiProjectionEventV1<TPayload = unknown> {
   seq: number
   sessionId: string
   runtimeId: string
+  /** Trusted producer identity assigned by the projection builder. */
+  origin?: 'host' | 'runtime'
+  /** Mortise-issued identity of the authorized logical run that produced this event. */
+  attemptId?: string
   turnId?: string
   entityId: string
   entityType: PiProjectionEntityType

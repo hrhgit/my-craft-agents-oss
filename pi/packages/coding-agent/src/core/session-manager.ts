@@ -1510,6 +1510,23 @@ export class SessionManager {
 		}
 	}
 
+	/**
+	 * Retry a failed durability boundary by atomically rewriting the complete
+	 * in-memory Session. A failed append may have written an unknown prefix, so
+	 * replaying the append would risk duplicate JSONL entries.
+	 */
+	async retryFlush(): Promise<void> {
+		while (this.persistenceLoop) {
+			await this.persistenceLoop;
+		}
+		if (!this.persistenceError) return this.flush();
+		this.persistenceError = undefined;
+		this.rewriteRequested = true;
+		this.requestedDurabilityRevision++;
+		this.ensurePersistenceLoop();
+		await this.flush();
+	}
+
 	getDurabilityState(): SessionDurabilityState {
 		const pendingEntries = Math.max(0, this.fileEntries.length - this.persistedEntryCount);
 		return {

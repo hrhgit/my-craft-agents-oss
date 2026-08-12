@@ -13,7 +13,7 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
-import { SessionManager as PiSessionManager } from '@mortise/pi-coding-agent/host-facade'
+import { SessionManager as PiSessionManager } from '@mortise/pi-coding-agent/internal/host-facade'
 import { requirePrimaryLocalWorkspaceRoot, type Workspace } from '@mortise/core/types'
 import type { AgentBackend } from '../agent/backend/index.ts'
 import { PiProjectionBuilder } from '../agent/backend/pi/projection-builder.ts'
@@ -448,7 +448,7 @@ function deterministicBackend(
     getModel: () => 'deterministic', setModel: () => undefined, getThinkingLevel: () => 'medium', setThinkingLevel: () => undefined,
     getSessionId: () => sessionId, setSessionId: () => undefined, isProcessing: () => false,
     abort: async () => undefined, forceAbort: () => undefined, interruptForHandoff: () => undefined, redirect: async () => false,
-    followUp: async () => false, runMiniCompletion: async () => null, runIsolatedAgent: async () => null, dispose: () => undefined, destroy: () => undefined,
+    followUp: async () => false, runMiniCompletion: async () => null, dispose: () => undefined, destroy: () => undefined,
     updateRuntimeConfig: async () => false,
     projectQueuedUser: () => undefined, projectRuntimeError: () => undefined, getSummarizeCallback: () => async () => null,
     updateSdkCwd: () => undefined, setWorkspace: () => undefined, generateTitle: async () => null, regenerateTitle: async () => null,

@@ -66,6 +66,7 @@ if (process.argv.includes('--generate-token')) {
 import type { WsRpcTlsOptions } from '@mortise/server-core/transport'
 import { registerCoreRpcHandlers, cleanupClientFileWatches } from '@mortise/server-core/handlers/rpc'
 import { SessionManager, setSessionPlatform, setSessionRuntimeHooks, type SessionBackendFactory } from '@mortise/server-core/sessions'
+import { createDefaultOperationCoordinator } from '@mortise/server-core/operations'
 import { initModelRefreshService, setFetcherPlatform } from '@mortise/server-core/model-fetchers'
 import { setSearchPlatform, setImageProcessor } from '@mortise/server-core/services'
 import type { HandlerDeps } from '@mortise/server-core/handlers'
@@ -90,6 +91,8 @@ process.on('unhandledRejection', (reason) => {
   const msg = errorMessage(reason)
   console.error(`[server] Unhandled rejection (caught, not crashing): ${msg}`)
 })
+
+const operationCoordinator = createDefaultOperationCoordinator()
 
 if (process.env.MORTISE_DEBUG === 'true' || process.env.MORTISE_DEBUG === '1') {
   enableDebug()
@@ -276,8 +279,8 @@ const instance = await (async () => {
       }),
       createSessionManager: () => {
         const sessionManager = new SessionManager(uiValidationSessionBackend
-          ? { createSessionBackend: uiValidationSessionBackend }
-          : {})
+          ? { createSessionBackend: uiValidationSessionBackend, operationCoordinator }
+          : { operationCoordinator })
         if (
           process.env.MORTISE_ELECTRON_CAPABILITY_BRIDGE === '1'
           && process.env.MORTISE_PROCESS_ROLE === 'workspace-server'
@@ -305,6 +308,7 @@ const instance = await (async () => {
           sessionManager,
           platform,
           messagingRegistry: messagingHandle.registry,
+          operationCoordinator,
         }
       },
       registerAllRpcHandlers: registerCoreRpcHandlers,

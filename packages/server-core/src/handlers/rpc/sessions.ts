@@ -516,7 +516,6 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
           undefined,
           { callerClientId },
           false,
-          false,
           onAccepted,
         )
         .then(() => {

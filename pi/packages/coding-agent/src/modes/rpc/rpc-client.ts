@@ -10,7 +10,6 @@ import { connect, type Socket } from "node:net";
 import type { AgentMessage, ThinkingLevel } from "@mortise/pi-agent-core";
 import type { ImageContent } from "@mortise/pi-ai/types";
 import type { AgentSessionEvent, SessionStats } from "../../core/agent-session.ts";
-import type { BashResult } from "../../core/bash-executor.ts";
 import type { CompactionResult } from "../../core/compaction/index.ts";
 import { PI_GLOBAL_HOST_INSTANCE_ID_ENV, readPiGlobalHostState } from "../../core/global-host-state.ts";
 import type {
@@ -50,6 +49,7 @@ import type {
 	RpcResponse,
 	RpcRuntimeOpenOptions,
 	RpcRuntimeSummary,
+	RpcSessionCommandDisposition,
 	RpcSessionState,
 	RpcSlashCommand,
 	RpcToolExecuteRequest,
@@ -468,8 +468,8 @@ export class RpcClient {
 	 */
 	async prompt(
 		message: string,
-		images?: ImageContent[],
-		options?: {
+		images: ImageContent[] | undefined,
+		options: {
 			systemPrompt?: string;
 			clearSystemPrompt?: boolean;
 			appendSystemPrompt?: string;
@@ -477,25 +477,36 @@ export class RpcClient {
 			interruptedAttempt?: boolean;
 			attachments?: import("@mortise/pi-ai/types").UserAttachmentMetadata[];
 		},
-	): Promise<void> {
-		await this.send({
+	): Promise<RpcSessionCommandDisposition> {
+		const response = await this.send({
 			type: "prompt",
 			message,
 			images,
 			systemPrompt: options?.systemPrompt,
 			clearSystemPrompt: options?.clearSystemPrompt,
 			appendSystemPrompt: options?.appendSystemPrompt,
-			clientMutationId: options?.clientMutationId,
-			interruptedAttempt: options?.interruptedAttempt,
-			attachments: options?.attachments,
+			clientMutationId: options.clientMutationId,
+			interruptedAttempt: options.interruptedAttempt,
+			attachments: options.attachments,
 		});
+		return this.getData(response);
 	}
 
 	/**
 	 * Queue a steering message to interrupt the agent mid-run.
 	 */
-	async steer(message: string, images?: ImageContent[], options?: { clientMutationId?: string }): Promise<void> {
-		await this.send({ type: "steer", message, images, clientMutationId: options?.clientMutationId });
+	async steer(
+		message: string,
+		images: ImageContent[] | undefined,
+		options: { clientMutationId?: string } = {},
+	): Promise<RpcSessionCommandDisposition> {
+		const response = await this.send({
+			type: "steer",
+			message,
+			images,
+			clientMutationId: options.clientMutationId,
+		});
+		return this.getData(response);
 	}
 
 	/**
@@ -503,23 +514,37 @@ export class RpcClient {
 	 */
 	async followUp(
 		message: string,
-		images?: ImageContent[],
-		options?: { clientMutationId?: string; attachments?: import("@mortise/pi-ai/types").UserAttachmentMetadata[] },
-	): Promise<void> {
-		await this.send({
+		images: ImageContent[] | undefined,
+		options: {
+			clientMutationId?: string;
+			attachments?: import("@mortise/pi-ai/types").UserAttachmentMetadata[];
+		} = {},
+	): Promise<RpcSessionCommandDisposition> {
+		const response = await this.send({
 			type: "follow_up",
 			message,
 			images,
-			clientMutationId: options?.clientMutationId,
-			attachments: options?.attachments,
+			clientMutationId: options.clientMutationId,
+			attachments: options.attachments,
 		});
+		return this.getData(response);
+	}
+
+	async withdrawQueued(clientMutationId: string): Promise<{ status: "removed" } | { status: "rejected"; reason: "already-consumed" }> {
+		const response = await this.send({ type: "withdraw_queued", clientMutationId });
+		return this.getData(response);
 	}
 
 	/**
 	 * Abort current operation.
 	 */
-	async abort(): Promise<void> {
-		await this.send({ type: "abort" });
+	async abort(): Promise<RpcSessionCommandDisposition> {
+		const response = await this.send({ type: "abort" });
+		return this.getData(response);
+	}
+
+	async retrySettlement(attemptId: string): Promise<void> {
+		await this.send({ type: "retry_settlement", attemptId }, NO_RPC_REQUEST_TIMEOUT);
 	}
 
 	/**
@@ -579,16 +604,6 @@ export class RpcClient {
 		const response = await this.send({ type: "register_tools", tools });
 		const data = this.getData<{ registered: string[] }>(response);
 		return data.registered;
-	}
-
-	/**
-	 * Start a new session, optionally with parent tracking.
-	 * @param parentSession - Optional parent session path for lineage tracking
-	 * @returns Object with `cancelled: true` if an extension cancelled the new session
-	 */
-	async newSession(parentSession?: string): Promise<{ cancelled: boolean }> {
-		const response = await this.send({ type: "new_session", parentSession }, NO_RPC_REQUEST_TIMEOUT);
-		return this.getData(response);
 	}
 
 	/**
@@ -705,59 +720,10 @@ export class RpcClient {
 	}
 
 	/**
-	 * Abort in-progress retry.
-	 */
-	async abortRetry(): Promise<void> {
-		await this.send({ type: "abort_retry" });
-	}
-
-	/**
-	 * Execute a bash command.
-	 */
-	async bash(command: string): Promise<BashResult> {
-		const response = await this.send({ type: "bash", command }, NO_RPC_REQUEST_TIMEOUT);
-		return this.getData(response);
-	}
-
-	/**
-	 * Abort running bash command.
-	 */
-	async abortBash(): Promise<void> {
-		await this.send({ type: "abort_bash" });
-	}
-
-	/**
 	 * Get session statistics.
 	 */
 	async getSessionStats(): Promise<SessionStats> {
 		const response = await this.send({ type: "get_session_stats" });
-		return this.getData(response);
-	}
-
-	/**
-	 * Switch to a different session file.
-	 * @returns Object with `cancelled: true` if an extension cancelled the switch
-	 */
-	async switchSession(sessionPath: string): Promise<{ cancelled: boolean }> {
-		const response = await this.send({ type: "switch_session", sessionPath }, NO_RPC_REQUEST_TIMEOUT);
-		return this.getData(response);
-	}
-
-	/**
-	 * Fork from a specific message.
-	 * @returns Object with `text` (the message text) and `cancelled` (if extension cancelled)
-	 */
-	async fork(entryId: string): Promise<{ text: string; cancelled: boolean }> {
-		const response = await this.send({ type: "fork", entryId }, NO_RPC_REQUEST_TIMEOUT);
-		return this.getData(response);
-	}
-
-	/**
-	 * Clone the current active branch into a new session.
-	 * @returns Object with `cancelled: true` if an extension cancelled the clone
-	 */
-	async clone(): Promise<{ cancelled: boolean }> {
-		const response = await this.send({ type: "clone" }, NO_RPC_REQUEST_TIMEOUT);
 		return this.getData(response);
 	}
 
@@ -816,12 +782,15 @@ export class RpcClient {
 		args?: string,
 		ownerExtensionId?: string,
 	): Promise<RpcExtensionCommandResult> {
-		const response = await this.send({
-			type: "invoke_extension_command",
-			commandId,
-			args,
-			...(ownerExtensionId !== undefined ? { ownerExtensionId } : {}),
-		}, NO_RPC_REQUEST_TIMEOUT);
+		const response = await this.send(
+			{
+				type: "invoke_extension_command",
+				commandId,
+				args,
+				...(ownerExtensionId !== undefined ? { ownerExtensionId } : {}),
+			},
+			NO_RPC_REQUEST_TIMEOUT,
+		);
 		return this.getData<RpcExtensionCommandResult>(response);
 	}
 
@@ -898,32 +867,19 @@ export class RpcClient {
 		return this.getData<HostSessionProjection>(response);
 	}
 
-	async forkSession(
-		sourcePath: string,
-		targetCwd: string,
-		options: { sessionDir?: string; id?: string; parentSession?: string } = {},
-	): Promise<HostSessionProjection> {
-		const response = await this.send({
-			type: "fork_session",
-			sourcePath,
-			targetCwd,
-			sessionDir: options.sessionDir,
-			idOverride: options.id,
-			parentSession: options.parentSession,
-		}, NO_RPC_REQUEST_TIMEOUT);
-		return this.getData<HostSessionProjection>(response);
-	}
-
 	async listSkills(
 		options: { cwd?: string; agentDir?: string; projectConfigDir?: string; skillPaths?: string[] } = {},
 	): Promise<HostSkillsResult> {
-		const response = await this.send({
-			type: "list_skills",
-			cwd: options.cwd,
-			agentDir: options.agentDir,
-			projectConfigDir: options.projectConfigDir,
-			skillPaths: options.skillPaths,
-		}, NO_RPC_REQUEST_TIMEOUT);
+		const response = await this.send(
+			{
+				type: "list_skills",
+				cwd: options.cwd,
+				agentDir: options.agentDir,
+				projectConfigDir: options.projectConfigDir,
+				skillPaths: options.skillPaths,
+			},
+			NO_RPC_REQUEST_TIMEOUT,
+		);
 		return this.getData<HostSkillsResult>(response);
 	}
 
@@ -931,26 +887,32 @@ export class RpcClient {
 		name: string,
 		options: { cwd?: string; agentDir?: string; projectConfigDir?: string; skillPaths?: string[] } = {},
 	): Promise<HostResolvedSkill | null> {
-		const response = await this.send({
-			type: "resolve_skill",
-			name,
-			cwd: options.cwd,
-			agentDir: options.agentDir,
-			projectConfigDir: options.projectConfigDir,
-			skillPaths: options.skillPaths,
-		}, NO_RPC_REQUEST_TIMEOUT);
+		const response = await this.send(
+			{
+				type: "resolve_skill",
+				name,
+				cwd: options.cwd,
+				agentDir: options.agentDir,
+				projectConfigDir: options.projectConfigDir,
+				skillPaths: options.skillPaths,
+			},
+			NO_RPC_REQUEST_TIMEOUT,
+		);
 		return this.getData<HostResolvedSkill | null>(response);
 	}
 
 	async getExtensions(
 		options: { cwd?: string; agentDir?: string; projectConfigDir?: string } = {},
 	): Promise<HostExtensionsResult> {
-		const response = await this.send({
-			type: "get_extensions",
-			cwd: options.cwd,
-			agentDir: options.agentDir,
-			projectConfigDir: options.projectConfigDir,
-		}, NO_RPC_REQUEST_TIMEOUT);
+		const response = await this.send(
+			{
+				type: "get_extensions",
+				cwd: options.cwd,
+				agentDir: options.agentDir,
+				projectConfigDir: options.projectConfigDir,
+			},
+			NO_RPC_REQUEST_TIMEOUT,
+		);
 		return this.getData<HostExtensionsResult>(response);
 	}
 
@@ -973,7 +935,11 @@ export class RpcClient {
 	// =========================================================================
 
 	/** @internal Shared transport entry point used by PiRuntimeHandle. */
-	requestRuntime(runtimeId: string, command: RpcRuntimeCommandBody, timeoutMs?: RpcRequestTimeoutMs): Promise<RpcResponse> {
+	requestRuntime(
+		runtimeId: string,
+		command: RpcRuntimeCommandBody,
+		timeoutMs?: RpcRequestTimeoutMs,
+	): Promise<RpcResponse> {
 		return this.send({ ...command, runtimeId } as RpcCommandBody, timeoutMs);
 	}
 
@@ -1032,15 +998,18 @@ export class RpcClient {
 	/**
 	 * Wait for the full logical agent run to settle, including retry and compaction recovery.
 	 */
-	waitForIdle(timeout?: number | null): Promise<void> {
+	waitForIdle(attemptId: string, timeout?: number | null): Promise<void> {
 		return new Promise((resolve, reject) => {
-			const timer = timeout == null ? null : setTimeout(() => {
-				unsubscribe();
-				reject(new Error(`Timeout waiting for agent to become idle. Stderr: ${this.stderr}`));
-			}, timeout);
+			const timer =
+				timeout == null
+					? null
+					: setTimeout(() => {
+							unsubscribe();
+							reject(new Error(`Timeout waiting for agent to become idle. Stderr: ${this.stderr}`));
+						}, timeout);
 
 			const unsubscribe = this.onEvent((event) => {
-				if (event.type === "agent_settled") {
+				if (event.type === "agent_settled" && event.attemptId === attemptId) {
 					if (timer) clearTimeout(timer);
 					unsubscribe();
 					resolve();
@@ -1052,15 +1021,19 @@ export class RpcClient {
 	/**
 	 * Collect events through logical settlement, including intermediate retry runs.
 	 */
-	collectEvents(timeout?: number | null): Promise<RpcAgentEvent[]> {
+	collectEvents(attemptId: string, timeout?: number | null): Promise<RpcAgentEvent[]> {
 		return new Promise((resolve, reject) => {
 			const events: RpcAgentEvent[] = [];
-			const timer = timeout == null ? null : setTimeout(() => {
-				unsubscribe();
-				reject(new Error(`Timeout collecting events. Stderr: ${this.stderr}`));
-			}, timeout);
+			const timer =
+				timeout == null
+					? null
+					: setTimeout(() => {
+							unsubscribe();
+							reject(new Error(`Timeout collecting events. Stderr: ${this.stderr}`));
+						}, timeout);
 
 			const unsubscribe = this.onEvent((event) => {
+				if (event.attemptId !== attemptId) return;
 				events.push(event);
 				if (event.type === "agent_settled") {
 					if (timer) clearTimeout(timer);
@@ -1074,9 +1047,14 @@ export class RpcClient {
 	/**
 	 * Send prompt and wait for completion, returning all events.
 	 */
-	async promptAndWait(message: string, images?: ImageContent[], timeout?: number | null): Promise<RpcAgentEvent[]> {
-		const eventsPromise = this.collectEvents(timeout);
-		await this.prompt(message, images);
+	async promptAndWait(
+		message: string,
+		images?: ImageContent[],
+		timeout?: number | null,
+	): Promise<RpcAgentEvent[]> {
+		const disposition = await this.prompt(message, images, {});
+		if (disposition.status !== "started") throw new Error(`Prompt was not started: ${disposition.status}`);
+		const eventsPromise = this.collectEvents(disposition.attemptId, timeout);
 		return eventsPromise;
 	}
 
@@ -1236,31 +1214,54 @@ export class RpcClient {
 					...response,
 					clientId: request.clientId,
 					runtimeId: request.runtimeId,
+					sessionId: request.sessionId,
 				}),
 			);
 		};
 
 		if (!handler) {
-			// No handler installed (gate disabled or handler cleared mid-flight):
-			// allow so the agent never hangs.
-			respond({ type: "tool_execution_response", id: request.id, action: "allow" });
+			respond({
+				type: "tool_execution_response",
+				id: request.id,
+				attemptId: request.attemptId,
+				action: "block",
+				reason: "Host execution authorization is unavailable",
+			});
 			return;
 		}
 
 		void handler(request)
 			.then((result) => {
 				if (result.action === "block") {
-					respond({ type: "tool_execution_response", id: request.id, action: "block", reason: result.reason });
+					respond({
+						type: "tool_execution_response",
+						id: request.id,
+						attemptId: request.attemptId,
+						action: "block",
+						reason: result.reason,
+					});
 				} else if (result.action === "modify") {
-					respond({ type: "tool_execution_response", id: request.id, action: "modify", input: result.input });
+					respond({
+						type: "tool_execution_response",
+						id: request.id,
+						attemptId: request.attemptId,
+						action: "modify",
+						input: result.input,
+					});
 				} else {
-					respond({ type: "tool_execution_response", id: request.id, action: "allow" });
+					respond({
+						type: "tool_execution_response",
+						id: request.id,
+						attemptId: request.attemptId,
+						action: "allow",
+					});
 				}
 			})
 			.catch((err: unknown) => {
 				respond({
 					type: "tool_execution_response",
 					id: request.id,
+					attemptId: request.attemptId,
 					action: "block",
 					reason: `Tool execution interceptor failed: ${err instanceof Error ? err.message : String(err)}`,
 				});
@@ -1286,18 +1287,29 @@ export class RpcClient {
 		};
 
 		if (!handler) {
-			respond({ type: "tool_result_response", id: request.id, status: "acknowledged" });
+			respond({
+				type: "tool_result_response",
+				id: request.id,
+				attemptId: request.attemptId,
+				status: "acknowledged",
+			});
 			return;
 		}
 
 		void handler(request)
 			.then(() => {
-				respond({ type: "tool_result_response", id: request.id, status: "acknowledged" });
+				respond({
+					type: "tool_result_response",
+					id: request.id,
+					attemptId: request.attemptId,
+					status: "acknowledged",
+				});
 			})
 			.catch((error: unknown) => {
 				respond({
 					type: "tool_result_response",
 					id: request.id,
+					attemptId: request.attemptId,
 					status: "failed",
 					error: `Tool result handler failed: ${error instanceof Error ? error.message : String(error)}`,
 				});
@@ -1314,6 +1326,7 @@ export class RpcClient {
 					...response,
 					clientId: request.clientId,
 					runtimeId: request.runtimeId,
+					sessionId: request.sessionId,
 				}),
 			);
 		};
@@ -1323,6 +1336,7 @@ export class RpcClient {
 			respond({
 				type: "tool_execute_response",
 				id: request.id,
+				attemptId: request.attemptId,
 				content: `No host executor installed for tool "${request.toolName}"`,
 				isError: true,
 			});
@@ -1334,6 +1348,7 @@ export class RpcClient {
 				respond({
 					type: "tool_execute_response",
 					id: request.id,
+					attemptId: request.attemptId,
 					content: result.content,
 					details: result.details,
 					isError: result.isError,
@@ -1344,6 +1359,7 @@ export class RpcClient {
 				respond({
 					type: "tool_execute_response",
 					id: request.id,
+					attemptId: request.attemptId,
 					content: `Host tool execution failed: ${err instanceof Error ? err.message : String(err)}`,
 					isError: true,
 				});
@@ -1535,8 +1551,8 @@ export class PiRuntimeHandle {
 
 	prompt(
 		message: string,
-		images?: ImageContent[],
-		options?: {
+		images: ImageContent[] | undefined,
+		options: {
 			systemPrompt?: string;
 			clearSystemPrompt?: boolean;
 			appendSystemPrompt?: string;
@@ -1544,44 +1560,67 @@ export class PiRuntimeHandle {
 			interruptedAttempt?: boolean;
 			attachments?: import("@mortise/pi-ai/types").UserAttachmentMetadata[];
 		},
-	): Promise<void> {
-		return this.requestVoid({
+	): Promise<RpcSessionCommandDisposition> {
+		return this.requestData({
 			type: "prompt",
 			message,
 			images,
 			systemPrompt: options?.systemPrompt,
 			clearSystemPrompt: options?.clearSystemPrompt,
 			appendSystemPrompt: options?.appendSystemPrompt,
-			clientMutationId: options?.clientMutationId,
-			interruptedAttempt: options?.interruptedAttempt,
-			attachments: options?.attachments,
+			clientMutationId: options.clientMutationId,
+			interruptedAttempt: options.interruptedAttempt,
+			attachments: options.attachments,
 		});
 	}
 
-	steer(message: string, images?: ImageContent[], options?: { clientMutationId?: string }): Promise<void> {
-		return this.requestVoid({ type: "steer", message, images, clientMutationId: options?.clientMutationId });
+	steer(
+		message: string,
+		images: ImageContent[] | undefined,
+		options: { clientMutationId?: string } = {},
+	): Promise<RpcSessionCommandDisposition> {
+		return this.requestData({
+			type: "steer",
+			message,
+			images,
+			clientMutationId: options.clientMutationId,
+		});
 	}
 
 	followUp(
 		message: string,
-		images?: ImageContent[],
-		options?: { clientMutationId?: string; attachments?: import("@mortise/pi-ai/types").UserAttachmentMetadata[] },
-	): Promise<void> {
-		return this.requestVoid({
+		images: ImageContent[] | undefined,
+		options: {
+			clientMutationId?: string;
+			attachments?: import("@mortise/pi-ai/types").UserAttachmentMetadata[];
+		} = {},
+	): Promise<RpcSessionCommandDisposition> {
+		return this.requestData({
 			type: "follow_up",
 			message,
 			images,
-			clientMutationId: options?.clientMutationId,
-			attachments: options?.attachments,
+			clientMutationId: options.clientMutationId,
+			attachments: options.attachments,
 		});
 	}
 
-	abort(): Promise<void> {
-		return this.requestVoid({ type: "abort" });
+	withdrawQueued(clientMutationId: string): Promise<{ status: "removed" } | { status: "rejected"; reason: "already-consumed" }> {
+		return this.requestData({ type: "withdraw_queued", clientMutationId });
 	}
 
-	continue(options?: { systemPrompt?: string }): Promise<void> {
-		return this.requestVoid({ type: "continue", systemPrompt: options?.systemPrompt });
+	abort(): Promise<RpcSessionCommandDisposition> {
+		return this.requestData({ type: "abort" });
+	}
+
+	retrySettlement(attemptId: string): Promise<void> {
+		return this.requestVoid({ type: "retry_settlement", attemptId }, NO_RPC_REQUEST_TIMEOUT);
+	}
+
+	continue(options: { systemPrompt?: string } = {}): Promise<RpcSessionCommandDisposition> {
+		return this.requestData({
+			type: "continue",
+			systemPrompt: options.systemPrompt,
+		});
 	}
 
 	setAutoCompaction(enabled: boolean): Promise<void> {
@@ -1602,30 +1641,6 @@ export class PiRuntimeHandle {
 
 	setSessionName(name: string): Promise<void> {
 		return this.requestVoid({ type: "set_session_name", name });
-	}
-
-	async newSession(parentSession?: string): Promise<{ cancelled: boolean }> {
-		const result = await this.requestData<{ cancelled: boolean }>({ type: "new_session", parentSession }, NO_RPC_REQUEST_TIMEOUT);
-		if (!result.cancelled) await this.refreshState();
-		return result;
-	}
-
-	async switchSession(sessionPath: string): Promise<{ cancelled: boolean }> {
-		const result = await this.requestData<{ cancelled: boolean }>({ type: "switch_session", sessionPath }, NO_RPC_REQUEST_TIMEOUT);
-		if (!result.cancelled) await this.refreshState();
-		return result;
-	}
-
-	async fork(entryId: string): Promise<{ text: string; cancelled: boolean }> {
-		const result = await this.requestData<{ text: string; cancelled: boolean }>({ type: "fork", entryId }, NO_RPC_REQUEST_TIMEOUT);
-		if (!result.cancelled) await this.refreshState();
-		return result;
-	}
-
-	async clone(): Promise<{ cancelled: boolean }> {
-		const result = await this.requestData<{ cancelled: boolean }>({ type: "clone" }, NO_RPC_REQUEST_TIMEOUT);
-		if (!result.cancelled) await this.refreshState();
-		return result;
 	}
 
 	runMiniCompletion(prompt: string): Promise<string | null> {
@@ -1658,21 +1673,27 @@ export class PiRuntimeHandle {
 		args?: string,
 		ownerExtensionId?: string,
 	): Promise<RpcExtensionCommandResult> {
-		return this.requestData({
-			type: "invoke_extension_command",
-			commandId,
-			args,
-			...(ownerExtensionId !== undefined ? { ownerExtensionId } : {}),
-		}, NO_RPC_REQUEST_TIMEOUT);
+		return this.requestData(
+			{
+				type: "invoke_extension_command",
+				commandId,
+				args,
+				...(ownerExtensionId !== undefined ? { ownerExtensionId } : {}),
+			},
+			NO_RPC_REQUEST_TIMEOUT,
+		);
 	}
 
 	sendExtensionFrontendMessage(extensionId: string, channelId: string, message: unknown): Promise<unknown> {
-		return this.requestData<{ result?: unknown }>({
-			type: "send_extension_frontend_message",
-			extensionId,
-			channelId,
-			message,
-		}, NO_RPC_REQUEST_TIMEOUT).then((result) => result.result);
+		return this.requestData<{ result?: unknown }>(
+			{
+				type: "send_extension_frontend_message",
+				extensionId,
+				channelId,
+				message,
+			},
+			NO_RPC_REQUEST_TIMEOUT,
+		).then((result) => result.result);
 	}
 
 	reloadExtensions(): Promise<{ reloaded: boolean; deferred: boolean }> {
@@ -1704,16 +1725,21 @@ export class PiRuntimeHandle {
 	}
 
 	/** Wait for this runtime's full logical agent run to settle. */
-	waitForIdle(timeout?: number | null): Promise<void> {
+	waitForIdle(attemptId: string, timeout?: number | null): Promise<void> {
 		return new Promise((resolve, reject) => {
-			const timer = timeout == null ? null : setTimeout(() => {
-				unsubscribe();
-				reject(
-					new Error(`Timeout waiting for runtime ${this.runtimeId} to become idle. Stderr: ${this.getStderr()}`),
-				);
-			}, timeout);
+			const timer =
+				timeout == null
+					? null
+					: setTimeout(() => {
+							unsubscribe();
+							reject(
+								new Error(
+									`Timeout waiting for runtime ${this.runtimeId} to become idle. Stderr: ${this.getStderr()}`,
+								),
+							);
+						}, timeout);
 			const unsubscribe = this.onEvent((event) => {
-				if (event.type === "agent_settled") {
+				if (event.type === "agent_settled" && event.attemptId === attemptId) {
 					if (timer) clearTimeout(timer);
 					unsubscribe();
 					resolve();
@@ -1723,14 +1749,22 @@ export class PiRuntimeHandle {
 	}
 
 	/** Collect this runtime's events through logical settlement. */
-	collectEvents(timeout?: number | null): Promise<RpcAgentEvent[]> {
+	collectEvents(attemptId: string, timeout?: number | null): Promise<RpcAgentEvent[]> {
 		return new Promise((resolve, reject) => {
 			const events: RpcAgentEvent[] = [];
-			const timer = timeout == null ? null : setTimeout(() => {
-				unsubscribe();
-				reject(new Error(`Timeout collecting events for runtime ${this.runtimeId}. Stderr: ${this.getStderr()}`));
-			}, timeout);
+			const timer =
+				timeout == null
+					? null
+					: setTimeout(() => {
+							unsubscribe();
+							reject(
+								new Error(
+									`Timeout collecting events for runtime ${this.runtimeId}. Stderr: ${this.getStderr()}`,
+								),
+							);
+						}, timeout);
 			const unsubscribe = this.onEvent((event) => {
+				if (event.attemptId !== attemptId) return;
 				events.push(event);
 				if (event.type === "agent_settled") {
 					if (timer) clearTimeout(timer);
@@ -1741,9 +1775,14 @@ export class PiRuntimeHandle {
 		});
 	}
 
-	async promptAndWait(message: string, images?: ImageContent[], timeout?: number | null): Promise<RpcAgentEvent[]> {
-		const eventsPromise = this.collectEvents(timeout);
-		await this.prompt(message, images);
+	async promptAndWait(
+		message: string,
+		images?: ImageContent[],
+		timeout?: number | null,
+	): Promise<RpcAgentEvent[]> {
+		const disposition = await this.prompt(message, images, {});
+		if (disposition.status !== "started") throw new Error(`Prompt was not started: ${disposition.status}`);
+		const eventsPromise = this.collectEvents(disposition.attemptId, timeout);
 		return eventsPromise;
 	}
 

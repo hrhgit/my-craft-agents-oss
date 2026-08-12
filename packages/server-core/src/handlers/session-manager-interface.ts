@@ -88,7 +88,6 @@ export interface ISessionManager extends WorkspaceTopologySessionCoordinator {
     onAck?: (messageId: string) => void,
     rpcContext?: { callerClientId?: string },
     isQueuedReplay?: boolean,
-    isAutomaticResume?: boolean,
     onAccepted?: (messageId: string) => void,
   ): Promise<void>
   /** Retry only the host-owned durability boundary for an already accepted turn. */

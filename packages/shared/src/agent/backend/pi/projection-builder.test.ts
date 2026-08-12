@@ -557,10 +557,11 @@ sessionId: session-1
 
     expect(failed[0]).toMatchObject({
       seq: 2, entityId: 'tool:call-1', entityVersion: 2,
+      origin: 'host',
       kind: 'tool_execution_end', payload: { status: 'failed', isError: true },
     })
     expect(failed[1]).toMatchObject({
-      seq: 3, kind: 'runtime_error',
+      seq: 3, kind: 'runtime_error', origin: 'host',
       payload: {
         source: 'host', phase: 'send', message: 'transport failed',
         code: 'transport_closed', retryable: true,

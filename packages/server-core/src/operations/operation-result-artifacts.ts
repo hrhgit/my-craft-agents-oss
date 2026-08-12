@@ -3,7 +3,7 @@ import { join } from 'node:path'
 
 import { atomicWriteFile } from '@mortise/shared/utils'
 
-export type OperationResultArtifactKind = 'session-export' | 'remote-transfer' | 'first-turn'
+export type OperationResultArtifactKind = 'session-export' | 'remote-transfer' | 'first-turn' | 'session-execution'
 
 export const OPERATION_RESULT_ARTIFACT_MAX_AGE_MS = 7 * 24 * 60 * 60_000
 
@@ -55,7 +55,7 @@ export class OperationResultArtifactStore {
 
     let removed = 0
     await Promise.all(names.map(async name => {
-      if (!/^(session-export|remote-transfer|first-turn)-[A-Za-z0-9._-]+\.json$/.test(name)) return
+      if (!/^(session-export|remote-transfer|first-turn|session-execution)-[A-Za-z0-9._-]+\.json$/.test(name)) return
       const path = join(this.root, name)
       const file = await stat(path).catch(() => null)
       if (!file?.isFile() || now - file.mtimeMs < this.maxAgeMs) return

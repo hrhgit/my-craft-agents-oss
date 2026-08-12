@@ -128,6 +128,12 @@ export interface AcquireElectronBuildOptions {
   capturedSource?: CapturedBuildSource
 }
 
+export interface ResolveReusableElectronBuildOptions {
+  buildRoot?: string
+  mode?: ElectronBuildMode
+  verification?: 'full' | 'fast'
+}
+
 export interface ElectronBuildStageActions {
   preparePiDependencies: () => void
   buildPiWorkspace: () => void
@@ -481,6 +487,47 @@ export function withStagedElectronBuild<T>(
       removeDirectory(stagingApp)
     }
   }, { timeoutMs: UI_VALIDATION_MAX_WAIT_MS, staleMs: BUILD_LOCK_STALE_MS })
+}
+
+export function resolveReusableElectronBuildId(
+  options: ResolveReusableElectronBuildOptions = {},
+): string | undefined {
+  const buildRoot = resolve(options.buildRoot ?? process.env.MORTISE_BUILD_ROOT ?? DEFAULT_BUILD_ROOT)
+  const buildsDir = join(buildRoot, 'builds')
+  const mode = options.mode ?? 'production'
+  if (!existsSync(buildsDir)) return undefined
+
+  const candidates = readdirSync(buildsDir, { withFileTypes: true })
+    .filter(entry => entry.isDirectory() && !entry.name.startsWith('.staging-'))
+    .flatMap(entry => {
+      try {
+        const manifest = JSON.parse(readFileSync(join(buildsDir, entry.name, 'build.json'), 'utf8')) as Partial<MortiseUiBuildManifest>
+        if (
+          manifest.buildId !== entry.name
+          || manifest.mode !== mode
+          || manifest.platform !== process.platform
+          || manifest.arch !== process.arch
+          || typeof manifest.createdAt !== 'string'
+          || !Number.isFinite(Date.parse(manifest.createdAt))
+        ) return []
+        return [{ buildId: entry.name, createdAt: manifest.createdAt }]
+      } catch {
+        return []
+      }
+    })
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+
+  for (const candidate of candidates) {
+    const manifest = readValidBuildManifest(
+      join(buildsDir, candidate.buildId),
+      candidate.buildId,
+      buildRoot,
+      true,
+      options.verification ?? 'fast',
+    )
+    if (manifest?.mode === mode) return candidate.buildId
+  }
+  return undefined
 }
 
 export function withElectronBuildForPackaging<T>(

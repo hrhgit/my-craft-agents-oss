@@ -8,7 +8,6 @@
 import type { AgentMessage, ThinkingLevel } from "@mortise/pi-agent-core";
 import type { ImageContent, Model, StopReason, Usage, UserAttachmentMetadata } from "@mortise/pi-ai/types";
 import type { SessionStats } from "../../core/agent-session.ts";
-import type { BashResult } from "../../core/bash-executor.ts";
 import type { CompactionResult } from "../../core/compaction/index.ts";
 import type {
 	ExtensionInteractionCancelReasonV1,
@@ -30,7 +29,7 @@ import type {
 import type { SessionHeader } from "../../core/session-manager.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
 
-export const PI_RPC_PROTOCOL_VERSION = 3;
+export const PI_RPC_PROTOCOL_VERSION = 4;
 export const PI_HOST_HOOKS_MODULE_ENV = "PI_HOST_HOOKS_MODULE";
 export const PI_RPC_UI_CAPABILITIES_ENV = "PI_RPC_UI_CAPABILITIES";
 
@@ -38,9 +37,10 @@ export const PI_RPC_COMMANDS = [
 	"prompt",
 	"steer",
 	"follow_up",
+	"withdraw_queued",
 	"abort",
 	"continue",
-	"new_session",
+	"retry_settlement",
 	"run_mini_completion",
 	"query_llm",
 	"get_capabilities",
@@ -62,13 +62,7 @@ export const PI_RPC_COMMANDS = [
 	"compact",
 	"set_auto_compaction",
 	"set_auto_retry",
-	"abort_retry",
-	"bash",
-	"abort_bash",
 	"get_session_stats",
-	"switch_session",
-	"fork",
-	"clone",
 	"get_fork_messages",
 	"get_last_assistant_text",
 	"set_session_name",
@@ -87,7 +81,6 @@ export const PI_RPC_COMMANDS = [
 	"set_mortise_credential",
 	"get_session_projection",
 	"set_mortise_session_metadata",
-	"fork_session",
 	"list_skills",
 	"resolve_skill",
 	"get_extensions",
@@ -166,6 +159,20 @@ export interface RpcRuntimeSummary {
 	lastOutput?: string;
 }
 
+export type RpcSessionCommandDisposition =
+	| { status: "started"; attemptId: string }
+	| { status: "accepted"; attemptId: string }
+	| { status: "queued"; attemptId: string }
+	| {
+			status: "rejected";
+			reason:
+				| "not-running"
+				| "already-running"
+				| "compaction-in-progress"
+				| "invalid-state"
+				| "preflight-failed";
+	  };
+
 export type RpcCommand = RpcEnvelope &
 	// Prompting
 	(
@@ -188,7 +195,13 @@ export type RpcCommand = RpcEnvelope &
 				/** Host system-prompt suffix for this turn onward (see PromptOptions.appendSystemPrompt). */
 				appendSystemPrompt?: string;
 		  }
-		| { id?: string; type: "steer"; message: string; images?: ImageContent[]; clientMutationId?: string }
+		| {
+				id?: string;
+				type: "steer";
+				message: string;
+				images?: ImageContent[];
+				clientMutationId?: string;
+		  }
 		| {
 				id?: string;
 				type: "follow_up";
@@ -197,9 +210,10 @@ export type RpcCommand = RpcEnvelope &
 				clientMutationId?: string;
 				attachments?: UserAttachmentMetadata[];
 		  }
+		| { id?: string; type: "withdraw_queued"; clientMutationId: string }
 		| { id?: string; type: "abort" }
 		| { id?: string; type: "continue"; systemPrompt?: string }
-		| { id?: string; type: "new_session"; parentSession?: string }
+		| { id?: string; type: "retry_settlement"; attemptId: string }
 		| { id?: string; type: "run_mini_completion"; prompt: string }
 		| { id?: string; type: "query_llm"; request: RpcLLMQueryRequest }
 
@@ -233,17 +247,9 @@ export type RpcCommand = RpcEnvelope &
 
 		// Retry
 		| { id?: string; type: "set_auto_retry"; enabled: boolean }
-		| { id?: string; type: "abort_retry" }
-
-		// Bash
-		| { id?: string; type: "bash"; command: string; excludeFromContext?: boolean }
-		| { id?: string; type: "abort_bash" }
 
 		// Session
 		| { id?: string; type: "get_session_stats" }
-		| { id?: string; type: "switch_session"; sessionPath: string }
-		| { id?: string; type: "fork"; entryId: string }
-		| { id?: string; type: "clone" }
 		| { id?: string; type: "get_fork_messages" }
 		| { id?: string; type: "get_last_assistant_text" }
 		| { id?: string; type: "set_session_name"; name: string }
@@ -295,15 +301,6 @@ export type RpcCommand = RpcEnvelope &
 				name?: string;
 				metadata?: unknown;
 				customType?: string;
-		  }
-		| {
-				id?: string;
-				type: "fork_session";
-				sourcePath: string;
-				targetCwd: string;
-				sessionDir?: string;
-				idOverride?: string;
-				parentSession?: string;
 		  }
 		| {
 				id?: string;
@@ -499,8 +496,8 @@ export type RpcResponse = RpcEnvelope &
 		| { id?: string; type: "response"; command: "prompt"; success: true }
 		| { id?: string; type: "response"; command: "steer"; success: true }
 		| { id?: string; type: "response"; command: "follow_up"; success: true }
+		| { id?: string; type: "response"; command: "withdraw_queued"; success: true }
 		| { id?: string; type: "response"; command: "abort"; success: true }
-		| { id?: string; type: "response"; command: "new_session"; success: true; data: { cancelled: boolean } }
 		| { id?: string; type: "response"; command: "run_mini_completion"; success: true; data: { text: string | null } }
 		| { id?: string; type: "response"; command: "query_llm"; success: true; data: RpcLLMQueryResult }
 
@@ -569,17 +566,9 @@ export type RpcResponse = RpcEnvelope &
 
 		// Retry
 		| { id?: string; type: "response"; command: "set_auto_retry"; success: true }
-		| { id?: string; type: "response"; command: "abort_retry"; success: true }
-
-		// Bash
-		| { id?: string; type: "response"; command: "bash"; success: true; data: BashResult }
-		| { id?: string; type: "response"; command: "abort_bash"; success: true }
 
 		// Session
 		| { id?: string; type: "response"; command: "get_session_stats"; success: true; data: SessionStats }
-		| { id?: string; type: "response"; command: "switch_session"; success: true; data: { cancelled: boolean } }
-		| { id?: string; type: "response"; command: "fork"; success: true; data: { text: string; cancelled: boolean } }
-		| { id?: string; type: "response"; command: "clone"; success: true; data: { cancelled: boolean } }
 		| {
 				id?: string;
 				type: "response";
@@ -658,7 +647,6 @@ export type RpcResponse = RpcEnvelope &
 				success: true;
 				data: HostSessionProjection;
 		  }
-		| { id?: string; type: "response"; command: "fork_session"; success: true; data: HostSessionProjection }
 		| { id?: string; type: "response"; command: "list_skills"; success: true; data: HostSkillsResult }
 		| { id?: string; type: "response"; command: "resolve_skill"; success: true; data: HostResolvedSkill | null }
 		| { id?: string; type: "response"; command: "get_extensions"; success: true; data: HostExtensionsResult }
@@ -832,11 +820,10 @@ export type RpcExtensionHostCapabilityResponse = RpcEnvelope &
  * host has enabled its neutral execution interceptor. The host must reply with
  * a `tool_execution_response` carrying the same `id`.
  */
-export interface RpcToolExecutionRequest {
+export interface RpcToolExecutionRequest extends RpcEnvelope {
 	type: "tool_execution_request";
 	id: string;
-	clientId?: string;
-	runtimeId?: string;
+	attemptId: string;
 	toolName: string;
 	toolCallId: string;
 	/** Tool input after extension tool_call handlers have run. */
@@ -846,8 +833,7 @@ export interface RpcToolExecutionRequest {
 }
 
 /** Host reply to a `tool_execution_request`. */
-export type RpcToolExecutionResponse = RpcEnvelope &
-	(
+export type RpcToolExecutionResponse = RpcEnvelope & { attemptId: string } & (
 		| { type: "tool_execution_response"; id: string; action: "allow" }
 		| { type: "tool_execution_response"; id: string; action: "block"; reason?: string }
 		| { type: "tool_execution_response"; id: string; action: "modify"; input: Record<string, unknown> }
@@ -861,6 +847,7 @@ export type RpcToolExecutionResponse = RpcEnvelope &
 export interface RpcToolResultRequest extends RpcEnvelope {
 	type: "tool_result_request";
 	id: string;
+	attemptId: string;
 	toolName: string;
 	toolCallId: string;
 	input: Record<string, unknown>;
@@ -872,8 +859,7 @@ export interface RpcToolResultRequest extends RpcEnvelope {
 }
 
 /** Host acknowledgement for a finalized tool result. */
-export type RpcToolResultResponse = RpcEnvelope &
-	(
+export type RpcToolResultResponse = RpcEnvelope & { attemptId: string } & (
 		| { type: "tool_result_response"; id: string; status: "acknowledged" }
 		| { type: "tool_result_response"; id: string; status: "failed"; error: string }
 	);
@@ -887,22 +873,20 @@ export type RpcToolResultResponse = RpcEnvelope &
  * LLM. The host executes the tool in its own process and replies with a
  * `tool_execute_response` carrying the same `id`.
  */
-export interface RpcToolExecuteRequest {
+export interface RpcToolExecuteRequest extends RpcEnvelope {
 	type: "tool_execute_request";
 	id: string;
-	clientId?: string;
-	runtimeId?: string;
+	attemptId: string;
 	toolName: string;
 	toolCallId: string;
 	input: Record<string, unknown>;
 }
 
 /** Host reply to a `tool_execute_request`. */
-export interface RpcToolExecuteResponse {
+export interface RpcToolExecuteResponse extends RpcEnvelope {
 	type: "tool_execute_response";
 	id: string;
-	clientId?: string;
-	runtimeId?: string;
+	attemptId: string;
 	/** Tool result content. String is accepted as shorthand for one text block. */
 	content: string | RpcToolResultContent[];
 	details?: unknown;

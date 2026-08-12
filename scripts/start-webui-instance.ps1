@@ -1,3 +1,8 @@
+[CmdletBinding()]
+param(
+  [switch]$NewClient
+)
+
 $ErrorActionPreference = 'Stop'
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
@@ -90,14 +95,14 @@ function Start-SharedClientInstance {
   if ($LASTEXITCODE -ne 0) { throw 'Failed to start a frontend process for the shared backend.' }
 }
 
-if ($null -ne (Get-MortiseServerEndpoint -RequireWebuiAutoLogin)) {
-  Start-SharedClientInstance
+$existingUrl = Get-RunningWebuiUrl
+if (-not $NewClient -and $null -ne $existingUrl) {
+  Open-WebuiUrl $existingUrl
   exit 0
 }
 
-$existingUrl = Get-RunningWebuiUrl
-if ($null -ne $existingUrl) {
-  Open-WebuiUrl $existingUrl
+if ($null -ne (Get-MortiseServerEndpoint -RequireWebuiAutoLogin)) {
+  Start-SharedClientInstance
   exit 0
 }
 
@@ -109,13 +114,13 @@ if ($null -eq $primaryLock) {
   $deadline = (Get-Date).AddSeconds(180)
   do {
     Start-Sleep -Milliseconds 250
-    if ($null -ne (Get-MortiseServerEndpoint -RequireWebuiAutoLogin)) {
-      Start-SharedClientInstance
+    $existingUrl = Get-RunningWebuiUrl
+    if (-not $NewClient -and $null -ne $existingUrl) {
+      Open-WebuiUrl $existingUrl
       exit 0
     }
-    $existingUrl = Get-RunningWebuiUrl
-    if ($null -ne $existingUrl) {
-      Open-WebuiUrl $existingUrl
+    if ($null -ne (Get-MortiseServerEndpoint -RequireWebuiAutoLogin)) {
+      Start-SharedClientInstance
       exit 0
     }
 
@@ -130,8 +135,12 @@ if ($null -eq $primaryLock) {
 
 try {
   $existingUrl = Get-RunningWebuiUrl
-  if ($null -ne $existingUrl) {
+  if (-not $NewClient -and $null -ne $existingUrl) {
     Open-WebuiUrl $existingUrl
+    exit 0
+  }
+  if ($null -ne (Get-MortiseServerEndpoint -RequireWebuiAutoLogin)) {
+    Start-SharedClientInstance
     exit 0
   }
 

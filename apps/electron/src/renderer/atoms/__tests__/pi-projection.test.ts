@@ -66,6 +66,23 @@ describe('Pi projection reducer', () => {
     expect(state.entityIds).toEqual([])
   })
 
+  it('marks optimistic mid-stream follow-ups as queued without blocking rejection rollback', () => {
+    const mutationId = 'mutation-queued'
+    let state = insertOptimisticPiUser(createPiProjectionState('session-1'), mutationId, 'later', [
+      { id: 'att-1', name: 'photo.png', mediaType: 'image/png', size: 10 },
+    ], true)
+    expect(state.entitiesById[`content:user:${mutationId}`]?.payload).toMatchObject({
+      optimistic: true,
+      queueStatus: 'queued',
+    })
+    expect(state.entitiesById[`artifact:attachment:${mutationId}:att-1`]?.payload).toMatchObject({
+      optimistic: true,
+      queueStatus: 'queued',
+    })
+    state = removeOptimisticPiUser(state, mutationId)
+    expect(state.entityIds).toEqual([])
+  })
+
   it('reconciles optimistic user input without replacing its entity key', () => {
     const mutationId = 'mutation-1'
     let state = insertOptimisticPiUser(createPiProjectionState('session-1'), mutationId, 'hello')

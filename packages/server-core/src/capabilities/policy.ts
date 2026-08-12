@@ -48,6 +48,36 @@ export function createCapabilityAuthorizationPolicy(options: CapabilityPolicyOpt
 }
 
 export const ELECTRON_CAPABILITY_POLICY_V1: readonly CapabilityPolicyRule[] = [
+  {
+    capability: 'agent.child-task',
+    operations: ['run'],
+    decision: 'allow',
+    extensionIds: ['plan-mode'],
+  },
+  {
+    capability: 'session.execution',
+    operations: ['compact'],
+    decision: 'allow',
+    extensionIds: ['plan-mode'],
+  },
+  {
+    capability: 'session.execution',
+    operations: ['submit-message', 'create-and-submit', 'interrupt', 'query-operation'],
+    decision: 'allow',
+    extensionIds: ['plan-mode', 'pi-remote', 'auto-continue-openai-errors'],
+  },
+  {
+    capability: 'session.catalog',
+    operations: ['list', 'get'],
+    decision: 'allow',
+    extensionIds: ['pi-remote'],
+  },
+  {
+    capability: 'session.settings',
+    operations: ['get', 'set-model', 'set-thinking-level'],
+    decision: 'allow',
+    extensionIds: ['pi-remote'],
+  },
   { capability: 'system.notification', operations: ['show'], decision: 'allow' },
   // The native picker is itself an explicit user confirmation surface.
   { capability: 'files.pick', operations: ['open'], decision: 'allow' },

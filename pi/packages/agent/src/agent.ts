@@ -151,6 +151,14 @@ class PendingMessageQueue {
 		return [first];
 	}
 
+	remove(clientMutationId: string): AgentMessage | undefined {
+		const index = this.messages.findIndex((message) =>
+			message.role === "user" && message.clientMutationId === clientMutationId,
+		);
+		if (index < 0) return undefined;
+		return this.messages.splice(index, 1)[0];
+	}
+
 	clear(): void {
 		this.messages = [];
 	}
@@ -291,6 +299,11 @@ export class Agent {
 	clearAllQueues(): void {
 		this.clearSteeringQueue();
 		this.clearFollowUpQueue();
+	}
+
+	/** Remove one queued user message before the loop consumes it. */
+	removeQueuedMessage(clientMutationId: string): AgentMessage | undefined {
+		return this.steeringQueue.remove(clientMutationId) ?? this.followUpQueue.remove(clientMutationId);
 	}
 
 	/** Returns true when either queue still contains pending messages. */

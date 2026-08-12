@@ -11,7 +11,6 @@ import {
   SystemMessage,
 } from '@mortise/ui'
 import { ExternalLink } from 'lucide-react'
-import { AnimatePresence, motion } from 'motion/react'
 import { cn } from '@/lib/utils'
 
 // ============================================================================
@@ -69,7 +68,7 @@ function CompactionDivider({ label = 'Conversation Compacted' }: { label?: strin
   )
 }
 
-/** Processing indicator with cycling messages and elapsed time */
+/** Processing indicator driven by the Playground scene timeline. */
 const PROCESSING_MESSAGES = [
   'Thinking…',
   'Pondering…',
@@ -124,56 +123,12 @@ const PROCESSING_MESSAGES = [
 ]
 
 interface ProcessingIndicatorProps {
-  /** Animation cycle duration in milliseconds */
-  cycleMs?: number
-  /** Whether the elapsed counter should count automatically */
-  counting?: boolean
-  /** Initial elapsed time (only used if counting is false) */
+  phaseIndex?: number
   elapsed?: number
 }
 
-function ProcessingIndicator({ cycleMs = 10000, counting = true, elapsed: initialElapsed = 0 }: ProcessingIndicatorProps) {
-  const [elapsed, setElapsed] = React.useState(initialElapsed)
-  const [messageIndex, setMessageIndex] = React.useState(() =>
-    Math.floor(Math.random() * PROCESSING_MESSAGES.length)
-  )
-  const startTimeRef = React.useRef(Date.now())
-
-  // Update elapsed time every second (only if counting)
-  React.useEffect(() => {
-    if (!counting) return
-    const interval = setInterval(() => {
-      setElapsed(Math.floor((Date.now() - startTimeRef.current) / 1000))
-    }, 1000)
-    return () => clearInterval(interval)
-  }, [counting])
-
-  // Cycle through messages based on cycleMs
-  React.useEffect(() => {
-    const interval = setInterval(() => {
-      setMessageIndex(prev => {
-        // Pick a random different message
-        let next = Math.floor(Math.random() * PROCESSING_MESSAGES.length)
-        while (next === prev && PROCESSING_MESSAGES.length > 1) {
-          next = Math.floor(Math.random() * PROCESSING_MESSAGES.length)
-        }
-        return next
-      })
-    }, cycleMs)
-    return () => clearInterval(interval)
-  }, [cycleMs])
-
-  const currentMessage = PROCESSING_MESSAGES[messageIndex]
-
-  const labelRef = React.useRef<HTMLSpanElement>(null)
-  const [labelWidth, setLabelWidth] = React.useState<number | 'auto'>('auto')
-
-  // Measure label width when message changes (not when counter changes)
-  React.useLayoutEffect(() => {
-    if (labelRef.current) {
-      setLabelWidth(labelRef.current.offsetWidth)
-    }
-  }, [currentMessage])
+function ProcessingIndicator({ phaseIndex = 0, elapsed = 0 }: ProcessingIndicatorProps) {
+  const currentMessage = PROCESSING_MESSAGES[phaseIndex % PROCESSING_MESSAGES.length]
 
   return (
     <div className="flex items-center gap-2 px-3 py-1 text-[13px] text-muted-foreground">
@@ -182,29 +137,8 @@ function ProcessingIndicator({ cycleMs = 10000, counting = true, elapsed: initia
         <Spinner className="text-[10px]" />
       </div>
       {/* Label container */}
-      <span className="inline-flex items-center h-5">
-        {/* Animated width container - only animates when label changes */}
-        <motion.span
-          className="relative inline-block h-5"
-          animate={{ width: labelWidth }}
-          transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
-        >
-          {/* True crossfade for label only */}
-          <AnimatePresence initial={false}>
-            <motion.span
-              ref={labelRef}
-              key={currentMessage}
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
-              className="absolute left-0 top-0 h-5 flex items-center whitespace-nowrap"
-            >
-              {currentMessage}
-            </motion.span>
-          </AnimatePresence>
-        </motion.span>
-        {/* Counter - no animation, just updates instantly */}
+      <span className="inline-flex h-5 items-center">
+        <span className="whitespace-nowrap">{currentMessage}</span>
         {elapsed >= 1 && (
           <span className="text-muted-foreground/60 ml-1 tabular-nums">
             {elapsed}s
@@ -220,7 +154,7 @@ function ProcessingIndicator({ cycleMs = 10000, counting = true, elapsed: initia
 // ============================================================================
 
 function MessageGallery() {
-  const now = Date.now()
+  const now = 1_735_603_200_000
 
   // Sample tool activities for TurnCard
   const completedGrepActivity: ActivityItem = {
@@ -529,20 +463,14 @@ export const messagesComponents: ComponentEntry[] = [
     id: 'processing-indicator',
     name: 'ProcessingIndicator',
     category: 'Chat Messages',
-    description: 'Animated processing indicator with cycling messages and elapsed time counter',
+    description: 'Deterministic processing indicator driven by the shared Playground timeline',
     component: ProcessingIndicator,
     props: [
       {
-        name: 'cycleMs',
-        description: 'Message cycle interval in milliseconds',
-        control: { type: 'number', min: 1000, max: 30000, step: 1000 },
-        defaultValue: 10000,
-      },
-      {
-        name: 'counting',
-        description: 'Whether the elapsed counter auto-increments',
-        control: { type: 'boolean' },
-        defaultValue: true,
+        name: 'phaseIndex',
+        description: 'Deterministic scene phase',
+        control: { type: 'number', min: 0, max: PROCESSING_MESSAGES.length - 1, step: 1 },
+        defaultValue: 0,
       },
       {
         name: 'elapsed',
@@ -552,11 +480,26 @@ export const messagesComponents: ComponentEntry[] = [
       },
     ],
     variants: [
-      { name: 'Default (10s cycle, counting)', props: { cycleMs: 10000, counting: true } },
-      { name: 'Fast Cycle (3s)', props: { cycleMs: 3000, counting: true } },
-      { name: 'Static at 5s', props: { cycleMs: 10000, counting: false, elapsed: 5 } },
-      { name: 'Static at 30s', props: { cycleMs: 10000, counting: false, elapsed: 30 } },
+      { name: 'Thinking', props: { phaseIndex: 0, elapsed: 0 } },
+      { name: 'Reasoning', props: { phaseIndex: 3, elapsed: 5 } },
+      { name: 'Working', props: { phaseIndex: 28, elapsed: 30 } },
     ],
     mockData: () => ({}),
+    source: {
+      file: 'apps/electron/src/renderer/playground/registry/messages.tsx',
+      symbol: 'ProcessingIndicator',
+      coverage: 'standalone',
+    },
+    scene: {
+      kind: 'timeline',
+      label: 'Agent event flow',
+      frameDurationMs: 1_200,
+      phases: [
+        { id: 'thinking', label: 'Thinking started', props: { phaseIndex: 0, elapsed: 0 } },
+        { id: 'reasoning', label: 'Reasoning stream', props: { phaseIndex: 3, elapsed: 5 } },
+        { id: 'tools', label: 'Tool activity', props: { phaseIndex: 12, elapsed: 12 } },
+        { id: 'response', label: 'Response preparation', props: { phaseIndex: 28, elapsed: 30 } },
+      ],
+    },
   },
 ]

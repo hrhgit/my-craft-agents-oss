@@ -90,4 +90,42 @@ describe('extractOverlayCards', () => {
       expect(output.data.content).toBe(markdownText)
     }
   })
+
+  it('renders pwsh output as a terminal card with the pwsh tool type', () => {
+    const activity = makeActivity({
+      toolName: 'pwsh',
+      toolInput: { command: 'Get-ChildItem | Select-Object -First 5', timeout: 120 },
+      content: 'Name Mode ----\nfoo bar\nbaz qux',
+    })
+
+    const cards = extractOverlayCards(activity)
+    const input = cards.find(card => card.id === 'input')
+    const output = cards.find(card => card.id === 'output')
+
+    // Input card preview uses real pwsh invocation syntax, not bash-style flags.
+    expect(input?.commandPreview).toBe('pwsh -Command "Get-ChildItem | Select-Object -First 5"')
+    // Output is a terminal card (raw text, not markdown-rendered) with pwsh tool type.
+    expect(output).toBeDefined()
+    expect((output?.data as OverlayData).type).toBe('terminal')
+    if (output?.data.type === 'terminal') {
+      expect(output.data.command).toBe('Get-ChildItem | Select-Object -First 5')
+      expect(output.data.output).toBe('Name Mode ----\nfoo bar\nbaz qux')
+      expect(output.data.toolType).toBe('pwsh')
+    }
+  })
+
+  it('keeps bash terminal cards on the bash tool type', () => {
+    const activity = makeActivity({
+      toolName: 'Bash',
+      toolInput: { command: 'ls -la', timeout: 60 },
+      content: 'drwxr-xr-x .',
+    })
+
+    const cards = extractOverlayCards(activity)
+    const output = cards.find(card => card.id === 'output')
+    expect((output?.data as OverlayData).type).toBe('terminal')
+    if (output?.data.type === 'terminal') {
+      expect(output.data.toolType).toBe('bash')
+    }
+  })
 })

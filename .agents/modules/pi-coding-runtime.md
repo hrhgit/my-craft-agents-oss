@@ -6,6 +6,7 @@ summary: Mortise-only embedded headless Agent runtime, RPC host, sessions, tools
 status: active
 when_to_read:
   - embedded Pi coding runtime, RPC host, sessions, tools, compaction, or extension lifecycle changes
+  - Attempt identity, continue-from-history behavior, or interrupted continuation changes
 tags:
   - coding-agent
   - embedded-runtime
@@ -15,6 +16,10 @@ tags:
   - session
   - tools
   - compaction
+  - attempt
+  - interrupted-continuation
+  - attempt-identity
+  - session-runtime-ownership
 entrypoints:
   - pi/packages/coding-agent/src/index.ts
   - pi/packages/coding-agent/src/core/index.ts
@@ -52,7 +57,7 @@ The shared GlobalHost keeps compiled Extension module and resource-resolution ca
 
 # Invariants
 
-The UI-neutral Agent Loop, Session, tool execution, compaction, extension lifecycle, and RPC semantics are canonical and must not change during headless separation. RPC events and the single host-neutral Extension contract remain versioned for supported Mortise hosts; target and engine selectors are invalid. Cleanup, abort, retry, settlement, and replacement paths complete in canonical order; tool results remain serializable. Production headless code must not import TUI or terminal component/render types, and Mortise extension GUI must flow only through versioned host/RPC contribution APIs. No interactive, standalone, or external-Pi compatibility fallback may remain reachable from production entrypoints.
+The UI-neutral Agent Loop, Session, tool execution, compaction, extension lifecycle, and RPC semantics are canonical and must not change during headless separation. Pi is the sole runtime authority for Session history, command acceptance, Attempt, Turn, and Agent Loop state. Prompt, continue, steer, follow-up, compact, abort, tool execution, and settlement commands enter one Session state machine, which accepts, queues, or rejects them according to its current state. Pi assigns a stable `attemptId` when it starts an Attempt and carries it on lifecycle, message, and tool events for correlation and stale-generation isolation; Pi retry counters remain internal details of that Attempt. `continueFromHistory` may create a new Attempt only after an explicit continuation command and must never run automatically merely because a runtime restarted or interrupted history exists. Mortise routes Workspace-level requests to one canonical Pi runtime per persistent Session and projects the long-lived Session event stream; it does not issue Attempt permissions or maintain a parallel execution state machine. RPC events and the single host-neutral Extension contract remain versioned for supported Mortise hosts; target and engine selectors are invalid. Cleanup, abort, retry, settlement, and replacement paths complete in canonical order; tool results remain serializable. Production headless code must not import TUI or terminal component/render types, and Mortise extension GUI must flow only through versioned host/RPC contribution APIs. No interactive, standalone, or external-Pi compatibility fallback may remain reachable from production entrypoints.
 
 The tool execution contract is policy-neutral: Pi runs Extension `tool_call` handlers first, then asks the host only for generic allow, block, or input-modification coordination. Permission modes, approval queues, remembered decisions, and approval presentation must not be implemented in the coding runtime or RPC host.
 

@@ -192,16 +192,11 @@ describe('SessionManager Workspace topology interruption', () => {
       .toEqual({ selectedSessionIds: [], interruptedSessionIds: [] })
   })
 
-  it('does not run delayed queue replay after interruption', async () => {
+  it('does not retain a host queue replay path after interruption', async () => {
     const managed = inject('no-replay', 'workspace-a', { queued: true, locationId: 'primary' })
     await manager.interruptWorkspaceSessionsForTopologyChange({ workspaceId: 'workspace-a', scope: 'workspace' })
     managed.messageQueue.push({ message: 'stale replay', messageId: 'stale-replay' })
-    const send = jest.spyOn(manager, 'sendMessage')
-
-    ;(manager as any).processNextQueuedMessage(managed.id)
-    await new Promise(resolve => setImmediate(resolve))
-
-    expect(send).not.toHaveBeenCalled()
+    expect(managed.isProcessing).toBe(false)
     expect(managed.messageQueue).toHaveLength(1)
   })
 

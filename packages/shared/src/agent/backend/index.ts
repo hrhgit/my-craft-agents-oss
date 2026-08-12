@@ -42,6 +42,8 @@ export type {
   HostRuntimeErrorProjection,
   HostQueuedUserProjection,
   ChildTaskBackgroundOperation,
+  ChildAttemptRegistrationRequest,
+  ChildAttemptRegistration,
   ChildTaskSettledOperation,
 } from './types.ts';
 
@@ -69,7 +71,7 @@ export {
 // Shared infrastructure
 export { BaseEventAdapter } from './base-event-adapter.ts';
 export { EventQueue } from './event-queue.ts';
-export { piHostManager, PiHostManager, PiHostProtocolError } from './pi-host-manager.ts';
+export { invalidateBackendRuntimes } from './pi-host-manager.ts';
 export {
   BackendExtensionRuntimeRegistry,
   backendTypeFromProcess,

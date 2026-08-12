@@ -46,6 +46,7 @@ export function insertOptimisticPiUser(
   clientMutationId: string,
   text: string,
   attachments: ReadonlyArray<{ id: string; name: string; mediaType?: string; size?: number }> = [],
+  queued = false,
 ): PiProjectionState {
   const entityId = `content:user:${clientMutationId}`
   if (state.entitiesById[entityId]) return state
@@ -65,6 +66,7 @@ export function insertOptimisticPiUser(
     payload: {
       role: 'user', messageId: clientMutationId, text, streaming: false,
       clientMutationId, optimistic: true, timestamp: Date.now(),
+      ...(queued ? { queueStatus: 'queued' as const } : {}),
     },
     lastEventId: `optimistic:${clientMutationId}`,
     lastSeq: state.lastSeq + 1,
@@ -83,6 +85,7 @@ export function insertOptimisticPiUser(
       payload: {
         attachment, clientMutationId, ownerMessageId: clientMutationId,
         contentEntityId: entityId, order, optimistic: true,
+        ...(queued ? { queueStatus: 'queued' as const } : {}),
       },
       lastEventId: `optimistic:${clientMutationId}:attachment:${attachment.id}`,
       lastSeq: state.lastSeq + 2 + order,

@@ -10,6 +10,7 @@ import {
   createElectronBuildCommandEnvironment,
   publishBuildBunToolchain,
   releaseElectronBuild,
+  resolveReusableElectronBuildId,
   withElectronBuildForPackaging,
   type ElectronBuildMode,
 } from './electron-build-cache.ts'
@@ -41,6 +42,7 @@ const PACKAGE_USAGE = `Usage: bun run scripts/build/package-electron.ts --target
 Options:
   --development              Package the development Electron build.
   --expected-build-id <sha>  Package an existing immutable build by its SHA-256 id.
+  --fresh-source             Capture current source and build its immutable identity instead of reusing the latest valid build.
   --build-source-root <path> Capture source from a checkout other than the current repository.
   --release-dir <path>       Publish artifacts to a repository-local directory instead of apps/electron/release.
   --timings-output <path>    Write structured package phase timings as JSON.
@@ -74,6 +76,14 @@ export function resolveExpectedPackageBuildId(args: string[]): string | undefine
     throw new Error('--expected-build-id requires a lowercase SHA-256 immutable build identity')
   }
   return expectedBuildId
+}
+
+export function resolvePackageFreshSource(args: string[]): boolean {
+  const freshSource = args.includes('--fresh-source')
+  if (freshSource && args.includes('--expected-build-id')) {
+    throw new Error('--fresh-source cannot be combined with --expected-build-id')
+  }
+  return freshSource
 }
 
 export function resolvePackageReleaseDir(args: string[], repoRootValue: string, electronDirValue: string): string {
@@ -192,6 +202,7 @@ export function packageElectron(args = process.argv.slice(2)): void {
   const resolvedTarget = resolvePackageTarget(requestedTarget)
   const mode: ElectronBuildMode = args.includes('--development') ? 'development' : 'production'
   const expectedBuildId = resolveExpectedPackageBuildId(args)
+  const freshSource = resolvePackageFreshSource(args)
   const repoRoot = resolve(import.meta.dir, '..', '..')
   const buildSourceRoot = resolve(optionValue(args, '--build-source-root') ?? repoRoot)
   const electronDir = join(repoRoot, 'apps', 'electron')
@@ -252,21 +263,36 @@ export function packageElectron(args = process.argv.slice(2)): void {
   let capturedSource: ReturnType<typeof captureElectronBuildSource> | undefined
   let packageSource: ReturnType<ReturnType<typeof captureElectronBuildSource>['materialize']> | undefined
   try {
-    if (expectedBuildId) {
-      console.log(`[electron-package] Acquiring pinned build ${expectedBuildId.slice(0, 12)}...`)
+    const reusableBuildResolutionStartedAt = performance.now()
+    const reusableBuildId = expectedBuildId ?? (!freshSource
+      ? resolveReusableElectronBuildId({ buildRoot, mode, verification: 'fast' })
+      : undefined)
+    timings.reusableBuildResolution = elapsedMs(reusableBuildResolutionStartedAt)
+    if (reusableBuildId) {
+      const source = expectedBuildId ? 'pinned' : 'latest reusable'
+      console.log(`[electron-package] Acquiring ${source} build ${reusableBuildId.slice(0, 12)}...`)
       const acquisitionStartedAt = performance.now()
-      lease = acquireElectronBuild({
-        runId,
-        runDir,
-        repoRoot,
-        buildRoot,
-        mode,
-        expectedBuildId,
-        skipBuild: true,
-        verification: 'fast',
-      })
+      try {
+        lease = acquireElectronBuild({
+          runId,
+          runDir,
+          repoRoot,
+          buildRoot,
+          mode,
+          expectedBuildId: reusableBuildId,
+          skipBuild: true,
+          verification: 'fast',
+        })
+      } catch (error) {
+        if (expectedBuildId) throw error
+        console.log('[electron-package] The reusable build changed before its lease was acquired.')
+      }
       timings.electronBuildAcquisition = elapsedMs(acquisitionStartedAt)
-    } else {
+    }
+    if (!lease) {
+      if (!freshSource) {
+        throw new Error('No reusable Electron build is available. Run again with --fresh-source to build the current source.')
+      }
       console.log('[electron-package] Capturing immutable source snapshot...')
       const sourceCaptureStartedAt = performance.now()
       capturedSource = captureElectronBuildSource({ repoRoot: buildSourceRoot, buildRoot })

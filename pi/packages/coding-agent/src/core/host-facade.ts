@@ -64,8 +64,6 @@ import {
 import { loadSkills, type Skill } from "./skills.ts";
 import { createSourceInfo, type SourceInfo } from "./source-info.ts";
 
-export { SessionManager };
-
 export type HostThinkingLevel = ThinkingLevel;
 export type HostErrorKind =
 	| "invalid_input"
@@ -1115,24 +1113,6 @@ export async function setMortiseSessionMetadata(args: {
 			name: args.name,
 			metadata: args.metadata,
 			customType: args.customType,
-		});
-		return toSessionProjection(manager);
-	} catch (error) {
-		throw new HostFacadeError("session", error instanceof Error ? error.message : String(error));
-	}
-}
-
-export function forkSession(args: {
-	sourcePath: string;
-	targetCwd: string;
-	sessionDir?: string;
-	id?: string;
-	parentSession?: string;
-}): HostSessionProjection {
-	try {
-		const manager = SessionManager.forkFrom(args.sourcePath, args.targetCwd, args.sessionDir, {
-			id: args.id,
-			parentSession: args.parentSession,
 		});
 		return toSessionProjection(manager);
 	} catch (error) {

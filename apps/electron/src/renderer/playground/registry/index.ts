@@ -1,4 +1,5 @@
-import type { ComponentEntry, CategoryGroup, Category } from './types'
+import type { ComponentEntry, CategoryGroup, Category, RegisteredComponentEntry } from './types'
+import { defaultPreviewScene } from '../scene-runtime'
 import { onboardingComponents } from './onboarding'
 import { turnCardComponents, fullscreenOverlayComponents } from './turn-card'
 import { turnCardModesComponents } from './turn-card-modes'
@@ -19,11 +20,15 @@ import { apiKeyInputComponents } from './api-key-input'
 import { messagingComponents } from './messaging'
 import { imageSupportComponents } from './image-support'
 import { appShellScenarioComponents } from './app-shell-scenarios'
+import { uiFoundationComponents } from './ui-foundations'
+import { uiCatalogComponents } from './ui-catalog'
 
 export * from './types'
 
-export const componentRegistry: ComponentEntry[] = [
+const rawComponentRegistry: ComponentEntry[] = [
   ...appShellScenarioComponents,
+  ...uiFoundationComponents,
+  ...uiCatalogComponents,
   ...apiKeyInputComponents,
   ...onboardingComponents,
   ...turnCardComponents,
@@ -46,8 +51,22 @@ export const componentRegistry: ComponentEntry[] = [
   ...imageSupportComponents,
 ]
 
+function normalizeEntry(entry: ComponentEntry): RegisteredComponentEntry {
+  return {
+    ...entry,
+    source: entry.source ?? {
+      file: `apps/electron/src/renderer/playground/registry/${entry.category}`,
+      symbol: entry.name,
+      coverage: 'contained',
+    },
+    scene: entry.scene ?? defaultPreviewScene('Default component surface'),
+  }
+}
+
+export const componentRegistry: RegisteredComponentEntry[] = rawComponentRegistry.map(normalizeEntry)
+
 export function getCategories(): CategoryGroup[] {
-  const categoryOrder: Category[] = ['Mobile WebUI', 'Automations', 'Onboarding', 'Agent Setup', 'Chat', 'Island', 'Browser', 'Planner', 'Custom Shadows', 'Session List', 'Entity Lists', 'Edit Popover', 'Turn Cards', 'TurnCard Modes', 'Fullscreen', 'Chat Messages', 'Chat Inputs', 'Toast Messages', 'Markdown', 'Icons', 'OAuth', 'Messaging']
+  const categoryOrder: Category[] = ['Catalog', 'Mobile WebUI', 'Automations', 'Onboarding', 'Agent Setup', 'Chat', 'Island', 'Browser', 'Planner', 'Custom Shadows', 'Session List', 'Entity Lists', 'Edit Popover', 'Turn Cards', 'TurnCard Modes', 'Fullscreen', 'Chat Messages', 'Chat Inputs', 'Toast Messages', 'Markdown', 'Icons', 'OAuth', 'Messaging', 'Settings']
   const categoryMap = new Map<Category, ComponentEntry[]>()
 
   for (const entry of componentRegistry) {
@@ -63,6 +82,6 @@ export function getCategories(): CategoryGroup[] {
     }))
 }
 
-export function getComponentById(id: string): ComponentEntry | undefined {
+export function getComponentById(id: string): RegisteredComponentEntry | undefined {
   return componentRegistry.find(c => c.id === id)
 }

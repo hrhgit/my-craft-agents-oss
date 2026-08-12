@@ -6,6 +6,7 @@ summary: Maintain Mortise's cross-module product concepts, authority boundaries,
 status: active
 when_to_read:
   - cross-module product meaning, terminology, authority, lifecycle, or unresolved product decisions
+  - Attempt identity, retry classification, interruption, or continuation semantics
 tags:
   - product-semantics
   - terminology
@@ -13,6 +14,10 @@ tags:
   - authority
   - invariant
   - product-model
+  - attempt
+  - interrupted-continuation
+  - attempt-identity
+  - session-runtime-ownership
 entrypoints:
   - docs/product-semantics.md
 depends_on: []
@@ -45,7 +50,7 @@ The primary reference is `docs/product-semantics.md`; detailed contracts remain 
 
 # Invariants
 
-Accepted product meaning is distinct from historical implementation. Detailed domain protocols may refine this reference but must not silently contradict it. Open questions never authorize implementation.
+Accepted product meaning is distinct from historical implementation. Mortise owns Workspace and product integration, while Pi is the sole runtime authority for Session, Attempt, Turn, and Agent Loop state. A Pi-issued `attemptId` is an event-generation identifier, not a Mortise execution permission, and must not be confused with Pi's internal retry counter. Interrupted continuation requires a new Attempt and an explicit caller or business request; restart and history loading never trigger it automatically. Detailed domain protocols may refine this reference but must not silently contradict it. Open questions never authorize implementation.
 
 # Change Impact
 

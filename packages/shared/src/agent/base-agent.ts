@@ -187,6 +187,8 @@ export abstract class BaseAgent implements AgentBackend {
   // Callbacks (public for facade wiring)
   // ============================================================
   onBeforeToolExecution: ((request: {
+    runtimeId?: string;
+    attemptId?: string;
     toolCallId: string;
     toolName: string;
     input: Record<string, unknown>;
@@ -790,6 +792,10 @@ ${formattedMessages}
     return false;
   }
 
+  async withdrawQueued(_clientMutationId: string): Promise<boolean> {
+    return false;
+  }
+
   /**
    * Check if currently processing a query.
    */
@@ -804,10 +810,6 @@ ${formattedMessages}
    * @returns The model's response text, or null if completion fails
    */
   abstract runMiniCompletion(prompt: string): Promise<string | null>;
-
-  async runIsolatedAgent(_request: import('./backend/types.ts').IsolatedAgentRequest): Promise<string | null> {
-    throw new Error('This backend does not support isolated Agent execution');
-  }
 
   /**
    * Execute an LLM query using the agent's auth infrastructure.

@@ -156,7 +156,10 @@ describe("AgentSession compaction thinking level", () => {
 			async (...args: Parameters<typeof CompactionModule.compact>) =>
 				await new Promise<never>((_resolve, reject) => {
 					const signal = args[5];
-					signal.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+					if (!signal) throw new Error("Compaction stream is missing its abort signal");
+					signal.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), {
+						once: true,
+					});
 				}),
 		);
 		const events: string[] = [];

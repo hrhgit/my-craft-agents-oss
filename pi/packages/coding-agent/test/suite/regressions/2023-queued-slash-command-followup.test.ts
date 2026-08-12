@@ -14,7 +14,7 @@ describe("issue #2023 queued slash-command follow-up", () => {
 		}
 	});
 
-	it("treats extension-origin queued slash-command follow-ups as raw user text instead of dispatching the command", async () => {
+	it("dispatches extension-origin slash commands from the Pi Session follow-up queue", async () => {
 		let extensionApi: ExtensionAPI | undefined;
 		const commandRuns: string[] = [];
 		let releaseToolExecution: (() => void) | undefined;
@@ -57,9 +57,8 @@ describe("issue #2023 queued slash-command follow-up", () => {
 		]);
 
 		const sawToolStart = new Promise<void>((resolve) => {
-			const unsubscribe = harness.session.subscribe((event) => {
+			harness.session.subscribe((event) => {
 				if (event.type === "tool_execution_start" && event.toolName === "wait") {
-					unsubscribe();
 					resolve();
 				}
 			});
@@ -73,8 +72,9 @@ describe("issue #2023 queued slash-command follow-up", () => {
 		releaseToolExecution?.();
 		await promptPromise;
 
-		expect(commandRuns).toEqual([]);
-		expect(getUserTexts(harness)).toEqual(["start", "/testcmd queued"]);
-		expect(getAssistantTexts(harness)).toContain("queued follow-up handled by model");
+		expect(commandRuns).toEqual(["queued"]);
+		expect(getUserTexts(harness)).toEqual(["start"]);
+		expect(getAssistantTexts(harness)).toContain("first turn complete");
+		expect(getAssistantTexts(harness)).not.toContain("queued follow-up handled by model");
 	});
 });

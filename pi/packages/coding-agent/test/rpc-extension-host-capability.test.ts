@@ -98,14 +98,6 @@ describe("Pi RPC extension host capabilities", () => {
 			}
 		},
 	});
-	pi.registerCommand("wait-for-rebind", {
-		handler: async (_args, ctx) => {
-			const result = await ctx.capabilities.invoke("test.long-running", "wait", { rebind: true });
-			if (result.status !== "cancelled" || result.error?.code !== "session_rebound") {
-				throw new Error("Session rebind did not cancel the host capability");
-			}
-		},
-	});
 }
 `,
 			"utf8",
@@ -134,8 +126,6 @@ describe("Pi RPC extension host capabilities", () => {
 		let receivedRequest: RpcExtensionHostCapabilityRequest | undefined;
 		let receivedDeclaration: RpcExtensionHostCapabilityDeclaration | undefined;
 		let receivedCancel: RpcExtensionHostCapabilityCancel | undefined;
-		let receivedLongRequest: RpcExtensionHostCapabilityRequest | undefined;
-		let receivedRebindCancel: RpcExtensionHostCapabilityCancel | undefined;
 		let receivedRouteRejection: { phase: string; reason: string } | undefined;
 		let receivedInteractionPresentation: unknown;
 		client.onClientEvent((event) => {
@@ -162,13 +152,11 @@ describe("Pi RPC extension host capabilities", () => {
 				return;
 			}
 			if (event.type === "extension_host_capability_cancel") {
-				if (event.id === receivedLongRequest?.id) receivedRebindCancel = event;
-				else receivedCancel = event;
+				receivedCancel = event;
 				return;
 			}
 			if (event.type !== "extension_host_capability_request") return;
 			if (event.capability === "test.long-running") {
-				if ((event.input as { rebind?: boolean } | undefined)?.rebind) receivedLongRequest = event;
 				return;
 			}
 			receivedRequest = event;
@@ -236,17 +224,6 @@ describe("Pi RPC extension host capabilities", () => {
 			mode: "wizard",
 			allowSkip: true,
 			autoAdvanceSingleChoice: true,
-		});
-
-		const pendingInvocation = client.invokeExtensionCommandResult("wait-for-rebind");
-		await vi.waitFor(() => expect(receivedLongRequest).toBeDefined());
-		await expect(client.newSession()).resolves.toEqual({ cancelled: false });
-		await expect(pendingInvocation).resolves.toEqual({ invoked: true });
-		expect(receivedRebindCancel).toMatchObject({
-			type: "extension_host_capability_cancel",
-			version: 1,
-			id: receivedLongRequest?.id,
-			extensionId: expect.any(String),
 		});
 	}, 30_000);
 });

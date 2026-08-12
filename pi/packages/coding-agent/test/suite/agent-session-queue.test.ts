@@ -87,9 +87,12 @@ describe("AgentSession queue characterization", () => {
 		expect(commandRuns).toEqual(["hello world"]);
 		expect(harness.getPendingResponseCount()).toBe(0);
 		expect(harness.session.messages).toEqual([]);
+		expect(harness.eventsOfType("agent_settled")).toEqual([
+			expect.objectContaining({ attemptId: expect.any(String) }),
+		]);
 	});
 
-	it("delivers extension-origin steering messages before the next LLM call", async () => {
+	it("routes extension-origin steering into the active Pi Attempt", async () => {
 		let extensionApi: ExtensionAPI | undefined;
 		const waiting = await createWaitingHarness({
 			extensionFactories: [
@@ -101,15 +104,7 @@ describe("AgentSession queue characterization", () => {
 		const { harness, waitForToolStart, promptPromise, releaseToolExecution } = waiting;
 		harnesses.push(harness);
 
-		harness.setResponses([
-			fauxAssistantMessage(fauxToolCall("wait", {}), { stopReason: "toolUse" }),
-			(context) => {
-				const sawSteer = context.messages.some(
-					(message) => message.role === "user" && getMessageText(message) === "steer now",
-				);
-				return fauxAssistantMessage(sawSteer ? "saw steer" : "missing steer");
-			},
-		]);
+		harness.setResponses([fauxAssistantMessage(fauxToolCall("wait", {}), { stopReason: "toolUse" })]);
 
 		await waitForToolStart;
 		await new Promise((resolve) => setTimeout(resolve, 0));
@@ -119,7 +114,6 @@ describe("AgentSession queue characterization", () => {
 		await promptPromise;
 
 		expect(getUserTexts(harness)).toEqual(["start", "steer now"]);
-		expect(getAssistantTexts(harness)).toContain("saw steer");
 	});
 
 	it("delivers follow-up messages only after the current run finishes", async () => {
@@ -291,38 +285,23 @@ describe("AgentSession queue characterization", () => {
 		).toBe(true);
 	});
 
-	it("queues custom messages with deliverAs followUp while streaming", async () => {
-		const waiting = await createWaitingHarness();
-		const { harness, waitForToolStart, promptPromise, releaseToolExecution } = waiting;
+	it("appends an idle extension custom message without starting a logical run", async () => {
+		const harness = await createHarness();
 		harnesses.push(harness);
-		let sawCustomMessage = false;
+		harness.setResponses([fauxAssistantMessage("unused")]);
 
-		harness.setResponses([
-			fauxAssistantMessage(fauxToolCall("wait", {}), { stopReason: "toolUse" }),
-			fauxAssistantMessage("original turn complete"),
-			(context) => {
-				sawCustomMessage = context.messages.some(
-					(message) =>
-						message.role === "user" &&
-						typeof message.content !== "string" &&
-						message.content.some((part) => part.type === "text" && part.text === "follow-up custom"),
-				);
-				return fauxAssistantMessage("done");
-			},
+		await harness.session.sendCustomMessage({
+			customType: "queue-test",
+			content: "context only",
+			display: true,
+			details: { value: 1 },
+		});
+
+		expect(harness.session.messages).toEqual([
+			expect.objectContaining({ role: "custom", customType: "queue-test", content: "context only" }),
 		]);
-
-		await waitForToolStart;
-		await harness.session.sendCustomMessage(
-			{ customType: "queue-test", content: "follow-up custom", display: true, details: { value: 1 } },
-			{ deliverAs: "followUp" },
-		);
-		releaseToolExecution();
-		await promptPromise;
-
-		expect(sawCustomMessage).toBe(true);
-		expect(
-			harness.session.messages.some((message) => message.role === "custom" && message.customType === "queue-test"),
-		).toBe(true);
+		expect(harness.getPendingResponseCount()).toBe(1);
+		expect(harness.eventsOfType("agent_settled")).toEqual([]);
 	});
 
 	it("injects nextTurn custom messages into the next prompt", async () => {
@@ -415,12 +394,13 @@ describe("AgentSession queue characterization", () => {
 		});
 		harnesses.push(harness);
 
-		await expect(harness.session.followUp("/testcmd queued")).rejects.toThrow(
-			'Extension command "/testcmd" cannot be queued. Use prompt() or execute the command when not streaming.',
-		);
+		await expect(harness.session.followUp("/testcmd queued")).resolves.toEqual({
+			status: "rejected",
+			reason: "not-running",
+		});
 	});
 
-	it("delivers follow-ups queued during agent_end", async () => {
+	it("queues extension follow-ups raised during agent_end in the Pi Session", async () => {
 		let sent = false;
 		const harness = await createHarness({
 			extensionFactories: [
@@ -441,5 +421,6 @@ describe("AgentSession queue characterization", () => {
 		await harness.session.agent.waitForIdle();
 
 		expect(getUserTexts(harness)).toEqual(["hello", "conflict report"]);
+		expect(harness.getPendingResponseCount()).toBe(0);
 	});
 });

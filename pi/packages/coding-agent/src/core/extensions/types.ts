@@ -31,7 +31,6 @@ import type { Static, TSchema } from "typebox";
 import type { BashResult } from "../bash-executor.ts";
 import type { CompactionPreparation, CompactionResult } from "../compaction/index.ts";
 import type { EventBus } from "../event-bus.ts";
-import type { ExecOptions, ExecResult } from "../exec.ts";
 import type {
 	ExtensionManifestDiagnostic,
 	ExtensionManifestStatus,
@@ -46,13 +45,7 @@ import type {
 import type { CustomMessage } from "../messages.ts";
 import type { ModelRegistry } from "../model-registry.ts";
 import type { SessionActivityRegistry } from "../session-activity-registry.ts";
-import type {
-	BranchSummaryEntry,
-	CompactionEntry,
-	ReadonlySessionManager,
-	SessionEntry,
-	SessionManager,
-} from "../session-manager.ts";
+import type { BranchSummaryEntry, CompactionEntry, ReadonlySessionManager, SessionEntry } from "../session-manager.ts";
 import type { SlashCommandInfo } from "../slash-commands.ts";
 import type { SourceInfo } from "../source-info.ts";
 import type { BuildSystemPromptOptions } from "../system-prompt.ts";
@@ -74,8 +67,8 @@ import type {
 	WebFetchToolInput,
 	WriteToolInput,
 } from "../tools/index.ts";
+import type { ExtensionInvocationOrigin } from "./invocation-context.ts";
 
-export type { ExecOptions, ExecResult } from "../exec.ts";
 export type { BuildSystemPromptOptions } from "../system-prompt.ts";
 export type { AgentToolResult, AgentToolUpdateCallback, ToolExecutionMode };
 
@@ -473,12 +466,6 @@ export interface ContextUsage {
 	percent: number | null;
 }
 
-export interface CompactOptions {
-	customInstructions?: string;
-	onComplete?: (result: CompactionResult) => void;
-	onError?: (error: Error) => void;
-}
-
 /**
  * Context passed to extension event handlers.
  */
@@ -503,16 +490,10 @@ export interface ExtensionContext {
 	isIdle(): boolean;
 	/** The current abort signal, or undefined when the agent is not streaming. */
 	signal: AbortSignal | undefined;
-	/** Abort the current agent operation */
-	abort(): void;
 	/** Whether there are queued messages waiting */
 	hasPendingMessages(): boolean;
-	/** Gracefully shutdown pi and exit. Available in all contexts. */
-	shutdown(): void;
 	/** Get current context usage for the active model. */
 	getContextUsage(): ContextUsage | undefined;
-	/** Trigger compaction without awaiting completion. */
-	compact(options?: CompactOptions): void;
 	/** Get the current effective system prompt. */
 	getSystemPrompt(): string;
 }
@@ -524,47 +505,13 @@ export interface ExtensionContext {
 export interface ExtensionCommandContext extends ExtensionContext {
 	/** Wait for the agent to finish streaming */
 	waitForIdle(): Promise<void>;
-
-	/** Start a new session, optionally with initialization. */
-	newSession(options?: {
-		/** Target working directory for the new session. Defaults to the current cwd. */
-		cwd?: string;
-		parentSession?: string;
-		setup?: (sessionManager: SessionManager) => Promise<void>;
-		withSession?: (ctx: ReplacedSessionContext) => Promise<void>;
-	}): Promise<{ cancelled: boolean }>;
-
-	/** Fork from a specific entry, creating a new session file. */
-	fork(
-		entryId: string,
-		options?: { position?: "before" | "at"; withSession?: (ctx: ReplacedSessionContext) => Promise<void> },
-	): Promise<{ cancelled: boolean }>;
-
-	/** Navigate to a different point in the session tree. */
-	navigateTree(
-		targetId: string,
-		options?: { summarize?: boolean; customInstructions?: string; replaceInstructions?: boolean; label?: string },
-	): Promise<{ cancelled: boolean }>;
-
-	/** Switch to a different session file. */
-	switchSession(
-		sessionPath: string,
-		options?: { withSession?: (ctx: ReplacedSessionContext) => Promise<void> },
-	): Promise<{ cancelled: boolean }>;
-
-	/** Reload extensions, skills, and prompts. */
-	reload(): Promise<void>;
 }
 
-/**
- * Fresh command-capable context bound to the replacement session after a session switch.
- *
- * This is passed to `withSession()` callbacks on `newSession()`, `fork()`, and `switchSession()`.
- */
+/** Internal context used by AgentSessionRuntime while replacing its bound Pi session. */
 export interface ReplacedSessionContext extends ExtensionCommandContext {
 	sendMessage<T = unknown>(
 		message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
-		options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" },
+		options?: { deliverAs?: "nextTurn" },
 	): Promise<void>;
 
 	sendUserMessage(
@@ -1338,12 +1285,15 @@ export interface ExtensionAPI {
 	/** Send a custom message to the session. */
 	sendMessage<T = unknown>(
 		message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
-		options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" },
+		options?: { deliverAs?: "nextTurn" },
 	): void;
 
 	/**
-	 * Send a user message to the agent. Always triggers a turn.
-	 * When the agent is streaming, use deliverAs to specify how to queue the message.
+	 * Submit a user-message intent to the Mortise host.
+	 *
+	 * This API never starts an Agent Loop directly. Mortise decides whether the
+	 * intent becomes steering for the current execution or competes for a new
+	 * turn after acquiring Session control.
 	 */
 	sendUserMessage(
 		content: string | (TextContent | ImageContent)[],
@@ -1365,9 +1315,6 @@ export interface ExtensionAPI {
 
 	/** Set or clear a label on an entry. Labels are user-defined markers for bookmarking/navigation. */
 	setLabel(entryId: string, label: string | undefined): void;
-
-	/** Execute a shell command. */
-	exec(command: string, args: string[], options?: ExecOptions): Promise<ExecResult>;
 
 	/** Get the list of currently active tool names. */
 	getActiveTools(): string[];
@@ -1690,12 +1637,14 @@ type HandlerFn = (...args: unknown[]) => Promise<unknown>;
 
 export type SendMessageHandler = <T = unknown>(
 	message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
-	options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" },
+	options?: { deliverAs?: "nextTurn" },
+	origin?: ExtensionInvocationOrigin,
 ) => void;
 
 export type SendUserMessageHandler = (
 	content: string | (TextContent | ImageContent)[],
 	options?: { deliverAs?: "steer" | "followUp" },
+	origin?: ExtensionInvocationOrigin,
 ) => void;
 
 export type AppendEntryHandler = <T = unknown>(customType: string, data?: T) => void;
@@ -1777,11 +1726,9 @@ export interface ExtensionContextActions {
 	getModel: () => Model<any> | undefined;
 	isIdle: () => boolean;
 	getSignal: () => AbortSignal | undefined;
-	abort: () => void;
+	getAttemptId: () => string | undefined;
 	hasPendingMessages: () => boolean;
-	shutdown: () => void;
 	getContextUsage: () => ContextUsage | undefined;
-	compact: (options?: CompactOptions) => void;
 	getSystemPrompt: () => string;
 }
 
@@ -1791,25 +1738,6 @@ export interface ExtensionContextActions {
  */
 export interface ExtensionCommandContextActions {
 	waitForIdle: () => Promise<void>;
-	newSession: (options?: {
-		cwd?: string;
-		parentSession?: string;
-		setup?: (sessionManager: SessionManager) => Promise<void>;
-		withSession?: (ctx: ReplacedSessionContext) => Promise<void>;
-	}) => Promise<{ cancelled: boolean }>;
-	fork: (
-		entryId: string,
-		options?: { position?: "before" | "at"; withSession?: (ctx: ReplacedSessionContext) => Promise<void> },
-	) => Promise<{ cancelled: boolean }>;
-	navigateTree: (
-		targetId: string,
-		options?: { summarize?: boolean; customInstructions?: string; replaceInstructions?: boolean; label?: string },
-	) => Promise<{ cancelled: boolean }>;
-	switchSession: (
-		sessionPath: string,
-		options?: { withSession?: (ctx: ReplacedSessionContext) => Promise<void> },
-	) => Promise<{ cancelled: boolean }>;
-	reload: () => Promise<void>;
 }
 
 /**

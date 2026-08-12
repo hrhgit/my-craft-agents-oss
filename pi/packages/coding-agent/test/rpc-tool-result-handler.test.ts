@@ -14,6 +14,7 @@ function request(runtimeId: string, id: string): RpcToolResultRequest {
 	return {
 		type: "tool_result_request",
 		id,
+		attemptId: `attempt-${runtimeId}`,
 		clientId: "client-1",
 		runtimeId,
 		sessionId: `session-${runtimeId}`,

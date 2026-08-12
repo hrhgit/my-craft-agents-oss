@@ -23,6 +23,7 @@ describe('Mortise Windows desktop tool', () => {
   it('uses one canonical package mode', () => {
     expect(script).toContain('scripts/build/package-electron.ts", "--target", "default"')
     expect(script).not.toContain('--development')
+    expect(script).not.toContain('--fresh-source')
     expect(script).not.toContain('测试构建')
     expect(script).not.toContain('标准构建')
   })
@@ -76,7 +77,7 @@ describe('Mortise Windows desktop tool', () => {
     expect(script).toContain('"scripts", "start-webui-instance.ps1"')
     expect(script).toContain('"scripts", "stop-webui.ps1"')
     expect(script).toContain('new[] { "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", scriptPath }')
-    expect(script).toContain('new[] { "run", "scripts/build-developer-kit.ts" }')
+    expect(script).toContain('new[] { "run", "scripts/build-developer-kit.ts", "--no-archive" }')
     expect(script).toContain('DrainWebuiMessages()')
     expect(script).toContain('DrainStopWebuiMessages()')
     expect(script).toContain('DrainDeveloperKitMessages()')

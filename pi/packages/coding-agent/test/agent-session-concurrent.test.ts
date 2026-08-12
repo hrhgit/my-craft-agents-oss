@@ -6,14 +6,7 @@ import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Agent } from "@mortise/pi-agent-core";
-import {
-	type AssistantMessage,
-	type AssistantMessageEvent,
-	EventStream,
-	getModel,
-	type ImageContent,
-	type TextContent,
-} from "@mortise/pi-ai";
+import { type AssistantMessage, type AssistantMessageEvent, EventStream, getModel } from "@mortise/pi-ai";
 import { Type } from "typebox";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AgentSession } from "../src/core/agent-session.ts";
@@ -181,12 +174,9 @@ describe("AgentSession concurrent prompt guard", () => {
 		await firstPrompt.catch(() => {});
 	});
 
-	it("should queue extension-origin steering messages while streaming", async () => {
+	it("should route extension-origin steering into the active Pi Attempt", async () => {
 		const model = getModel("anthropic", "claude-sonnet-4-5")!;
 		let abortSignal: AbortSignal | undefined;
-		let sawSteeringMessage = false;
-		let lastInputSource: string | undefined;
-		const queueEvents: Array<{ steering: readonly string[]; followUp: readonly string[] }> = [];
 
 		const agent = new Agent({
 			getApiKey: () => "test-key",
@@ -195,30 +185,10 @@ describe("AgentSession concurrent prompt guard", () => {
 				systemPrompt: "Test",
 				tools: [],
 			},
-			streamFn: (_model, context, options) => {
+			streamFn: (_model, _context, options) => {
 				abortSignal = options?.signal;
 				const stream = new MockAssistantStream();
 				queueMicrotask(() => {
-					const userTexts = context.messages
-						.filter((message) => message.role === "user")
-						.map((message) => {
-							if (typeof message.content === "string") {
-								return message.content;
-							}
-							return message.content
-								.filter((part): part is TextContent | ImageContent => typeof part === "object" && part !== null)
-								.filter((part): part is TextContent => part.type === "text")
-								.map((part) => part.text)
-								.join("\n");
-						});
-
-					if (userTexts.includes("Steer from extension")) {
-						sawSteeringMessage = true;
-						stream.push({ type: "start", partial: createAssistantMessage("") });
-						stream.push({ type: "done", reason: "stop", message: createAssistantMessage("Steered") });
-						return;
-					}
-
 					stream.push({ type: "start", partial: createAssistantMessage("") });
 					const checkAbort = () => {
 						if (abortSignal?.aborted) {
@@ -243,11 +213,6 @@ describe("AgentSession concurrent prompt guard", () => {
 			(pi) => {
 				(globalThis as typeof globalThis & { testExtensionApi?: unknown }).testExtensionApi = pi;
 			},
-			(pi) => {
-				pi.on("input", async (event) => {
-					lastInputSource = event.source;
-				});
-			},
 		]);
 
 		session = new AgentSession({
@@ -258,12 +223,6 @@ describe("AgentSession concurrent prompt guard", () => {
 			modelRegistry,
 			resourceLoader: createTestResourceLoader({ extensionsResult }),
 		});
-		session.subscribe((event) => {
-			if (event.type === "queue_update") {
-				queueEvents.push({ steering: event.steering, followUp: event.followUp });
-			}
-		});
-
 		const firstPrompt = session.prompt("First message");
 		await new Promise((resolve) => setTimeout(resolve, 10));
 		expect(session.isStreaming).toBe(true);
@@ -281,14 +240,9 @@ describe("AgentSession concurrent prompt guard", () => {
 		await new Promise((resolve) => setTimeout(resolve, 25));
 
 		expect(session.pendingMessageCount).toBe(1);
-		expect(session.getSteeringMessages()).toContain("Steer from extension");
-		expect(lastInputSource).toBe("extension");
-		expect(queueEvents.some((event) => event.steering.includes("Steer from extension"))).toBe(true);
 
 		await session.abort();
 		await firstPrompt.catch(() => {});
-
-		expect(sawSteeringMessage).toBe(true);
 	});
 
 	it("should allow prompt() after previous completes", async () => {

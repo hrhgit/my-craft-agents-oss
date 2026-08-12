@@ -1,11 +1,13 @@
 import * as React from 'react'
 import { cn } from '@/lib/utils'
-import type { ComponentEntry } from './registry'
+import type { RegisteredComponentEntry } from './registry'
 import { TooltipProvider } from '@mortise/ui'
+import { PreviewSceneControls, PreviewSceneFrame, usePreviewScene } from './scene-runtime'
 
 interface ComponentPreviewProps {
-  component: ComponentEntry
+  component: RegisteredComponentEntry
   props: Record<string, unknown>
+  locale: 'zh-CN' | 'en'
 }
 
 const MIN_WIDTH = 100
@@ -32,12 +34,13 @@ function loadSavedSize(): { width: number; height: number } {
   return { width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT }
 }
 
-export function ComponentPreview({ component, props }: ComponentPreviewProps) {
+export function ComponentPreview({ component, props, locale }: ComponentPreviewProps) {
   const [size, setSize] = React.useState(loadSavedSize)
   const containerRef = React.useRef<HTMLDivElement>(null)
   const isDraggingRef = React.useRef<'right' | 'bottom' | 'corner' | null>(null)
   const startPosRef = React.useRef({ x: 0, y: 0 })
   const startSizeRef = React.useRef({ width: 0, height: 0 })
+  const scene = usePreviewScene(component.scene, `${component.id}:${JSON.stringify(props)}`)
 
   // Merge default props, mock data, and current props
   const mergedProps = React.useMemo(() => {
@@ -46,8 +49,8 @@ export function ComponentPreview({ component, props }: ComponentPreviewProps) {
       defaults[prop.name] = prop.defaultValue
     }
     const mockData = component.mockData?.() ?? {}
-    return { ...defaults, ...mockData, ...props }
-  }, [component, props])
+    return { ...defaults, ...mockData, ...scene.phase.props, ...props }
+  }, [component, props, scene.phase.props])
 
   // Render with optional wrapper
   const Component = component.component
@@ -115,6 +118,8 @@ export function ComponentPreview({ component, props }: ComponentPreviewProps) {
         </h2>
         <div className="mt-1 flex flex-wrap items-center gap-4 text-sm text-muted-foreground">
           <p>{component.description}</p>
+          <span className="font-mono text-xs">{component.source.file} · {component.source.symbol}</span>
+          <span className="rounded border border-border px-1.5 py-0.5 text-xs">{component.source.coverage}</span>
           <div className="flex items-center gap-2">
             <span className="text-xs font-mono">
               {Math.round(size.width)} × {Math.round(size.height)}
@@ -126,9 +131,19 @@ export function ComponentPreview({ component, props }: ComponentPreviewProps) {
               }}
               className="px-2 py-1 rounded text-xs text-muted-foreground hover:text-foreground hover:bg-foreground/5 transition-colors"
             >
-              Reset
+              {locale === 'zh-CN' ? '重置' : 'Reset'}
             </button>
           </div>
+          <PreviewSceneControls
+            label={component.scene.label}
+            scene={component.scene}
+            phase={scene.phase}
+            playing={scene.playing}
+            onReplay={scene.replay}
+            onPrevious={scene.previous}
+            onNext={scene.next}
+            onTogglePlaying={scene.togglePlaying}
+          />
         </div>
       </div>
 
@@ -155,9 +170,11 @@ export function ComponentPreview({ component, props }: ComponentPreviewProps) {
             )}
           >
             <TooltipProvider>
-              <Wrapper>
-                <Component {...mergedProps} />
-              </Wrapper>
+              <PreviewSceneFrame scene={component.scene} phase={scene.phase} phaseIndex={scene.phaseIndex}>
+                <Wrapper>
+                  <Component {...mergedProps} />
+                </Wrapper>
+              </PreviewSceneFrame>
             </TooltipProvider>
           </div>
 

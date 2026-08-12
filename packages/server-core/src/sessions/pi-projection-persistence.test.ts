@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test'
 import type { PiProjectionEventV1 } from '@mortise/shared/protocol'
 import type { Workspace } from '@mortise/core/types'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'fs'
@@ -599,7 +599,7 @@ describe('Pi projection persistence', () => {
     await internals.piProjectionWrites.get(managed.id)
   })
 
-  it('recovers a queued projection message exactly once after Host restart', async () => {
+  it('recovers a queued projection message without scheduling a new Attempt after Host restart', async () => {
     const workspace = createTestWorkspace(workspaceRoot)
     const firstSession = createManagedSession({ mortiseId: 'session-1' }, workspace, { messagesLoaded: true })
     const firstHost = new SessionManager()
@@ -622,26 +622,15 @@ describe('Pi projection persistence', () => {
     const restartedHost = new SessionManager()
     ;(restartedHost as unknown as { sessions: Map<string, typeof restartedSession> })
       .sessions.set(restartedSession.id, restartedSession)
-    const originalSetImmediate = globalThis.setImmediate
-    const scheduled: Array<() => void> = []
-    ;(globalThis as typeof globalThis & { setImmediate: typeof setImmediate }).setImmediate = ((callback: () => void) => {
-      scheduled.push(callback)
-      return 0 as unknown as ReturnType<typeof setImmediate>
-    }) as typeof setImmediate
+    await restartedHost.getPiProjectionSnapshot(restartedSession.id)
+    await restartedHost.getPiProjectionSnapshot(restartedSession.id)
 
-    try {
-      await restartedHost.getPiProjectionSnapshot(restartedSession.id)
-      await restartedHost.getPiProjectionSnapshot(restartedSession.id)
-
-      expect(restartedSession.messageQueue).toEqual([expect.objectContaining({
-        message: 'queued after restart',
-        messageId: 'message-1',
-        optimisticMessageId: 'message-1',
-        options: expect.objectContaining({ optimisticMessageId: 'message-1' }),
-      })])
-      expect(scheduled).toHaveLength(1)
-    } finally {
-      globalThis.setImmediate = originalSetImmediate
-    }
+    expect(restartedSession.messageQueue).toEqual([expect.objectContaining({
+      message: 'queued after restart',
+      messageId: 'message-1',
+      optimisticMessageId: 'message-1',
+      options: expect.objectContaining({ optimisticMessageId: 'message-1' }),
+    })])
+    expect(restartedSession.isProcessing).toBe(false)
   })
 })

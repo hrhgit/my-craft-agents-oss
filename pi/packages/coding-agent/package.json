@@ -1,6 +1,7 @@
 {
 	"name": "@mortise/pi-coding-agent",
 	"version": "0.1.0",
+	"private": true,
 	"description": "Mortise embedded headless Agent and RPC runtime",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -15,10 +16,14 @@
 			"import": "./dist/core/host-facade.js",
 			"require": "./dist/core/host-facade.cjs"
 		},
-		"./rpc": {
-			"types": "./dist/modes/rpc/public.d.ts",
-			"import": "./dist/modes/rpc/public.js",
-			"require": "./dist/modes/rpc/rpc-client.cjs"
+		"./internal/host-facade": {
+			"types": "./dist/internal/host-facade.d.ts",
+			"import": "./dist/internal/host-facade.js"
+		},
+		"./internal/rpc": {
+			"types": "./dist/internal/rpc.d.ts",
+			"import": "./dist/internal/rpc.js",
+			"require": "./dist/internal/rpc.cjs"
 		},
 		"./hooks": {
 			"types": "./dist/core/hooks/index.d.ts",

@@ -16,8 +16,9 @@ binds the runtime to `~/.mortise/agent/`; independent Pi keeps `~/.pi/agent/`. M
 must not reimplement them, must not monkey-patch their internals, and must not
 import them outside the sanctioned seam (see below).
 
-- Agent runtime: `AgentSession`, prompt/steer/follow-up, thinking levels,
-  compaction, branch/fork/clone, abort, retry.
+- Agent runtime mechanics: `AgentSession`, the Session command queue, Attempt
+  and Turn lifecycle, the model/tool loop, and the semantics of prompt, steer,
+  follow-up, compaction, abort, retry, and branch/fork/clone.
 - Session storage: JSONL tree format, `~/.mortise/agent/sessions/{encoded-cwd}/`,
   the cwd→bucket encoding.
 - Credential storage: `~/.mortise/agent/auth.json` (plaintext, 0600).
@@ -30,10 +31,13 @@ import them outside the sanctioned seam (see below).
 - Extension system: `ExtensionContext`, `ExtensionUIContext`, `EventBus`,
   `createHeadlessUIContext`, skills, widgets, commands.
 
-When Mortise needs a new capability in any of these, the change is made **in Pi**
-and exposed as a typed public API (an RPC command, an `AgentSession` method, a
-`PromptOptions` field, an `ExtensionContext` facet). Mortise then consumes that
-API.
+When Mortise needs a new Session or engine capability in any of these, the
+behavior is implemented **in Pi** and exposed through a typed Session command or
+event contract. Every command that changes Session runtime state must enter the
+same Pi Session state machine, regardless of whether it originated from the UI,
+Automation, Messaging, an Agent tool, or an Extension. Mortise routes product
+requests to the canonical Pi runtime; it does not create a parallel Attempt
+state machine or authorize individual Pi lifecycle transitions.
 
 ## Scaffolding — owned by Mortise, must not touch the bottom layer
 
@@ -45,7 +49,8 @@ add, change, and extend them without touching Pi.
 - Workspace registry, switching, and bounded create/edit dialogs.
 - Multi-session history, unread tracking, session naming.
 - Automations engine (SchedulerTick, PreToolUse triggers, etc.) —
-  Mortise listens to its own events and drives Pi via `RpcClient`.
+  Mortise listens to its own events and routes Session commands to the
+  canonical Pi runtime.
 - Messaging gateway (Telegram, WhatsApp), pairing, bindings.
 - Browser pane manager (local and remote-bridged).
 - File attachments, rich-output block rendering, deep linking, updater,
@@ -53,7 +58,9 @@ add, change, and extend them without touching Pi.
 
 Scaffolding code talks to Pi through exactly two channels:
 
-1. **`RpcClient`** — typed commands and events over the RPC protocol.
+1. **Internal `RpcClient`** — typed Session commands and a long-lived event
+   stream over the RPC protocol. Pi accepts, queues, or rejects commands through
+   its Session state machine and assigns `attemptId` when a new Attempt starts.
 2. **Pi host facade** — typed public helpers exported by
    `@mortise/pi-coding-agent` for global config, credentials, session
    projection/fork, skills, and extensions. Mortise must not reimplement Pi file
@@ -63,9 +70,10 @@ Scaffolding code talks to Pi through exactly two channels:
 
 `packages/shared/src/agent/backend/**` is the only place in `packages/shared`
 that may import Pi event/runtime internals for adapter work. It holds the typed
-event adapter and thinking-level constants that translate Pi's typed events into
-Mortise's UI events. This seam is expected to **shrink** over time as Pi's
-`RpcClient` exposes typed events directly and the translation layer thins.
+event adapter and host driver that route commands to Pi and translate Pi's typed
+Session events into Mortise projections while preserving Pi-issued `attemptId`
+values. This seam is expected to **shrink** over time as the internal RPC
+contract becomes more direct.
 
 A small number of files outside `agent/backend/**` may import PUBLIC Pi APIs
 (`RpcClient`, `AuthStorage`, `SettingsManager`, static provider catalogs) or
@@ -90,6 +98,17 @@ class. Capabilities in this category must go through typed public APIs in Pi.
 Mortise passes host hooks through Pi `RpcClient({ hostHooksModule })` →
 `createAgentSession({ fetchInterceptor, toolMetadataResolver })`; tool display
 metadata is carried by Pi tool events, not by a cross-process metadata file.
+
+**Red line 3 — one Session state machine and one runtime owner.**
+Pi is the sole runtime authority for Session history, command acceptance,
+Attempt, Turn, and Agent Loop state. Every prompt, continue, steer, follow-up,
+compact, and abort command must enter the canonical Pi Session state machine;
+no caller may mutate Agent runtime state through a parallel queue or lifecycle
+path. Mortise owns Workspace routing and must resolve one canonical Pi runtime
+for each persistent Session, but it must not maintain a competing Attempt state
+machine. Extensions may submit commands to their current Pi Session and observe
+events, but must not bypass the Session state machine or launch a second runtime
+for the same persistent Session.
 
 ## Ratchet allowlist
 

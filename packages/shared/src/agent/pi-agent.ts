@@ -28,7 +28,7 @@ import {
   type RpcCommandType as PiRpcCommandType,
   type RpcHostToolResult as PiRpcHostToolResult,
   type RpcExtensionHostCapabilityResponse as PiRpcExtensionHostCapabilityResponse,
-} from '@mortise/pi-coding-agent/rpc';
+} from '@mortise/pi-coding-agent/internal/rpc';
 import { piHostManager, type PiHostLease } from './backend/pi-host-manager.ts';
 import { createMortiseRpcUiCapabilities } from './backend/pi/rpc-ui-capabilities.ts';
 
@@ -36,6 +36,7 @@ import type {
   BackendConfig,
   BackendRuntimeUpdate,
   ChatOptions,
+  ChildAttemptRegistration,
   ExtensionBridgeEvent,
   HostQueuedUserProjection,
   HostRuntimeErrorProjection,
@@ -127,7 +128,6 @@ import type { LLMQueryRequest, LLMQueryResult } from './llm-tool.ts';
 import { writeRuntimeLog, type RuntimeLogLevel } from '../utils/runtime-log.ts';
 import {
   WorkspaceCoordinationBridge,
-  type CoordinationToolResultRequest,
 } from './workspace-coordination-bridge.ts';
 
 // ============================================================
@@ -174,10 +174,11 @@ const AWS_ENVIRONMENT_AUTH_VARS = [
 
 type PiRpcToolExecutionRequest = Extract<PiRpcClientEvent, { type: 'tool_execution_request' }>;
 type PiRpcToolExecuteRequest = Extract<PiRpcClientEvent, { type: 'tool_execute_request' }>;
+type PiRpcToolResultRequest = Extract<PiRpcClientEvent, { type: 'tool_result_request' }>;
 type PiSessionRpcClient = PiRuntimeHandle;
 interface PiCoordinationRpcClient {
   setToolResultHandler(
-    handler: ((request: CoordinationToolResultRequest) => Promise<void>) | null,
+    handler: ((request: PiRpcToolResultRequest) => Promise<void>) | null,
   ): Promise<void>;
 }
 type PiRpcHostToolDefinition = {
@@ -330,24 +331,54 @@ export class PiAgent extends BaseAgent {
   private adapter: PiEventAdapter;
   private projectionBuilder: PiProjectionBuilder | null = null;
   private projectionEpoch = randomUUID();
+  private activeAttemptId: string | undefined;
   /** Ignore late content events while Pi is acknowledging an abort. */
   private suppressAbortedTurnEvents = false;
-  private readonly agentSettledWaiters = new Set<() => void>();
+  private readonly agentSettledWaiters = new Map<string, Set<() => void>>();
+  private settlementRetry: {
+    attemptId: string;
+    runtime: PiSessionRpcClient;
+    attempt: number;
+    timer?: ReturnType<typeof setTimeout>;
+    inFlight: boolean;
+  } | undefined;
 
-  // Event queue for streaming (AsyncGenerator pattern over RpcClient events)
-  private eventQueue = new EventQueue();
+  // This queue observes one chat() call. Canonical projection delivery belongs
+  // to the long-lived runtime subscription and does not depend on this queue.
+  private activeEventStream: { attemptId?: string; queue: EventQueue } | undefined;
 
-  private waitForAgentSettled(): Promise<void> {
+  private waitForAgentSettled(attemptId: string): Promise<void> {
     return new Promise(resolve => {
       const finish = () => resolve();
-      this.agentSettledWaiters.add(finish);
+      const waiters = this.agentSettledWaiters.get(attemptId) ?? new Set<() => void>();
+      waiters.add(finish);
+      this.agentSettledWaiters.set(attemptId, waiters);
     });
   }
 
-  private resolveAgentSettledWaiters(): void {
-    const waiters = [...this.agentSettledWaiters];
-    this.agentSettledWaiters.clear();
+  private resolveAgentSettledWaiters(attemptId: string): void {
+    const waiters = [...(this.agentSettledWaiters.get(attemptId) ?? [])];
+    this.agentSettledWaiters.delete(attemptId);
     for (const resolve of waiters) resolve();
+  }
+
+  private resolveAllAgentSettledWaiters(): void {
+    for (const attemptId of this.agentSettledWaiters.keys()) {
+      this.resolveAgentSettledWaiters(attemptId);
+    }
+  }
+
+  private completeActiveAttempt(attemptId: string): void {
+    this.clearSettlementRetry(attemptId);
+    this.resolveAgentSettledWaiters(attemptId);
+    if (this.activeEventStream?.attemptId === attemptId) {
+      this.activeEventStream.queue.complete();
+      this.activeEventStream = undefined;
+    }
+    if (this.activeAttemptId === attemptId) {
+      this.activeAttemptId = undefined;
+      this._isProcessing = false;
+    }
   }
 
   /**
@@ -356,9 +387,62 @@ export class PiAgent extends BaseAgent {
    * so the active chat generator cannot remain suspended on a retired runtime.
    */
   private settleTurnForRuntimeReplacement(): void {
-    this.resolveAgentSettledWaiters();
+    this.clearSettlementRetry();
+    this.resolveAllAgentSettledWaiters();
     this.coordinationBridge?.completeTurn();
-    this.eventQueue.complete();
+    this.activeEventStream?.queue.complete();
+    this.activeEventStream = undefined;
+    this.activeAttemptId = undefined;
+    this._isProcessing = false;
+  }
+
+  private clearSettlementRetry(attemptId?: string): void {
+    const retry = this.settlementRetry;
+    if (!retry || (attemptId && retry.attemptId !== attemptId)) return;
+    if (retry.timer) clearTimeout(retry.timer);
+    this.settlementRetry = undefined;
+  }
+
+  private scheduleSettlementRetry(attemptId: string, reportedAttempt: number): void {
+    const runtime = this.rpcClient;
+    if (!runtime || this.activeAttemptId !== attemptId) return;
+    let retry = this.settlementRetry;
+    if (!retry || retry.attemptId !== attemptId || retry.runtime !== runtime) {
+      this.clearSettlementRetry();
+      retry = { attemptId, runtime, attempt: reportedAttempt, inFlight: false };
+      this.settlementRetry = retry;
+    } else {
+      retry.attempt = Math.max(retry.attempt, reportedAttempt);
+    }
+    if (retry.timer || retry.inFlight) return;
+
+    const delayMs = Math.min(30_000, 250 * (2 ** Math.min(7, Math.max(0, retry.attempt - 1))));
+    const scheduledRetry = retry;
+    scheduledRetry.timer = setTimeout(() => {
+      if (
+        this.settlementRetry !== scheduledRetry
+        || this.activeAttemptId !== attemptId
+        || this.rpcClient !== runtime
+      ) return;
+      scheduledRetry.timer = undefined;
+      scheduledRetry.inFlight = true;
+      const attempted = scheduledRetry.attempt;
+      void runtime.retrySettlement(attemptId).catch(error => {
+        this.writePiRuntimeLog('warn', 'runtime.settlement_retry_failed', {
+          attemptId,
+          attempt: attempted,
+          error,
+        });
+      }).finally(() => {
+        if (this.settlementRetry !== scheduledRetry) return;
+        scheduledRetry.inFlight = false;
+        if (this.activeAttemptId === attemptId && this.rpcClient === runtime) {
+          scheduledRetry.attempt = Math.max(scheduledRetry.attempt, attempted + 1);
+          this.scheduleSettlementRetry(attemptId, scheduledRetry.attempt);
+        }
+      });
+    }, delayMs);
+    scheduledRetry.timer.unref?.();
   }
 
   private stopRpcClientDetached(reason: string): void {
@@ -1436,10 +1520,12 @@ export class PiAgent extends BaseAgent {
     }
 
     const parsed = parseError(error instanceof Error ? error : new Error(rawMessage));
+    const queue = this.activeEventStream?.queue;
+    if (!queue) return;
     if (parsed.code !== 'unknown_error') {
-      this.eventQueue.enqueue({ type: 'typed_error', error: parsed });
+      queue.enqueue({ type: 'typed_error', error: parsed });
     } else {
-      this.eventQueue.enqueue({
+      queue.enqueue({
         type: 'error',
         message: `Pi RpcClient error: ${rawMessage}`,
       });
@@ -1447,9 +1533,11 @@ export class PiAgent extends BaseAgent {
   }
 
   private handleRpcError(error: unknown): void {
+    const attemptId = this.activeAttemptId;
     this.reportRpcError(error);
-    this.eventQueue.enqueue({ type: 'complete' });
-    this.eventQueue.complete();
+    if (!attemptId) return;
+    this.activeEventStream?.queue.enqueue({ type: 'complete', terminalStatus: 'failed' });
+    this.completeActiveAttempt(attemptId);
   }
 
   private handleRpcControlError(operation: string, error: unknown): void {
@@ -1461,7 +1549,6 @@ export class PiAgent extends BaseAgent {
    * Forward a Pi SDK event through the event adapter.
    */
   private handlePiEvent(event: Record<string, unknown>): void {
-
     // Frontend channel events are runtime bridge traffic, not conversation
     // events. Forward them before the compatibility adapter sees them.
     if (event.type === 'extension_frontend_state') {
@@ -1491,6 +1578,24 @@ export class PiAgent extends BaseAgent {
         })
       }
       return
+    }
+
+	const eventAttemptId = typeof event.attemptId === 'string' ? event.attemptId : undefined;
+	const eventStream = this.activeEventStream
+	  && this.activeEventStream.attemptId === eventAttemptId
+	  ? this.activeEventStream
+	  : undefined;
+
+    if (event.type === 'settlement_failed') {
+      const attempt = typeof event.attempt === 'number' && Number.isFinite(event.attempt)
+        ? Math.max(1, Math.trunc(event.attempt))
+        : 1;
+      this.writePiRuntimeLog('error', 'runtime.settlement_failed', {
+        attemptId: eventAttemptId,
+        attempt,
+        error: typeof event.error === 'string' ? event.error : 'Unknown Session persistence failure',
+      });
+	  if (eventStream && eventAttemptId) this.scheduleSettlementRetry(eventAttemptId, attempt);
     }
 
     // Detect canonical or persisted legacy session tool completions.
@@ -1536,7 +1641,8 @@ export class PiAgent extends BaseAgent {
     // but since we're receiving plain JSON, we cast through unknown.
     if (!suppressCompatibilityEvent) {
       for (const agentEvent of this.adapter.adaptEvent(adaptedEvent as any)) {
-        this.emitPiProjectionEvents(agentEvent);
+		this.emitPiProjectionEvents(agentEvent, eventAttemptId);
+		this.config.onAgentEvent?.(agentEvent);
         // Track Read tool calls for prerequisite checking
         if (agentEvent.type === 'tool_start' && agentEvent.toolName === 'Read') {
           this.prerequisiteManager.trackReadTool(agentEvent.input as Record<string, unknown>);
@@ -1559,15 +1665,25 @@ export class PiAgent extends BaseAgent {
           });
         }
 
-        this.eventQueue.enqueue(agentEvent);
+			if (
+			  eventStream
+			  && (agentEvent.type === 'pi_user_message_persisted'
+				|| agentEvent.type === 'error'
+				|| agentEvent.type === 'typed_error'
+				|| agentEvent.type === 'complete')
+			) {
+			  eventStream.queue.enqueue(agentEvent);
+			  if (agentEvent.type === 'pi_user_message_persisted') eventStream.queue.complete();
+			}
       }
     }
 
-    if (eventType === 'agent_settled') {
-      this.resolveAgentSettledWaiters();
-      this.coordinationBridge?.completeTurn();
-      this.eventQueue.complete();
-    }
+	if (eventType === 'agent_settled') {
+	  if (eventAttemptId && this.activeAttemptId === eventAttemptId) {
+		this.coordinationBridge?.completeTurn();
+		this.completeActiveAttempt(eventAttemptId);
+	  }
+	}
 
     this.emitRawPiProjectionEvents(adaptedEvent);
   }
@@ -1583,11 +1699,15 @@ export class PiAgent extends BaseAgent {
     const debugSessionId = this.config.session?.mortiseId || this._sessionId;
     this.debug(`PreToolUse request from Pi RpcClient: ${toolName} (${req.id}, sessionId=${debugSessionId})`);
 
-    if (this.onBeforeToolExecution) {
-      const authorization = await this.onBeforeToolExecution({ toolCallId, toolName, input });
-      if (!authorization.allowed) {
-        return { action: 'block', reason: authorization.reason };
-      }
+	if (this.onBeforeToolExecution) {
+	  const coordination = await this.onBeforeToolExecution({
+		toolCallId,
+		toolName,
+		input,
+	  });
+	  if (!coordination.allowed) {
+		return { action: 'block', reason: coordination.reason };
+	  }
     }
 
     // Capture metadata BEFORE centralized checks strip it out.
@@ -1804,6 +1924,58 @@ export class PiAgent extends BaseAgent {
     }
   }
 
+  private async startChildExecution(
+    runtime: PiRuntimeHandle,
+    childSessionId: string,
+    sessionPath: string,
+    background: boolean,
+    attemptId: string,
+  ): Promise<ChildAttemptRegistration> {
+    const acquire = this.config.onChildAttemptStarted;
+    if (!acquire) throw new Error('Child Attempt registration is unavailable');
+    return acquire({
+      runtimeId: runtime.runtimeId,
+      childSessionId,
+      sessionPath,
+      background,
+      attemptId,
+    });
+  }
+
+  private getChildExecution(runtime: PiRuntimeHandle, childSessionId: string): ChildAttemptRegistration {
+    const execution = this.config.getChildAttempt?.(runtime.runtimeId, childSessionId);
+    if (!execution) throw new Error('Active child Attempt is unavailable');
+    return execution;
+  }
+
+  private async abandonChildExecution(
+    runtime: PiRuntimeHandle,
+    childSessionId: string,
+    attemptId: string,
+  ): Promise<void> {
+    await this.config.onChildAttemptAbandoned?.(runtime.runtimeId, childSessionId, attemptId);
+  }
+
+  private async failChildOperation(
+    runtime: PiRuntimeHandle,
+    childSessionId: string,
+    sessionPath: string,
+    execution: ChildAttemptRegistration,
+    reason: string,
+  ): Promise<void> {
+    if (!execution.operationId || !this.config.onChildTaskSettled) return;
+    await this.config.onChildTaskSettled({
+      operationId: execution.operationId,
+      attemptId: execution.attemptId,
+      runtimeId: runtime.runtimeId,
+      childSessionId,
+      sessionPath,
+      status: 'failed',
+      output: reason,
+      modified: new Date().toISOString(),
+    });
+  }
+
   /**
    * Spawn a child session in the pi session tree via Pi RpcClient.
    *
@@ -1832,7 +2004,6 @@ export class PiAgent extends BaseAgent {
     if (!parentLease) throw new Error('Pi multi-runtime host is unavailable for child task execution');
     const previous = await parent.getState();
     const resolvedOptions = this.resolveChildRuntimeOptions(options, previous);
-    const backgroundOperationId = options.background && options.prompt?.trim() ? randomUUID() : undefined;
     const spawnConfig = {
       connection: resolvedOptions.connection,
       model: resolvedOptions.model,
@@ -1841,7 +2012,6 @@ export class PiAgent extends BaseAgent {
       systemPrompt: options.systemPrompt,
       tools: options.tools,
       background: options.background,
-      backgroundOperationId,
     };
     const childSessionId = randomUUID();
     const { lease, epoch } = await this.acquireChildRuntimeLease(() => parentLease.acquireRuntime({
@@ -1866,6 +2036,8 @@ export class PiAgent extends BaseAgent {
     const runtime = lease.runtime;
     let releaseHere = true;
     let settlement: { promise: Promise<void>; cancel: () => void } | undefined;
+    let childExecution: ChildAttemptRegistration | undefined;
+    let promptAccepted = false;
     try {
       await this.configureChildRuntime(runtime, resolvedOptions, previous);
       this.assertChildRuntimeActive(epoch);
@@ -1881,29 +2053,41 @@ export class PiAgent extends BaseAgent {
       ) ?? [];
       const childPrompt = [...attachmentContext, options.prompt].join('\n\n');
       this.assertChildRuntimeActive(epoch);
-      settlement = this.watchChildSettlement(runtime);
-      await runtime.prompt(childPrompt, undefined, {
+      const disposition = await runtime.prompt(childPrompt, undefined, {
         systemPrompt: options.systemPrompt,
         attachments: options.attachments?.map(attachment => ({
           id: randomUUID(),
           name: attachment.name ?? basename(attachment.path),
         })),
       });
-      this.assertChildRuntimeActive(epoch);
-      if (backgroundOperationId) {
-        await this.config.onChildTaskBackgroundStarted?.({
-          operationId: backgroundOperationId,
-          childSessionId: sessionId,
-          sessionPath,
-        });
+      if (disposition.status !== 'started') {
+        throw new Error(`Child prompt was not started: ${disposition.status}`);
       }
+      childExecution = await this.startChildExecution(
+        runtime,
+        sessionId,
+        sessionPath,
+        options.background === true,
+        disposition.attemptId,
+      );
+      const { attemptId, operationId: backgroundOperationId } = childExecution;
+      settlement = this.watchChildSettlement(runtime, sessionId, attemptId);
+      promptAccepted = true;
+      this.assertChildRuntimeActive(epoch);
       if (options.background) {
         releaseHere = false;
         void settlement.promise
-          .catch(error => this.debug(`Child task ${sessionId} failed: ${error instanceof Error ? error.message : String(error)}`))
           .then(() => this.childRuntimeDisposed
             ? undefined
-            : this.notifyChildTaskSettled(parentSessionId, sessionId, sessionPath, backgroundOperationId))
+            : this.notifyChildTaskSettled(
+                parentSessionId,
+                sessionId,
+                sessionPath,
+                backgroundOperationId,
+                attemptId,
+                runtime.runtimeId,
+              ))
+          .catch(error => this.debug(`Child task ${sessionId} remains pending verification: ${error instanceof Error ? error.message : String(error)}`))
           .catch(error => this.debug(`Child task ${sessionId} delivery failed: ${error instanceof Error ? error.message : String(error)}`))
           .finally(async () => {
             await this.releaseChildRuntimeLease(lease);
@@ -1922,7 +2106,28 @@ export class PiAgent extends BaseAgent {
         ...(output ? { output } : {}),
       };
     } catch (error) {
+      if (promptAccepted && settlement && childExecution) {
+        this.debug(
+          `Child prompt was accepted before the parent runtime changed; retaining settlement tracking: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        releaseHere = false;
+        return await this.finishChildOperation(
+          parentSessionId,
+          { lease, runtime, child: {
+            sessionId: childSessionId,
+            sessionPath: runtime.runtimeSummary.sessionFile ?? '',
+          } as PiChildSessionInfo, epoch },
+          settlement.promise,
+          childExecution,
+          options.background === true,
+          childExecution.operationId,
+        );
+      }
       settlement?.cancel();
+      if (childExecution && !promptAccepted) {
+        await this.abandonChildExecution(runtime, childSessionId, childExecution.attemptId)
+          .catch(() => undefined);
+      }
       throw error;
     } finally {
       if (releaseHere) await this.releaseChildRuntimeLease(lease);
@@ -2003,11 +2208,11 @@ export class PiAgent extends BaseAgent {
     return join(getSessionPath(this.config.workspace.id, parentSessionId), 'subagents');
   }
 
-  private emitPiProjectionEvents(event: AgentEvent): void {
+  private emitPiProjectionEvents(event: AgentEvent, attemptId?: string): void {
     const builder = this.getProjectionBuilder();
     const emit = this.config.onPiProjectionEvent;
     if (!builder || !emit) return;
-    for (const projectionEvent of builder.accept(event)) emit(projectionEvent);
+    for (const projectionEvent of builder.accept(event, attemptId)) emit(projectionEvent);
   }
 
   projectQueuedUser(message: HostQueuedUserProjection): void {
@@ -2094,49 +2299,59 @@ export class PiAgent extends BaseAgent {
     let persistence: { promise: Promise<boolean>; cancel: () => void } | undefined;
     let settlement: { promise: Promise<void>; cancel: () => void } | undefined;
     let accepted = false;
+    let childExecution: ChildAttemptRegistration | undefined;
+    let startedNewExecution = false;
     const messageId = randomUUID();
     try {
       const isStreaming = (await opened.runtime.getState()).isStreaming;
-      const backgroundOperationId = options.background || isStreaming ? randomUUID() : undefined;
       await this.queueChildInboxMessage(opened.child, messageId, message, opened.epoch);
       persistence = this.watchChildMessagePersistence(opened.runtime, [messageId]);
       this.assertChildRuntimeActive(opened.epoch);
       if (isStreaming) {
-        settlement = this.watchChildSettlement(opened.runtime);
-        await opened.runtime.followUp(message, undefined, { clientMutationId: messageId });
+		const disposition = await opened.runtime.followUp(message, undefined, { clientMutationId: messageId });
+		if (disposition.status !== 'queued') throw new Error(`Child follow-up was not queued: ${disposition.status}`);
+		childExecution = await this.startChildExecution(
+		  opened.runtime,
+		  opened.child.sessionId,
+		  opened.child.sessionPath,
+		  true,
+		  disposition.attemptId,
+		);
+		const { attemptId, operationId: backgroundOperationId } = childExecution;
+		settlement = this.watchChildSettlement(opened.runtime, opened.child.sessionId, attemptId);
         accepted = true;
-        await this.config.onChildTaskBackgroundStarted?.({
-          operationId: backgroundOperationId!,
-          childSessionId: opened.child.sessionId,
-          sessionPath: opened.child.sessionPath,
-        });
         return await this.finishChildOperation(
           parentSessionId,
           opened,
           settlement.promise,
+          childExecution,
           true,
           backgroundOperationId,
           [messageId],
           persistence,
         );
       }
-      settlement = this.watchChildSettlement(opened.runtime);
-      await opened.runtime.prompt(message, undefined, {
+      const disposition = await opened.runtime.prompt(message, undefined, {
         systemPrompt: options.systemPrompt ?? opened.child.spawnConfig?.systemPrompt,
         clientMutationId: messageId,
       });
+      if (disposition.status !== 'started') throw new Error(`Child prompt was not started: ${disposition.status}`);
+      childExecution = await this.startChildExecution(
+        opened.runtime,
+        opened.child.sessionId,
+        opened.child.sessionPath,
+        options.background === true,
+        disposition.attemptId,
+      );
+      startedNewExecution = true;
+      const { attemptId, operationId: backgroundOperationId } = childExecution;
+      settlement = this.watchChildSettlement(opened.runtime, opened.child.sessionId, attemptId);
       accepted = true;
-      if (backgroundOperationId) {
-        await this.config.onChildTaskBackgroundStarted?.({
-          operationId: backgroundOperationId,
-          childSessionId: opened.child.sessionId,
-          sessionPath: opened.child.sessionPath,
-        });
-      }
       return await this.finishChildOperation(
         parentSessionId,
         opened,
         settlement.promise,
+        childExecution,
         options.background === true,
         backgroundOperationId,
         [messageId],
@@ -2147,6 +2362,21 @@ export class PiAgent extends BaseAgent {
       persistence?.cancel();
       if (!accepted) {
         await this.removeChildInboxMessages(opened.child, [messageId], opened.epoch).catch(() => undefined);
+        if (startedNewExecution && childExecution) {
+          await this.abandonChildExecution(
+            opened.runtime,
+            opened.child.sessionId,
+            childExecution.attemptId,
+          ).catch(() => undefined);
+        } else if (childExecution) {
+          await this.failChildOperation(
+            opened.runtime,
+            opened.child.sessionId,
+            opened.child.sessionPath,
+            childExecution,
+            `Child follow-up was rejected before Pi accepted it: ${error instanceof Error ? error.message : String(error)}`,
+          ).catch(() => undefined);
+        }
       }
       await this.releaseChildRuntimeLease(opened.lease);
       throw error;
@@ -2159,61 +2389,86 @@ export class PiAgent extends BaseAgent {
     options: { background?: boolean; systemPrompt?: string; tools?: string[] } = {},
   ): Promise<PiSpawnChildSessionResult> {
     const opened = await this.acquireChildRuntime(parentSessionId, childSessionId, options);
-    const backgroundOperationId = options.background ? randomUUID() : undefined;
     let persistence: { promise: Promise<boolean>; cancel: () => void } | undefined;
     let settlement: { promise: Promise<void>; cancel: () => void } | undefined;
+    let childExecution: ChildAttemptRegistration | undefined;
+    let accepted = false;
+    let pendingMessages: ChildInboxMessage[] = [];
     try {
       if ((await opened.runtime.getState()).isStreaming) {
         await this.releaseChildRuntimeLease(opened.lease);
         return { sessionId: opened.child.sessionId, sessionPath: opened.child.sessionPath, status: 'running' };
       }
-      const pendingMessages = await this.getPendingChildInboxMessages(opened.child, opened.epoch);
+      pendingMessages = await this.getPendingChildInboxMessages(opened.child, opened.epoch);
       persistence = this.watchChildMessagePersistence(opened.runtime, pendingMessages.map(item => item.id));
-      settlement = this.watchChildSettlement(opened.runtime);
+      let disposition: Awaited<ReturnType<PiRuntimeHandle['prompt']>>;
       if (pendingMessages.length > 0) {
-        const [first, ...rest] = pendingMessages;
-        await opened.runtime.prompt(
-          first!.message,
-          undefined,
-          {
-            systemPrompt: options.systemPrompt ?? opened.child.spawnConfig?.systemPrompt,
-            clientMutationId: first!.id,
-          },
-        );
-        if (backgroundOperationId) {
-          await this.config.onChildTaskBackgroundStarted?.({
-            operationId: backgroundOperationId,
-            childSessionId: opened.child.sessionId,
-            sessionPath: opened.child.sessionPath,
-          });
-        }
-        for (const pending of rest) {
-          await opened.runtime.followUp(pending.message, undefined, { clientMutationId: pending.id });
-        }
+		const [first, ...rest] = pendingMessages;
+		disposition = await opened.runtime.prompt(
+		  first!.message,
+		  undefined,
+		  {
+			systemPrompt: options.systemPrompt ?? opened.child.spawnConfig?.systemPrompt,
+			clientMutationId: first!.id,
+		  },
+		);
       } else {
-        await opened.runtime.continue({
-          systemPrompt: options.systemPrompt ?? opened.child.spawnConfig?.systemPrompt,
-        });
-        if (backgroundOperationId) {
-          await this.config.onChildTaskBackgroundStarted?.({
-            operationId: backgroundOperationId,
-            childSessionId: opened.child.sessionId,
-            sessionPath: opened.child.sessionPath,
-          });
-        }
+		disposition = await opened.runtime.continue({
+		  systemPrompt: options.systemPrompt ?? opened.child.spawnConfig?.systemPrompt,
+		});
       }
+      if (disposition.status !== 'started') throw new Error(`Child continuation was not started: ${disposition.status}`);
+      childExecution = await this.startChildExecution(
+        opened.runtime,
+        opened.child.sessionId,
+        opened.child.sessionPath,
+        options.background === true,
+        disposition.attemptId,
+      );
+      const { attemptId, operationId: backgroundOperationId } = childExecution;
+	  settlement = this.watchChildSettlement(opened.runtime, opened.child.sessionId, attemptId);
+	  accepted = true;
+      for (const pending of pendingMessages.slice(1)) {
+		const followUpDisposition = await opened.runtime.followUp(pending.message, undefined, { clientMutationId: pending.id });
+		if (followUpDisposition.status !== 'queued' || followUpDisposition.attemptId !== attemptId) {
+		  throw new Error(`Child follow-up was not queued for Attempt ${attemptId}`);
+		}
+	  }
       return await this.finishChildOperation(
         parentSessionId,
         opened,
         settlement.promise,
+        childExecution,
         options.background === true,
         backgroundOperationId,
         pendingMessages.map(item => item.id),
         persistence,
       );
     } catch (error) {
+      if (accepted && settlement && childExecution) {
+        this.debug(
+          `Child resume accepted its first message but deferred remaining inbox work after a follow-up rejection: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        return await this.finishChildOperation(
+          parentSessionId,
+          opened,
+          settlement.promise,
+          childExecution,
+          options.background === true,
+          childExecution.operationId,
+          pendingMessages.map(item => item.id),
+          persistence,
+        );
+      }
       settlement?.cancel();
       persistence?.cancel();
+      if (!accepted && childExecution) {
+        await this.abandonChildExecution(
+          opened.runtime,
+          opened.child.sessionId,
+          childExecution.attemptId,
+        ).catch(() => undefined);
+      }
       await this.releaseChildRuntimeLease(opened.lease);
       throw error;
     }
@@ -2240,8 +2495,12 @@ export class PiAgent extends BaseAgent {
     }));
     try {
       this.assertChildRuntimeActive(epoch);
-      const settled = lease.runtime.waitForIdle();
-      await lease.runtime.abort();
+	  const { attemptId } = this.getChildExecution(lease.runtime, child.sessionId);
+	  const settled = lease.runtime.waitForIdle(attemptId);
+		  const disposition = await lease.runtime.abort();
+		  if (disposition.status !== 'accepted' || disposition.attemptId !== attemptId) {
+			throw new Error(`Child abort was not accepted for Attempt ${attemptId}`);
+		  }
       await settled;
       return { sessionId: child.sessionId, sessionPath: child.sessionPath, status: 'interrupted' };
     } finally {
@@ -2320,6 +2579,7 @@ export class PiAgent extends BaseAgent {
     parentSessionId: string,
     opened: { lease: PiHostLease; runtime: PiRuntimeHandle; child: PiChildSessionInfo; epoch: number },
     settled: Promise<void>,
+    execution: ChildAttemptRegistration,
     background: boolean,
     backgroundOperationId?: string,
     inboxMessageIds: string[] = [],
@@ -2331,17 +2591,19 @@ export class PiAgent extends BaseAgent {
           if (await (persistence?.promise ?? Promise.resolve(true))) {
             await this.completeChildInboxMessages(opened.child, inboxMessageIds, opened.epoch);
           }
-        }, error => {
-          persistence?.cancel();
-          this.debug(`Child task ${opened.child.sessionId} failed: ${error instanceof Error ? error.message : String(error)}`);
         })
         .then(() => this.childRuntimeDisposed ? undefined : this.notifyChildTaskSettled(
           parentSessionId,
           opened.child.sessionId,
           opened.child.sessionPath,
           backgroundOperationId,
+          execution.attemptId,
+          opened.runtime.runtimeId,
         ))
-        .catch(error => this.debug(`Child task ${opened.child.sessionId} delivery failed: ${error instanceof Error ? error.message : String(error)}`))
+        .catch(error => {
+          persistence?.cancel();
+          this.debug(`Child task ${opened.child.sessionId} remains pending verification: ${error instanceof Error ? error.message : String(error)}`);
+        })
         .finally(async () => {
           await this.releaseChildRuntimeLease(opened.lease);
         });
@@ -2477,32 +2739,73 @@ export class PiAgent extends BaseAgent {
     return { promise, cancel: () => settle(false) };
   }
 
-  private watchChildSettlement(runtime: PiRuntimeHandle): { promise: Promise<void>; cancel: () => void } {
+  private watchChildSettlement(
+    runtime: PiRuntimeHandle,
+    childSessionId: string,
+    attemptId: string,
+  ): { promise: Promise<void>; cancel: () => void } {
     let resolvePromise!: () => void;
     let rejectPromise!: (error: Error) => void;
     let unsubscribe: () => void = () => undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    let finished = false;
-    const finish = (error?: Error) => {
-      if (finished) return;
-      finished = true;
-      if (timer) clearTimeout(timer);
-      unsubscribe();
-      if (error) rejectPromise(error);
-      else resolvePromise();
+    let callerFinished = false;
+    let cancelled = false;
+    let hostSettlement: Promise<void> | undefined;
+    const settleHost = (): Promise<void> => {
+      if (!hostSettlement) {
+        hostSettlement = Promise.resolve(
+          this.config.onChildAttemptSettled?.(runtime.runtimeId, childSessionId, attemptId),
+        );
+      }
+      return hostSettlement;
     };
     const promise = new Promise<void>((resolve, reject) => {
       resolvePromise = resolve;
       rejectPromise = reject;
     });
     unsubscribe = runtime.onEvent(event => {
-      if (event.type === 'agent_settled') finish();
+      if (cancelled || event.type !== 'agent_settled' || event.attemptId !== attemptId) return;
+      if (timer) clearTimeout(timer);
+      unsubscribe();
+      void settleHost().then(
+        () => {
+          if (!callerFinished) {
+            callerFinished = true;
+            resolvePromise();
+          }
+        },
+        cause => {
+          const error = cause instanceof Error ? cause : new Error(String(cause));
+          if (!callerFinished) {
+            callerFinished = true;
+            rejectPromise(error);
+          } else {
+            this.debug(`Late child settlement failed for ${runtime.runtimeId}: ${error.message}`);
+          }
+        },
+      );
     });
     timer = setTimeout(() => {
-      finish(new Error(`Timeout waiting for child runtime ${runtime.runtimeId} to become idle`));
+      if (callerFinished || cancelled) return;
+      callerFinished = true;
+      rejectPromise(new Error(
+        `Timed out waiting for child runtime ${runtime.runtimeId}; execution ${attemptId} remains pending verification`,
+      ));
     }, 600_000);
     timer.unref?.();
-    return { promise, cancel: () => finish() };
+    return {
+      promise,
+      cancel: () => {
+        if (cancelled) return;
+        cancelled = true;
+        if (timer) clearTimeout(timer);
+        unsubscribe();
+        if (!callerFinished) {
+          callerFinished = true;
+          resolvePromise();
+        }
+      },
+    };
   }
 
   private async getPendingChildInboxMessages(child: PiChildSessionInfo, epoch?: number): Promise<ChildInboxMessage[]> {
@@ -2524,12 +2827,16 @@ export class PiAgent extends BaseAgent {
     childSessionId: string,
     sessionPath: string,
     operationId?: string,
+    attemptId?: string,
+    runtimeId?: string,
   ): Promise<void> {
-    if (!operationId || !this.config.onChildTaskSettled) return;
+    if (!operationId || !attemptId || !runtimeId || !this.config.onChildTaskSettled) return;
     const child = (await this.listChildSessions(parentSessionId))
       .find(candidate => candidate.sessionId === childSessionId);
     await this.config.onChildTaskSettled({
       operationId,
+      attemptId,
+      runtimeId,
       childSessionId,
       sessionPath,
       status: child?.status === 'running' || !child ? 'interrupted' : child.status,
@@ -2541,8 +2848,10 @@ export class PiAgent extends BaseAgent {
   /**
    * Ask Pi to compact the active session context.
    */
-  private async requestCompact(customInstructions?: string): Promise<{ summary: string; firstKeptEntryId: string; tokensBefore: number } | null> {
-    const result = await (await this.ensureRpcClient()).compact(customInstructions);
+  private async requestCompact(
+    customInstructions?: string,
+  ): Promise<{ summary: string; firstKeptEntryId: string; tokensBefore: number } | null> {
+	const result = await (await this.ensureRpcClient()).compact(customInstructions);
     return {
       summary: result.summary,
       firstKeptEntryId: result.firstKeptEntryId,
@@ -2631,8 +2940,15 @@ export class PiAgent extends BaseAgent {
     return this.coordinationBridge;
   }
 
-  private async handleCoordinatedToolResult(request: CoordinationToolResultRequest): Promise<void> {
+  private async handleCoordinatedToolResult(request: PiRpcToolResultRequest): Promise<void> {
     await this.coordinationBridge?.recordResult(request);
+    if (!request.runtimeId) return;
+    await this.config.onChildToolExecutionCompleted?.({
+      runtimeId: request.runtimeId,
+      attemptId: request.attemptId,
+      toolCallId: request.toolCallId,
+      isError: request.isError,
+    });
   }
 
   /**
@@ -2741,16 +3057,21 @@ export class PiAgent extends BaseAgent {
   protected async *chatImpl(
     messageParam: string,
     attachments?: FileAttachment[],
-    options?: ChatOptions
+    options: ChatOptions = {},
   ): AsyncGenerator<AgentEvent> {
     const message = messageParam;
-    // Reset state for new turn
+    if (this.activeAttemptId || this.activeEventStream) {
+	  throw new Error(`Pi runtime is already bound to Attempt ${this.activeAttemptId ?? 'unknown'}`);
+    }
     this._isProcessing = true;
     this.abortReason = undefined;
     this.suppressAbortedTurnEvents = false;
-    this.eventQueue.reset();
     this.currentUserMessage = message;
     this.adapter.startTurn();
+    let promptAccepted = false;
+    let attemptId: string | undefined;
+    const eventQueue = new EventQueue();
+    this.activeEventStream = { queue: eventQueue };
 
     // Fire UserPromptSubmit hook event (fire-and-forget)
     this.emitAutomationEvent('UserPromptSubmit', {
@@ -2795,7 +3116,7 @@ export class PiAgent extends BaseAgent {
       const compactMatch = trimmedMessage.match(/^\/compact(?:\s+([\s\S]+))?$/i);
       if (compactMatch) {
         const customInstructions = compactMatch[1]?.trim() || undefined;
-        const compactResult = await this.requestCompact(customInstructions);
+		const compactResult = await this.requestCompact(customInstructions);
         if (compactResult) {
           yield {
             type: 'info',
@@ -2865,11 +3186,11 @@ export class PiAgent extends BaseAgent {
       // Pi agent-session.ts 用 `systemPrompt !== undefined` 判断是否覆盖。
       // 壳模式下 fullSystemPrompt === ''，必须传 undefined 让 Pi 回落到原生 system prompt，
       // 否则会把原生 prompt 覆盖成空字符串，导致 agent 完全丢失 system prompt。
-      await client.prompt(
+	  const disposition = await client.prompt(
         userMessage,
         images.length > 0 ? images as any : undefined,
         {
-          systemPrompt: fullSystemPrompt || undefined,
+		  systemPrompt: fullSystemPrompt || undefined,
           clearSystemPrompt: piShellPassthrough,
           // Clear any suffix retained by a runtime that handled an earlier turn.
           appendSystemPrompt: '',
@@ -2878,13 +3199,21 @@ export class PiAgent extends BaseAgent {
           attachments: options?.attachmentRefs,
         },
       );
+      if (disposition.status !== 'started') {
+        throw new Error(`Pi prompt was not started: ${disposition.status}`);
+      }
+      attemptId = disposition.attemptId;
+      this.activeAttemptId = attemptId;
+      this.activeEventStream = { attemptId, queue: eventQueue };
+      promptAccepted = true;
 
-      for await (const event of this.eventQueue.drain()) {
+	  for await (const event of eventQueue.drain()) {
         if (event.type === 'queue_overflow') this.emitPiProjectionEvents(event);
         yield event;
       }
     } catch (error) {
       if (error instanceof Error && error.message.includes('abort')) {
+		if (!promptAccepted) eventQueue.complete();
         if (this.abortReason === AbortReason.PlanSubmitted) {
           return;
         }
@@ -2900,9 +3229,13 @@ export class PiAgent extends BaseAgent {
         yield { type: 'error', message: errorObj.message };
       }
 
-      yield { type: 'complete' };
+      yield { type: 'complete', terminalStatus: 'failed' };
+	  if (!promptAccepted) eventQueue.complete();
     } finally {
-      this._isProcessing = false;
+	  if (this.activeEventStream?.queue === eventQueue && eventQueue.isComplete) {
+		this.activeEventStream = undefined;
+	  }
+	  if (!this.activeAttemptId) this._isProcessing = false;
     }
   }
 
@@ -2986,13 +3319,19 @@ export class PiAgent extends BaseAgent {
     this._isProcessing = false;
     this.suppressAbortedTurnEvents = true;
 
+    const attemptId = this.activeAttemptId;
     let abortTimeout: ReturnType<typeof setTimeout> | null = null;
     try {
       const client = this.rpcClient;
-      if (client) {
-        const settled = this.waitForAgentSettled();
+      if (client && attemptId) {
+        const settled = this.waitForAgentSettled(attemptId);
         await Promise.race([
-          Promise.all([client.abort(), settled]),
+		  client.abort().then(disposition => {
+			if (disposition.status !== 'accepted' || disposition.attemptId !== attemptId) {
+			  throw new Error(`Pi abort was not accepted for Attempt ${attemptId}`);
+			}
+			return settled;
+		  }),
           new Promise<never>((_, reject) => {
             abortTimeout = setTimeout(() => {
               reject(new Error(`Pi abort acknowledgment or settlement timed out after ${PI_ABORT_ACK_TIMEOUT_MS}ms`));
@@ -3005,12 +3344,12 @@ export class PiAgent extends BaseAgent {
       // If the cooperative abort command fails, release this runtime so the
       // stopped generation cannot continue publishing events in the background.
       await this.stopRpcClient();
-      this.resolveAgentSettledWaiters();
+      if (attemptId) this.completeActiveAttempt(attemptId);
     } finally {
       if (abortTimeout) clearTimeout(abortTimeout);
       // A successful abort waits for Pi's agent_settled event, which closes the
       // queue. Failure paths close it in catch after the runtime is stopped.
-      if (!this.rpcClient) this.eventQueue.complete();
+      if (!this.rpcClient && attemptId) this.completeActiveAttempt(attemptId);
     }
 
     // Clear bridge cache for this interrupted turn.
@@ -3030,9 +3369,10 @@ export class PiAgent extends BaseAgent {
     this.preToolMetadataByCallId.clear();
 
     // Plan review hands control back to the host UI.
+    const attemptId = this.activeAttemptId;
     if (reason === AbortReason.PlanSubmitted) {
       this.coordinationBridge?.completeTurn();
-      this.eventQueue.complete();
+      if (attemptId) this.completeActiveAttempt(attemptId);
       return;
     }
 
@@ -3040,13 +3380,19 @@ export class PiAgent extends BaseAgent {
     const client = this.rpcClient;
     if (!client) {
       this.coordinationBridge?.completeTurn();
-      this.eventQueue.complete();
+      if (attemptId) this.completeActiveAttempt(attemptId);
       return;
     }
-    const settled = this.waitForAgentSettled();
+    if (!attemptId) return;
+    const settled = this.waitForAgentSettled(attemptId);
     let abortTimeout: ReturnType<typeof setTimeout> | null = null;
     void Promise.race([
-      Promise.all([client.abort(), settled]),
+	  client.abort().then(disposition => {
+		if (disposition.status !== 'accepted' || disposition.attemptId !== attemptId) {
+		  throw new Error(`Pi abort was not accepted for Attempt ${attemptId}`);
+		}
+		return settled;
+	  }),
       new Promise<never>((_, reject) => {
         abortTimeout = setTimeout(
           () => reject(new Error('Pi force-abort settlement timed out')),
@@ -3060,7 +3406,6 @@ export class PiAgent extends BaseAgent {
         // runtime before exposing terminal state so it cannot publish after UI
         // completion against the replaced Session projection.
         await this.stopRpcClient();
-        this.resolveAgentSettledWaiters();
         this.handleRpcError(error);
       })
       .finally(() => {
@@ -3078,7 +3423,10 @@ export class PiAgent extends BaseAgent {
    * queued tools, and continues with full context intact.
    * Events flow through the existing generator — no abort needed.
    */
-  override async redirect(message: string, clientMutationId?: string): Promise<boolean> {
+  override async redirect(
+    message: string,
+    clientMutationId?: string,
+  ): Promise<boolean> {
     if (!this._isProcessing || !this.rpcClient) {
       // Not streaming or no client — fall back to abort
       this.forceAbort(AbortReason.Redirect);
@@ -3086,8 +3434,12 @@ export class PiAgent extends BaseAgent {
     }
     this.debug(`Steering mid-stream: "${message.slice(0, 100)}"`);
     try {
-      await this.rpcClient.steer(message, undefined, { clientMutationId });
-      return true;
+      const activeAttemptId = this.activeAttemptId;
+	  if (!activeAttemptId) return false;
+	  const disposition = await this.rpcClient.steer(message, undefined, {
+		clientMutationId,
+	  });
+      return disposition.status === 'accepted' && disposition.attemptId === activeAttemptId;
     } catch (error) {
       this.writePiRuntimeLog('warn', 'chat.steer_rejected', { error });
       this.debug(`Pi steer was rejected: ${error instanceof Error ? error.message : String(error)}`);
@@ -3101,7 +3453,11 @@ export class PiAgent extends BaseAgent {
     return await client.sendExtensionFrontendMessage(extensionId, channelId, message);
   }
 
-  override async followUp(message: string, attachments?: FileAttachment[], options?: ChatOptions): Promise<boolean> {
+  override async followUp(
+    message: string,
+    attachments?: FileAttachment[],
+    options: ChatOptions = {},
+  ): Promise<boolean> {
     if (!this._isProcessing || !this.rpcClient) return false;
     this.debug(`Queueing native Pi follow-up: "${message.slice(0, 100)}"`);
     const attachmentParts: string[] = [];
@@ -3121,14 +3477,30 @@ export class PiAgent extends BaseAgent {
     }
     const userMessage = [...attachmentParts, message].filter(Boolean).join('\n\n');
     try {
-      await this.rpcClient.followUp(
+      const activeAttemptId = this.activeAttemptId;
+	  if (!activeAttemptId) return false;
+      const disposition = await this.rpcClient.followUp(
         userMessage,
         images.length > 0 ? images : undefined,
-        { clientMutationId: options?.clientMutationId, attachments: options?.attachmentRefs },
+		{
+		  clientMutationId: options.clientMutationId,
+		  attachments: options.attachmentRefs,
+		},
       );
-      return true;
+      return disposition.status === 'queued' && disposition.attemptId === activeAttemptId;
     } catch (error) {
       this.debug(`Native Pi follow-up was rejected: ${error instanceof Error ? error.message : String(error)}`);
+      return false;
+    }
+  }
+
+  override async withdrawQueued(clientMutationId: string): Promise<boolean> {
+    if (!this.rpcClient) return false;
+    try {
+      const result = await this.rpcClient.withdrawQueued(clientMutationId);
+      return result.status === 'removed';
+    } catch (error) {
+      this.debug(`Native Pi queued-message withdrawal failed: ${error instanceof Error ? error.message : String(error)}`);
       return false;
     }
   }
@@ -3237,9 +3609,15 @@ export class PiAgent extends BaseAgent {
       this.childRuntimeLeases.clear();
       const runtimes = new Map(leases.map(lease => [lease.runtime.runtimeId, lease.runtime]));
       const runtimeResults = await Promise.allSettled([...runtimes.values()].map(async (runtime) => {
-        if (!(await runtime.getState()).isStreaming) return;
-        const settled = runtime.waitForIdle(CHILD_RUNTIME_CLEANUP_SETTLEMENT_TIMEOUT_MS);
-        await runtime.abort();
+		const state = await runtime.getState();
+		if (!state.isStreaming) return;
+		if (!state.sessionId) throw new Error(`Active child Session identity is unavailable for ${runtime.runtimeId}`);
+		const { attemptId } = this.getChildExecution(runtime, state.sessionId);
+		const settled = runtime.waitForIdle(attemptId, CHILD_RUNTIME_CLEANUP_SETTLEMENT_TIMEOUT_MS);
+		const disposition = await runtime.abort();
+		if (disposition.status !== 'accepted' || disposition.attemptId !== attemptId) {
+		  throw new Error(`Child abort was not accepted for Attempt ${attemptId}`);
+		}
         await settled;
       }));
       const releaseResults = await Promise.allSettled(leases.map(lease => lease.release()));
@@ -3329,65 +3707,6 @@ export class PiAgent extends BaseAgent {
     } catch (error) {
       this.debug(`[runMiniCompletion] Failed: ${error instanceof Error ? error.message : String(error)}`);
       return null;
-    }
-  }
-
-  async runIsolatedAgent(request: import('./backend/types.ts').IsolatedAgentRequest): Promise<string | null> {
-    await this.ensureRpcClient();
-    const host = this.rpcHostLease?.client;
-    if (!host) throw new Error('Pi multi-runtime host is unavailable for isolated Agent execution');
-    if (request.signal?.aborted) throw request.signal.reason ?? new Error('Isolated Agent execution cancelled');
-
-    const runtime = await host.openRuntime({
-      runtimeId: `automation-isolated-${randomUUID()}`,
-      cwd: this.resolvedWorkspaceRoot(),
-      agentDir: PI_AGENT_DIR,
-      projectConfigDir: MORTISE_PROJECT_DIR,
-      inMemory: true,
-      persistInitialState: false,
-      uiCapabilities: {
-		kind: 'none',
-		dialogs: false,
-		contributions: false,
-        interactionSchemas: [],
-      },
-    });
-    const abort = () => { void runtime.abort().catch(() => undefined); };
-    request.signal?.addEventListener('abort', abort, { once: true });
-    try {
-      const provider = getBackendRuntime(this.config).piAuthProvider;
-      const model = request.model ?? this._model;
-      if (provider && model) await runtime.setModel(provider, model);
-      const thinkingLevel = request.thinkingLevel ?? this._thinkingLevel;
-      if (thinkingLevel) await runtime.setThinkingLevel(thinkingLevel);
-
-      await runtime.setToolExecutionHandler(async executionRequest => {
-        const decision = await this.handleToolExecutionBoundary(executionRequest);
-		return this.getCoordinationBridge().beforeTool({
-		  toolName: executionRequest.toolName,
-		  toolCallId: executionRequest.toolCallId,
-		  input: executionRequest.input,
-          assistantTimestamp: Date.now(),
-        }, decision);
-      });
-      await runtime.setToolResultHandler(result => this.handleCoordinatedToolResult(result));
-      this.assertBackendSessionToolParity();
-      const sessionToolDefs = getSessionHostToolDefs()
-        .filter(definition => !PI_EXTENSION_OWNED_SESSION_TOOL_NAMES.has(definition.name));
-      await runtime.registerTools(
-        sessionToolDefs as PiRpcHostToolDefinition[],
-        toolRequest => this.executeHostTool(toolRequest),
-      );
-      const profile = await runtime.getState();
-      const disabledTools = new Set(getDisabledAgentTools());
-      await runtime.setActiveTools(profile.activeTools.filter(name => !disabledTools.has(name)));
-      await runtime.setCompactionPrompt(getCustomCompactionPrompt());
-      await runtime.prompt(request.prompt);
-      if (request.signal?.aborted) throw request.signal.reason ?? new Error('Isolated Agent execution cancelled');
-      return runtime.getLastAssistantText();
-    } finally {
-      request.signal?.removeEventListener('abort', abort);
-      await runtime.close();
     }
   }
 

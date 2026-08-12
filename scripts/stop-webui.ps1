@@ -2,10 +2,15 @@ $ErrorActionPreference = 'Stop'
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $normalizedRepoRoot = $repoRoot.TrimEnd('\').ToLowerInvariant()
-$legacyInstanceRoot = Join-Path $repoRoot '.mortise\portmux\webui-instance-'
-$normalizedLegacyInstanceRoot = $legacyInstanceRoot.ToLowerInvariant()
+$instanceRoots = @(
+  (Join-Path $repoRoot '.mortise\portmux\webui-instance-'),
+  (Join-Path $repoRoot '.craft-agent\portmux\webui-instance-')
+)
+$normalizedInstanceRoots = @($instanceRoots | ForEach-Object { $_.ToLowerInvariant() })
 $clientProjectRoot = Join-Path $env:TEMP 'mortise-webui\portmux\client-'
 $normalizedClientProjectRoot = $clientProjectRoot.ToLowerInvariant()
+$legacyClientProjectRoot = Join-Path $env:TEMP 'craft-agent-webui\portmux\client-'
+$normalizedLegacyClientProjectRoot = $legacyClientProjectRoot.ToLowerInvariant()
 . (Join-Path $PSScriptRoot 'webui-process-utils.ps1')
 
 function Write-Step {
@@ -22,8 +27,17 @@ function Test-IsWebuiProject {
   param([string]$ProjectPath)
   $normalized = Normalize-PathText $ProjectPath
   return $normalized -eq $normalizedRepoRoot -or
-    $normalized.StartsWith($normalizedLegacyInstanceRoot) -or
-    $normalized.StartsWith($normalizedClientProjectRoot)
+    @($normalizedInstanceRoots | Where-Object { $normalized.StartsWith($_) }).Count -gt 0 -or
+    $normalized.StartsWith($normalizedClientProjectRoot) -or
+    $normalized.StartsWith($normalizedLegacyClientProjectRoot)
+}
+
+function Test-IsEphemeralWebuiProject {
+  param([string]$ProjectPath)
+  $normalized = Normalize-PathText $ProjectPath
+  return @($normalizedInstanceRoots | Where-Object { $normalized.StartsWith($_) }).Count -gt 0 -or
+    $normalized.StartsWith($normalizedClientProjectRoot) -or
+    $normalized.StartsWith($normalizedLegacyClientProjectRoot)
 }
 
 $statusText = (& portmux --json status 2>&1 | Out-String)
@@ -31,9 +45,13 @@ if ($LASTEXITCODE -ne 0) {
   throw "Unable to read portmux status: $($statusText.Trim())"
 }
 $status = $statusText | ConvertFrom-Json
-$projects = @($status.data.projects | Where-Object { Test-IsWebuiProject $_.project_path })
+$projects = @($status.data.projects | Where-Object {
+  (Test-IsWebuiProject $_.project_path) -and
+    (-not (Test-IsEphemeralWebuiProject $_.project_path) -or $null -ne $_.assigned_port)
+})
 
 $stoppedManagedProjectCount = 0
+$releasedProjectCount = 0
 foreach ($project in $projects) {
   $resultText = (& portmux --json stop --project $project.project_path 2>&1 | Out-String)
   if ($LASTEXITCODE -ne 0) {
@@ -42,6 +60,13 @@ foreach ($project in $projects) {
   $result = $resultText | ConvertFrom-Json
   if ($result.data.was_running) {
     $stoppedManagedProjectCount++
+  }
+  if (Test-IsEphemeralWebuiProject $project.project_path) {
+    $releaseText = (& portmux --json release --project $project.project_path 2>&1 | Out-String)
+    if ($LASTEXITCODE -ne 0) {
+      throw "Unable to release portmux project '$($project.project_path)': $($releaseText.Trim())"
+    }
+    $releasedProjectCount++
   }
 }
 
@@ -109,11 +134,12 @@ foreach ($rootPid in $fallbackRoots) {
 }
 
 if ($stoppedManagedProjectCount -eq 0 -and
+    $releasedProjectCount -eq 0 -and
     $stoppedStateProcessCount -eq 0 -and
     $stoppedLegacyViteCount -eq 0 -and
     $stoppedLegacyRpcCount -eq 0 -and
     $fallbackRoots.Count -eq 0) {
   Write-Step 'No running WebUI processes found.'
 } else {
-  Write-Step "Stopped all WebUI processes ($stoppedManagedProjectCount managed project(s), $stoppedStateProcessCount state-tracked tree(s), $stoppedLegacyViteCount orphaned Vite tree(s), $stoppedLegacyRpcCount orphaned RPC tree(s), $($fallbackRoots.Count) legacy launcher tree(s))."
+  Write-Step "Stopped all WebUI processes ($stoppedManagedProjectCount managed project(s), $releasedProjectCount temporary port allocation(s), $stoppedStateProcessCount state-tracked tree(s), $stoppedLegacyViteCount orphaned Vite tree(s), $stoppedLegacyRpcCount orphaned RPC tree(s), $($fallbackRoots.Count) legacy launcher tree(s))."
 }

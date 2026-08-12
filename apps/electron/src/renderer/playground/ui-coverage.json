@@ -1,0 +1,3195 @@
+{
+  "schema": "playground-ui-coverage/v1",
+  "entries": [
+    {
+      "sourcePath": "apps/electron/src/renderer/components/apisetup/ApiKeyInput.tsx",
+      "exportName": "ApiKeyInput",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/apisetup/OAuthConnect.tsx",
+      "exportName": "OAuthConnect",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/app-menu/DesktopAppMenu.tsx",
+      "exportName": "DesktopAppMenu",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/app-menu/MobileAppMenu.tsx",
+      "exportName": "MobileAppMenu",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/app-menu/MobileMenuItem.tsx",
+      "exportName": "MobileMenuItem",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/app-menu/MobileMenuPage.tsx",
+      "exportName": "MobileMenuPage",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/app-shell/ActiveOptionBadges.tsx",
+      "exportName": "ActiveOptionBadges",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/app-shell/ActiveTasksBar.tsx",
+      "exportName": "ActiveTasksBar",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/app-shell/AppShell.tsx",
+      "exportName": "AppShell",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/app-shell/AttachmentPreview.tsx",
+      "exportName": "AttachmentPreview",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/app-shell/BatchSessionMenu.tsx",
+      "exportName": "BatchSessionMenu",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/app-shell/ChatDisplay.tsx",
+      "exportName": "ChatDisplay",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/app-shell/CompactPanelTransition.tsx",
+      "exportName": "CompactPanelTransition",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/app-shell/CompactSessionMenu.tsx",
+      "exportName": "CompactSessionMenu",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/app-shell/FabNewChat.tsx",
+      "exportName": "FabNewChat",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/app-shell/input/ChatInputZone.tsx",
+      "exportName": "ChatInputZone",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/app-shell/input/CompactModelSelector.tsx",
+      "exportName": "CompactModelSelector",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/app-shell/input/ComposerEditor.tsx",
+      "exportName": "ComposerEditor",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/app-shell/input/ComposerSuggestionMenus.tsx",
+      "exportName": "ComposerSuggestionMenus",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/app-shell/input/DegradedComposer.tsx",
+      "exportName": "BasicComposerTextarea",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/app-shell/input/DegradedComposer.tsx",
+      "exportName": "DegradedComposer",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/app-shell/input/DegradedComposer.tsx",
+      "exportName": "InputControlFallback",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/app-shell/input/FreeFormInput.tsx",
+      "exportName": "FreeFormInput",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/app-shell/input/FreeFormInputContextBadge.tsx",
+      "exportName": "FreeFormInputContextBadge",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/app-shell/input/ImageSupportWarningBanner.tsx",
+      "exportName": "ImageSupportWarningBanner",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/app-shell/input/InputContainer.tsx",
+      "exportName": "InputContainer",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/app-shell/input/InputErrorBoundary.tsx",
+      "exportName": "IsolatedInputSection",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/app-shell/input/QueuedMessageList.tsx",
+      "exportName": "QueuedMessageList",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/app-shell/input/ToolbarStatusSlot.tsx",
+      "exportName": "ToolbarStatusSlot",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/app-shell/LeftSidebar.tsx",
+      "exportName": "LeftSidebar",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/app-shell/MainContentPanel.tsx",
+      "exportName": "MainContentPanel",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/app-shell/MultiSelectPanel.tsx",
+      "exportName": "MultiSelectPanel",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/app-shell/PageNavigationSurface.tsx",
+      "exportName": "PageNavigationSurface",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/app-shell/Panel.tsx",
+      "exportName": "Panel",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/app-shell/PanelHeader.tsx",
+      "exportName": "PanelHeader",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/app-shell/PiProjectionTimeline.tsx",
+      "exportName": "PiProjectionTimeline",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/app-shell/RootSurfaceContainer.tsx",
+      "exportName": "RootSurfaceContainer",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/app-shell/SendResourceToWorkspaceDialog.tsx",
+      "exportName": "SendResourceToWorkspaceDialog",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/app-shell/SendToWorkspaceDialog.tsx",
+      "exportName": "SendToWorkspaceDialog",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/app-shell/SessionInfoPopover.tsx",
+      "exportName": "SessionInfoPopover",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/app-shell/SessionItem.tsx",
+      "exportName": "SessionItem",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/app-shell/SessionList.tsx",
+      "exportName": "SessionList",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/app-shell/SessionMenu.tsx",
+      "exportName": "SessionMenu",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/app-shell/SessionMenuParts.tsx",
+      "exportName": "ShareMenuItems",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/app-shell/SessionSearchHeader.tsx",
+      "exportName": "SessionSearchHeader",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/app-shell/SidebarMenu.tsx",
+      "exportName": "SidebarMenu",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/app-shell/SideTasksStatusPopover.tsx",
+      "exportName": "SideTasksStatusContent",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/app-shell/SideTasksStatusPopover.tsx",
+      "exportName": "SideTasksStatusPopover",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/app-shell/SkillEditorPanel.tsx",
+      "exportName": "SkillEditorPanel",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/app-shell/SkillImportDialog.tsx",
+      "exportName": "SkillImportDialog",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/app-shell/SkillMenu.tsx",
+      "exportName": "SkillMenu",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/app-shell/SkillsListPanel.tsx",
+      "exportName": "SkillsListPanel",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/app-shell/TaskActionMenu.tsx",
+      "exportName": "TaskActionMenu",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/app-shell/TopBar.tsx",
+      "exportName": "TopBar",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/app-shell/TransportConnectionBanner.tsx",
+      "exportName": "TransportConnectionBanner",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/app-shell/UnifiedDockWorkspace.tsx",
+      "exportName": "UnifiedDockWorkspace",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/app-shell/WorkspaceCoordinationStatusPopover.tsx",
+      "exportName": "WorkspaceCoordinationStatusContent",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/app-shell/WorkspaceCoordinationStatusPopover.tsx",
+      "exportName": "WorkspaceCoordinationStatusPopover",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/AppMenu.tsx",
+      "exportName": "AppMenu",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/automations/ActionTypeIcon.tsx",
+      "exportName": "ActionTypeIcon",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/automations/AutomationActionPreview.tsx",
+      "exportName": "AutomationActionPreview",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/automations/AutomationActionRow.tsx",
+      "exportName": "AutomationActionRow",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/automations/AutomationAvatar.tsx",
+      "exportName": "AutomationAvatar",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/automations/AutomationCard.tsx",
+      "exportName": "AutomationCard",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/automations/AutomationEditorPanel.tsx",
+      "exportName": "AutomationEditorPanel",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/automations/AutomationEventTimeline.tsx",
+      "exportName": "AutomationEventTimeline",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/automations/AutomationInfoPage.tsx",
+      "exportName": "AutomationInfoPage",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/automations/AutomationMenu.tsx",
+      "exportName": "AutomationMenu",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/automations/AutomationsListPanel.tsx",
+      "exportName": "AutomationsListPanel",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/automations/AutomationTestPanel.tsx",
+      "exportName": "AutomationTestPanel",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/automations/BatchAutomationMenu.tsx",
+      "exportName": "BatchAutomationMenu",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/automations/CronBuilder.tsx",
+      "exportName": "CronBuilder",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/automations/PhaseBadge.tsx",
+      "exportName": "PhaseBadge",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/browser/BrowserTabBadge.tsx",
+      "exportName": "BrowserTabBadge",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/browser/BrowserTabStrip.tsx",
+      "exportName": "BrowserTabStrip",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/browser/BrowserToolbar.tsx",
+      "exportName": "BrowserToolbar",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/extensions/ExtensionArtifactContributionProvider.tsx",
+      "exportName": "ExtensionArtifactContributionProvider",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/extensions/ExtensionContributionZone.tsx",
+      "exportName": "ExtensionContributionContent",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/extensions/ExtensionContributionZone.tsx",
+      "exportName": "ExtensionContributionZone",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/extensions/ExtensionContributionZone.tsx",
+      "exportName": "ExtensionReplaceZone",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/extensions/ExtensionFrontendSurface.tsx",
+      "exportName": "ExtensionFrontendSurface",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/extensions/ExtensionFrontendZone.tsx",
+      "exportName": "ExtensionFrontendZone",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/extensions/ExtensionInteractionComposer.tsx",
+      "exportName": "ExtensionInteractionComposer",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/extensions/SandboxAppHost.tsx",
+      "exportName": "SandboxAppHost",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/files/FileViewer.tsx",
+      "exportName": "FileViewer",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/icons/McpIcon.tsx",
+      "exportName": "McpIcon",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/icons/MortiseAppIcon.tsx",
+      "exportName": "MortiseAppIcon",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/icons/MortiseLogo.tsx",
+      "exportName": "MortiseLogo",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/icons/MortiseSymbol.tsx",
+      "exportName": "MortiseSymbol",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/icons/PanelLeftRounded.tsx",
+      "exportName": "PanelLeftRounded",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/icons/PanelRightRounded.tsx",
+      "exportName": "PanelRightRounded",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/icons/ProviderIcon.tsx",
+      "exportName": "ProviderIcon",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/icons/SettingsIcons.tsx",
+      "exportName": "AgentsSettingsIcon",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/icons/SettingsIcons.tsx",
+      "exportName": "AiSettingsIcon",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/icons/SettingsIcons.tsx",
+      "exportName": "AppearanceIcon",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/icons/SettingsIcons.tsx",
+      "exportName": "AppSettingsIcon",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/icons/SettingsIcons.tsx",
+      "exportName": "DeveloperSettingsIcon",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/icons/SettingsIcons.tsx",
+      "exportName": "ExtensionsSettingsIcon",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/icons/SettingsIcons.tsx",
+      "exportName": "LabelsIcon",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/icons/SettingsIcons.tsx",
+      "exportName": "MessagingSettingsIcon",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/icons/SettingsIcons.tsx",
+      "exportName": "PermissionsIcon",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/icons/SettingsIcons.tsx",
+      "exportName": "PreferencesIcon",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/icons/SettingsIcons.tsx",
+      "exportName": "ServerSettingsIcon",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/icons/SettingsIcons.tsx",
+      "exportName": "ShortcutsIcon",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/icons/SquarePenRounded.tsx",
+      "exportName": "SquarePenRounded",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/icons/TodoStateIcons.tsx",
+      "exportName": "CalendarClock",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/icons/TodoStateIcons.tsx",
+      "exportName": "CircleCheckFilled",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/icons/TodoStateIcons.tsx",
+      "exportName": "CircleDashed",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/icons/TodoStateIcons.tsx",
+      "exportName": "CircleEye",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/icons/TodoStateIcons.tsx",
+      "exportName": "CircleProgress",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/icons/TodoStateIcons.tsx",
+      "exportName": "CircleXFilled",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/icons/TodoStateIcons.tsx",
+      "exportName": "FilterLines",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/info/Info_Badge.tsx",
+      "exportName": "Info_Badge",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/info/Info_DataTable.tsx",
+      "exportName": "Info_DataTable",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/info/Info_Markdown.tsx",
+      "exportName": "Info_Markdown",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/info/Info_Section.tsx",
+      "exportName": "Info_Section",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/KeyboardShortcuts.tsx",
+      "exportName": "KeyboardShortcuts",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/KeyboardShortcutsDialog.tsx",
+      "exportName": "KeyboardShortcutsDialog",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/markdown/StreamingMarkdown.tsx",
+      "exportName": "StreamingMarkdown",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/messaging/access/AccessModeBanner.tsx",
+      "exportName": "AccessModeBanner",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/messaging/access/BindingAllowListPopover.tsx",
+      "exportName": "BindingAllowListPopover",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/messaging/access/OwnersListEditor.tsx",
+      "exportName": "OwnersListEditor",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/messaging/access/PendingSendersList.tsx",
+      "exportName": "PendingSendersList",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/messaging/access/TelegramAccessSection.tsx",
+      "exportName": "TelegramAccessSection",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/messaging/LarkConnectDialog.tsx",
+      "exportName": "LarkConnectDialog",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/messaging/MessagingDialogHost.tsx",
+      "exportName": "MessagingDialogHost",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/messaging/MessagingPlatformIcon.tsx",
+      "exportName": "MessagingPlatformIcon",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/messaging/MessagingSessionMenuItem.tsx",
+      "exportName": "MessagingSessionMenuItem",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/messaging/PairingCodeDialog.tsx",
+      "exportName": "PairingCodeDialog",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/messaging/TelegramConnectDialog.tsx",
+      "exportName": "TelegramConnectDialog",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/messaging/TelegramSupergroupPairingDialog.tsx",
+      "exportName": "TelegramSupergroupPairingDialog",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/messaging/WhatsAppConnectDialog.tsx",
+      "exportName": "WhatsAppConnectDialog",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/onboarding/APISetupStep.tsx",
+      "exportName": "APISetupStep",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/onboarding/CompletionStep.tsx",
+      "exportName": "CompletionStep",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/onboarding/CredentialsStep.tsx",
+      "exportName": "CredentialsStep",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/onboarding/GitBashWarning.tsx",
+      "exportName": "GitBashWarning",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/onboarding/LocalModelStep.tsx",
+      "exportName": "LocalModelStep",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/onboarding/OnboardingWizard.tsx",
+      "exportName": "OnboardingWizard",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/onboarding/primitives.tsx",
+      "exportName": "BackButton",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/onboarding/primitives.tsx",
+      "exportName": "ContinueButton",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/onboarding/primitives.tsx",
+      "exportName": "StepActions",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/onboarding/primitives.tsx",
+      "exportName": "StepFormLayout",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/onboarding/primitives.tsx",
+      "exportName": "StepHeader",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/onboarding/primitives.tsx",
+      "exportName": "StepIcon",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/onboarding/ProviderSelectStep.tsx",
+      "exportName": "ProviderSelectStep",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/onboarding/ReauthScreen.tsx",
+      "exportName": "ReauthScreen",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/onboarding/WelcomeStep.tsx",
+      "exportName": "WelcomeStep",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/preview/TableOfContents.tsx",
+      "exportName": "TableOfContents",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/RemoteConnectionPanel.tsx",
+      "exportName": "RemoteConnectionPanel",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/right-workbench/FileWorkbench.tsx",
+      "exportName": "FileWorkbench",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/right-workbench/RightWorkbench.tsx",
+      "exportName": "BrowserWorkbench",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/right-workbench/RightWorkbench.tsx",
+      "exportName": "WorkbenchToolContent",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/right-workbench/RightWorkbench.tsx",
+      "exportName": "WorkbenchToolPicker",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ServerDirectoryBrowser.tsx",
+      "exportName": "ServerDirectoryBrowser",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/session-files/SessionFilesSection.tsx",
+      "exportName": "SessionFilesSection",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/settings/ModelReferenceSelect.tsx",
+      "exportName": "ModelReferenceSelectRow",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/settings/SearchableModelInput.tsx",
+      "exportName": "SearchableModelInput",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/settings/SettingsCard.tsx",
+      "exportName": "SettingsCard",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/settings/SettingsCard.tsx",
+      "exportName": "SettingsCardContent",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/settings/SettingsCard.tsx",
+      "exportName": "SettingsCardFooter",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/settings/SettingsEditRow.tsx",
+      "exportName": "SettingsEditRow",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/settings/SettingsInput.tsx",
+      "exportName": "SettingsInput",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/settings/SettingsInput.tsx",
+      "exportName": "SettingsInputRow",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/settings/SettingsInput.tsx",
+      "exportName": "SettingsSecretInput",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/settings/SettingsMenuSelect.tsx",
+      "exportName": "SettingsMenuSelect",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/settings/SettingsMenuSelect.tsx",
+      "exportName": "SettingsMenuSelectRow",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/settings/SettingsRadioGroup.tsx",
+      "exportName": "SettingsRadioCard",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/settings/SettingsRadioGroup.tsx",
+      "exportName": "SettingsRadioGroup",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/settings/SettingsRadioGroup.tsx",
+      "exportName": "SettingsRadioOption",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/settings/SettingsRow.tsx",
+      "exportName": "SettingsRow",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/settings/SettingsRow.tsx",
+      "exportName": "SettingsRowLabel",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/settings/SettingsSection.tsx",
+      "exportName": "SettingsDivider",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/settings/SettingsSection.tsx",
+      "exportName": "SettingsGroup",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/settings/SettingsSection.tsx",
+      "exportName": "SettingsSection",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/settings/SettingsSegmentedControl.tsx",
+      "exportName": "SettingsSegmentedControl",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/settings/SettingsSegmentedControl.tsx",
+      "exportName": "SettingsSegmentedControlCard",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/settings/SettingsSelect.tsx",
+      "exportName": "SettingsSelect",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/settings/SettingsSelect.tsx",
+      "exportName": "SettingsSelectRow",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/settings/SettingsTextarea.tsx",
+      "exportName": "SettingsTextarea",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/settings/SettingsToggle.tsx",
+      "exportName": "SettingsToggle",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/shiki/ShikiCodeEditor.tsx",
+      "exportName": "ShikiCodeEditor",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/shiki/ShikiCodeViewer.tsx",
+      "exportName": "ShikiCodeViewer",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/shiki/ShikiDiffViewer.tsx",
+      "exportName": "ShikiDiffViewer",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/SplashScreen.tsx",
+      "exportName": "SplashScreen",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/action-menu-item.tsx",
+      "exportName": "ActionMenuItem",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/action-tooltip.tsx",
+      "exportName": "ActionTooltip",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/avatar-group.tsx",
+      "exportName": "AvatarGroup",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/avatar.tsx",
+      "exportName": "Avatar",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/avatar.tsx",
+      "exportName": "AvatarFallback",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/avatar.tsx",
+      "exportName": "AvatarImage",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/avatar.tsx",
+      "exportName": "CrossfadeAvatar",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/badge.tsx",
+      "exportName": "Badge",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/button.tsx",
+      "exportName": "Button",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/calendar.tsx",
+      "exportName": "Calendar",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/collapsible.tsx",
+      "exportName": "AnimatedCollapsibleContent",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/command.tsx",
+      "exportName": "Command",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/command.tsx",
+      "exportName": "CommandDialog",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/command.tsx",
+      "exportName": "CommandEmpty",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/command.tsx",
+      "exportName": "CommandGroup",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/command.tsx",
+      "exportName": "CommandInput",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/command.tsx",
+      "exportName": "CommandItem",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/command.tsx",
+      "exportName": "CommandList",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/command.tsx",
+      "exportName": "CommandSeparator",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/command.tsx",
+      "exportName": "CommandShortcut",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/context-menu.tsx",
+      "exportName": "ContextMenu",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/context-menu.tsx",
+      "exportName": "ContextMenuCheckboxItem",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/context-menu.tsx",
+      "exportName": "ContextMenuContent",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/context-menu.tsx",
+      "exportName": "ContextMenuGroup",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/context-menu.tsx",
+      "exportName": "ContextMenuItem",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/context-menu.tsx",
+      "exportName": "ContextMenuLabel",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/context-menu.tsx",
+      "exportName": "ContextMenuPortal",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/context-menu.tsx",
+      "exportName": "ContextMenuRadioGroup",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/context-menu.tsx",
+      "exportName": "ContextMenuRadioItem",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/context-menu.tsx",
+      "exportName": "ContextMenuSeparator",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/context-menu.tsx",
+      "exportName": "ContextMenuShortcut",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/context-menu.tsx",
+      "exportName": "ContextMenuSub",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/context-menu.tsx",
+      "exportName": "ContextMenuSubContent",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/context-menu.tsx",
+      "exportName": "ContextMenuSubTrigger",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/context-menu.tsx",
+      "exportName": "ContextMenuTrigger",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/data-table.tsx",
+      "exportName": "DataTable",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/data-table.tsx",
+      "exportName": "SortableHeader",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/dialog.tsx",
+      "exportName": "Dialog",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/dialog.tsx",
+      "exportName": "DialogClose",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/dialog.tsx",
+      "exportName": "DialogContent",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/dialog.tsx",
+      "exportName": "DialogDescription",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/dialog.tsx",
+      "exportName": "DialogFooter",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/dialog.tsx",
+      "exportName": "DialogHeader",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/dialog.tsx",
+      "exportName": "DialogOverlay",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/dialog.tsx",
+      "exportName": "DialogPortal",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/dialog.tsx",
+      "exportName": "DialogTitle",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/dialog.tsx",
+      "exportName": "DialogTrigger",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/dropdown-menu.tsx",
+      "exportName": "DropdownMenu",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/dropdown-menu.tsx",
+      "exportName": "DropdownMenuCheckboxItem",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/dropdown-menu.tsx",
+      "exportName": "DropdownMenuContent",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/dropdown-menu.tsx",
+      "exportName": "DropdownMenuGroup",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/dropdown-menu.tsx",
+      "exportName": "DropdownMenuItem",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/dropdown-menu.tsx",
+      "exportName": "DropdownMenuLabel",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/dropdown-menu.tsx",
+      "exportName": "DropdownMenuPortal",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/dropdown-menu.tsx",
+      "exportName": "DropdownMenuRadioGroup",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/dropdown-menu.tsx",
+      "exportName": "DropdownMenuRadioItem",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/dropdown-menu.tsx",
+      "exportName": "DropdownMenuSeparator",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/dropdown-menu.tsx",
+      "exportName": "DropdownMenuShortcut",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/dropdown-menu.tsx",
+      "exportName": "DropdownMenuSub",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/dropdown-menu.tsx",
+      "exportName": "DropdownMenuSubContent",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/dropdown-menu.tsx",
+      "exportName": "DropdownMenuSubTrigger",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/dropdown-menu.tsx",
+      "exportName": "DropdownMenuTrigger",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/EditPopover.tsx",
+      "exportName": "EditButton",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/EditPopover.tsx",
+      "exportName": "EditPopover",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/empty.tsx",
+      "exportName": "Empty",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/empty.tsx",
+      "exportName": "EmptyContent",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/empty.tsx",
+      "exportName": "EmptyDescription",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/empty.tsx",
+      "exportName": "EmptyHeader",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/empty.tsx",
+      "exportName": "EmptyMedia",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/empty.tsx",
+      "exportName": "EmptyTitle",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/entity-list-badge.tsx",
+      "exportName": "EntityListBadge",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/entity-list-empty.tsx",
+      "exportName": "EntityListEmptyScreen",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/entity-list.tsx",
+      "exportName": "EntityList",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/entity-panel.tsx",
+      "exportName": "EntityPanel",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/entity-row.tsx",
+      "exportName": "EntityRow",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/fading-text.tsx",
+      "exportName": "FadingText",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/gradient-resize-handle.tsx",
+      "exportName": "GradientResizeHandle",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/HeaderIconButton.tsx",
+      "exportName": "HeaderIconButton",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/HeaderMenu.tsx",
+      "exportName": "HeaderMenu",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/horizontal-resize-handle.tsx",
+      "exportName": "HorizontalResizeHandle",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/HoverRevealIcon.tsx",
+      "exportName": "HoverRevealIcon",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/input.tsx",
+      "exportName": "Input",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/kbd.tsx",
+      "exportName": "Kbd",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/kbd.tsx",
+      "exportName": "KbdGroup",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/label.tsx",
+      "exportName": "Label",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/mention-badge.tsx",
+      "exportName": "ActiveMentionBadges",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/mention-badge.tsx",
+      "exportName": "MentionBadge",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/mention-menu.tsx",
+      "exportName": "InlineMentionMenu",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/menu-context.tsx",
+      "exportName": "ContextMenuProvider",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/menu-context.tsx",
+      "exportName": "DropdownMenuProvider",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/metadata-badge.tsx",
+      "exportName": "MetadataBadge",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/PanelHeaderCenterButton.tsx",
+      "exportName": "PanelHeaderCenterButton",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/popover.tsx",
+      "exportName": "Popover",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/popover.tsx",
+      "exportName": "PopoverAnchor",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/popover.tsx",
+      "exportName": "PopoverContent",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/popover.tsx",
+      "exportName": "PopoverTrigger",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/rename-dialog.tsx",
+      "exportName": "RenameDialog",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/resizable.tsx",
+      "exportName": "ResizableHandle",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/resizable.tsx",
+      "exportName": "ResizablePanelGroup",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/scroll-area.tsx",
+      "exportName": "ScrollArea",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/scroll-area.tsx",
+      "exportName": "ScrollBar",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/select.tsx",
+      "exportName": "Select",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/select.tsx",
+      "exportName": "SelectContent",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/select.tsx",
+      "exportName": "SelectItem",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/select.tsx",
+      "exportName": "SelectLabel",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/select.tsx",
+      "exportName": "SelectScrollDownButton",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/select.tsx",
+      "exportName": "SelectScrollUpButton",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/select.tsx",
+      "exportName": "SelectSeparator",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/select.tsx",
+      "exportName": "SelectTrigger",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/separator.tsx",
+      "exportName": "Separator",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/service-logo.tsx",
+      "exportName": "ServiceLogo",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/skill-avatar.tsx",
+      "exportName": "SkillAvatar",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/slash-command-menu.tsx",
+      "exportName": "InlineSlashCommand",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/slash-command-menu.tsx",
+      "exportName": "SlashCommandMenu",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/sonner.tsx",
+      "exportName": "Toaster",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/sortable-list.tsx",
+      "exportName": "SortableList",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/styled-context-menu.tsx",
+      "exportName": "StyledContextMenuContent",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/styled-context-menu.tsx",
+      "exportName": "StyledContextMenuItem",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/styled-context-menu.tsx",
+      "exportName": "StyledContextMenuSeparator",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/styled-context-menu.tsx",
+      "exportName": "StyledContextMenuSubContent",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/styled-context-menu.tsx",
+      "exportName": "StyledContextMenuSubTrigger",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/switch.tsx",
+      "exportName": "Switch",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/table.tsx",
+      "exportName": "Table",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/table.tsx",
+      "exportName": "TableBody",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/table.tsx",
+      "exportName": "TableCaption",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/table.tsx",
+      "exportName": "TableCell",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/table.tsx",
+      "exportName": "TableFooter",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/table.tsx",
+      "exportName": "TableHead",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/table.tsx",
+      "exportName": "TableHeader",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/table.tsx",
+      "exportName": "TableRow",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/tabs.tsx",
+      "exportName": "TabsContent",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/tabs.tsx",
+      "exportName": "TabsList",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/tabs.tsx",
+      "exportName": "TabsTrigger",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/textarea.tsx",
+      "exportName": "Textarea",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/ui/TopBarButton.tsx",
+      "exportName": "TopBarButton",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/workspace/AddWorkspaceStep_ConnectRemote.tsx",
+      "exportName": "AddWorkspaceStep_ConnectRemote",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/workspace/AddWorkspaceStep_CreateNew.tsx",
+      "exportName": "AddWorkspaceStep_CreateNew",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/workspace/primitives.tsx",
+      "exportName": "AddWorkspaceContainer",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/workspace/primitives.tsx",
+      "exportName": "AddWorkspacePrimaryButton",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/workspace/primitives.tsx",
+      "exportName": "AddWorkspaceSecondaryButton",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/workspace/primitives.tsx",
+      "exportName": "AddWorkspaceStepHeader",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/workspace/WorkspaceCreationScreen.tsx",
+      "exportName": "WorkspaceCreationDialog",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/workspace/WorkspaceEditDialog.tsx",
+      "exportName": "WorkspaceEditDialog",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/workspace/WorkspaceLocationCollection.tsx",
+      "exportName": "WorkspaceLocationCollection",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/components/workspace/WorkspacePicker.tsx",
+      "exportName": "WorkspacePicker",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/pages/ChatPage.tsx",
+      "exportName": "default",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/pages/NewConversationPage.tsx",
+      "exportName": "default",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/pages/settings/AgentSettingsPage.tsx",
+      "exportName": "default",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/pages/settings/AiSettingsPage.tsx",
+      "exportName": "AiSettingsPage",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/pages/settings/AiSettingsPage.tsx",
+      "exportName": "default",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/pages/settings/AppearanceSettingsPage.tsx",
+      "exportName": "default",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/pages/settings/AppSettingsPage.tsx",
+      "exportName": "default",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/pages/settings/DeveloperSettingsPage.tsx",
+      "exportName": "default",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/pages/settings/ExtensionDetailPanel.tsx",
+      "exportName": "default",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/pages/settings/ExtensionDetailPanel.tsx",
+      "exportName": "ExtensionDetailPanel",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/pages/settings/ExtensionSettingsPage.tsx",
+      "exportName": "default",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/pages/settings/ExtensionSettingsPage.tsx",
+      "exportName": "ExtensionSettingsPage",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/pages/settings/ExtensionsSettingsPage.tsx",
+      "exportName": "default",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/pages/settings/MessagingSettingsPage.tsx",
+      "exportName": "default",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/pages/settings/PiExtensionsSettingsPanel.tsx",
+      "exportName": "default",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/pages/settings/PiExtensionsSettingsPanel.tsx",
+      "exportName": "ExtensionListPanel",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/pages/settings/PiProviderFormDialog.tsx",
+      "exportName": "PiProviderFormDialog",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/pages/settings/PiProvidersSection.tsx",
+      "exportName": "PiProvidersSection",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/pages/settings/PreferencesPage.tsx",
+      "exportName": "default",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/pages/settings/ServerSettingsPage.tsx",
+      "exportName": "default",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/pages/settings/SettingsNavigator.tsx",
+      "exportName": "default",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/pages/settings/ShortcutsPage.tsx",
+      "exportName": "default",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/pages/settings/WorkspaceLocationsSection.tsx",
+      "exportName": "WorkspaceLocationsSection",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/pages/ShortcutsPage.tsx",
+      "exportName": "default",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "apps/electron/src/renderer/pages/SkillInfoPage.tsx",
+      "exportName": "default",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/annotations/AnnotationIslandMenu.tsx",
+      "exportName": "AnnotationIslandMenu",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/annotations/AnnotationOverlayLayer.tsx",
+      "exportName": "AnnotationOverlayLayer",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/chat/AcceptPlanDropdown.tsx",
+      "exportName": "AcceptPlanDropdown",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/chat/attachment-helpers.tsx",
+      "exportName": "FileTypeIcon",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/chat/CompactAcceptPlanDrawer.tsx",
+      "exportName": "CompactAcceptPlanDrawer",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/chat/InlineExecution.tsx",
+      "exportName": "InlineExecution",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/chat/SessionViewer.tsx",
+      "exportName": "SessionViewer",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/chat/SystemMessage.tsx",
+      "exportName": "SystemMessage",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/chat/TurnCard.tsx",
+      "exportName": "ActivityStatusIcon",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/chat/TurnCard.tsx",
+      "exportName": "ArtifactContributionProvider",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/chat/TurnCard.tsx",
+      "exportName": "ResponseCard",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/chat/TurnCard.tsx",
+      "exportName": "TurnCard",
+      "entryId": "turn-card-streaming-sim"
+    },
+    {
+      "sourcePath": "packages/ui/src/components/chat/TurnCardActionsMenu.tsx",
+      "exportName": "TurnCardActionsMenu",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/chat/UserMessageBubble.tsx",
+      "exportName": "UserMessageBubble",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/code-viewer/DiffIcons.tsx",
+      "exportName": "DiffBackgroundIcon",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/code-viewer/DiffIcons.tsx",
+      "exportName": "DiffSplitIcon",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/code-viewer/DiffIcons.tsx",
+      "exportName": "DiffUnifiedIcon",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/code-viewer/DiffViewerControls.tsx",
+      "exportName": "DiffViewerControls",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/code-viewer/ShikiCodeViewer.tsx",
+      "exportName": "ShikiCodeViewer",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/code-viewer/ShikiDiffViewer.tsx",
+      "exportName": "ShikiDiffViewer",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/code-viewer/UnifiedDiffViewer.tsx",
+      "exportName": "UnifiedDiffViewer",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/icons/Folder.tsx",
+      "exportName": "Icon_Folder",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/icons/Home.tsx",
+      "exportName": "Icon_Home",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/icons/Inbox.tsx",
+      "exportName": "Icon_Inbox",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/markdown/CodeBlock.tsx",
+      "exportName": "CodeBlock",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/markdown/CodeBlock.tsx",
+      "exportName": "InlineCode",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/markdown/CollapsibleMarkdownContext.tsx",
+      "exportName": "CollapsibleMarkdownProvider",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/markdown/CollapsibleSection.tsx",
+      "exportName": "CollapsibleSection",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/markdown/ImageCardStack.tsx",
+      "exportName": "ImageCardStack",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/markdown/Markdown.tsx",
+      "exportName": "Markdown",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/markdown/MarkdownDatatableBlock.tsx",
+      "exportName": "MarkdownDatatableBlock",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/markdown/MarkdownDiffBlock.tsx",
+      "exportName": "MarkdownDiffBlock",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/markdown/MarkdownDocBlock.tsx",
+      "exportName": "MarkdownDocBlock",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/markdown/MarkdownHtmlBlock.tsx",
+      "exportName": "MarkdownHtmlBlock",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/markdown/MarkdownImageBlock.tsx",
+      "exportName": "MarkdownImageBlock",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/markdown/MarkdownJsonBlock.tsx",
+      "exportName": "MarkdownJsonBlock",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/markdown/MarkdownLatexBlock.tsx",
+      "exportName": "MarkdownLatexBlock",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/markdown/MarkdownMermaidBlock.tsx",
+      "exportName": "MarkdownMermaidBlock",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/markdown/MarkdownPdfBlock.tsx",
+      "exportName": "MarkdownPdfBlock",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/markdown/MarkdownSpreadsheetBlock.tsx",
+      "exportName": "MarkdownSpreadsheetBlock",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/markdown/RichBlockShell.tsx",
+      "exportName": "RichBlockShell",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/markdown/safe-components.tsx",
+      "exportName": "UnknownTag",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/markdown/TableExportDropdown.tsx",
+      "exportName": "TableExportDropdown",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/markdown/TiptapBubbleMenus.tsx",
+      "exportName": "TiptapBubbleMenus",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/markdown/TiptapHoverActions.tsx",
+      "exportName": "TiptapHoverActionButton",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/markdown/TiptapHoverActions.tsx",
+      "exportName": "TiptapHoverActions",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/markdown/TiptapHoverActions.tsx",
+      "exportName": "TiptapHoverActionsHost",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/markdown/TiptapMarkdownEditor.tsx",
+      "exportName": "TiptapMarkdownEditor",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/overlay/ActivityCardsOverlay.tsx",
+      "exportName": "ActivityCardsOverlay",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/overlay/AnnotatableMarkdownDocument.tsx",
+      "exportName": "AnnotatableMarkdownDocument",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/overlay/CodePreviewOverlay.tsx",
+      "exportName": "CodePreviewOverlay",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/overlay/ContentFrame.tsx",
+      "exportName": "ContentFrame",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/overlay/CopyButton.tsx",
+      "exportName": "CopyButton",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/overlay/DataTableOverlay.tsx",
+      "exportName": "DataTableOverlay",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/overlay/DocumentFormattedMarkdownOverlay.tsx",
+      "exportName": "DocumentFormattedMarkdownOverlay",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/overlay/FullscreenOverlayBase.tsx",
+      "exportName": "FullscreenOverlayBase",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/overlay/FullscreenOverlayBaseHeader.tsx",
+      "exportName": "FullscreenOverlayBaseHeader",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/overlay/GenericOverlay.tsx",
+      "exportName": "GenericOverlay",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/overlay/HTMLPreviewOverlay.tsx",
+      "exportName": "HTMLPreviewOverlay",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/overlay/ImagePreviewOverlay.tsx",
+      "exportName": "ImagePreviewOverlay",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/overlay/ItemNavigator.tsx",
+      "exportName": "ItemNavigator",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/overlay/JSONPreviewOverlay.tsx",
+      "exportName": "JSONPreviewOverlay",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/overlay/MermaidPreviewOverlay.tsx",
+      "exportName": "MermaidPreviewOverlay",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/overlay/MultiDiffPreviewOverlay.tsx",
+      "exportName": "MultiDiffPreviewOverlay",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/overlay/OverlayErrorBanner.tsx",
+      "exportName": "OverlayErrorBanner",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/overlay/PDFPreviewOverlay.tsx",
+      "exportName": "PDFPreviewOverlay",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/overlay/PreviewOverlay.tsx",
+      "exportName": "PreviewOverlay",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/overlay/TerminalPreviewOverlay.tsx",
+      "exportName": "TerminalPreviewOverlay",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/overlay/ZoomControls.tsx",
+      "exportName": "ZoomControls",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/terminal/TerminalOutput.tsx",
+      "exportName": "TerminalOutput",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/tooltip.tsx",
+      "exportName": "TooltipContent",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/tooltip.tsx",
+      "exportName": "TooltipProvider",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/ui/BrowserControls.tsx",
+      "exportName": "BrowserControls",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/ui/BrowserShader.tsx",
+      "exportName": "BrowserShader",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/ui/drawer.tsx",
+      "exportName": "Drawer",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/ui/drawer.tsx",
+      "exportName": "DrawerClose",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/ui/drawer.tsx",
+      "exportName": "DrawerContent",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/ui/drawer.tsx",
+      "exportName": "DrawerDescription",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/ui/drawer.tsx",
+      "exportName": "DrawerFooter",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/ui/drawer.tsx",
+      "exportName": "DrawerHeader",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/ui/drawer.tsx",
+      "exportName": "DrawerOverlay",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/ui/drawer.tsx",
+      "exportName": "DrawerPortal",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/ui/drawer.tsx",
+      "exportName": "DrawerTitle",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/ui/drawer.tsx",
+      "exportName": "DrawerTrigger",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/ui/FilterableSelectPopover.tsx",
+      "exportName": "FilterableSelectPopover",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/ui/Island.tsx",
+      "exportName": "Island",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/ui/Island.tsx",
+      "exportName": "IslandContentView",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/ui/IslandFollowUpContentView.tsx",
+      "exportName": "IslandFollowUpContentView",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/ui/LoadingIndicator.tsx",
+      "exportName": "LoadingIndicator",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/ui/LoadingIndicator.tsx",
+      "exportName": "Spinner",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/ui/PreviewHeader.tsx",
+      "exportName": "PreviewHeader",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/ui/PreviewHeader.tsx",
+      "exportName": "PreviewHeaderBadge",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/ui/SimpleDropdown.tsx",
+      "exportName": "SimpleDropdown",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/ui/SimpleDropdown.tsx",
+      "exportName": "SimpleDropdownItem",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/ui/StyledDropdown.tsx",
+      "exportName": "DropdownMenu",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/ui/StyledDropdown.tsx",
+      "exportName": "DropdownMenuShortcut",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/ui/StyledDropdown.tsx",
+      "exportName": "DropdownMenuTrigger",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/ui/StyledDropdown.tsx",
+      "exportName": "StyledDropdownMenuContent",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/ui/StyledDropdown.tsx",
+      "exportName": "StyledDropdownMenuItem",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/ui/StyledDropdown.tsx",
+      "exportName": "StyledDropdownMenuSeparator",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/ui/StyledDropdown.tsx",
+      "exportName": "StyledDropdownMenuSubContent",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    },
+    {
+      "sourcePath": "packages/ui/src/components/ui/StyledDropdown.tsx",
+      "exportName": "StyledDropdownMenuSubTrigger",
+      "exemption": {
+        "reason": "Requires a dedicated production adapter or is represented by its parent scene."
+      }
+    }
+  ]
+}

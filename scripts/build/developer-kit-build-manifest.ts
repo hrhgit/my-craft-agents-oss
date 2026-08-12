@@ -62,7 +62,12 @@ export function writeDeveloperKitStagingOwner(stagingDir: string): void {
 export function cleanupDeveloperKitBuildCacheLocked(
   buildRootValue: string,
   protectedBuildIds: Set<string>,
-  options: { retainCount?: number; staleMs?: number; nowMs?: number } = {},
+  options: {
+    retainCount?: number
+    staleMs?: number
+    nowMs?: number
+    verification?: 'full' | 'fast'
+  } = {},
 ): { removed: string[]; retained: string[] } {
   const buildRoot = resolve(buildRootValue)
   const buildsDir = join(buildRoot, 'builds')
@@ -83,7 +88,11 @@ export function cleanupDeveloperKitBuildCacheLocked(
       removed.push(entry.name)
       continue
     }
-    const manifest = readValidDeveloperKitBuildManifest(path, entry.name)
+    const manifest = readValidDeveloperKitBuildManifest(
+      path,
+      entry.name,
+      options.verification ?? 'full',
+    )
     if (manifest) {
       builds.push(manifest)
     } else if (!protectedBuildIds.has(entry.name)) {
@@ -109,6 +118,43 @@ export function cleanupDeveloperKitBuildCacheLocked(
       .map(entry => entry.name)
       .sort(),
   }
+}
+
+export function resolveReusableDeveloperKitBuild(options: {
+  buildRoot: string
+  bunExecutableSha256: string
+  preferredBuildId?: string
+  verification?: 'full' | 'fast'
+}): DeveloperKitBuildManifest | undefined {
+  const buildsDir = join(resolve(options.buildRoot), 'builds')
+  if (!existsSync(buildsDir)) return undefined
+
+  if (options.preferredBuildId) {
+    const preferred = readValidDeveloperKitBuildManifest(
+      join(buildsDir, options.preferredBuildId),
+      options.preferredBuildId,
+      options.verification ?? 'fast',
+    )
+    if (preferred?.bunExecutableSha256 === options.bunExecutableSha256) return preferred
+  }
+
+  const candidates: DeveloperKitBuildManifest[] = []
+  for (const entry of readdirSync(buildsDir, { withFileTypes: true })) {
+    if (
+      !entry.isDirectory()
+      || entry.name.startsWith('.staging-')
+      || entry.name === options.preferredBuildId
+    ) continue
+    const manifest = readValidDeveloperKitBuildManifest(
+      join(buildsDir, entry.name),
+      entry.name,
+      options.verification ?? 'fast',
+    )
+    if (!manifest || manifest.bunExecutableSha256 !== options.bunExecutableSha256) continue
+    candidates.push(manifest)
+  }
+
+  return candidates.sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0]
 }
 
 function isActiveDeveloperKitStaging(stagingDir: string): boolean {

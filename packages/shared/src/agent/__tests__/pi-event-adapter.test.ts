@@ -982,6 +982,19 @@ describe('PiEventAdapter', () => {
   // ============================================================
 
   describe('session events', () => {
+    it('should report persistence settlement failure as non-terminal retry status', () => {
+      const events = collect(adapter.adaptEvent({
+        type: 'settlement_failed',
+        attemptId: 'attempt-a',
+        attempt: 2,
+        error: 'disk unavailable',
+      } as any));
+
+      expect(events).toEqual([
+        expect.objectContaining({ type: 'status', message: expect.stringContaining('attempt 2') }),
+      ]);
+    });
+
     it('should emit status for compaction_start', () => {
       const events = collect(adapter.adaptEvent({
         type: 'compaction_start',

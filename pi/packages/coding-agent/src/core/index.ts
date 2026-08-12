@@ -39,8 +39,6 @@ export {
 	type BuildSystemPromptOptions,
 	type ContextEvent,
 	defineTool,
-	type ExecOptions,
-	type ExecResult,
 	type Extension,
 	type ExtensionAPI,
 	type ExtensionCapabilitiesContext,

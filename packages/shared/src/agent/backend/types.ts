@@ -55,6 +55,8 @@ export interface HostQueuedUserProjection {
 
 export interface ChildTaskBackgroundOperation {
   operationId: string;
+  attemptId: string;
+  runtimeId: string;
   childSessionId: string;
   sessionPath: string;
 }
@@ -65,12 +67,25 @@ export interface ChildTaskSettledOperation extends ChildTaskBackgroundOperation 
   modified: string;
 }
 
-export interface IsolatedAgentRequest {
-  prompt: string;
-  provider?: string;
-  model?: string;
-  thinkingLevel?: ThinkingLevel;
-  signal?: AbortSignal;
+export interface ChildAttemptRegistrationRequest {
+  runtimeId: string;
+  childSessionId: string;
+  sessionPath: string;
+  background: boolean;
+  /** Pi-issued Attempt that accepted this child Session command. */
+  attemptId: string;
+}
+
+export interface ChildAttemptRegistration {
+  attemptId: string;
+  operationId?: string;
+}
+
+export interface ChildToolExecutionCompleted {
+  runtimeId: string;
+  attemptId: string;
+  toolCallId: string;
+  isError: boolean;
 }
 
 export type LlmProviderType = 'pi' | 'pi_custom';
@@ -297,11 +312,26 @@ export interface CoreBackendConfig {
   /** Pi-first conversation projection stream. Must not contain Mortise Message DTOs. */
   onPiProjectionEvent?: (event: PiProjectionEventV1) => void;
 
-  /** Persist a background child operation immediately after its prompt is accepted. */
-  onChildTaskBackgroundStarted?: (operation: ChildTaskBackgroundOperation) => Promise<void>;
+  /** Long-lived Pi Session event stream, independent of any one command call. */
+  onAgentEvent?: (event: AgentEvent) => void;
+
+  /** Register the Pi-issued Attempt associated with a child Session operation. */
+  onChildAttemptStarted?: (request: ChildAttemptRegistrationRequest) => Promise<ChildAttemptRegistration>;
+
+  /** Resolve the Pi Attempt associated with an already-open child runtime. */
+  getChildAttempt?: (runtimeId: string, childSessionId: string) => ChildAttemptRegistration | undefined;
+
+  /** Close a child Attempt registration that never reached Pi settlement. */
+  onChildAttemptAbandoned?: (runtimeId: string, childSessionId: string, attemptId: string) => Promise<void>;
+
+  /** Close a Pi-settled child Attempt registration after tool receipts settle. */
+  onChildAttemptSettled?: (runtimeId: string, childSessionId: string, attemptId: string) => Promise<void>;
 
   /** Deliver a terminal background child result through the parent Session. */
   onChildTaskSettled?: (operation: ChildTaskSettledOperation) => Promise<void>;
+
+  /** Durably complete a child tool receipt under its exact execution lease. */
+  onChildToolExecutionCompleted?: (result: ChildToolExecutionCompleted) => Promise<void>;
 
   /** Execute a Pi extension's request against the host-owned capability router. */
   onHostCapabilityRequest?: (
@@ -335,7 +365,7 @@ export interface ChatOptions {
   /** Ask Pi to append hidden interruption context before this user message. */
   interruptedAttempt?: boolean;
   /** Sanitized display metadata forwarded to Pi; never include paths or contents. */
-  attachmentRefs?: Array<{ id: string; name: string; mediaType?: string; size?: number }>;
+	attachmentRefs?: Array<{ id: string; name: string; mediaType?: string; size?: number }>;
 }
 
 /**
@@ -405,6 +435,7 @@ export interface AgentBackend {
    *   return false — the session layer queues the message for re-send.
    *
    * @param message - The new user message
+   * @param clientMutationId - Optimistic mutation identity
    * @returns true if steered (events flow through existing stream),
    *          false if aborted (session layer must queue + re-send)
    */
@@ -416,14 +447,14 @@ export interface AgentBackend {
    */
   followUp(message: string, attachments?: FileAttachment[], options?: ChatOptions): Promise<boolean>;
 
+  /** Withdraw one Pi-owned queued message before it is consumed. */
+  withdrawQueued?(clientMutationId: string): Promise<boolean>;
+
   /**
    * Run a simple text completion using the backend's auth infrastructure.
    * Used for connection testing, title generation, and summarization.
    */
   runMiniCompletion(prompt: string): Promise<string | null>;
-
-  /** Run a complete tool-capable Agent Loop without creating a persisted Session. */
-  runIsolatedAgent(request: IsolatedAgentRequest): Promise<string | null>;
 
   /**
    * Clean up backend resources and watchers.
@@ -600,8 +631,10 @@ export interface AgentBackend {
   // Callbacks (set by facade after construction)
   // ============================================================
 
-  /** Backend-owned fence invoked before the Agent Loop may execute a tool. */
+  /** Host policy hook invoked before the Agent Loop may execute a tool. */
   onBeforeToolExecution?: ((request: {
+    runtimeId?: string;
+    attemptId?: string;
     toolCallId: string;
     toolName: string;
     input: Record<string, unknown>;

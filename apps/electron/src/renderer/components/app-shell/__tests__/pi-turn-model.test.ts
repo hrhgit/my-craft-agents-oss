@@ -443,6 +443,87 @@ describe('buildPiTurns', () => {
     expect(turns).toEqual([])
   })
 
+  it('keeps the streaming turn intact while a follow-up is queued', () => {
+    const turns = buildPiTurns([
+      entity({
+        entityId: 'content:user:user-1', createdSeq: 1, turnId: 'turn-1', kind: 'user_text',
+        payload: { role: 'user', messageId: 'user-1', text: 'first request', streaming: false },
+      }),
+      entity({
+        entityId: 'turn:turn-1', entityType: 'turn', createdSeq: 2, kind: 'turn_start',
+        payload: { status: 'running' },
+      }),
+      entity({
+        entityId: 'content:text:assistant-1:0', createdSeq: 3, turnId: 'turn-1',
+        payload: {
+          role: 'assistant', messageId: 'assistant-1', contentIndex: 0,
+          text: 'working', streaming: true,
+        },
+      }),
+      entity({
+        entityId: 'content:user:follow-up-1', createdSeq: 4, turnId: undefined, kind: 'user_text',
+        payload: {
+          role: 'user', messageId: 'follow-up-1', clientMutationId: 'follow-up-1',
+          text: 'follow-up', streaming: false, queueStatus: 'queued', source: 'host',
+        },
+      }),
+      // The runtime keeps streaming after the queued follow-up was accepted.
+      entity({
+        entityId: 'content:text:assistant-1:1', createdSeq: 5, turnId: 'turn-1',
+        payload: {
+          role: 'assistant', messageId: 'assistant-1', contentIndex: 1,
+          text: 'still working', streaming: true,
+        },
+      }),
+    ])
+
+    // The queued follow-up stays in the model (filtered above the composer by
+    // ChatDisplay) and must NOT split or finalize the turn that is streaming.
+    expect(turns.map(turn => turn.type)).toEqual(['user', 'assistant', 'user'])
+    expect(turns[2]).toMatchObject({ type: 'user', message: { id: 'follow-up-1', isQueued: true } })
+    expect(turns[1]).toMatchObject({ type: 'assistant', isComplete: false, isStreaming: true })
+    if (turns[1]?.type !== 'assistant') throw new Error('Expected assistant turn')
+    expect(turns[1].activities.map(activity => activity.content ?? '').join('\n')).toContain('still working')
+  })
+
+  it('splits the follow-up turn once the queued message is accepted', () => {
+    const turns = buildPiTurns([
+      entity({
+        entityId: 'content:user:user-1', createdSeq: 1, turnId: 'turn-1', kind: 'user_text',
+        payload: { role: 'user', messageId: 'user-1', text: 'first request', streaming: false },
+      }),
+      entity({
+        entityId: 'content:text:assistant-1:0', createdSeq: 2, turnId: 'turn-1',
+        payload: {
+          role: 'assistant', messageId: 'assistant-1', contentIndex: 0,
+          text: 'first answer', streaming: false, isFinal: true,
+        },
+      }),
+      entity({
+        entityId: 'content:user:follow-up-1', createdSeq: 3, turnId: undefined, kind: 'user_text',
+        payload: {
+          role: 'user', messageId: 'follow-up-1', clientMutationId: 'follow-up-1',
+          text: 'follow-up', streaming: false, queueStatus: 'accepted', source: 'pi',
+        },
+      }),
+      entity({
+        entityId: 'turn:turn-2', entityType: 'turn', createdSeq: 4, turnId: 'turn-2', kind: 'turn_start',
+        payload: { status: 'running' },
+      }),
+      entity({
+        entityId: 'content:text:assistant-2:0', createdSeq: 5, turnId: 'turn-2',
+        payload: {
+          role: 'assistant', messageId: 'assistant-2', contentIndex: 0,
+          text: 'second answer', streaming: true,
+        },
+      }),
+    ])
+
+    expect(turns.map(turn => turn.type)).toEqual(['user', 'assistant', 'user', 'assistant'])
+    expect(turns[2]).toMatchObject({ type: 'user', message: { id: 'follow-up-1', isQueued: false } })
+    expect(turns[3]).toMatchObject({ type: 'assistant', isComplete: false, isStreaming: true })
+  })
+
   it('omits completed empty thinking from the derived activity list', () => {
     const turns = buildPiTurns([
       entity({

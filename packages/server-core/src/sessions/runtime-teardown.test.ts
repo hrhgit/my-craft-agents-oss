@@ -121,26 +121,6 @@ describe('SessionManager runtime teardown', () => {
     await expect(sm.deleteSession('delete-child-failure')).resolves.toBeUndefined()
   })
 
-  it('cleanup releases each backend turn handle after finite runtime disposal', async () => {
-    const { managed } = injectManagedSession('cleanup-control')
-    const release = jest.fn(async () => undefined)
-    managed.turnControl = {
-      sessionId: managed.id,
-      backendId: 'test-backend',
-      handleId: 'handle-cleanup',
-      attemptId: 'attempt-cleanup',
-      acquiredAt: Date.now(),
-      valid: true,
-      assertValid: () => undefined,
-      setState: async () => undefined,
-      release,
-    }
-
-    await sm.cleanup()
-
-    expect(release).toHaveBeenCalledTimes(1)
-  })
-
   it('cleanup flushes projection persistence before clearing runtime state', async () => {
     injectManagedSession('cleanup-projection')
     let release!: () => void

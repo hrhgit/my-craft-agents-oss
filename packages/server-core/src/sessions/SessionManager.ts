@@ -21,16 +21,19 @@ import {
   type BackendHostRuntimeContext,
   type HostRuntimeErrorProjection,
   type ChildTaskBackgroundOperation,
+  type ChildAttemptRegistrationRequest,
+  type ChildAttemptRegistration,
   type ChildTaskSettledOperation,
   type PostInitResult,
   buildPiProjectionSnapshotFromHostProjection,
   PiProjectionBuilder,
-  piHostManager,
+  invalidateBackendRuntimes,
   BackendExtensionRuntimeRegistry,
   backendTypeFromProcess,
   type BackendExtensionWorkspaceSnapshot,
   type ExtensionBridgeEvent,
 } from '@mortise/shared/agent/backend'
+type ChildToolExecutionCompleted = Parameters<NonNullable<CoreBackendConfig['onChildToolExecutionCompleted']>>[0]
 import { alternateMidStreamBehavior, readPiGlobalProviders, readPiGlobalSettings, getDefaultThinkingLevel, getMidStreamBehavior, resetManagedAnthropicAuthEnvVars, getPersistedUiLanguage, resolveTitleLanguageName, listSubagentTemplates, type PiExtensionReloadActiveSession, type PiExtensionReloadResult } from '@mortise/shared/config'
 import { SessionShareTransferService } from '@mortise/server-core/services'
 import { InitGate, WorkspaceLocationActivityRegistry, type WorkspaceTopologySessionCoordinator } from '@mortise/server-core/domain'
@@ -98,7 +101,14 @@ import {
   type PiBranchProjectionEntry,
   type ProjectionApplyResult,
 } from '../projection'
-import { CapabilityRouter, ELECTRON_CAPABILITY_POLICY_V1, createCapabilityAuthorizationPolicy, type CapabilityProvider } from '../capabilities'
+import {
+  CapabilityRouter,
+  ELECTRON_CAPABILITY_POLICY_V1,
+  createCapabilityAuthorizationPolicy,
+  createSessionRuntimeCapabilityProviders,
+  type CapabilityProvider,
+} from '../capabilities'
+import { createDefaultOperationCoordinator, type OperationCoordinator } from '../operations'
 import { messageToStored, storedToMessage, type Message, type StoredAttachment, type ToolDisplayMeta } from '@mortise/core/types'
 import { ATTACHMENT_MESSAGE_TOTAL_LIMIT_BYTES, ATTACHMENT_SINGLE_FILE_LIMIT_BYTES, atomicWriteFile, formatToolInputPaths, perf, encodeIconToDataUrlAsync, getEmojiIcon, resolveToolIcon, readFileAttachment, selectSpreadMessages, normalizePath, writeRuntimeLog } from '@mortise/shared/utils'
 import { loadAllSkills } from '@mortise/shared/skills'
@@ -117,9 +127,6 @@ import { createAutomationWebhookExecutor } from '../services/automation-webhook-
 import { buildBackendRuntimeSignature, buildRestartRequiredSignature, filterAttachmentsForModelInput, normalizeProviderRuntimeBaseUrl } from './runtime-config'
 import {
   FileToolSideEffectLedger,
-  getDefaultSessionTurnControl,
-  type SessionTurnControl,
-  type SessionTurnControlHandle,
   type ToolSideEffectRecorder,
 } from '../session-control'
 import { ExtensionFrontendStateCache, type ExtensionFrontendStateEvent } from './extension-frontend-state-cache'
@@ -747,8 +754,6 @@ export async function resolveToolDisplayMeta(
 /** Agent type - unified backend interface for all providers */
 type AgentInstance = AgentBackend
 
-export const MAX_PENDING_FOLLOW_UPS = 16
-
 export type SessionBackendFactory = (
   args: {
     context: Parameters<typeof createBackendFromResolvedContext>[0]['context']
@@ -767,13 +772,14 @@ export type WorkspaceRuntimeBackendFactory = (args: {
 export interface SessionManagerOptions {
   resolveWorkspaceByNameOrId?: (nameOrId: string) => Workspace | null
   createSessionBackend?: SessionBackendFactory
-  sessionTurnControl?: SessionTurnControl
   toolSideEffectRecorderFactory?: (workspaceId: string, sessionId: string) => ToolSideEffectRecorder
   extensionRuntime?: BackendExtensionRuntimeRegistry
   /** Durable outbox boundary; injectable for isolated recovery/durability tests. */
   messageOutbox?: MessageOutboxStore
   /** Optional Workspace warmup backend used by focused runtime tests. */
   createWorkspaceRuntimeBackend?: WorkspaceRuntimeBackendFactory
+  /** Durable receipts for Extension-initiated Session operations. */
+  operationCoordinator?: OperationCoordinator
 }
 
 interface WorkspaceRuntimeWarmup {
@@ -784,17 +790,6 @@ interface WorkspaceRuntimeWarmup {
   error?: string
   agent?: AgentBackend
   ready: Promise<void>
-}
-
-export class SessionFollowUpQueueFullError extends Error {
-  readonly code = 'SESSION_FOLLOW_UP_QUEUE_FULL' as const
-  readonly accepted = false
-  readonly retryable = false
-
-  constructor(readonly sessionId: string, readonly limit: number) {
-    super(`Session ${sessionId} already has ${limit} pending follow-up messages`)
-    this.name = 'SessionFollowUpQueueFullError'
-  }
 }
 
 export type WorkspaceSessionInterruptionTarget =
@@ -816,8 +811,36 @@ interface SubagentDeliveryRecord extends ChildTaskBackgroundOperation {
 }
 
 interface SubagentDeliveryLedger {
-  schemaVersion: 1
+  schemaVersion: 2
   operations: Record<string, SubagentDeliveryRecord>
+}
+
+interface LegacySubagentDeliveryRecord {
+  operationId?: string
+  attemptId?: string
+  runtimeId?: string
+  childSessionId?: string
+  sessionPath?: string
+  state?: SubagentDeliveryRecord['state']
+  status?: SubagentDeliveryRecord['status']
+  output?: string
+  modified?: string
+  messageId?: string
+  updatedAt?: string
+}
+
+interface ChildAttemptRecord {
+  attemptId: string
+  runtimeId: string
+  childSessionId: string
+  sessionPath: string
+  state: 'open' | 'closed'
+  operationIds: Set<string>
+  pendingTools: Map<string, { toolName: string; result?: { isError: boolean } }>
+  receiptChain: Promise<void>
+  normalSettlement?: Promise<void>
+  revocationSettlement?: Promise<void>
+  operationSettlements: Map<string, Promise<void>>
 }
 
 interface ManagedSession {
@@ -919,15 +942,10 @@ interface ManagedSession {
     onAck?: (messageId: string) => void
     onAccepted?: (messageId: string) => void
     onReject?: (error: unknown) => void
-    // A queued follow-up that lost the next-turn control race remains visible
-    // in the backend-local pending area, but must not be replayed implicitly.
-    controlRejected?: boolean
   }>
-  turnControl?: SessionTurnControlHandle
+  agentEventChain: Promise<void>
   pendingToolSideEffects: Map<string, { attemptId: string; toolName: string }>
   pendingInputAcks: Map<string, { resolve: (messageId: string) => void; reject: (error: unknown) => void }>
-  // Runtime-only marker for the queued message currently being replayed.
-  replayingQueuedMessageId?: string
   // Workspace location captured when the current unit of work started. It must
   // not be re-derived after a topology mutation.
   activeWorkspaceLocationId?: string
@@ -953,10 +971,13 @@ interface ManagedSession {
   lastSentAttachments?: FileAttachment[]
   lastSentStoredAttachments?: StoredAttachment[]
   lastSentOptions?: SendMessageOptions
+  lastSentMessageId?: string
   // Flag to prevent infinite retry loops (reset at start of each sendMessage)
   authRetryAttempted?: boolean
   // Flag indicating auth retry is in progress (to prevent complete handler from interfering)
   authRetryInProgress?: boolean
+  authRetryFailureCode?: string
+  authRetryTopologyGeneration?: number
   // Whether this session is hidden from session list (e.g., mini edit sessions)
   hidden?: boolean
   // Ordinary new conversations remain internal until Pi atomically persists
@@ -1042,6 +1063,7 @@ export function createManagedSession(
     processingGeneration: 0,
     workspaceTopologyGeneration: 0,
     messageQueue: [],
+    agentEventChain: Promise.resolve(),
     pendingToolSideEffects: new Map(),
     pendingInputAcks: new Map(),
     backgroundShellCommands: new Map(),
@@ -1388,7 +1410,6 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
   private readonly resolveWorkspaceByNameOrId: (nameOrId: string) => Workspace | null
   /** Session backend construction boundary; production uses the canonical shared factory. */
   private readonly createSessionBackend: SessionBackendFactory
-  private readonly sessionTurnControl: SessionTurnControl
   private readonly toolSideEffectRecorderFactory: (workspaceId: string, sessionId: string) => ToolSideEffectRecorder
   private readonly toolSideEffectWrites = new Map<string, Promise<void>>()
   private sessions: Map<string, ManagedSession> = new Map()
@@ -1402,7 +1423,9 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
   private subagentDeliveryWrites = new Map<string, Promise<void>>()
   private subagentDeliveryTasks = new Map<string, Promise<void>>()
   private subagentLifecycleTasks = new Map<string, Set<Promise<void>>>()
+  private readonly childAttempts = new Map<string, ChildAttemptRecord>()
   private readonly workspaceLocationActivities = new WorkspaceLocationActivityRegistry()
+  private readonly extensionOperationCoordinator: OperationCoordinator
   private capabilityPrompt?: (request: import('@mortise/shared/protocol').CapabilityRequestV1) => Promise<boolean>
   private readonly capabilityRouter = new CapabilityRouter({
     requireDeclarations: true,
@@ -1539,7 +1562,6 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
   constructor(options: SessionManagerOptions = {}) {
     this.resolveWorkspaceByNameOrId = options.resolveWorkspaceByNameOrId ?? getWorkspaceByNameOrId
     this.createSessionBackend = options.createSessionBackend ?? (args => args.createDefaultBackend())
-    this.sessionTurnControl = options.sessionTurnControl ?? getDefaultSessionTurnControl()
     this.extensionRuntime = options.extensionRuntime ?? new BackendExtensionRuntimeRegistry({
       backendType: backendTypeFromProcess(),
     })
@@ -1552,6 +1574,56 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
       }))
     this.toolSideEffectRecorderFactory = options.toolSideEffectRecorderFactory
       ?? ((workspaceId, sessionId) => new FileToolSideEffectLedger(workspaceId, sessionId))
+    this.extensionOperationCoordinator = options.operationCoordinator ?? createDefaultOperationCoordinator()
+    for (const provider of createSessionRuntimeCapabilityProviders({
+      getSession: sessionId => this.getSession(sessionId),
+      listSessions: workspaceId => this.getSessions(workspaceId),
+      getSessionCwd: sessionId => {
+        const managed = this.sessions.get(sessionId)
+        return managed ? requirePrimaryLocalWorkspaceRoot(managed.workspace) : undefined
+      },
+      submitMessage: (sessionId, message, operationId, delivery) => (
+        this.submitExtensionSessionMessage(sessionId, message, operationId, delivery)
+      ),
+      compactSession: async (sessionId, operationId, instructions) => {
+        const command = instructions ? `/compact ${instructions}` : '/compact'
+        await this.sendMessage(sessionId, command, undefined, undefined, { operationId })
+      },
+      interruptSession: sessionId => this.cancelProcessing(sessionId),
+      updateSessionModel: (sessionId, workspaceId, model, provider) => (
+        this.updateSessionModel(sessionId, workspaceId, model, provider)
+      ),
+      updateSessionThinkingLevel: (sessionId, level) => this.setSessionThinkingLevel(sessionId, level),
+      createAndSubmit: async (workspaceId, message, operationId, options) => {
+        const result = await this.createAndSendFirstTurn({
+          workspaceId,
+          message,
+          createOptions: options.name ? { name: options.name } : undefined,
+          sendOptions: { operationId },
+          signal: options.signal,
+        })
+        return result.session.id
+      },
+      runChildTask: async input => {
+        const managed = this.sessions.get(input.parentSessionId)
+        if (!managed || managed.deleting) throw new Error('Parent Session is unavailable')
+        const agent = managed.agent
+        if (!agent?.spawnChildSession) throw new Error('Child task execution is unavailable for this Session')
+        const parentSessionId = agent.getSessionId()
+        if (!parentSessionId) throw new Error('Parent Pi Session identity is unavailable')
+        return agent.spawnChildSession(parentSessionId, {
+          prompt: input.prompt,
+          connection: managed.provider,
+          model: input.model ?? managed.model,
+          thinkingLevel: input.thinkingLevel,
+          systemPrompt: input.systemPrompt,
+          tools: input.tools,
+          background: false,
+        })
+      },
+    }, this.extensionOperationCoordinator)) {
+      this.capabilityRouter.register(provider)
+    }
   }
 
   /**
@@ -1577,26 +1649,6 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
     if (was !== processing) {
       this.emitUnreadSummaryChanged()
     }
-  }
-
-  private async acquireTurnControl(managed: ManagedSession): Promise<SessionTurnControlHandle> {
-    if (managed.turnControl?.valid) return managed.turnControl
-    const handle = await this.sessionTurnControl.acquire(managed.id)
-    managed.turnControl = handle
-    managed.pendingToolSideEffects.clear()
-    return handle
-  }
-
-  private hasTurnControl(managed: ManagedSession, expected?: SessionTurnControlHandle): boolean {
-    const current = managed.turnControl
-    return Boolean(current?.valid && (!expected || current === expected))
-  }
-
-  private assertTurnControl(managed: ManagedSession, expected?: SessionTurnControlHandle): SessionTurnControlHandle {
-    if (!this.hasTurnControl(managed, expected)) {
-      throw new Error(`Rejected stale Session runtime activity for ${managed.id}`)
-    }
-    return managed.turnControl!
   }
 
   private async recordToolSideEffect(
@@ -1633,13 +1685,6 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
       })
       managed.pendingToolSideEffects.delete(toolCallId)
     }
-  }
-
-  private async releaseTurnControl(managed: ManagedSession): Promise<void> {
-    const handle = managed.turnControl
-    if (!handle) return
-    managed.turnControl = undefined
-    await handle.release()
   }
 
   /** Wait until initialize() has completed (sessions loaded from disk).
@@ -2121,8 +2166,7 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
     if (!managed.messagesLoaded) this.hydrateMessagesForColdPersist(managed)
     let recovered = 0
     for (const item of queued) {
-      if (managed.messageQueue.some(queuedMessage => queuedMessage.messageId === item.messageId)
-        || managed.replayingQueuedMessageId === item.messageId) continue
+      if (managed.messageQueue.some(queuedMessage => queuedMessage.messageId === item.messageId)) continue
       const overlay = managed.messages.find(message => message.id === item.messageId)
       const storedAttachments = overlay?.attachments
       const attachments = storedAttachments?.flatMap((attachment) => {
@@ -2147,7 +2191,6 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
 
     if (recovered > 0) {
       sessionLog.info(`Recovered ${recovered} queued Pi projection message(s) for session ${managed.id}`)
-      if (!managed.isProcessing) setImmediate(() => this.processNextQueuedMessage(managed.id))
     }
   }
 
@@ -2509,6 +2552,22 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
     }
   }
 
+  private handlePiUserMessagePersisted(managed: ManagedSession, clientMutationId?: string): boolean {
+    if (!clientMutationId) return false
+    const pendingAck = managed.pendingInputAcks.get(clientMutationId)
+    if (pendingAck) {
+      managed.pendingInputAcks.delete(clientMutationId)
+      pendingAck.resolve(clientMutationId)
+    }
+    this.messageOutbox.update(clientMutationId, {
+      status: 'pi_persisted',
+      updatedAt: Date.now(),
+      error: undefined,
+    })
+    if (!managed.publicationState) this.removeMessageOutboxBestEffort(clientMutationId)
+    return pendingAck !== undefined
+  }
+
   private outboxAttempt(clientMutationId: string): number {
     return this.messageOutbox.listPending().find(record => record.clientMutationId === clientMutationId)?.attempt ?? 1
   }
@@ -2608,41 +2667,9 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
           if (!managed.publicationState) this.removeMessageOutboxBestEffort(record.clientMutationId)
           continue
         }
-        sessionLog.info(`Replaying Mortise-accepted message ${record.clientMutationId}`)
-        void this.sendMessage(
-          record.sessionId,
-          record.message,
-          record.attachments as unknown as FileAttachment[] | undefined,
-          record.storedAttachments as unknown as StoredAttachment[] | undefined,
-          record.options as unknown as SendMessageOptions | undefined,
-          record.clientMutationId,
-          false,
-          undefined,
-          { callerClientId: record.callerClientId },
-        ).catch(error => {
-          const publicationError = error instanceof SessionPublicationDurabilityError
-            ? error
-            : null
-          if (publicationError) {
-            managed.pendingPublicationFailure = {
-              code: publicationError.code,
-              message: publicationError.message,
-              data: publicationError.data,
-            }
-            if (record.callerClientId) {
-              this.sendEventToClient({
-                type: 'session_failure',
-                sessionId: managed.id,
-                error: managed.pendingPublicationFailure,
-              }, record.callerClientId)
-            }
-          }
-          this.messageOutbox.update(record.clientMutationId, {
-            status: 'failed',
-            updatedAt: Date.now(),
-            error: error instanceof Error ? error.message : String(error),
-          })
-        })
+		sessionLog.info(
+		  `Retained Mortise-accepted message ${record.clientMutationId} for explicit retry after restart`,
+		)
       } catch (error) {
         this.messageOutbox.update(record.clientMutationId, {
           status: 'failed', updatedAt: Date.now(), error: error instanceof Error ? error.message : String(error),
@@ -3050,16 +3077,282 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
     return join(getSessionStoragePath(managed.workspace.id, managed.id), 'subagent-deliveries.json')
   }
 
+  private childAttemptKey(managed: ManagedSession, runtimeId: string): string {
+    return `${managed.id}:${runtimeId}`
+  }
+
+  private getChildAttemptRecord(
+    managed: ManagedSession,
+    runtimeId: string,
+    attemptId?: string,
+  ): ChildAttemptRecord | undefined {
+    const record = this.childAttempts.get(this.childAttemptKey(managed, runtimeId))
+    if (!record || (attemptId && record.attemptId !== attemptId)) return undefined
+    return record
+  }
+
+  private maybeDeleteChildAttempt(managed: ManagedSession, record: ChildAttemptRecord): void {
+    if (
+      record.state === 'closed'
+      && record.operationIds.size === 0
+      && record.pendingTools.size === 0
+      && this.childAttempts.get(this.childAttemptKey(managed, record.runtimeId)) === record
+    ) {
+      this.childAttempts.delete(this.childAttemptKey(managed, record.runtimeId))
+    }
+  }
+
+  private enqueueChildReceipt(record: ChildAttemptRecord, work: () => Promise<void>): Promise<void> {
+    const next = record.receiptChain.catch(() => undefined).then(work)
+    record.receiptChain = next
+    return next
+  }
+
+  private async registerChildAttempt(
+    managed: ManagedSession,
+    request: ChildAttemptRegistrationRequest,
+  ): Promise<ChildAttemptRegistration> {
+    if (managed.deleting || this.sessions.get(managed.id) !== managed) {
+      throw new Error('The parent Session is unavailable for a child Attempt')
+    }
+
+    const key = this.childAttemptKey(managed, request.runtimeId)
+    let record = this.childAttempts.get(key)
+    let created = false
+    if (record) {
+      if (
+        record.state !== 'open'
+        || record.attemptId !== request.attemptId
+        || record.childSessionId !== request.childSessionId
+      ) {
+        throw new Error('The child Attempt is stale or does not belong to this runtime')
+      }
+    } else {
+      record = {
+        attemptId: request.attemptId,
+        runtimeId: request.runtimeId,
+        childSessionId: request.childSessionId,
+        sessionPath: request.sessionPath,
+        state: 'open',
+        operationIds: new Set(),
+        pendingTools: new Map(),
+        receiptChain: Promise.resolve(),
+        operationSettlements: new Map(),
+      }
+      this.childAttempts.set(key, record)
+      created = true
+    }
+
+    let operationId: string | undefined
+    if (request.background) {
+      operationId = randomUUID()
+      const operation: ChildTaskBackgroundOperation = {
+        operationId,
+        attemptId: record.attemptId,
+        runtimeId: record.runtimeId,
+        childSessionId: record.childSessionId,
+        sessionPath: record.sessionPath,
+      }
+      try {
+        await this.recordBackgroundChildOperation(managed, operation)
+        record.operationIds.add(operationId)
+        this.workspaceLocationActivities.begin({
+          workspaceId: managed.workspace.id,
+          locationId: managed.activeWorkspaceLocationId ?? managed.workspace.primaryLocationId,
+          kind: 'child-task',
+          activityId: `${managed.id}:${record.childSessionId}`,
+          ownerSessionId: managed.id,
+        })
+      } catch (error) {
+        if (created && this.childAttempts.get(key) === record) this.childAttempts.delete(key)
+        throw error
+      }
+    }
+
+    return { attemptId: record.attemptId, operationId }
+  }
+
+  private async abandonChildAttempt(
+    managed: ManagedSession,
+    runtimeId: string,
+    childSessionId: string,
+    attemptId: string,
+  ): Promise<void> {
+    const record = this.getChildAttemptRecord(managed, runtimeId, attemptId)
+    if (!record || record.childSessionId !== childSessionId) return
+    record.state = 'closed'
+    if (!record.revocationSettlement) {
+      const task = (async () => {
+        await record.normalSettlement?.catch(() => undefined)
+        await this.settleChildToolSideEffects(managed, record)
+        for (const operationId of [...record.operationIds]) {
+          await this.settleChildOperation(managed, record, {
+            operationId,
+            attemptId,
+            runtimeId,
+            childSessionId,
+            sessionPath: record.sessionPath,
+            status: 'failed',
+            output: 'Child Attempt registration failed after Pi rejected the request.',
+            modified: new Date().toISOString(),
+          })
+        }
+        this.maybeDeleteChildAttempt(managed, record)
+      })()
+      record.revocationSettlement = task
+      void task.catch(() => {
+        if (record.revocationSettlement === task) record.revocationSettlement = undefined
+      })
+    }
+    await record.revocationSettlement
+  }
+
+  private async settleChildAttempt(
+    managed: ManagedSession,
+    runtimeId: string,
+    childSessionId: string,
+    attemptId: string,
+  ): Promise<void> {
+    const record = this.getChildAttemptRecord(managed, runtimeId, attemptId)
+    if (!record || record.childSessionId !== childSessionId) return
+    record.state = 'closed'
+    if (!record.normalSettlement) {
+      const task = (async () => {
+        await this.settleChildToolSideEffects(managed, record)
+        this.maybeDeleteChildAttempt(managed, record)
+      })()
+      record.normalSettlement = task
+      void task.catch(() => {
+        if (record.normalSettlement === task) record.normalSettlement = undefined
+      })
+    }
+    await record.normalSettlement
+  }
+
+  private async settleChildToolSideEffects(
+    managed: ManagedSession,
+    record: ChildAttemptRecord,
+  ): Promise<void> {
+    await this.enqueueChildReceipt(record, async () => {
+      for (const [toolCallId, tool] of [...record.pendingTools]) {
+        await this.recordToolSideEffect(managed, {
+          attemptId: record.attemptId,
+          toolCallId,
+          toolName: tool.toolName,
+          status: tool.result ? 'completed' : 'outcome-unknown',
+          ...(tool.result ? { isError: tool.result.isError } : {}),
+        })
+        record.pendingTools.delete(toolCallId)
+      }
+    })
+  }
+
+  private async completeChildToolSideEffect(
+    managed: ManagedSession,
+    result: ChildToolExecutionCompleted,
+  ): Promise<void> {
+    const record = this.getChildAttemptRecord(managed, result.runtimeId, result.attemptId)
+    const tool = record?.pendingTools.get(result.toolCallId)
+    if (!record || !tool) return
+    tool.result = { isError: result.isError }
+    await this.enqueueChildReceipt(record, async () => {
+      const current = record.pendingTools.get(result.toolCallId)
+      if (!current) return
+      await this.recordToolSideEffect(managed, {
+        attemptId: record.attemptId,
+        toolCallId: result.toolCallId,
+        toolName: current.toolName,
+        status: 'completed',
+        isError: result.isError,
+      })
+      record.pendingTools.delete(result.toolCallId)
+      this.maybeDeleteChildAttempt(managed, record)
+    })
+  }
+
+  private settleChildOperation(
+    managed: ManagedSession,
+    record: ChildAttemptRecord,
+    operation: ChildTaskSettledOperation,
+    options: { deliver?: boolean } = {},
+  ): Promise<void> {
+    const existing = record.operationSettlements.get(operation.operationId)
+    if (existing) return existing
+    const task = (async () => {
+      await this.settleBackgroundChildOperation(managed, operation, options)
+      record.operationIds.delete(operation.operationId)
+      if (record.operationIds.size === 0) {
+        this.workspaceLocationActivities.end('child-task', `${managed.id}:${operation.childSessionId}`)
+      }
+      this.maybeDeleteChildAttempt(managed, record)
+    })()
+    record.operationSettlements.set(operation.operationId, task)
+    void task.catch(() => {
+      if (record.operationSettlements.get(operation.operationId) === task) {
+        record.operationSettlements.delete(operation.operationId)
+      }
+    })
+    return task
+  }
+
+  private async closeChildAttempts(
+    managed: ManagedSession,
+    reason: string,
+  ): Promise<void> {
+    const records = [...this.childAttempts.entries()]
+      .filter(([key]) => key.startsWith(`${managed.id}:`))
+      .map(([, record]) => record)
+    for (const record of records) {
+      record.state = 'closed'
+      await record.normalSettlement?.catch(() => undefined)
+      await this.settleChildToolSideEffects(managed, record)
+      for (const operationId of [...record.operationIds]) {
+        await this.settleChildOperation(managed, record, {
+          operationId,
+          attemptId: record.attemptId,
+          runtimeId: record.runtimeId,
+          childSessionId: record.childSessionId,
+          sessionPath: record.sessionPath,
+          status: 'interrupted',
+          output: `Child Attempt was interrupted because ${reason}.`,
+          modified: new Date().toISOString(),
+        }, { deliver: false })
+      }
+      this.maybeDeleteChildAttempt(managed, record)
+    }
+  }
+
   private async readSubagentDeliveryLedger(managed: ManagedSession): Promise<SubagentDeliveryLedger> {
     try {
-      const parsed = JSON.parse(await readFile(this.getSubagentDeliveryLedgerPath(managed), 'utf8')) as Partial<SubagentDeliveryLedger>
-      if (parsed.schemaVersion === 1 && parsed.operations && typeof parsed.operations === 'object') {
-        return { schemaVersion: 1, operations: parsed.operations }
+      const parsed = JSON.parse(await readFile(this.getSubagentDeliveryLedgerPath(managed), 'utf8')) as {
+        schemaVersion?: number
+        operations?: Record<string, LegacySubagentDeliveryRecord>
+      }
+      if ((parsed.schemaVersion === 1 || parsed.schemaVersion === 2) && parsed.operations && typeof parsed.operations === 'object') {
+        const operations: Record<string, SubagentDeliveryRecord> = {}
+        for (const [key, value] of Object.entries(parsed.operations)) {
+          const operationId = value.operationId ?? key
+          if (!operationId || !value.childSessionId || !value.sessionPath || !value.state || !value.messageId) continue
+          operations[operationId] = {
+            operationId,
+            attemptId: value.attemptId ?? `legacy-execution:${operationId}`,
+            runtimeId: value.runtimeId ?? `legacy-runtime:${value.childSessionId}`,
+            childSessionId: value.childSessionId,
+            sessionPath: value.sessionPath,
+            state: value.state,
+            status: value.status,
+            output: value.output,
+            modified: value.modified,
+            messageId: value.messageId,
+            updatedAt: value.updatedAt ?? new Date().toISOString(),
+          }
+        }
+        return { schemaVersion: 2, operations }
       }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
     }
-    return { schemaVersion: 1, operations: {} }
+    return { schemaVersion: 2, operations: {} }
   }
 
   private mutateSubagentDeliveryLedger(
@@ -3103,6 +3396,7 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
   private async settleBackgroundChildOperation(
     managed: ManagedSession,
     operation: ChildTaskSettledOperation,
+    options: { deliver?: boolean } = {},
   ): Promise<void> {
     await this.mutateSubagentDeliveryLedger(managed, (ledger) => {
       const existing = ledger.operations[operation.operationId]
@@ -3114,7 +3408,9 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
         updatedAt: new Date().toISOString(),
       }
     })
-    await this.deliverBackgroundChildOperation(managed, operation.operationId)
+    if (options.deliver !== false) {
+      await this.deliverBackgroundChildOperation(managed, operation.operationId)
+    }
   }
 
   private deliverBackgroundChildOperation(managed: ManagedSession, operationId: string): Promise<void> {
@@ -3168,7 +3464,6 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
           acknowledge,
           undefined,
           false,
-          true,
         ).then(acknowledge, reject)
       })
     }
@@ -3227,6 +3522,8 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
         if (!child || child.status === 'running') continue
         await this.settleBackgroundChildOperation(managed, {
           operationId: operation.operationId,
+          attemptId: operation.attemptId,
+          runtimeId: operation.runtimeId,
           childSessionId: operation.childSessionId,
           sessionPath: operation.sessionPath,
           status: child.status,
@@ -3258,19 +3555,16 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
     if (input.attachmentStagingId) this.validateFirstTurnAttachmentStagingId(input.attachmentStagingId)
 
     const requestedSessionId = this.generateProvisionalSessionId(workspace.id)
-    const control = await this.sessionTurnControl.acquire(requestedSessionId)
     let created: Session | null = null
     try {
       created = await this.createSessionInternal(input.workspaceId, input.createOptions, true, requestedSessionId)
       const managed = this.sessions.get(created.id)
       if (!managed) throw new Error(`Session ${created.id} was not created`)
-      managed.turnControl = control
       await prepareProvisional?.(managed)
       await input.beforePublish?.(managedToSession(managed, { messages: managed.messages }))
     } catch (error) {
       const managed = created ? this.sessions.get(created.id) : undefined
       if (managed) await this.discardUnacceptedFirstTurn(managed, error)
-      else await control.release()
       await this.cleanupFirstTurnAttachmentStaging(workspace.id, input.attachmentStagingId)
       throw error
     }
@@ -3347,7 +3641,6 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
         undefined,
         undefined,
         { callerClientId: input.callerClientId },
-        false,
         false,
         settleAccepted,
       ).then(async () => {
@@ -3659,9 +3952,8 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
       })
     }
 
-    // Ordinary first turns use a preallocated identity for the control race,
-    // but createAndSendFirstTurn does not return it until Pi durably confirms
-    // the canonical user entry.
+    // Ordinary first turns preallocate only the persistent Session identity.
+    // Pi creates the Attempt after it accepts the first Session command.
     const provisional = provisionalFirstTurn && !options?.hidden && !validatedBranch
     const now = Date.now()
     if (provisional && requestedSessionId) validateSessionId(requestedSessionId)
@@ -3821,10 +4113,15 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
   private async disposeManagedAgentRuntime(
     managed: ManagedSession,
     reason: string,
-    options: { propagateFailure?: boolean } = {},
+    options: { propagateFailure?: boolean; expectedAgent?: AgentInstance } = {},
   ): Promise<void> {
     const sessionId = managed.id
-    let disposalError: unknown
+    const disposalErrors: unknown[] = []
+    let childRevocationFailed = false
+
+    if (options.expectedAgent && managed.agent !== options.expectedAgent) {
+      throw new Error(`Refused to dispose a replacement agent for ${sessionId} during ${reason}`)
+    }
 
     if (managed.agent) {
       try {
@@ -3835,8 +4132,16 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
         }
       } catch (error) {
         sessionLog.warn(`Failed to dispose agent for ${sessionId} during ${reason}: ${error instanceof Error ? error.message : error}`)
-        disposalError = error
+        disposalErrors.push(error)
       }
+    }
+
+    try {
+      await this.closeChildAttempts(managed, reason)
+    } catch (error) {
+      sessionLog.warn(`Failed to close child Attempts for ${sessionId} during ${reason}: ${error instanceof Error ? error.message : error}`)
+      disposalErrors.push(error)
+      childRevocationFailed = true
     }
 
     managed.agent = null
@@ -3846,7 +4151,9 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
     managed.backendRuntimeSignature = undefined
     managed.backendRestartSignature = undefined
     unregisterSessionScopedToolCallbacks(sessionId)
-    if (disposalError && options.propagateFailure) throw disposalError
+    if (disposalErrors.length > 0 && (options.propagateFailure || childRevocationFailed)) {
+      throw new AggregateError(disposalErrors, `Failed to fully dispose Session runtime ${sessionId} during ${reason}`)
+    }
   }
 
   /**
@@ -4186,19 +4493,41 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
         forwardExtensionEvent(event)
       }
       const onPiProjectionEvent = (event: PiProjectionEventV1) => {
-        if (!this.hasTurnControl(managed)) {
-          writeRuntimeLog('warn', {
-            scope: 'session-control',
-            event: 'stale_projection_event_rejected',
-            meta: { sessionId: managed.id, runtimeId: event.runtimeId, sequence: event.seq },
-          })
-          return
-        }
         try {
           this.applyPiProjectionEvent(event)
         } catch (error) {
           sessionLog.error(`Failed to apply Pi projection event for ${managed.id}:`, error)
         }
+      }
+      const onAgentEvent = (event: AgentEvent) => {
+        managed.agentEventChain = managed.agentEventChain.then(async () => {
+          if (this.sessions.get(managed.id) !== managed || managed.deleting) return
+          if (event.type === 'pi_user_message_persisted') {
+            this.handlePiUserMessagePersisted(managed, event.clientMutationId)
+            return
+          }
+          await this.processEvent(managed, event)
+          if (event.type !== 'complete') return
+          if (managed.stopRequested) {
+            await this.onProcessingStopped(managed.id, 'interrupted')
+            return
+          }
+          if (managed.authRetryInProgress) {
+            await this.resumeAfterAuthFailure(managed)
+            return
+          }
+          await this.onProcessingStopped(
+            managed.id,
+            event.terminalStatus === 'failed' ? 'error' : 'complete',
+          )
+        }).catch(async error => {
+          sessionLog.error(`Failed to consume Pi Session event for ${managed.id}:`, error)
+          if (this.sessions.get(managed.id) === managed && managed.isProcessing) {
+            await this.onProcessingStopped(managed.id, 'error').catch(settlementError => {
+              sessionLog.error(`Failed to settle Session ${managed.id} after event consumer error:`, settlementError)
+            })
+          }
+        })
       }
       const onHostCapabilityRequest = (
         request: import('@mortise/shared/protocol').CapabilityRequestV1,
@@ -4211,9 +4540,8 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
         this.capabilityRouter.cancel(requestId, runtimeId)
       }
       const onHostCapabilityRuntimeReleased = (runtimeId: string) => {
-        this.capabilityRouter.releaseRuntime(runtimeId)
+		this.capabilityRouter.releaseRuntime(runtimeId)
       }
-
       const getRecoveryMessages = () => {
         const snapshot = this.piProjectionBySession.get(managed.id)?.createSnapshot()
         return getPiProjectionRecoveryMessages(snapshot)
@@ -4222,25 +4550,53 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
       const getPiProjectionSnapshot = () => (
         this.piProjectionBySession.get(managed.id)?.createSnapshot()
       )
-      const onChildTaskBackgroundStarted = async (operation: ChildTaskBackgroundOperation) => {
-        if (managed.deleting || this.sessions.get(managed.id) !== managed) return
-        this.workspaceLocationActivities.begin({
-          workspaceId: managed.workspace.id,
-          locationId: managed.activeWorkspaceLocationId ?? managed.workspace.primaryLocationId,
-          kind: 'child-task',
-          activityId: `${managed.id}:${operation.childSessionId}`,
-          ownerSessionId: managed.id,
-        })
-        await this.trackSubagentLifecycleTask(managed, this.recordBackgroundChildOperation(managed, operation))
+      const onChildAttemptStarted = (request: ChildAttemptRegistrationRequest) => {
+        const task = this.registerChildAttempt(managed, request)
+        void this.trackSubagentLifecycleTask(managed, task.then(() => undefined))
+        return task
       }
+      const getChildAttempt = (runtimeId: string, childSessionId: string): ChildAttemptRegistration | undefined => {
+        const record = this.getChildAttemptRecord(managed, runtimeId)
+        if (!record || record.state !== 'open' || record.childSessionId !== childSessionId) return undefined
+        return { attemptId: record.attemptId }
+      }
+      const onChildAttemptAbandoned = (runtimeId: string, childSessionId: string, attemptId: string) => (
+        this.trackSubagentLifecycleTask(
+          managed,
+          this.abandonChildAttempt(managed, runtimeId, childSessionId, attemptId),
+        )
+      )
+      const onChildAttemptSettled = (runtimeId: string, childSessionId: string, attemptId: string) => (
+        this.trackSubagentLifecycleTask(
+          managed,
+          this.settleChildAttempt(managed, runtimeId, childSessionId, attemptId),
+        )
+      )
       const onChildTaskSettled = async (operation: ChildTaskSettledOperation) => {
-        if (managed.deleting || this.sessions.get(managed.id) !== managed) return
-        try {
-          await this.trackSubagentLifecycleTask(managed, this.settleBackgroundChildOperation(managed, operation))
-        } finally {
-          this.workspaceLocationActivities.end('child-task', `${managed.id}:${operation.childSessionId}`)
+        const record = this.getChildAttemptRecord(managed, operation.runtimeId, operation.attemptId)
+        if (!record || !record.operationIds.has(operation.operationId)) {
+          writeRuntimeLog('warn', {
+            scope: 'session-control',
+            event: 'stale_child_settlement_rejected',
+            meta: {
+              sessionId: managed.id,
+              runtimeId: operation.runtimeId,
+              attemptId: operation.attemptId,
+              operationId: operation.operationId,
+            },
+          })
+          return
         }
+        await this.trackSubagentLifecycleTask(
+          managed,
+          this.settleChildOperation(managed, record, operation, {
+            deliver: !managed.deleting && this.sessions.get(managed.id) === managed,
+          }),
+        )
       }
+      const onChildToolExecutionCompleted = (result: ChildToolExecutionCompleted) => (
+        this.trackSubagentLifecycleTask(managed, this.completeChildToolSideEffect(managed, result))
+      )
 
       const getBranchFallbackMessages = () => {
         if (!managed.branchFromMessageId) return []
@@ -4352,12 +4708,17 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
         // 扩展事件桥接回调：将 Pi RpcClient的扩展事件转发到渲染进程
         onExtensionEvent,
         onPiProjectionEvent,
-        onChildTaskBackgroundStarted,
+        onAgentEvent,
+        onChildAttemptStarted,
+        getChildAttempt,
+        onChildAttemptAbandoned,
+        onChildAttemptSettled,
         onChildTaskSettled,
+        onChildToolExecutionCompleted,
         onHostCapabilityRequest,
         onHostCapabilityDeclaration,
         onHostCapabilityCancel,
-        onHostCapabilityRuntimeReleased,
+		onHostCapabilityRuntimeReleased,
       }
       managed.agent = this.createSessionBackend({
         context: backendContext,
@@ -4378,20 +4739,17 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
 
       managed.agent.onDebug = (msg: string) => sessionLog.info(msg)
 
-      managed.agent.onBeforeToolExecution = async ({ toolCallId, toolName }) => {
-        const control = managed.turnControl
-        if (!control?.valid || !managed.isProcessing) {
-          return { allowed: false, reason: 'This Session turn no longer has execution control' }
-        }
+      managed.agent.onBeforeToolExecution = async ({ runtimeId, toolCallId, toolName, attemptId }) => {
+        if (!attemptId) return { allowed: false, reason: 'Pi Attempt identity is unavailable' }
         try {
-          control.assertValid()
           await this.recordToolSideEffect(managed, {
-            attemptId: control.attemptId,
+			attemptId,
             toolCallId,
             toolName,
             status: 'started',
           })
-          managed.pendingToolSideEffects.set(toolCallId, { attemptId: control.attemptId, toolName })
+          if (runtimeId) this.getChildAttemptRecord(managed, runtimeId, attemptId)?.pendingTools.set(toolCallId, { toolName })
+          else managed.pendingToolSideEffects.set(toolCallId, { attemptId, toolName })
           return { allowed: true }
         } catch (error) {
           sessionLog.error(`Failed to establish tool side-effect receipt for ${toolCallId}:`, error)
@@ -4717,7 +5075,7 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
    * rebuild idle session runtimes. Active turns finish before their rebuild.
    */
   async reloadProviderRuntime(provider?: string): Promise<void> {
-    await piHostManager.invalidateAll('provider-config-changed')
+    await invalidateBackendRuntimes('provider-config-changed')
     await Promise.all([...this.workspaceRuntimeWarmups.keys()].map(async (workspaceId) => {
       await this.disposeWorkspaceRuntimeWarmup(workspaceId, 'provider registry reload')
       const workspace = getWorkspaces().find(candidate => candidate.id === workspaceId)
@@ -5599,25 +5957,21 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
 
   private async discardUnacceptedFirstTurn(managed: ManagedSession, cause: unknown): Promise<void> {
     const reason = cause instanceof Error ? cause.message : String(cause)
-    try {
-      if (managed.agent) await managed.agent.abort(AbortReason.UserStop).catch(() => undefined)
-      this.setProcessing(managed, false)
-      managed.processingGeneration++
-      await this.settleUnknownToolSideEffects(managed)
-      await this.disposeManagedAgentRuntime(managed, `unaccepted first turn: ${reason}`)
-      await this.piProjectionWrites.get(managed.id)
-      await sessionPersistenceQueue.cancel(managed.id, { preventFutureEnqueue: true })
-      this.sessions.delete(managed.id)
-      this.extensionFrontendStates.clearSession(managed.id)
-      this.piProjectionBySession.delete(managed.id)
-      this.piProjectionRetiredRuntimeIds.delete(managed.id)
-      this.piProjectionWrites.delete(managed.id)
-      this.piProjectionPendingSnapshots.delete(managed.id)
-      this.piProjectionWriteErrors.delete(managed.id)
-      await deleteStoredSession(managed.workspace.id, managed.id)
-    } finally {
-      await this.releaseTurnControl(managed)
-    }
+    if (managed.agent) await managed.agent.abort(AbortReason.UserStop).catch(() => undefined)
+    this.setProcessing(managed, false)
+    managed.processingGeneration++
+    await this.settleUnknownToolSideEffects(managed)
+    await this.disposeManagedAgentRuntime(managed, `unaccepted first turn: ${reason}`)
+    await this.piProjectionWrites.get(managed.id)
+    await sessionPersistenceQueue.cancel(managed.id, { preventFutureEnqueue: true })
+    this.sessions.delete(managed.id)
+    this.extensionFrontendStates.clearSession(managed.id)
+    this.piProjectionBySession.delete(managed.id)
+    this.piProjectionRetiredRuntimeIds.delete(managed.id)
+    this.piProjectionWrites.delete(managed.id)
+    this.piProjectionPendingSnapshots.delete(managed.id)
+    this.piProjectionWriteErrors.delete(managed.id)
+    await deleteStoredSession(managed.workspace.id, managed.id)
   }
 
   async deleteSession(sessionId: string): Promise<void> {
@@ -5633,6 +5987,14 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
     this.sendEvent({ type: 'session_deletion_changed', sessionId, state: 'deleting' }, workspaceId)
 
     try {
+
+    const deletionError = new CodedError(
+      'SESSION_EXECUTION_TERMINATED',
+      'Session was deleted before the execution result settled.',
+      { sessionId },
+    )
+    for (const pending of managed.messageQueue) pending.onReject?.(deletionError)
+    managed.messageQueue = []
 
     // If processing is in progress, force-abort via Query.close() and wait for cleanup
     if (managed.isProcessing && managed.agent) {
@@ -5673,10 +6035,8 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
     // the same runtime teardown path used for config-driven restarts.
     await this.disposeManagedAgentRuntime(managed, 'session deleted', { propagateFailure: true })
     await this.settleUnknownToolSideEffects(managed)
-    await this.releaseTurnControl(managed)
     await this.drainSubagentLifecycle(managed)
     await this.flushPiProjectionWrites(managed)
-
     // Cancel pending/in-flight persistence only after child completion delivery
     // has drained, then prevent any later Session write from recreating the path.
     await sessionPersistenceQueue.cancel(sessionId, { preventFutureEnqueue: true })
@@ -5709,6 +6069,31 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
     }
   }
 
+  private submitExtensionSessionMessage(
+    sessionId: string,
+    message: string,
+    operationId: string,
+    delivery?: 'steer' | 'followUp',
+  ): Promise<void> {
+    const desiredBehavior = delivery === 'steer' ? 'steer' : 'queue'
+    const midStreamSendIntent = delivery && getMidStreamBehavior() !== desiredBehavior ? 'alternate' : 'default'
+    return new Promise<void>((resolve, reject) => {
+      void this.sendMessage(
+        sessionId,
+        message,
+        undefined,
+        undefined,
+        { operationId, optimisticMessageId: operationId, midStreamSendIntent },
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        false,
+        () => resolve(),
+      ).catch(reject)
+    })
+  }
+
   async sendMessage(
     sessionId: string,
     message: string,
@@ -5726,12 +6111,7 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
      * directly (tests, intra-server flows) to leave the existing pin in place.
      */
     rpcContext?: { callerClientId?: string },
-    /**
-     * Internal queue replay guard. processNextQueuedMessage pre-claims
-     * isProcessing before scheduling replay so newer RPCs queue behind it.
-     */
-    isQueuedReplay = false,
-    isAutomaticResume = false,
+    _isQueuedReplay = false,
     /** Hook fired once Mortise has durably accepted the outbox record. */
     onAccepted?: (messageId: string) => void,
   ): Promise<void> {
@@ -5741,7 +6121,7 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
     }
     if (managed.deleting) throw new Error(`Session ${sessionId} is being deleted`)
 
-    if (_isAuthRetry || isQueuedReplay || isAutomaticResume) {
+    if (_isAuthRetry || _isQueuedReplay) {
       if (managed.workspaceTopologyAutoResumeBlocked) {
         sessionLog.info(`Suppressed automatic Session resume after Workspace topology interruption: ${sessionId}`)
         return
@@ -5777,90 +6157,23 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
 
     this.setLastMessageClientId(sessionId, rpcContext?.callerClientId)
 
-    // Steer remains inside the current turn. Follow-up never extends the turn:
-    // it stays backend-local until settlement releases control, then competes
-    // as an independent next turn.
-    if ((managed.isProcessing || managed.replayingQueuedMessageId) && !isQueuedReplay) {
+    // Pi owns the Session command queue. Mortise only chooses the product-level
+    // steer/follow-up intent and projects the disposition returned by Pi.
+    if (managed.isProcessing && !_isQueuedReplay && !_isAuthRetry) {
       const configuredBehavior = getMidStreamBehavior()
       const requestedBehavior = options?.midStreamSendIntent === 'alternate'
         ? alternateMidStreamBehavior(configuredBehavior)
         : configuredBehavior
-      // A shifted replay has queue precedence but no turn control yet. It cannot
-      // accept steer; newer input remains ordered behind it as another follow-up.
-      const behavior = managed.isProcessing ? requestedBehavior : 'queue'
+      const canSteer = managed.isProcessing
+      const behavior = canSteer ? requestedBehavior : 'queue'
 
       const agent = managed.agent
       const messageId = options?.optimisticMessageId ?? generateMessageId()
-      let steered = false
-      let downgradedSteer = false
-      if (behavior === 'steer') {
-        steered = await (agent?.redirect(message, messageId) ?? false)
-        downgradedSteer = !steered
-      }
-
-      sessionLog.info('mid-stream send', {
-        sessionId,
-        behavior,
-        sendIntent: options?.midStreamSendIntent ?? 'default',
-        steered,
-        downgradedSteer,
-        queueLengthBefore: managed.messageQueue.length,
-        backend: agent ? agent.constructor.name : 'none',
-        provider: managed.provider,
-      })
-
-      if (steered) {
-        managed.lastMessageRole = 'user'
-        this.upsertUserMessageOverlay(managed, messageId, storedAttachments, options?.badges, false)
-        this.persistSession(managed)
-        await this.flushSession(managed.id)
-        const acceptedAt = Date.now()
-        this.messageOutbox.put({
-          clientMutationId: messageId,
-          sessionId,
-          workspaceId: managed.workspace.id,
-          callerClientId: rpcContext?.callerClientId,
-          message,
-          ...(serializeOutboxAttachments(attachments) !== undefined
-            ? { attachments: serializeOutboxAttachments(attachments) }
-            : {}),
-          ...(serializeStoredAttachmentRefs(storedAttachments) !== undefined
-            ? { storedAttachments: serializeStoredAttachmentRefs(storedAttachments) }
-            : {}),
-          ...(options ? { options: options as unknown as JsonValue } : {}),
-          sessionOptions: serializeSessionRecoveryOptions(managed),
-          provisional: managed.publicationState !== undefined,
-          status: 'accepted',
-          attempt: this.outboxAttempt(messageId),
-          createdAt: acceptedAt,
-          updatedAt: acceptedAt,
-        })
-        if (onAck) {
-          managed.pendingInputAcks.set(messageId, {
-            resolve: persistedMessageId => onAck(persistedMessageId),
-            reject: () => undefined,
-          })
-        }
-        onAccepted?.(messageId)
-        return
-      }
-
-      if (managed.messageQueue.length >= MAX_PENDING_FOLLOW_UPS) {
-        throw new SessionFollowUpQueueFullError(sessionId, MAX_PENDING_FOLLOW_UPS)
-      }
-      if (downgradedSteer) {
-        this.sendEvent({
-          type: 'info',
-          sessionId,
-          message: 'Steer was not accepted in time and is now pending as a normal next-turn message.',
-          level: 'warning',
-        }, managed.workspace.id)
-      }
+      const acceptedAt = Date.now()
       const queuedOptions = {
         ...(options ?? {}),
         optimisticMessageId: options?.optimisticMessageId ?? messageId,
       }
-      const acceptedAt = Date.now()
       this.messageOutbox.put({
         clientMutationId: messageId,
         sessionId,
@@ -5881,27 +6194,92 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
         createdAt: acceptedAt,
         updatedAt: acceptedAt,
       })
-      managed.messageQueue.push({
-        message,
-        attachments,
-        storedAttachments,
-        options: queuedOptions,
-        messageId,
-        optimisticMessageId: queuedOptions.optimisticMessageId,
-        onAck,
-        onAccepted,
+      if (onAck) {
+        managed.pendingInputAcks.set(messageId, {
+          resolve: persistedMessageId => onAck(persistedMessageId),
+          reject: () => undefined,
+        })
+      }
+
+      let steered = false
+      let followedUp = false
+      if (behavior === 'steer') {
+        steered = await (agent?.redirect(message, messageId) ?? false)
+      }
+      if (!steered) {
+        followedUp = await (agent?.followUp(message, attachments, {
+          clientMutationId: messageId,
+          attachmentRefs: storedAttachments?.map(attachment => ({
+            id: attachment.id,
+            name: attachment.name,
+            mediaType: attachment.mimeType,
+            size: attachment.size,
+          })),
+        }) ?? false)
+      }
+
+      sessionLog.info('mid-stream send', {
+        sessionId,
+        behavior,
+        sendIntent: options?.midStreamSendIntent ?? 'default',
+        steered,
+        followedUp,
+        backend: agent ? agent.constructor.name : 'none',
+        provider: managed.provider,
       })
+
+      if (!steered && !followedUp) {
+        managed.pendingInputAcks.delete(messageId)
+        this.messageOutbox.remove(messageId)
+        throw new CodedError('SESSION_COMMAND_REJECTED', 'Pi Session rejected the message in its current state.', {
+          sessionId,
+          requestedBehavior: behavior,
+        })
+      }
+
+      if (behavior === 'steer' && followedUp) {
+        this.sendEvent({
+          type: 'info',
+          sessionId,
+          message: 'Steer was not accepted in time and is now pending as a normal next-turn message.',
+          level: 'warning',
+        }, managed.workspace.id)
+      }
+      managed.lastMessageRole = 'user'
+      this.upsertUserMessageOverlay(managed, messageId, storedAttachments, options?.badges, followedUp)
+      if (followedUp) {
+        managed.messageQueue.push({
+          message,
+          attachments,
+          storedAttachments,
+          options: queuedOptions,
+          messageId,
+          optimisticMessageId: queuedOptions.optimisticMessageId,
+        })
+        try {
+          managed.agent?.projectQueuedUser?.({
+            message,
+            clientMutationId: messageId,
+            messageId,
+            timestamp: acceptedAt,
+            attachments: storedAttachments?.map(attachment => ({
+              id: attachment.id,
+              name: attachment.name,
+              mediaType: attachment.mimeType,
+              size: attachment.size,
+            })),
+          })
+        } catch (error) {
+          sessionLog.warn(`Failed to project queued follow-up ${messageId}: ${error instanceof Error ? error.message : error}`)
+        }
+      }
+      this.persistSession(managed)
+      await this.flushSession(managed.id)
       onAccepted?.(messageId)
       return
     }
 
-    const turnControl = await this.acquireTurnControl(managed)
-    try {
-      await this.ensureMessagesLoaded(managed)
-    } catch (error) {
-      await this.releaseTurnControl(managed)
-      throw error
-    }
+    await this.ensureMessagesLoaded(managed)
 
     // Pi owns the canonical user message. Mortise only records the UI overlay
     // needed to reconcile optimistic queue/attachment state.
@@ -5928,7 +6306,8 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
       })
     }
     try {
-      managed.lastMessageRole = 'user'
+      if (!_isAuthRetry) {
+        managed.lastMessageRole = 'user'
       this.upsertUserMessageOverlay(
         managed,
         messageId,
@@ -5998,16 +6377,15 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
         }
       }
       }
+      }
 
       managed.lastMessageAt = Date.now()
       this.setProcessing(managed, true)
       managed.streamingText = ''
       managed.processingGeneration++
-      managed.turnStartFinalMessageId = managed.lastFinalMessageId
-      await turnControl.setState('running')
+      if (!_isAuthRetry) managed.turnStartFinalMessageId = managed.lastFinalMessageId
     } catch (error) {
       this.setProcessing(managed, false)
-      await this.releaseTurnControl(managed)
       throw error
     }
 
@@ -6026,6 +6404,7 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
     managed.lastSentAttachments = attachments
     managed.lastSentStoredAttachments = storedAttachments
     managed.lastSentOptions = options
+    managed.lastSentMessageId = messageId
 
     // Capture the generation to detect if a new request supersedes this one.
     // This prevents the finally block from clobbering state when a follow-up message arrives.
@@ -6081,7 +6460,8 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
 
       sendSpan.mark('chat.starting')
       const chatIterator = agent.chat(message, modelInputAttachments.attachments, {
-        clientMutationId: messageId,
+		clientMutationId: messageId,
+        isRetry: _isAuthRetry === true,
         interruptedAttempt,
         attachmentRefs: storedAttachments?.map(attachment => ({
           id: attachment.id,
@@ -6093,14 +6473,6 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
       sessionLog.info('Got chat iterator, starting iteration...')
 
       for await (const event of chatIterator) {
-        if (!this.hasTurnControl(managed, turnControl)) {
-          writeRuntimeLog('warn', {
-            scope: 'session-control',
-            event: 'stale_runtime_event_rejected',
-            meta: { sessionId, handleId: turnControl.handleId, eventType: event.type },
-          })
-          continue
-        }
         // Log events (skip noisy text_delta)
         if (event.type !== 'text_delta') {
           if (event.type === 'tool_start') {
@@ -6130,15 +6502,7 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
         await this.processEvent(managed, event)
 
         if (event.type === 'pi_user_message_persisted') {
-          let hadPendingAck = false
-          if (event.clientMutationId) {
-            const pendingAck = managed.pendingInputAcks.get(event.clientMutationId)
-            if (pendingAck) {
-              hadPendingAck = true
-              managed.pendingInputAcks.delete(event.clientMutationId)
-              pendingAck.resolve(event.clientMutationId)
-            }
-          }
+          const hadPendingAck = this.handlePiUserMessagePersisted(managed, event.clientMutationId ?? messageId)
           writeRuntimeLog('info', {
             scope: 'session',
             event: 'send_message.pi_persisted',
@@ -6153,13 +6517,6 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
           if (!event.clientMutationId || event.clientMutationId === messageId) {
             canonicalUserPersisted = true
             if (interruptedAttempt) managed.wasInterrupted = false
-            const persistedMutationId = event.clientMutationId ?? messageId
-            this.messageOutbox.update(persistedMutationId, {
-              status: 'pi_persisted',
-              updatedAt: Date.now(),
-              error: undefined,
-            })
-            if (!managed.publicationState) this.removeMessageOutboxBestEffort(persistedMutationId)
             if (!hadPendingAck) onAck?.(event.clientMutationId ?? messageId)
           }
         }
@@ -6199,18 +6556,21 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
             await this.onProcessingStopped(sessionId, 'interrupted')
             return
           }
+          if (managed.authRetryInProgress) {
+            sendSpan.mark('chat.complete.auth_retry_replacing_execution')
+            sendSpan.end()
+            await this.resumeAfterAuthFailure(managed)
+            return
+          }
+          if (event.terminalStatus === 'failed') {
+            sendSpan.mark('chat.failed')
+            sendSpan.end()
+            await this.onProcessingStopped(sessionId, 'error')
+            return
+          }
           // Defensive fallback: Pi should emit pi_user_message_persisted after
           // SessionManager.appendMessage(user), but never leave the caller
           // hanging if an older subprocess misses that bridge event.
-          // Skip normal completion handling if auth retry is in progress
-          // The retry will handle its own completion
-          if (managed.authRetryInProgress) {
-            sessionLog.info('Chat completed but auth retry is in progress, skipping normal completion handling')
-            sendSpan.mark('chat.complete.auth_retry_pending')
-            sendSpan.end()
-            return  // Exit function - retry will handle completion
-          }
-
           // Auth/plan handoff paths already stopped processing and emitted a complete
           // event to the renderer. Ignore the backend's trailing complete to avoid
           // double cleanup and duplicate UI completion events.
@@ -6273,6 +6633,11 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
         sessionLog.info('Chat loop exited after explicit handoff/stop')
         sendSpan.mark('chat.exit.already_stopped')
         sendSpan.end()
+      } else if (canonicalUserPersisted) {
+        sessionLog.info('Pi accepted the Session command; remaining events continue on the runtime subscription')
+        sendSpan.mark('chat.command_accepted')
+        sendSpan.end()
+        return
       } else if (managed.stopRequested) {
         sessionLog.info('Chat loop completed after stop request - events drained successfully')
         await this.onProcessingStopped(sessionId, 'interrupted')
@@ -6310,9 +6675,6 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
           error: publicationError.message,
         })
         this.setProcessing(managed, false)
-        await this.releaseTurnControl(managed).catch(releaseError => {
-          sessionLog.warn(`Failed to release provisional turn control for ${sessionId}: ${releaseError instanceof Error ? releaseError.message : releaseError}`)
-        })
         sendSpan.mark('chat.publication_failed')
         sendSpan.setMetadata('error', publicationError.message)
         sendSpan.end()
@@ -6329,6 +6691,16 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
         sendSpan.setMetadata('error', error.message)
         sendSpan.end()
         throw error
+      }
+
+      if (
+        managed.authRetryInProgress
+        && canonicalUserPersisted
+      ) {
+        sendSpan.mark('chat.error.auth_retry_replacing_execution')
+        sendSpan.end()
+        await this.resumeAfterAuthFailure(managed)
+        return
       }
 
       if (managed.publicationState) {
@@ -6356,7 +6728,6 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
         managed.stopRequested = false
         managed.turnStartFinalMessageId = undefined
         await this.settleUnknownToolSideEffects(managed)
-        await this.releaseTurnControl(managed)
         throw error instanceof SessionSendDurabilityError
           ? error
           : new SessionSendDurabilityError(sessionId, messageId, error)
@@ -6413,7 +6784,7 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
           retryable: true,
         })
         // Handle error via centralized handler
-        await this.onProcessingStopped(sessionId, 'error')
+		await this.onProcessingStopped(sessionId, 'error')
       }
     } finally {
       // Only handle cleanup for unexpected exits (loop break without complete event)
@@ -6422,14 +6793,14 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
       if (
         managed.isProcessing
         && managed.processingGeneration === myGeneration
-        && this.hasTurnControl(managed, turnControl)
+        && !canonicalUserPersisted
         && !managed.pendingSettlementReason
         && !managed.settlementPromise
       ) {
         sessionLog.info('Finally block cleanup - unexpected exit')
         sendSpan.mark('chat.unexpected_exit')
         sendSpan.end()
-        await this.onProcessingStopped(sessionId, 'interrupted')
+		await this.onProcessingStopped(sessionId, 'interrupted')
       }
     }
   }
@@ -6443,10 +6814,9 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
 
     sessionLog.info('Cancelling processing for session:', sessionId, silent ? '(silent)' : '')
 
-    // Signal intent to stop - let the event loop drain remaining events before clearing isProcessing
-    // This prevents losing in-flight messages after soft interrupt
+    // Pi owns command acceptance and decides whether abort is valid for the
+    // current Session state.
     managed.stopRequested = true
-    if (managed.turnControl?.valid) await managed.turnControl.setState('stopping')
 
     // Track interruption so the next user message gets a context note
     // telling the LLM the previous response was cut short
@@ -6482,7 +6852,7 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
     setTimeout(() => {
       if (managed.stopRequested && managed.isProcessing) {
         sessionLog.warn('Generator did not complete after stop request, forcing cleanup')
-        void this.onProcessingStopped(sessionId, 'timeout').catch(error => {
+		void this.onProcessingStopped(sessionId, 'timeout').catch(error => {
           sessionLog.error(`Failed to settle timed-out session ${sessionId}:`, error)
         })
       }
@@ -6505,11 +6875,11 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
   ): boolean {
     if (managed.workspaceTopologyAutoResumeBlocked || managed.authRetryAttempted || !managed.lastSentMessage) return false
 
-    const topologyGeneration = managed.workspaceTopologyGeneration
-
-    sessionLog.info(`Auth error detected, attempting token refresh and retry for session ${sessionId}`)
+    sessionLog.info(`Auth error detected; scheduling execution replacement for session ${sessionId}`)
     managed.authRetryAttempted = true
     managed.authRetryInProgress = true
+    managed.authRetryFailureCode = failureErrorCode
+    managed.authRetryTopologyGeneration = managed.workspaceTopologyGeneration
 
     // Emit lightweight info so the user sees progress instead of a scary red error
     this.sendEvent({
@@ -6519,55 +6889,65 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
       timestamp: this.monotonic(),
     }, workspaceId)
 
-    setImmediate(async () => {
-      try {
-        if (managed.workspaceTopologyAutoResumeBlocked
-          || managed.workspaceTopologyGeneration !== topologyGeneration) return
-
-        // 1. Destroy the agent — the new agent's postInit() will refresh auth
-        sessionLog.info(`[auth-retry] Destroying agent for session ${sessionId}`)
-        managed.agent = null
-
-        // 2. Retry the message
-        const retryMessage = managed.lastSentMessage
-        const retryAttachments = managed.lastSentAttachments
-        const retryStoredAttachments = managed.lastSentStoredAttachments
-        const retryOptions = managed.lastSentOptions
-
-        if (retryMessage) {
-          sessionLog.info(`[auth-retry] Retrying message for session ${sessionId}`)
-          this.setProcessing(managed, false)
-
-          managed.authRetryInProgress = false
-
-          await this.sendMessage(
-            sessionId,
-            retryMessage,
-            retryAttachments,
-            retryStoredAttachments,
-            retryOptions,
-            undefined,  // existingMessageId
-            true        // _isAuthRetry - prevents infinite retry loop
-          )
-          sessionLog.info(`[auth-retry] Retry completed for session ${sessionId}`)
-        } else {
-          managed.authRetryInProgress = false
-        }
-      } catch (retryError) {
-        managed.authRetryInProgress = false
-        sessionLog.error(`[auth-retry] Failed to retry after auth refresh for session ${sessionId}:`, retryError)
-        sessionRuntimeHooks.captureException(retryError, { errorSource: 'auth-retry', sessionId })
-        await this.projectHostRuntimeError(managed, {
-          phase: 'recovery',
-          message: 'Authentication failed. Please check your credentials.',
-          code: failureErrorCode,
-          retryable: true,
-        })
-        await this.onProcessingStopped(sessionId, 'error')
-      }
-    })
-
     return true
+  }
+
+  private async resumeAfterAuthFailure(managed: ManagedSession): Promise<void> {
+    const sessionId = managed.id
+    const sourceAgent = managed.agent
+    const retryMessage = managed.lastSentMessage
+    const retryMessageId = managed.lastSentMessageId
+    try {
+      if (!managed.authRetryInProgress || !retryMessage || !retryMessageId || !sourceAgent) {
+        throw new Error(`Authentication recovery state is incomplete for Session ${sessionId}`)
+      }
+      if (
+        managed.workspaceTopologyAutoResumeBlocked
+        || managed.authRetryTopologyGeneration !== managed.workspaceTopologyGeneration
+      ) {
+        throw new Error(`Authentication recovery was invalidated by a Workspace topology change for Session ${sessionId}`)
+      }
+
+      await this.settleUnknownToolSideEffects(managed)
+      this.persistSession(managed)
+      await this.flushSession(sessionId)
+      await this.flushPiProjectionWrites(managed)
+      await this.disposeManagedAgentRuntime(managed, 'authentication execution replacement', {
+        propagateFailure: true,
+        expectedAgent: sourceAgent,
+      })
+      managed.authRetryInProgress = false
+      managed.authRetryTopologyGeneration = undefined
+
+      sessionLog.info(`[auth-retry] Continuing Session ${sessionId} with a replacement execution`)
+      await this.sendMessage(
+        sessionId,
+        retryMessage,
+        managed.lastSentAttachments,
+        managed.lastSentStoredAttachments,
+        managed.lastSentOptions,
+        retryMessageId,
+        true,
+        undefined,
+        undefined,
+        false,
+		undefined,
+      )
+    } catch (retryError) {
+      managed.authRetryInProgress = false
+      managed.authRetryTopologyGeneration = undefined
+      sessionLog.error(`[auth-retry] Failed to replace execution for session ${sessionId}:`, retryError)
+      sessionRuntimeHooks.captureException(retryError, { errorSource: 'auth-retry', sessionId })
+      await this.projectHostRuntimeError(managed, {
+        phase: 'recovery',
+        message: 'Authentication failed. Please check your credentials.',
+        code: managed.authRetryFailureCode,
+        retryable: true,
+      })
+      await this.onProcessingStopped(sessionId, 'error')
+    } finally {
+      managed.authRetryFailureCode = undefined
+    }
   }
 
   /**
@@ -6579,7 +6959,7 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
    */
   private async onProcessingStopped(
     sessionId: string,
-    reason: 'complete' | 'interrupted' | 'error' | 'timeout'
+	reason: 'complete' | 'interrupted' | 'error' | 'timeout',
   ): Promise<void> {
     const managed = this.sessions.get(sessionId)
     if (!managed) return
@@ -6593,7 +6973,7 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
     // second synchronous caller can enter before settleProcessing reaches its
     // first await and start a duplicate settlement.
     const settlement = Promise.resolve().then(
-      () => this.settleProcessing(managed, managed.pendingSettlementReason!),
+	  () => this.settleProcessing(managed, managed.pendingSettlementReason!),
     ).catch(error => {
       throw error instanceof SessionSettlementDurabilityError
         ? error
@@ -6613,7 +6993,7 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
   async retryPendingSettlement(sessionId: string): Promise<void> {
     const managed = this.sessions.get(sessionId)
     if (!managed?.pendingSettlementReason && !managed?.settlementPromise) return
-    await this.onProcessingStopped(sessionId, managed.pendingSettlementReason ?? 'error')
+	await this.onProcessingStopped(sessionId, managed.pendingSettlementReason ?? 'error')
   }
 
   /** Retry an accepted first turn without allocating a new client mutation id. */
@@ -6693,7 +7073,6 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
         undefined,
         { callerClientId },
         false,
-        false,
         onAccepted,
       ).then(() => {
         if (!accepted) reject(new Error(`Retry for Session ${sessionId} completed without acceptance`))
@@ -6723,11 +7102,6 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
     reason: 'complete' | 'interrupted' | 'error' | 'timeout',
   ): Promise<void> {
     const sessionId = managed.id
-    const control = managed.turnControl?.valid
-      ? managed.turnControl
-      : await this.acquireTurnControl(managed)
-    this.assertTurnControl(managed, control)
-    await control.setState('stopping')
 
     sessionLog.info(`Processing stopped for session ${sessionId}: ${reason}`)
 
@@ -6798,25 +7172,18 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
     // accepted turn remains processing, so queue replay and fresh sends cannot
     // overtake settlement.
     this.setProcessing(managed, false)
-    managed.replayingQueuedMessageId = undefined
     managed.stopRequested = false
     managed.turnStartFinalMessageId = undefined
     managed.pendingExternalMetadata = undefined
     managed.pendingProviderRuntimeRestart = false
-    managed.pendingSettlementReason = undefined
     for (const [messageId, pending] of managed.pendingInputAcks) {
       pending.reject(new Error(`Steer ${messageId} was not durably accepted before the turn ended`))
     }
-    managed.pendingInputAcks.clear()
-    await this.releaseTurnControl(managed)
+	managed.pendingInputAcks.clear()
+	managed.pendingSettlementReason = undefined
 
-    // 5. Check queue and process or complete
-    if (!managed.workspaceTopologyAutoResumeBlocked
-      && managed.messageQueue.length > 0
-      && managed.messageQueue[0]?.controlRejected !== true) {
-      // Has queued messages - process next
-      this.processNextQueuedMessage(sessionId)
-    } else {
+    // Pi owns follow-up draining. Mortise only publishes the settled product state.
+    {
       // Session is truly done — release browser ownership.
       // The window stays alive (hidden) and becomes reusable by future sessions.
       // On the next turn, getOrCreateForSession() will re-bind it.
@@ -6837,82 +7204,6 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
       if (pendingTitleUserMessage) this.generateTitle(managed, pendingTitleUserMessage)
     }
 
-  }
-
-  /**
-   * Process the next message in the queue.
-   * Called by onProcessingStopped when queue has messages.
-   */
-  private processNextQueuedMessage(sessionId: string): void {
-    const managed = this.sessions.get(sessionId)
-    if (!managed || managed.workspaceTopologyAutoResumeBlocked || managed.messageQueue.length === 0) return
-
-    const next = managed.messageQueue.shift()!
-    if (next.controlRejected) {
-      managed.messageQueue.unshift(next)
-      return
-    }
-    managed.replayingQueuedMessageId = next.messageId
-    sessionLog.info('replay queued', {
-      sessionId,
-      messageId: next.messageId,
-      queueLengthAfterShift: managed.messageQueue.length,
-    })
-
-    // The projection builder resolves the queued user entity when Pi accepts it.
-
-    // Process message (use setImmediate to allow current stack to clear)
-    setImmediate(() => {
-      this.sendMessage(
-        sessionId,
-        next.message,
-        next.attachments,
-        next.storedAttachments,
-        next.options,
-        next.messageId,
-        undefined,
-        next.onAck,
-        undefined,
-        true,
-        false,
-        next.onAccepted,
-      ).catch(async err => {
-        next.onReject?.(err)
-        managed.replayingQueuedMessageId = undefined
-        if ((err as { code?: unknown })?.code === 'SESSION_CONTROL_NOT_ACQUIRED') {
-          // The failed follow-up is rejected and remains visible locally. It
-          // is intentionally not auto-retried or projected into the shared
-          // transcript; a later explicit action must choose what to do with it.
-          next.controlRejected = true
-          next.onAck = undefined
-          next.onReject = undefined
-          managed.messageQueue.unshift(next)
-        }
-        sessionLog.error('replay failed', {
-          sessionId,
-          messageId: next.messageId,
-          error: err instanceof Error ? err.message : String(err),
-        })
-        // Report queued message failures via runtime hooks
-        sessionRuntimeHooks.captureException(err, { errorSource: 'chat-queue', sessionId })
-        // Surface a typed error so the UI can show a clear, actionable banner
-        // instead of a generic "Unknown error" (#616).
-        if ((err as { code?: unknown })?.code !== 'SESSION_CONTROL_NOT_ACQUIRED') {
-          await this.projectHostRuntimeError(managed, {
-            phase: 'queue',
-            code: 'queued_message_replay_failed',
-            message: err instanceof Error ? err.message : 'Queued message could not be sent',
-            retryable: true,
-          })
-        }
-        this.sendEvent({
-          type: 'complete',
-          sessionId,
-          tokenUsage: managed.tokenUsage,
-          hasUnread: managed.hasUnread,
-        }, managed.workspace.id)
-      })
-    })
   }
 
   /**
@@ -6962,7 +7253,6 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
       || managed.agent?.isProcessing()
       || this.isPiProjectionProcessing(managed.id)
       || managed.messageQueue.length > 0
-      || managed.replayingQueuedMessageId
       || managed.pendingSettlementReason
       || managed.settlementPromise
       || managed.authRetryInProgress
@@ -6993,13 +7283,15 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
     managed.workspaceTopologyGeneration++
     managed.processingGeneration++
     managed.messageQueue = []
-    managed.replayingQueuedMessageId = undefined
     managed.authRetryAttempted = true
     managed.authRetryInProgress = false
+    managed.authRetryFailureCode = undefined
+    managed.authRetryTopologyGeneration = undefined
     managed.lastSentMessage = undefined
     managed.lastSentAttachments = undefined
     managed.lastSentStoredAttachments = undefined
     managed.lastSentOptions = undefined
+    managed.lastSentMessageId = undefined
     managed.stopRequested = true
     managed.wasInterrupted = true
 
@@ -7505,7 +7797,10 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
     }
   }
 
-  private async processEvent(managed: ManagedSession, event: AgentEvent): Promise<void> {
+  private async processEvent(
+    managed: ManagedSession,
+    event: AgentEvent,
+  ): Promise<void> {
     const sessionId = managed.id
     const workspaceId = managed.workspace.id
 
@@ -7682,6 +7977,7 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
           break
         }
 
+        this.sendEvent({ type: 'error', sessionId, error: event.message }, workspaceId)
         break
       }
 
@@ -7715,7 +8011,7 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
           break
         }
 
-        // PiProjectionBuilder already emits the structured runtime_error entity.
+        this.sendEvent({ type: 'typed_error', sessionId, error: event.error }, workspaceId)
         break
 
       case 'task_backgrounded':
@@ -7838,14 +8134,6 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
             },
           }, workspaceId)
         }
-        break
-
-      case 'steer_undelivered':
-        // Steer message was not delivered (no PreToolUse fired before turn ended).
-        // Re-queue it so it's sent as a normal message on the next turn.
-        sessionLog.info(`Steer message undelivered, re-queuing for session ${sessionId}`)
-        managed.messageQueue.push({ message: event.message })
-        managed.wasInterrupted = true
         break
 
     }
@@ -8049,6 +8337,14 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
 
     const [queued] = managed.messageQueue.splice(index, 1)
     const mutationId = queued?.messageId ?? queued?.optimisticMessageId
+    if (!mutationId || !await managed.agent?.withdrawQueued?.(mutationId)) {
+      if (queued) managed.messageQueue.splice(index, 0, queued)
+      throw new CodedError('QUEUED_MESSAGE_WITHDRAWN', 'This queued message is no longer waiting to be sent.', {
+        sessionId,
+        messageId,
+        alreadyProcessed: true,
+      })
+    }
     if (mutationId) this.messageOutbox.remove(mutationId)
     queued?.onReject?.(new CodedError('QUEUED_MESSAGE_WITHDRAWN', 'Queued message withdrawn for editing.', {
       sessionId,
@@ -8465,6 +8761,15 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
         continue
       }
       try {
+        const shutdownError = new CodedError(
+          'SESSION_EXECUTION_TERMINATED',
+          'Backend closed before the Session execution result settled.',
+          { sessionId: managed.id },
+        )
+        for (const pending of managed.messageQueue) {
+          pending.onReject?.(shutdownError)
+        }
+        managed.messageQueue = []
         if (managed.isProcessing || managed.agent?.isProcessing()) {
           await this.cancelProcessing(managed.id, true)
           await Promise.race([
@@ -8485,14 +8790,8 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
           pending.reject(new Error('Backend closed before the input was accepted'))
         }
         managed.pendingInputAcks.clear()
-        for (const pending of managed.messageQueue) {
-          pending.onReject?.(new Error('Backend closed before the follow-up could compete for control'))
-        }
-        managed.messageQueue = []
-        await this.releaseTurnControl(managed)
       } catch (error) {
         sessionLog.error(`Failed to dispose runtime for ${managed.id} during cleanup:`, error)
-        await this.releaseTurnControl(managed).catch(() => undefined)
       }
     }
     await Promise.all([...this.sessions.values()].map(managed => this.flushPiProjectionWrites(managed)))
@@ -8526,10 +8825,7 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
       workspaceId => this.disposeWorkspaceRuntimeWarmup(workspaceId, 'application shutdown'),
     ))
     this.extensionRuntime.clear()
-
-
-    await this.sessionTurnControl.close({ graceMs: 1_000 })
-
+    this.extensionOperationCoordinator.close()
     sessionLog.info('Cleanup complete')
   }
 }

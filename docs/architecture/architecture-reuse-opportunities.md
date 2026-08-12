@@ -20,13 +20,11 @@ This document parks bounded architecture reuse opportunities found during the pr
 |---|---|---|---|---|
 | `REUSE-001` | Typed capability descriptor and routing registry | Extension host, desktop client, WebUI, backend host, remote endpoint | High | Medium |
 | `REUSE-002` | Revisioned owned projection | Extension GUI, Extension validation, other runtime-owned projections | High | Low-medium |
-| `REUSE-003` | Explicit Session host lifecycle aggregate | Session publication, turn control, settlement, recovery | High | High |
 | `REUSE-004` | Idempotent multi-writer command primitive | Workspace topology, Automations, other durable mutable authorities | Medium-high | Medium |
 | `REUSE-005` | Backend-type scoped atomic snapshot store | Universal dock, optional Extension state, backend-scoped UI state | High | Low-medium |
 | `REUSE-006` | Async Browser capability service | Local Electron browser, remote browser, unavailable/headless adapters | Medium-high | Medium |
 | `REUSE-007` | Cross-module activity summary projection | Child tasks, Automation runs, global background tasks | Medium | Low |
 | `REUSE-008` | Workspace content-provider registry | Files, Browser, Extension `workspace.content`, future built-in tools | Medium | Low-medium |
-| `REUSE-009` | Local backend execution coordinator | Electron backend, WebUI backends, Session execution ownership | High | Medium |
 | `REUSE-010` | Backend-owned runtime container | Agent Loops, Extension runtimes, Automation schedulers and runs | High | Medium |
 
 ## REUSE-001: Typed Capability Descriptor And Routing Registry
@@ -74,28 +72,6 @@ The development-only Extension validation contribution path is the first candida
 
 GUI payload validation, placement and sandbox budgets remain Extension UI policy. Validation permissions, scenario rules, and command ownership remain Developer Kit policy.
 
-## REUSE-003: Explicit Session Host Lifecycle Aggregate
-
-### Borrow
-
-Automations V3 uses explicit legal transitions, immutable identity guards, durable history, and transactional projection updates.
-
-### Apply
-
-Use the transition-table approach, not the Automation state model itself, to define a Session host aggregate such as:
-
-```text
-provisional -> active -> runtime-settled -> host-settling -> ready
-                                              |             |
-                                              +-> failed    +-> interrupted
-```
-
-The aggregate should encode publication, accepted message, pending settlement, Stop, follow-up recompetition readiness, local coordinator ownership loss, and terminal late-event rejection. Transitions return domain state and an explicit side-effect plan; SessionManager continues to orchestrate runtime and storage I/O.
-
-### Keep Separate
-
-Attempt remains a Pi runtime execution segment. Session lifecycle does not become an Automation run, and Automation does not gain authority over Session transcript or settlement.
-
 ## REUSE-004: Idempotent Multi-Writer Command Primitive
 
 ### Borrow
@@ -117,7 +93,7 @@ Automation mutation loops and other durable domain commands with true optimistic
 
 ### Keep Separate
 
-Do not create a generic Repository abstraction. Automation history/index transactions and Workspace marker/transfer behavior remain domain-owned. Session turn control is in-memory coordination plus an operating-system lock, not another durable command store.
+Do not create a generic Repository abstraction. Automation history/index transactions, Workspace marker/transfer behavior, and Pi Session command state remain domain-owned.
 
 ## REUSE-005: Backend-Type Scoped Atomic Snapshot Store
 
@@ -207,26 +183,6 @@ Use one registry to populate the content picker and resolve restored tabs. Exten
 
 Built-in content can use trusted renderer components. Extension Level 1 remains host-rendered from primitives, and Level 2 remains sandboxed. A common frame must not erase these trust boundaries.
 
-## REUSE-009: Local Backend Execution Coordinator
-
-### Borrow
-
-The server bootstrap and transport layers already provide authenticated local process connections, backend identity, disconnect observation, and reusable runtime composition. Session activity tracking already projects active runtime information, but it is not an atomic ownership authority.
-
-### Apply
-
-Introduce one on-demand coordinator instance per machine. All Electron and WebUI backends connect to it through local inter-process communication. It keeps only live in-memory state and atomically maps a Session to:
-
-- the owning backend connection;
-- the backend-managed Agent Loop process;
-- a small starting, running, or stopping state.
-
-Use the shared module for control authorization, relationship indexing, release, status queries, and coordinator shutdown after the last backend disconnects. The owning backend performs model calls, tool execution, and Session writes while holding a turn-scoped control handle backed by an operating-system exclusive lock. Backend-to-backend discovery remains observational and cannot grant control. Enforce a single coordinator instance with an operating-system boundary; coordinator connection loss preserves existing backend control. A replacement coordinator rejects new grants while it rebuilds its index from every discoverable live backend and held lock, then callers submit fresh authorization requests after recovery completes.
-
-### Keep Separate
-
-The coordinator is global to the local machine, not partitioned by Workspace, and keys control only by `sessionId`. It is not an Agent supervisor, transcript store, Automation occurrence ledger, durable Workspace coordination ledger, or cross-machine authority. Session message durability remains owned by Session lifecycle; tool side-effect receipts remain durable domain records; Automation keeps its own persisted occurrence identity and claim rules. Supporting multiple machines would require a separate shared authority and is not implied by this local coordinator.
-
 ## REUSE-010: Backend-Owned Runtime Container
 
 ### Borrow
@@ -253,11 +209,9 @@ This is lifecycle composition, not a generic task engine. Agent Loop semantics, 
 1. Extract `REUSE-002` when the next Extension contribution lifecycle change is approved.
 2. Design `REUSE-001` before adding another platform or endpoint capability family.
 3. Extract `REUSE-005` when backend-type layout persistence or optional Extension file state becomes active scope.
-4. Specify `REUSE-003` and its migration slices before changing Session lifecycle code.
-5. Extract `REUSE-004` incrementally from one proven caller at a time.
-6. Adopt `REUSE-006` with the next cross-platform Browser change.
-7. Keep `REUSE-007` projection-only and `REUSE-008` frame-only.
-8. Treat `REUSE-009` as the reusable boundary already being adopted by the Session control implementation; extend it only after focused acceptance finds a gap.
-9. Extract `REUSE-010` only when a change already crosses two or more backend-owned runtime lifecycles.
+4. Extract `REUSE-004` incrementally from one proven caller at a time.
+5. Adopt `REUSE-006` with the next cross-platform Browser change.
+6. Keep `REUSE-007` projection-only and `REUSE-008` frame-only.
+7. Extract `REUSE-010` only when a change already crosses two or more backend-owned runtime lifecycles.
 
 The order is guidance for an explicitly activated architecture task, not an implementation schedule.

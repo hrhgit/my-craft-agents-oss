@@ -72,7 +72,6 @@ pnpm-lock.yaml
 .mortise/
 
 # Local agent instructions
-AGENTS.md
 
 # Local browser and UI validation artifacts
 .playwright-cli/

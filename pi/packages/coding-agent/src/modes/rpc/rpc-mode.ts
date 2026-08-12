@@ -38,6 +38,7 @@ import type {
 	HostCapabilityInvokeOptions,
 	HostCapabilityResult,
 } from "../../core/extensions/index.ts";
+import { runWithExtensionInvocationOrigin } from "../../core/extensions/invocation-context.ts";
 import { type ExtensionFrontendChannelOptions, isSerializableFrontendValue } from "../../core/extensions/types.ts";
 import { getProcessGlobalBackgroundTaskCoordinator } from "../../core/global-background-tasks.ts";
 import {
@@ -47,7 +48,6 @@ import {
 } from "../../core/global-host-state.ts";
 import {
 	deleteGlobalProvider,
-	forkSession,
 	getExtensions,
 	getGlobalConfig,
 	getModelCatalog,
@@ -426,6 +426,8 @@ export async function runRpcMode(
 	let globalHostIdleTimer: ReturnType<typeof setTimeout> | undefined;
 	let cleanupGlobalHostServer = () => {};
 	let unsubscribeBackgroundTasks = () => {};
+	const isClientConnected = (clientId: string): boolean =>
+		socketClients.has(clientId) || (stdioConnected && stdioClientIds.has(clientId));
 	const defaultBinding: RuntimeBinding | undefined = runtimeHost
 		? {
 				runtimeId: defaultRuntimeId,
@@ -754,10 +756,31 @@ export async function runRpcMode(
 		);
 
 	// Pending tool permission requests waiting for host response
-	const pendingToolExecutionRequests = new Map<
-		string,
-		{ resolve: (value: RpcToolExecutionResponse) => void; reject: (error: Error) => void }
-	>();
+	type PendingToolExecutionRequest = {
+		resolve: (value: RpcToolExecutionResponse) => void;
+		reject: (error: Error) => void;
+		clientId?: string;
+		runtimeId: string;
+		sessionId: string;
+		attemptId: string;
+	};
+	const pendingToolExecutionRequests = new Map<string, PendingToolExecutionRequest>();
+	const cancelToolExecutionRequests = (
+		predicate: (pending: PendingToolExecutionRequest) => boolean,
+		reason: string,
+	): void => {
+		for (const [id, pending] of pendingToolExecutionRequests) {
+			if (!predicate(pending)) continue;
+			pendingToolExecutionRequests.delete(id);
+			pending.resolve({
+				type: "tool_execution_response",
+				id,
+				attemptId: pending.attemptId,
+				action: "block",
+				reason,
+			});
+		}
+	};
 
 	const requestToolExecution = (
 		binding: RuntimeBinding,
@@ -770,12 +793,23 @@ export async function runRpcMode(
 		},
 	): Promise<RpcToolExecutionResponse> => {
 		const id = crypto.randomUUID();
+		const attemptId = binding.session.attemptId;
+		if (!attemptId) throw new Error("Tool execution requested without an active Attempt");
+		const sessionId = binding.session.sessionId;
 		return new Promise<RpcToolExecutionResponse>((resolve, reject) => {
-			pendingToolExecutionRequests.set(id, { resolve, reject });
+			pendingToolExecutionRequests.set(id, {
+				resolve,
+				reject,
+				clientId: binding.clientId,
+				runtimeId: binding.runtimeId,
+				sessionId,
+				attemptId,
+			});
 			output(
 				{
 					type: "tool_execution_request",
 					id,
+					attemptId,
 					toolName: request.toolName,
 					toolCallId: request.toolCallId,
 					input: request.input,
@@ -793,6 +827,7 @@ export async function runRpcMode(
 		clientId?: string;
 		runtimeId: string;
 		sessionId: string;
+		attemptId: string;
 	};
 	const pendingToolResultRequests = new Map<string, PendingToolResultRequest>();
 	const cancelToolResultRequests = (
@@ -802,7 +837,13 @@ export async function runRpcMode(
 		for (const [id, pending] of pendingToolResultRequests) {
 			if (!predicate(pending)) continue;
 			pendingToolResultRequests.delete(id);
-			pending.resolve({ type: "tool_result_response", id, status: "failed", error });
+			pending.resolve({
+				type: "tool_result_response",
+				id,
+				attemptId: pending.attemptId,
+				status: "failed",
+				error,
+			});
 		}
 	};
 	const requestToolResult = (
@@ -820,6 +861,8 @@ export async function runRpcMode(
 	): Promise<RpcToolResultResponse> => {
 		const id = crypto.randomUUID();
 		const sessionId = binding.session.sessionId;
+		const attemptId = binding.session.attemptId;
+		if (!attemptId) throw new Error("Tool result requested without an active Attempt");
 		return new Promise<RpcToolResultResponse>((resolve, reject) => {
 			pendingToolResultRequests.set(id, {
 				resolve,
@@ -827,11 +870,13 @@ export async function runRpcMode(
 				clientId: binding.clientId,
 				runtimeId: binding.runtimeId,
 				sessionId,
+				attemptId,
 			});
 			output(
 				{
 					type: "tool_result_request",
 					id,
+					attemptId,
 					toolName: request.toolName,
 					toolCallId: request.toolCallId,
 					input: request.input,
@@ -847,10 +892,31 @@ export async function runRpcMode(
 	};
 
 	// Pending host proxy-tool executions waiting for the host's result
-	const pendingToolExecuteRequests = new Map<
-		string,
-		{ resolve: (value: RpcToolExecuteResponse) => void; reject: (error: Error) => void }
-	>();
+	type PendingToolExecuteRequest = {
+		resolve: (value: RpcToolExecuteResponse) => void;
+		reject: (error: Error) => void;
+		clientId?: string;
+		runtimeId: string;
+		sessionId: string;
+		attemptId: string;
+	};
+	const pendingToolExecuteRequests = new Map<string, PendingToolExecuteRequest>();
+	const cancelToolExecuteRequests = (
+		predicate: (pending: PendingToolExecuteRequest) => boolean,
+		error: string,
+	): void => {
+		for (const [id, pending] of pendingToolExecuteRequests) {
+			if (!predicate(pending)) continue;
+			pendingToolExecuteRequests.delete(id);
+			pending.resolve({
+				type: "tool_execute_response",
+				id,
+				attemptId: pending.attemptId,
+				content: error,
+				isError: true,
+			});
+		}
+	};
 
 	const requestHostToolExecution = (
 		binding: RuntimeBinding,
@@ -861,12 +927,23 @@ export async function runRpcMode(
 		},
 	): Promise<RpcToolExecuteResponse> => {
 		const id = crypto.randomUUID();
+		const attemptId = binding.session.attemptId;
+		if (!attemptId) throw new Error("Host tool requested without an active Attempt");
+		const sessionId = binding.session.sessionId;
 		return new Promise<RpcToolExecuteResponse>((resolve, reject) => {
-			pendingToolExecuteRequests.set(id, { resolve, reject });
+			pendingToolExecuteRequests.set(id, {
+				resolve,
+				reject,
+				clientId: binding.clientId,
+				runtimeId: binding.runtimeId,
+				sessionId,
+				attemptId,
+			});
 			output(
 				{
 					type: "tool_execute_request",
 					id,
+					attemptId,
 					toolName: request.toolName,
 					toolCallId: request.toolCallId,
 					input: request.input,
@@ -904,8 +981,6 @@ export async function runRpcMode(
 			},
 		}));
 
-	// Shutdown request flag
-	let shutdownRequested = false;
 	let shuttingDown = false;
 	const signalCleanupHandlers: Array<() => void> = [];
 
@@ -1562,29 +1637,6 @@ export async function runRpcMode(
 			},
 			commandContextActions: {
 				waitForIdle: () => session.agent.waitForIdle(),
-				newSession: async (options) => binding.runtime.newSession(options),
-				fork: async (entryId, forkOptions) => {
-					const result = await binding.runtime.fork(entryId, forkOptions);
-					return { cancelled: result.cancelled };
-				},
-				navigateTree: async (targetId, options) => {
-					const result = await session.navigateTree(targetId, {
-						summarize: options?.summarize,
-						customInstructions: options?.customInstructions,
-						replaceInstructions: options?.replaceInstructions,
-						label: options?.label,
-					});
-					return { cancelled: result.cancelled };
-				},
-				switchSession: async (sessionPath, options) => {
-					return binding.runtime.switchSession(sessionPath, options);
-				},
-				reload: async () => {
-					await session.reload();
-				},
-			},
-			shutdownHandler: () => {
-				shutdownRequested = true;
 			},
 			onError: (err: ExtensionError) => {
 				output(
@@ -1643,9 +1695,26 @@ export async function runRpcMode(
 	const registerRuntime = async (binding: RuntimeBinding): Promise<void> => {
 		binding.runtime.setRebindSession(async () => {
 			const previousSessionId = binding.session.sessionId;
+			cancelToolExecutionRequests(
+				(pending) =>
+					pending.runtimeId === binding.runtimeId &&
+					pending.clientId === binding.clientId &&
+					pending.sessionId === previousSessionId,
+				"Session changed before the host authorized tool execution",
+			);
 			cancelToolResultRequests(
-				(pending) => pending.runtimeId === binding.runtimeId && pending.sessionId === previousSessionId,
+				(pending) =>
+					pending.runtimeId === binding.runtimeId &&
+					pending.clientId === binding.clientId &&
+					pending.sessionId === previousSessionId,
 				"Session changed before the host recorded the tool result",
+			);
+			cancelToolExecuteRequests(
+				(pending) =>
+					pending.runtimeId === binding.runtimeId &&
+					pending.clientId === binding.clientId &&
+					pending.sessionId === previousSessionId,
+				"Session changed before the host tool completed",
 			);
 			cancelExtensionRequests((pending) => pending.runtimeId === binding.runtimeId, "runtime-disposed");
 			cancelHostCapabilityRequests(
@@ -1701,6 +1770,9 @@ export async function runRpcMode(
 			runtimeBindings.set(defaultRuntimeId, binding);
 			try {
 				await registerRuntime(binding);
+				if (clientId && !isClientConnected(clientId)) {
+					throw new Error("Host disconnected before the default runtime finished opening");
+				}
 				return binding;
 			} catch (error) {
 				runtimeBindings.delete(defaultRuntimeId);
@@ -1878,9 +1950,17 @@ export async function runRpcMode(
 			}
 			resetRuntimeContributions(binding);
 			runtimeBindings.delete(runtimeId);
+			cancelToolExecutionRequests(
+				(pending) => pending.runtimeId === runtimeId && pending.clientId === binding.clientId,
+				"Runtime closed before the host authorized tool execution",
+			);
 			cancelToolResultRequests(
 				(pending) => pending.runtimeId === runtimeId && pending.clientId === binding.clientId,
 				"Runtime closed before the host recorded the tool result",
+			);
+			cancelToolExecuteRequests(
+				(pending) => pending.runtimeId === runtimeId && pending.clientId === binding.clientId,
+				"Runtime closed before the host tool completed",
 			);
 			cancelExtensionRequests((pending) => pending.runtimeId === runtimeId, "runtime-disposed");
 			cancelRuntimeHostCapabilityRequests(runtimeId);
@@ -1915,7 +1995,7 @@ export async function runRpcMode(
 			case "prompt": {
 				// Start prompt handling immediately, but emit the authoritative response only after
 				// prompt preflight succeeds. Queued and immediately handled prompts also count as success.
-				let preflightSucceeded = false;
+				let commandAcknowledged = false;
 				void session
 					.prompt(command.message, {
 						images: command.images,
@@ -1927,15 +2007,13 @@ export async function runRpcMode(
 						clearSystemPrompt: command.clearSystemPrompt,
 						appendSystemPrompt: command.appendSystemPrompt,
 						source: "rpc",
-						preflightResult: (didSucceed) => {
-							if (didSucceed) {
-								preflightSucceeded = true;
-								output(success(id, "prompt"), binding);
-							}
+						commandResult: (result) => {
+							commandAcknowledged = true;
+							output(success(id, "prompt", result), binding);
 						},
 					})
 					.catch((e) => {
-						if (!preflightSucceeded) {
+						if (!commandAcknowledged) {
 							output(error(id, "prompt", e.message), binding);
 						}
 					});
@@ -1943,41 +2021,55 @@ export async function runRpcMode(
 			}
 
 			case "continue": {
-				let preflightSucceeded = false;
+				let commandAcknowledged = false;
 				void session
-					.continueFromHistory((didSucceed) => {
-						if (!didSucceed) return;
-						preflightSucceeded = true;
-						output(success(id, "continue"), binding);
-					}, command.systemPrompt)
+					.continueFromHistory(
+						(result) => {
+							commandAcknowledged = true;
+							output(success(id, "continue", result), binding);
+						},
+						command.systemPrompt,
+					)
 					.catch((cause) => {
-						if (!preflightSucceeded) output(error(id, "continue", cause.message), binding);
+						if (!commandAcknowledged) output(error(id, "continue", cause.message), binding);
 					});
 				return undefined;
 			}
 
+			case "retry_settlement": {
+				if (!command.attemptId || command.attemptId !== session.attemptId) {
+					throw new Error("retry_settlement does not belong to the pending execution");
+				}
+				await session.retrySettlement(command.attemptId);
+				return success(id, "retry_settlement");
+			}
+
 			case "steer": {
-				await session.steer(command.message, command.images, { clientMutationId: command.clientMutationId });
-				return success(id, "steer");
+				const result = await session.steer(command.message, command.images, {
+					clientMutationId: command.clientMutationId,
+				});
+				return success(id, "steer", result);
 			}
 
 			case "follow_up": {
-				await session.followUp(command.message, command.images, {
+				const result = await session.followUp(command.message, command.images, {
 					clientMutationId: command.clientMutationId,
 					attachments: command.attachments,
 				});
-				return success(id, "follow_up");
+				return success(id, "follow_up", result);
+			}
+
+			case "withdraw_queued": {
+				return success(id, "withdraw_queued", session.withdrawQueued(command.clientMutationId));
 			}
 
 			case "abort": {
+				if (!session.attemptId || !session.isStreaming) {
+					return success(id, "abort", { status: "rejected", reason: "not-running" });
+				}
+				const attemptId = session.attemptId;
 				await session.abort();
-				return success(id, "abort");
-			}
-
-			case "new_session": {
-				const options = command.parentSession ? { parentSession: command.parentSession } : undefined;
-				const result = await binding.runtime.newSession(options);
-				return success(id, "new_session", result);
+				return success(id, "abort", { status: "accepted", attemptId });
 			}
 
 			case "run_mini_completion": {
@@ -2092,27 +2184,6 @@ export async function runRpcMode(
 				return success(id, "set_auto_retry");
 			}
 
-			case "abort_retry": {
-				session.abortRetry();
-				return success(id, "abort_retry");
-			}
-
-			// =================================================================
-			// Bash
-			// =================================================================
-
-			case "bash": {
-				const result = await session.executeBash(command.command, undefined, {
-					excludeFromContext: command.excludeFromContext,
-				});
-				return success(id, "bash", result);
-			}
-
-			case "abort_bash": {
-				session.abortBash();
-				return success(id, "abort_bash");
-			}
-
 			// =================================================================
 			// Session
 			// =================================================================
@@ -2120,25 +2191,6 @@ export async function runRpcMode(
 			case "get_session_stats": {
 				const stats = session.getSessionStats();
 				return success(id, "get_session_stats", stats);
-			}
-
-			case "switch_session": {
-				const result = await binding.runtime.switchSession(command.sessionPath);
-				return success(id, "switch_session", result);
-			}
-
-			case "fork": {
-				const result = await binding.runtime.fork(command.entryId);
-				return success(id, "fork", { text: result.selectedText, cancelled: result.cancelled });
-			}
-
-			case "clone": {
-				const leafId = session.sessionManager.getLeafId();
-				if (!leafId) {
-					return error(id, "clone", "Cannot clone session: no current entry selected");
-				}
-				const result = await binding.runtime.fork(leafId, { position: "at" });
-				return success(id, "clone", { cancelled: result.cancelled });
 			}
 
 			case "get_fork_messages": {
@@ -2239,9 +2291,11 @@ export async function runRpcMode(
 
 				try {
 					const messageCountBeforeCommand = session.messages.length;
-					await extensionCommand.handler(
-						command.args ?? "",
-						session.extensionRunner.createCommandContext(extensionCommand.extensionId),
+					await runWithExtensionInvocationOrigin({ kind: "host" }, () =>
+						extensionCommand.handler(
+							command.args ?? "",
+							session.extensionRunner.createCommandContext(extensionCommand.extensionId),
+						),
 					);
 					const customMessages = session.messages
 						.slice(messageCountBeforeCommand)
@@ -2262,9 +2316,11 @@ export async function runRpcMode(
 				const channel = frontendChannels.get(frontendChannelKey(binding, command.extensionId, command.channelId));
 				if (!channel?.onMessage) return success(id, "send_extension_frontend_message", { result: undefined });
 				try {
-					const result = await channel.onMessage(
-						command.message,
-						session.extensionRunner.createCommandContext(command.extensionId),
+					const result = await runWithExtensionInvocationOrigin({ kind: "host" }, () =>
+						channel.onMessage?.(
+							command.message,
+							session.extensionRunner.createCommandContext(command.extensionId),
+						),
 					);
 					if (result !== undefined && !isSerializableFrontendValue(result)) {
 						throw new Error("Frontend channel response must be JSON serializable");
@@ -2345,20 +2401,6 @@ export async function runRpcMode(
 				);
 			}
 
-			case "fork_session": {
-				return success(
-					id,
-					"fork_session",
-					forkSession({
-						sourcePath: command.sourcePath,
-						targetCwd: command.targetCwd,
-						sessionDir: command.sessionDir,
-						id: command.idOverride,
-						parentSession: command.parentSession,
-					}),
-				);
-			}
-
 			case "list_skills": {
 				return success(
 					id,
@@ -2411,10 +2453,10 @@ export async function runRpcMode(
 				binding.toolExecutionInterceptorEnabled = command.enabled;
 				if (!command.enabled) {
 					// Unblock any in-flight requests so tools don't hang forever.
-					for (const [, pending] of pendingToolExecutionRequests) {
-						pending.resolve({ type: "tool_execution_response", id: "", action: "allow" });
-					}
-					pendingToolExecutionRequests.clear();
+					cancelToolExecutionRequests(
+						(pending) => pending.runtimeId === binding.runtimeId && pending.clientId === binding.clientId,
+						"Host execution interceptor was disabled before completion",
+					);
 				}
 				return success(id, "enable_tool_execution_interceptor");
 			}
@@ -2459,16 +2501,10 @@ export async function runRpcMode(
 			cleanup();
 		}
 		// Unblock in-flight tool permission waits so dispose doesn't hang on them.
-		for (const [, pending] of pendingToolExecutionRequests) {
-			pending.resolve({ type: "tool_execution_response", id: "", action: "block", reason: "Server shutting down" });
-		}
-		pendingToolExecutionRequests.clear();
+		cancelToolExecutionRequests(() => true, "Server shutting down");
 		cancelToolResultRequests(() => true, "RPC host shut down before the host recorded the tool result");
 		// Fail in-flight host tool executions so dispose doesn't hang on them.
-		for (const [, pending] of pendingToolExecuteRequests) {
-			pending.resolve({ type: "tool_execute_response", id: "", content: "Server shutting down", isError: true });
-		}
-		pendingToolExecuteRequests.clear();
+		cancelToolExecuteRequests(() => true, "Server shutting down");
 		cancelExtensionRequests(() => true, "runtime-disposed");
 		cancelHostCapabilityRequests(
 			() => true,
@@ -2496,18 +2532,23 @@ export async function runRpcMode(
 		process.exit(exitCode);
 	}
 
-	async function checkShutdownRequested(): Promise<void> {
-		if (!shutdownRequested) return;
-		await shutdown();
-	}
-
 	const disposeClientRuntimes = async (clientId: string): Promise<void> => {
-		const bindings = Array.from(runtimeBindings.values()).filter(
-			(binding) => binding.runtimeId !== defaultRuntimeId && binding.clientId === clientId,
-		);
+		const bindings = Array.from(runtimeBindings.values()).filter((binding) => binding.clientId === clientId);
 		for (const binding of bindings) {
 			resetRuntimeContributions(binding);
 			runtimeBindings.delete(binding.runtimeId);
+			cancelToolExecutionRequests(
+				(pending) => pending.runtimeId === binding.runtimeId && pending.clientId === binding.clientId,
+				"Host disconnected before authorizing tool execution",
+			);
+			cancelToolResultRequests(
+				(pending) => pending.runtimeId === binding.runtimeId && pending.clientId === binding.clientId,
+				"Host disconnected before recording the tool result",
+			);
+			cancelToolExecuteRequests(
+				(pending) => pending.runtimeId === binding.runtimeId && pending.clientId === binding.clientId,
+				"Host disconnected before the host tool completed",
+			);
 			cancelExtensionRequests((pending) => pending.runtimeId === binding.runtimeId, "host-disconnected");
 			cancelRuntimeHostCapabilityRequests(binding.runtimeId);
 			binding.unsubscribe?.();
@@ -2651,7 +2692,15 @@ export async function runRpcMode(
 		) {
 			const response = parsed as RpcToolExecutionResponse;
 			const pending = pendingToolExecutionRequests.get(response.id);
-			if (pending) {
+			const actualClientId = forcedClientId ?? response.clientId;
+			if (
+				pending &&
+				response.runtimeId === pending.runtimeId &&
+				response.sessionId === pending.sessionId &&
+				response.attemptId === pending.attemptId &&
+				actualClientId === pending.clientId &&
+				(forcedClientId === undefined || response.clientId === undefined || response.clientId === forcedClientId)
+			) {
 				pendingToolExecutionRequests.delete(response.id);
 				pending.resolve(response);
 			}
@@ -2667,6 +2716,7 @@ export async function runRpcMode(
 				pending &&
 				response.runtimeId === pending.runtimeId &&
 				response.sessionId === pending.sessionId &&
+				response.attemptId === pending.attemptId &&
 				actualClientId === pending.clientId &&
 				(forcedClientId === undefined || response.clientId === undefined || response.clientId === forcedClientId)
 			) {
@@ -2685,7 +2735,15 @@ export async function runRpcMode(
 		) {
 			const response = parsed as RpcToolExecuteResponse;
 			const pending = pendingToolExecuteRequests.get(response.id);
-			if (pending) {
+			const actualClientId = forcedClientId ?? response.clientId;
+			if (
+				pending &&
+				response.runtimeId === pending.runtimeId &&
+				response.sessionId === pending.sessionId &&
+				response.attemptId === pending.attemptId &&
+				actualClientId === pending.clientId &&
+				(forcedClientId === undefined || response.clientId === undefined || response.clientId === forcedClientId)
+			) {
 				pendingToolExecuteRequests.delete(response.id);
 				pending.resolve(response);
 			}
@@ -2704,7 +2762,6 @@ export async function runRpcMode(
 				});
 				await waitForRawStdoutBackpressure();
 			}
-			await checkShutdownRequested();
 		} catch (commandError: unknown) {
 			output(error(command.id, command.type, commandError), {
 				clientId: command.clientId,

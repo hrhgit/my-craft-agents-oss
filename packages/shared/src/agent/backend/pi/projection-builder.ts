@@ -34,6 +34,8 @@ export class PiProjectionBuilder {
   private seq = 0
   private turnIndex = 0
   private activeTurnId: string | null = null
+  private activeAttemptId: string | undefined
+  private eventOrigin: 'host' | 'runtime' = 'runtime'
   private lastAgentEndStatus: 'completed' | 'failed' | 'aborted' | null = null
   private readonly entities = new Map<string, EntityState>()
   private readonly pendingTurnEntityIds: string[] = []
@@ -48,6 +50,8 @@ export class PiProjectionBuilder {
   }
 
   acceptHostQueuedUser(input: HostQueuedUserProjection): PiProjectionEventV1[] {
+	this.eventOrigin = 'host'
+	this.activeAttemptId = undefined
     const clientMutationId = input.clientMutationId.trim()
     if (!clientMutationId) throw new TypeError('Queued Pi projection requires a clientMutationId')
 
@@ -94,13 +98,17 @@ export class PiProjectionBuilder {
   }
 
   acceptHostRuntimeError(input: HostRuntimeErrorProjection): PiProjectionEventV1[] {
+	this.eventOrigin = 'host'
+	this.activeAttemptId = undefined
     return [
       ...this.finalizeRunningTools(true),
       this.errorEvent({ ...input, source: 'host' }),
     ]
   }
 
-  accept(event: AgentEvent): PiProjectionEventV1[] {
+  accept(event: AgentEvent, attemptId?: string): PiProjectionEventV1[] {
+	this.eventOrigin = 'runtime'
+	this.activeAttemptId = attemptId
     if (!this.isProjectable(event)) return []
 
     switch (event.type) {
@@ -211,6 +219,8 @@ export class PiProjectionBuilder {
 
   /** Projects Pi events that intentionally never enter Mortise's AgentEvent model. */
   acceptRuntimeEvent(event: Record<string, unknown>): PiProjectionEventV1[] {
+	this.eventOrigin = 'runtime'
+	this.activeAttemptId = typeof event.attemptId === 'string' ? event.attemptId : undefined
     if (event.type === 'agent_start') {
       return [this.lifecycleEvent('agent_start', { status: 'running' }, this.projectionTimestamp(event))]
     }
@@ -289,6 +299,13 @@ export class PiProjectionBuilder {
         willRetry: event.willRetry === true,
         errorMessage: typeof event.errorMessage === 'string' ? event.errorMessage : undefined,
       })]
+    }
+    if (event.type === 'settlement_failed') {
+      return [this.lifecycleEvent('settlement_failed', {
+        status: 'pending',
+        attempt: typeof event.attempt === 'number' ? event.attempt : 1,
+        error: typeof event.error === 'string' ? event.error : 'Unknown Session persistence failure',
+      }, this.projectionTimestamp(event))]
     }
     if (event.type === 'message_update') return this.acceptMessageUpdate(event)
     if (event.type !== 'message_end') return []
@@ -786,7 +803,8 @@ export class PiProjectionBuilder {
     const seq = ++this.seq
     return {
       schemaVersion: 1, eventId: `${this.runtimeId}:${seq}`, seq: this.seq,
-      sessionId: this.sessionId, runtimeId: this.runtimeId, turnId,
+	  sessionId: this.sessionId, runtimeId: this.runtimeId, origin: this.eventOrigin,
+	  attemptId: this.activeAttemptId, turnId,
       entityId, entityType, entityVersion, kind, payload, occurredAt,
     }
   }

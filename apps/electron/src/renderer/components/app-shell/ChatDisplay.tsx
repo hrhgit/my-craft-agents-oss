@@ -15,7 +15,7 @@ import {
 } from "lucide-react"
 import { motion, AnimatePresence } from "motion/react"
 import { toast } from "sonner"
-import { useAtomValue } from "jotai"
+import { useAtomValue, useStore } from "jotai"
 
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { cn } from "@/lib/utils"
@@ -72,7 +72,9 @@ import { CHAT_LAYOUT } from "@/config/layout"
 import { collectFileChangesFromActivities, getFirstFileChangeIdForActivity } from "@/lib/file-changes"
 import { resolveBranchNewPanelOption } from "./branching"
 import { handleErrorMessageAction } from "./error-message-actions"
-import { piProjectionAtomFamily } from "@/atoms/pi-projection"
+import { piProjectionAtomFamily, removeOptimisticPiUser } from "@/atoms/pi-projection"
+import { updateSessionAtom } from "@/atoms/sessions"
+import { removePiUserOverlayCarrier } from "@/lib/pi-message-overlay"
 import { selectPiProcessingStatusMessage, selectPiRuntimeState } from "./pi-timeline-model"
 import { buildPiTurnOverlay, buildPiTurns } from "./pi-turn-model"
 import {
@@ -140,7 +142,8 @@ type OverlayState =
 
 function isStackedActivityTool(activity: ActivityItem): boolean {
   const toolName = activity.toolName?.toLowerCase() || ''
-  return toolName === 'bash' || toolName.startsWith('mcp__') || toolName.startsWith('browser_')
+  // pwsh is the Windows shell tool name — same stacked Input/Output treatment as bash.
+  return toolName === 'bash' || toolName === 'pwsh' || toolName.startsWith('mcp__') || toolName.startsWith('browser_')
 }
 
 function getTurnKey(turn: Turn): string {
@@ -483,6 +486,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
 }, ref) {
   const { t } = useTranslation()
   const electronApi = useWorkspaceElectronApi()
+  const store = useStore()
   const activeSessionId = session?.id
   const piProjection = useAtomValue(piProjectionAtomFamily(activeSessionId ?? ''))
   const projectionEntities = React.useMemo(
@@ -1285,6 +1289,20 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
     })
   }
 
+  // Drop the renderer-only optimistic entity and overlay carrier after a
+  // successful withdrawal. The backend cancellation events reconcile the
+  // durable projection; this covers the case where no projection event lands
+  // (e.g. the runtime has no agent to project through).
+  const clearQueuedMessageLocally = React.useCallback((messageId: string) => {
+    const projectionAtom = piProjectionAtomFamily(session?.id ?? '')
+    store.set(projectionAtom, current => removeOptimisticPiUser(current, messageId))
+    if (session) {
+      store.set(updateSessionAtom, session.id, current => current
+        ? { ...current, messages: removePiUserOverlayCarrier(current.messages, messageId) }
+        : current)
+    }
+  }, [session, store])
+
   const handleEditQueuedMessage = React.useCallback(async (messageId: string) => {
     if (!session || editingQueuedMessageId) return
     const queuedTurn = queuedUserTurns.find(turn => turn.message.id === messageId)
@@ -1297,6 +1315,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
       } else {
         await electronApi.sessionCommand(session.id, { type: 'withdrawQueuedMessage', messageId })
       }
+      clearQueuedMessageLocally(messageId)
       const restoredText = appendRestoredInput(inputValue, queuedTurn.message.content)
       const restoredAttachments = queuedTurn.message.attachments?.map(attachment => ({
         type: attachment.type,
@@ -1331,6 +1350,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
   }, [
     attachmentsValue,
     appShellContext,
+    clearQueuedMessageLocally,
     editingQueuedMessageId,
     electronApi,
     inputValue,
@@ -1353,6 +1373,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
       } else {
         await electronApi.sessionCommand(session.id, { type: 'withdrawQueuedMessage', messageId })
       }
+      clearQueuedMessageLocally(messageId)
     } catch (error) {
       toast.error(t('toast.cannotSendRightNow'), {
         description: error instanceof Error ? error.message : 'The queued message could not be deleted.',
@@ -1360,7 +1381,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
     } finally {
       setEditingQueuedMessageId(null)
     }
-  }, [appShellContext, editingQueuedMessageId, electronApi, queuedUserTurns, session, t])
+  }, [appShellContext, clearQueuedMessageLocally, editingQueuedMessageId, electronApi, queuedUserTurns, session, t])
 
   const handleSteerQueuedMessage = React.useCallback(async (messageId: string) => {
     if (!session || editingQueuedMessageId) return
@@ -1386,6 +1407,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
         await electronApi.sessionCommand(session.id, { type: 'withdrawQueuedMessage', messageId })
       }
       withdrawn = true
+      clearQueuedMessageLocally(messageId)
       const midStreamBehavior = await electronApi.getMidStreamBehavior()
       const accepted = await onSendMessage(snapshotComposerSubmission({
         composerText: queuedTurn.message.content,
@@ -1420,6 +1442,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
   }, [
     appShellContext,
     attachmentsValue,
+    clearQueuedMessageLocally,
     editingQueuedMessageId,
     electronApi,
     inputValue,

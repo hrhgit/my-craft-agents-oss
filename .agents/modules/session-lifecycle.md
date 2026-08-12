@@ -6,6 +6,7 @@ summary: Session creation, persistence, projection, execution state, and transcr
 status: active
 when_to_read:
   - Session creation, persistence, projection, drafts, execution state, unread, or transcript durability
+  - Attempt identity, interrupted continuation, retry boundaries, or tool side-effect closure
 tags:
   - session
   - transcript
@@ -13,6 +14,10 @@ tags:
   - persistence
   - projection
   - unread
+  - attempt
+  - interrupted-continuation
+  - attempt-identity
+  - session-runtime-ownership
 entrypoints:
   - packages/server-core/src/projection/index.ts
   - packages/server-core/src/sessions/index.ts
@@ -52,7 +57,7 @@ Shared session storage is consumed by server `SessionManager`; ordinary first tu
 
 # Invariants
 
-A normal UI draft has a caller-private pending Session after Mortise accepts its outbox record; it enters the shared Session list only when the first UserMessage is durably appended by Pi. Failures before Mortise acceptance leave no stored Session, while accepted failures retain a retryable pending record. Every complete AgentMessage becomes shared only after its own append, flush, and durable acknowledgement. Core subagent tasks persist below the owning parent Session sidecar and never enter the ordinary Session list; their inbox and completion records are capabilities of that concrete task type, not a platform guarantee for every child task. Parent deletion freezes new writes and child creation, invokes each registered child-task deletion contract, and retains a visible retryable `deleting` state when required settlement fails. Hidden internal sessions retain their invisible persisted semantics until separately migrated.
+A normal UI draft has a caller-private pending Session after Mortise accepts its outbox record; it enters the shared Session list only when the first UserMessage is durably appended by Pi. Failures before Mortise acceptance leave no stored Session, while accepted failures retain a retryable pending record. Mortise owns Workspace routing and product projection; Pi is the sole runtime authority for Session history, command acceptance, Attempt, Turn, and Agent Loop state. Every Session command enters one Pi Session state machine, and one persistent Session has only one canonical Pi runtime owner. Pi issues `attemptId` values for event correlation and stale-generation isolation; Mortise projects them but does not issue execution permissions or maintain a competing Attempt state machine. A terminal Attempt is never reactivated. Interrupted continuation closes incomplete tools as explicit unknown outcomes, preserves only canonical history, and starts a new Attempt only after an explicit continuation request. Restart restores history and marks the old Attempt interrupted without continuing it. Every complete AgentMessage becomes shared only after its own append, flush, and durable acknowledgement. Core subagent tasks persist below the owning parent Session sidecar and never enter the ordinary Session list; their inbox and completion records are capabilities of that concrete task type, not a platform guarantee for every child task. Parent deletion freezes new writes and child creation, invokes each registered child-task deletion contract, and retains a visible retryable `deleting` state when required settlement fails. Hidden internal sessions retain their invisible persisted semantics until separately migrated.
 
 # Change Impact
 

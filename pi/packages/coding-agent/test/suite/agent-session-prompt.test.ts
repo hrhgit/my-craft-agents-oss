@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { AgentTool } from "@mortise/pi-agent-core";
 import { fauxAssistantMessage, fauxToolCall, type Model } from "@mortise/pi-ai";
 import { Type } from "typebox";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { InputEvent } from "../../src/core/extensions/index.ts";
 import type { PromptTemplate } from "../../src/core/prompt-templates.ts";
 import { createSyntheticSourceInfo } from "../../src/core/source-info.ts";
@@ -38,6 +38,43 @@ describe("AgentSession prompt characterization", () => {
 		expect(harness.session.messages.map((message) => message.role)).toEqual(["user", "assistant"]);
 		expect(getMessageText(harness.session.messages[0]!)).toBe("hi");
 		expect(harness.getPendingResponseCount()).toBe(0);
+	});
+
+	it("retains Attempt identity until a failed persistence settlement is retried", async () => {
+		const harness = await createHarness();
+		harnesses.push(harness);
+		harness.setResponses([fauxAssistantMessage("durable reply")]);
+		const originalFlush = harness.sessionManager.flush.bind(harness.sessionManager);
+		let flushCalls = 0;
+		vi.spyOn(harness.sessionManager, "flush").mockImplementation(async () => {
+			flushCalls++;
+			if (flushCalls === 3) throw new Error("disk temporarily unavailable");
+			await originalFlush();
+		});
+		const retryFlush = vi.spyOn(harness.sessionManager, "retryFlush").mockImplementation(originalFlush);
+
+		await expect(harness.session.prompt("persist me")).rejects.toThrow(
+			"disk temporarily unavailable",
+		);
+
+		const attemptId = harness.session.attemptId;
+		expect(attemptId).toEqual(expect.any(String));
+		expect(harness.eventsOfType("settlement_failed")).toEqual([
+			expect.objectContaining({
+				attemptId,
+				attempt: 1,
+				error: "disk temporarily unavailable",
+			}),
+		]);
+		expect(harness.eventsOfType("agent_settled")).toEqual([]);
+
+		await harness.session.retrySettlement(attemptId!);
+
+		expect(retryFlush).toHaveBeenCalledTimes(1);
+		expect(harness.session.attemptId).toBeUndefined();
+		expect(harness.eventsOfType("agent_settled")).toEqual([
+			expect.objectContaining({ attemptId }),
+		]);
 	});
 
 	it("handles a tool call turn and waits for the follow-up LLM response", async () => {
@@ -246,9 +283,12 @@ describe("AgentSession prompt characterization", () => {
 		expect(commandRuns).toEqual(["hello world"]);
 		expect(harness.session.messages).toEqual([]);
 		expect(harness.getPendingResponseCount()).toBe(1);
+		expect(harness.eventsOfType("agent_settled")).toEqual([
+			expect.objectContaining({ attemptId: expect.any(String) }),
+		]);
 	});
 
-	it("sendUserMessage while idle triggers a turn", async () => {
+	it("routes an idle extension user message into the Pi Session state machine", async () => {
 		const harness = await createHarness();
 		harnesses.push(harness);
 
@@ -258,6 +298,27 @@ describe("AgentSession prompt characterization", () => {
 
 		expect(harness.session.messages.map((message) => message.role)).toEqual(["user", "assistant"]);
 		expect(getMessageText(harness.session.messages[0]!)).toBe("from extension");
+		expect(harness.eventsOfType("agent_settled")).toHaveLength(1);
+	});
+
+	it("settles a Pi Attempt when an input extension handles the request without starting the agent", async () => {
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi) => {
+					pi.on("input", () => ({ action: "handled" }));
+				},
+			],
+		});
+		harnesses.push(harness);
+		harness.setResponses([fauxAssistantMessage("unused")]);
+
+		await harness.session.prompt("handled");
+
+		expect(harness.session.messages).toEqual([]);
+		expect(harness.getPendingResponseCount()).toBe(1);
+		expect(harness.eventsOfType("agent_settled")).toEqual([
+			expect.objectContaining({ attemptId: expect.any(String) }),
+		]);
 	});
 
 	it("does not report streamingBehavior to input handlers while idle", async () => {
@@ -382,9 +443,12 @@ describe("AgentSession prompt characterization", () => {
 	it("throws when prompting without a model", async () => {
 		const harness = await createHarness();
 		harnesses.push(harness);
+		await harness.session.prepareForFirstRequest();
 		harness.session.agent.state.model = undefined as unknown as Model<any>;
 
-		await expect(harness.session.prompt("hi")).rejects.toThrow("No model selected.");
+		await expect(harness.session.prompt("hi")).rejects.toThrow(
+			"No model selected.",
+		);
 	});
 
 	it("throws when prompting without configured auth", async () => {

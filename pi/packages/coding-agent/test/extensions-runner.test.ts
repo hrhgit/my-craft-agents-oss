@@ -5,7 +5,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { createExtensionRuntime, loadExtensions } from "../src/core/extensions/loader.ts";
 import { ExtensionRunner } from "../src/core/extensions/runner.ts";
@@ -81,11 +81,9 @@ describe("ExtensionRunner", () => {
 		getModel: () => undefined,
 		isIdle: () => true,
 		getSignal: () => undefined,
-		abort: () => {},
+		getExecutionId: () => undefined,
 		hasPendingMessages: () => false,
-		shutdown: () => {},
 		getContextUsage: () => undefined,
-		compact: () => {},
 		getSystemPrompt: () => "",
 	};
 
@@ -311,6 +309,36 @@ describe("ExtensionRunner", () => {
 		});
 	});
 
+	describe("Attempt provenance", () => {
+		it("keeps the originating Attempt identity across delayed extension callbacks", async () => {
+			fs.writeFileSync(
+				path.join(extensionsDir, "delayed-message.ts"),
+				`export default function(pi) {
+					pi.on("agent_end", async () => {
+						setTimeout(() => pi.sendUserMessage("late message", { deliverAs: "followUp" }), 0);
+					});
+				}`,
+			);
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			let attemptId = "attempt-a";
+			const origins: unknown[] = [];
+			runner.bindCore(
+				{
+					...extensionActions,
+					sendUserMessage: (_content, _options, origin) => origins.push(origin),
+				},
+				{ ...extensionContextActions, getAttemptId: () => attemptId },
+			);
+
+			await runner.emit({ type: "agent_end", messages: [] });
+			attemptId = "attempt-b";
+			await new Promise((resolve) => setTimeout(resolve, 10));
+
+			expect(origins).toEqual([{ kind: "attempt", attemptId: "attempt-a" }]);
+		});
+	});
+
 	describe("before_agent_start", () => {
 		it("keeps ctx.getSystemPrompt() in sync with chained system prompt updates", async () => {
 			const extCode1 = `
@@ -512,26 +540,23 @@ describe("ExtensionRunner", () => {
 	});
 
 	describe("command context", () => {
-		it("passes fork options through to the bound handler", async () => {
+		it("does not expose execution or host lifecycle controls to extensions", () => {
 			const runtime = createExtensionRuntime();
 			const runner = new ExtensionRunner([], runtime, tempDir, sessionManager, modelRegistry);
-			const fork = vi.fn(async () => ({ cancelled: false }));
 
 			runner.bindCommandContext({
 				waitForIdle: async () => {},
-				newSession: async () => ({ cancelled: false }),
-				fork,
-				navigateTree: async () => ({ cancelled: false }),
-				switchSession: async () => ({ cancelled: false }),
-				reload: async () => {},
 			});
 
 			const commandContext = runner.createCommandContext();
-			await commandContext.fork("entry-1");
-			expect(fork).toHaveBeenCalledWith("entry-1", undefined);
-
-			await commandContext.fork("entry-2", { position: "at" });
-			expect(fork).toHaveBeenLastCalledWith("entry-2", { position: "at" });
+			expect(commandContext).not.toHaveProperty("newSession");
+			expect(commandContext).not.toHaveProperty("fork");
+			expect(commandContext).not.toHaveProperty("switchSession");
+			expect(commandContext).not.toHaveProperty("abort");
+			expect(commandContext).not.toHaveProperty("compact");
+			expect(commandContext).not.toHaveProperty("shutdown");
+			expect(commandContext).not.toHaveProperty("navigateTree");
+			expect(commandContext).not.toHaveProperty("reload");
 		});
 	});
 

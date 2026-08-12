@@ -16,10 +16,12 @@ import {
   activeDeveloperKitBuildIdsLocked,
   cleanupDeveloperKitBuildCacheLocked,
   readValidDeveloperKitBuildManifest,
+  resolveReusableDeveloperKitBuild,
   writeDeveloperKitStagingOwner,
   type DeveloperKitBuildManifest,
 } from './build/developer-kit-build-manifest.ts'
 import { withFileLock } from './build/file-lock.ts'
+import { ensureDeveloperKitArchive } from './build/developer-kit-archive.ts'
 import { writeJsonAtomic } from './build/files.ts'
 
 const BUILD_SCHEMA_VERSION = DEVELOPER_KIT_BUILD_SCHEMA_VERSION
@@ -27,6 +29,7 @@ const LOCK_TIMEOUT_MS = 10 * 60 * 1_000
 const DEFAULT_RETAIN_COUNT = 2
 const args = process.argv.slice(2)
 const noArchive = args.some(arg => arg.toLowerCase() === '--no-archive' || arg.toLowerCase() === '-noarchive')
+const freshSource = args.some(arg => arg.toLowerCase() === '--fresh-source')
 const sourceRootOption = optionValue(args, '--source-root')
 const sourceIdOption = optionValue(args, '--source-id')
 assertSupportedArguments(args)
@@ -35,6 +38,9 @@ if ((sourceRootOption === undefined) !== (sourceIdOption === undefined)) {
 }
 if (sourceIdOption !== undefined && !/^[0-9a-f]{64}$/.test(sourceIdOption)) {
   throw new Error('Developer Kit --source-id must be a canonical source identity.')
+}
+if (freshSource && sourceIdOption !== undefined) {
+  throw new Error('Developer Kit --fresh-source cannot be combined with an external source identity.')
 }
 if (process.platform !== 'win32') throw new Error('Mortise Developer Kit packaging currently supports Windows only.')
 
@@ -47,24 +53,44 @@ const bunExecutableSha256 = buildToolchainExecutableSha256(bunExecutable)
 const toolchainCacheDir = resolve(process.env.MORTISE_BUILD_TOOLCHAIN_CACHE_DIR ?? join(buildRoot, 'toolchains'))
 seedUvToolchainCacheFromCompletedBuild(join(outputRoot, 'electron-builds'), toolchainCacheDir)
 
-withFileLock(join(buildRoot, 'coordinator'), () => cleanupDeveloperKitBuildCacheLocked(
-  buildRoot,
-  activeDeveloperKitBuildIdsLocked(buildRoot),
-  { retainCount: developerKitRetainCount() },
-), { timeoutMs: LOCK_TIMEOUT_MS, staleMs: 60_000 })
+if (freshSource || sourceIdOption !== undefined) {
+  withFileLock(join(buildRoot, 'coordinator'), () => cleanupDeveloperKitBuildCacheLocked(
+    buildRoot,
+    activeDeveloperKitBuildIdsLocked(buildRoot),
+    { retainCount: developerKitRetainCount(), verification: 'fast' },
+  ), { timeoutMs: LOCK_TIMEOUT_MS, staleMs: 60_000 })
+}
 
 if (sourceIdOption) assertMaterializedBuildSourceIdentity(repoRoot, sourceIdOption)
-const captured = sourceIdOption ? undefined : captureBuildSource({
-  repoRoot,
-  scratchRoot: join(buildRoot, 'sources'),
-  extraPaths: ['node_modules/@vscode/ripgrep', 'node_modules/electron/dist'],
-})
-const sourceId = sourceIdOption ?? captured!.sourceId
+const reusable = sourceIdOption === undefined && !freshSource
+  ? resolveReusableDeveloperKitBuild({
+      buildRoot,
+      bunExecutableSha256,
+      preferredBuildId: readLatestDeveloperKitBuildId(outputRoot),
+      verification: 'fast',
+    })
+  : undefined
+if (sourceIdOption === undefined && !freshSource && !reusable) {
+  throw new Error('No reusable Developer Kit build is available. Run again with --fresh-source to build the current source.')
+}
+if (reusable) {
+  process.stdout.write(`[Mortise Developer Kit] Reusing build ${reusable.buildId.slice(0, 12)}.\n`)
+}
+const captured = sourceIdOption === undefined && freshSource
+  ? captureBuildSource({
+      repoRoot,
+      scratchRoot: join(buildRoot, 'sources'),
+      extraPaths: ['node_modules/@vscode/ripgrep', 'node_modules/electron/dist'],
+    })
+  : undefined
+const sourceId = sourceIdOption ?? reusable?.sourceId ?? captured!.sourceId
 try {
-  const buildId = computeDeveloperKitBuildId(sourceId, noArchive, bunExecutableSha256)
+  // The immutable content build is always directory-only. Archives are derived
+  // publications and must not force a second compilation of identical content.
+  const buildId = reusable?.buildId ?? computeDeveloperKitBuildId(sourceId, true, bunExecutableSha256)
   const finalBuildDir = join(buildRoot, 'builds', buildId)
-  const manifest = withFileLock(join(buildRoot, 'locks', buildId), () => {
-    const cached = readValidDeveloperKitBuildManifest(finalBuildDir, buildId)
+  const manifest = reusable ?? withFileLock(join(buildRoot, 'locks', buildId), () => {
+    const cached = readValidDeveloperKitBuildManifest(finalBuildDir, buildId, 'fast')
     if (cached) return cached
     if (existsSync(finalBuildDir)) removeDirectory(finalBuildDir)
 
@@ -84,7 +110,7 @@ try {
         '-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass',
         '-File', join(source.sourceRoot, 'scripts', 'build-developer-kit.ps1'),
         '-Worker', '-OutputRoot', workerOutput, '-BunExecutable', bunExecutable,
-        ...(noArchive ? ['-NoArchive'] : []),
+        '-NoArchive',
       ]
       const result = spawnSync('powershell', workerArgs, {
         cwd: source.sourceRoot,
@@ -103,9 +129,7 @@ try {
       const kitPackage = JSON.parse(readFileSync(join(source.sourceRoot, 'developer-kit', 'package.json'), 'utf8')) as { version: string }
       const kitName = `mortise-developer-kit-${kitPackage.version}-win-x64`
       const finalArtifactDirectory = join(finalBuildDir, 'artifacts', kitName)
-      const finalArchivePath = noArchive ? undefined : join(finalBuildDir, 'artifacts', `${kitName}.zip`)
       if (!existsSync(join(workerOutput, kitName))) throw new Error(`Developer Kit worker did not produce ${kitName}.`)
-      if (finalArchivePath && !existsSync(join(workerOutput, `${kitName}.zip`))) throw new Error(`Developer Kit worker did not produce ${kitName}.zip.`)
       const artifacts = collectArtifactInventory(workerOutput)
 
       const completed: DeveloperKitBuildManifest = {
@@ -113,10 +137,9 @@ try {
         buildId,
         sourceId,
         bunExecutableSha256,
-        archiveDisabled: noArchive,
+        archiveDisabled: true,
         createdAt: new Date().toISOString(),
         artifactDirectory: finalArtifactDirectory,
-        ...(finalArchivePath ? { archivePath: finalArchivePath } : {}),
         sizeBytes: artifactInventorySize(artifacts),
         artifacts,
         platform: process.platform,
@@ -135,15 +158,19 @@ try {
   }, { timeoutMs: LOCK_TIMEOUT_MS, staleMs: 60_000 })
 
   if (!sourceIdOption) writeJsonAtomic(join(outputRoot, 'developer-kit-latest.json'), manifest)
-  withFileLock(join(buildRoot, 'coordinator'), () => cleanupDeveloperKitBuildCacheLocked(
-    buildRoot,
-    new Set([manifest.buildId, ...activeDeveloperKitBuildIdsLocked(buildRoot)]),
-    { retainCount: developerKitRetainCount() },
-  ), {
-    timeoutMs: LOCK_TIMEOUT_MS,
-    staleMs: 60_000,
-  })
-  const resultPath = manifest.archivePath ?? manifest.artifactDirectory
+  if (!reusable) {
+    withFileLock(join(buildRoot, 'coordinator'), () => cleanupDeveloperKitBuildCacheLocked(
+      buildRoot,
+      new Set([manifest.buildId, ...activeDeveloperKitBuildIdsLocked(buildRoot)]),
+      { retainCount: developerKitRetainCount(), verification: 'fast' },
+    ), {
+      timeoutMs: LOCK_TIMEOUT_MS,
+      staleMs: 60_000,
+    })
+  }
+  const resultPath = noArchive
+    ? manifest.artifactDirectory
+    : ensureDeveloperKitArchive(outputRoot, manifest)
   process.stdout.write(`[Mortise Developer Kit] ${manifest.createdAt} ${basename(resultPath)}\n${resultPath}\n`)
 } finally {
   captured?.dispose()
@@ -154,10 +181,19 @@ function optionValue(values: string[], name: string): string | undefined {
   return index >= 0 ? values[index + 1] : undefined
 }
 
+function readLatestDeveloperKitBuildId(outputRoot: string): string | undefined {
+  try {
+    const latest = JSON.parse(readFileSync(join(outputRoot, 'developer-kit-latest.json'), 'utf8')) as { buildId?: unknown }
+    return typeof latest.buildId === 'string' && /^[0-9a-f]{64}$/.test(latest.buildId)
+      ? latest.buildId
+      : undefined
+  } catch { return undefined }
+}
+
 function assertSupportedArguments(values: string[]): void {
   for (let index = 0; index < values.length; index += 1) {
     const value = values[index]!
-    if (['--no-archive', '-noarchive'].includes(value.toLowerCase())) continue
+    if (['--no-archive', '-noarchive', '--fresh-source'].includes(value.toLowerCase())) continue
     if (value === '--source-root' || value === '--source-id') {
       if (!values[index + 1] || values[index + 1]!.startsWith('--')) throw new Error(`${value} requires a value.`)
       index += 1

@@ -7,11 +7,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { AgentSession } from "../src/core/agent-session.ts";
 import type { AgentSessionRuntime } from "../src/core/agent-session-runtime.ts";
 import { AuthStorage } from "../src/core/auth-storage.ts";
+import type { ExtensionFactory } from "../src/core/extensions/index.ts";
 import { ModelRegistry } from "../src/core/model-registry.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
 import { runRpcMode } from "../src/modes/rpc/rpc-mode.ts";
-import { createTestResourceLoader } from "./utilities.ts";
+import { createTestExtensionsResult, createTestResourceLoader } from "./utilities.ts";
 
 const rpcIo = vi.hoisted(() => ({
 	outputLines: [] as string[],
@@ -70,6 +71,69 @@ function createAssistantMessage(text: string): AssistantMessage {
 
 type ParsedOutputLine = Record<string, unknown>;
 
+type FakeRuntimeControls = {
+	toolExecutionHandler: (request: Record<string, unknown>) => Promise<{ action: string; reason?: string }>;
+	toolResultHandler: (request: Record<string, unknown>) => Promise<void>;
+};
+
+function createFakeRuntime(sessionId: string, siblingFactory?: () => ReturnType<typeof createFakeRuntime>) {
+	let controls: FakeRuntimeControls | undefined;
+	let rebind: (() => Promise<void>) | undefined;
+	let hostTools: Array<{ name: string; execute: (toolCallId: string, input: unknown) => Promise<unknown> }> = [];
+	const session = {
+		sessionId,
+		attemptId: `execution-${sessionId}`,
+		sessionFile: undefined,
+		isStreaming: false,
+		isCompacting: false,
+		model: undefined,
+		thinkingLevel: "off",
+		steeringMode: "one-at-a-time",
+		followUpMode: "one-at-a-time",
+		sessionName: undefined,
+		autoCompactionEnabled: true,
+		messages: [],
+		pendingMessageCount: 0,
+		systemPrompt: "",
+		compactionPrompt: undefined,
+		resourceLoader: { getExtensions: () => ({ extensions: [] }) },
+		agent: { subscribe: () => () => {}, waitForIdle: async () => {} },
+		bindExtensions: async (next: FakeRuntimeControls) => {
+			controls = next;
+		},
+		subscribe: () => () => {},
+		getLastAssistantText: () => undefined,
+		getActiveToolNames: () => [],
+		getAllTools: () => [],
+		registerHostTools: (tools: typeof hostTools) => {
+			hostTools = tools;
+		},
+	};
+	const runtime = {
+		cwd: process.cwd(),
+		session,
+		services: { agentDir: process.cwd() },
+		setRebindSession: (handler: () => Promise<void>) => {
+			rebind = handler;
+		},
+		createSibling: async () => siblingFactory?.() ?? createFakeRuntime(`sibling-${Date.now()}`),
+		dispose: async () => {},
+		get controls() {
+			if (!controls) throw new Error(`Runtime ${sessionId} is not bound`);
+			return controls;
+		},
+		get hostTool() {
+			const tool = hostTools[0];
+			if (!tool) throw new Error(`Runtime ${sessionId} has no host tool`);
+			return tool;
+		},
+		get rebind() {
+			return rebind;
+		},
+	};
+	return runtime;
+}
+
 function parseOutputLines(outputLines: string[]): ParsedOutputLine[] {
 	return outputLines
 		.flatMap((line) => line.split("\n"))
@@ -83,20 +147,34 @@ function getPromptResponses(outputLines: string[], id: string): ParsedOutputLine
 	);
 }
 
+function getCommandResponses(outputLines: string[], id: string, command: string): ParsedOutputLine[] {
+	return parseOutputLines(outputLines).filter(
+		(record) => record.id === id && record.type === "response" && record.command === command,
+	);
+}
+
+function getStartedAttemptId(outputLines: string[], id: string): string | undefined {
+	const response = getPromptResponses(outputLines, id)[0];
+	const data = response?.data as { status?: unknown; attemptId?: unknown } | undefined;
+	return data?.status === "started" && typeof data.attemptId === "string" ? data.attemptId : undefined;
+}
+
 function sleep(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function createRuntimeHost(options: {
+async function createRuntimeHost(options: {
 	withAuth: boolean;
 	responseDelayMs: number;
 	model?: Model<any>;
 	persistSession?: boolean;
-}): {
+	extensionFactories?: ExtensionFactory[];
+	failSettlementOnce?: boolean;
+}): Promise<{
 	runtimeHost: AgentSessionRuntime;
 	getSessionFile: () => string | undefined;
 	cleanup: () => Promise<void>;
-} {
+}> {
 	const tempDir = join(tmpdir(), `pi-rpc-prompt-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 	mkdirSync(tempDir, { recursive: true });
 
@@ -134,14 +212,27 @@ function createRuntimeHost(options: {
 		authStorage.setRuntimeApiKey("anthropic", "test-key");
 	}
 
+	const extensionsResult = options.extensionFactories
+		? await createTestExtensionsResult(options.extensionFactories, tempDir)
+		: undefined;
 	const session = new AgentSession({
 		agent,
 		sessionManager,
 		settingsManager,
 		cwd: tempDir,
 		modelRegistry,
-		resourceLoader: createTestResourceLoader(),
+		resourceLoader: createTestResourceLoader(extensionsResult ? { extensionsResult } : undefined),
 	});
+	if (options.failSettlementOnce) {
+		const originalFlush = sessionManager.flush.bind(sessionManager);
+		let flushCalls = 0;
+		vi.spyOn(sessionManager, "flush").mockImplementation(async () => {
+			flushCalls++;
+			if (flushCalls === 3) throw new Error("disk temporarily unavailable");
+			await originalFlush();
+		});
+		vi.spyOn(sessionManager, "retryFlush").mockImplementation(originalFlush);
+	}
 
 	const runtimeHost = {
 		session,
@@ -176,6 +267,8 @@ async function startRpcMode(options: {
 	responseDelayMs: number;
 	model?: Model<any>;
 	persistSession?: boolean;
+	extensionFactories?: ExtensionFactory[];
+	failSettlementOnce?: boolean;
 }): Promise<{
 	lineHandler: (line: string) => void;
 	getSessionFile: () => string | undefined;
@@ -184,7 +277,7 @@ async function startRpcMode(options: {
 	rpcIo.outputLines = [];
 	rpcIo.lineHandler = undefined;
 
-	const { runtimeHost, getSessionFile, cleanup } = createRuntimeHost(options);
+	const { runtimeHost, getSessionFile, cleanup } = await createRuntimeHost(options);
 	void runRpcMode(runtimeHost);
 	await vi.waitFor(() => expect(rpcIo.lineHandler).toBeDefined());
 
@@ -197,7 +290,23 @@ describe("RPC prompt response semantics", () => {
 		rpcIo.lineHandler = undefined;
 	});
 
-	it("emits one failure response when prompt preflight rejects", async () => {
+	it("starts a Pi Attempt without a host-issued Attempt identity", async () => {
+		const { lineHandler, cleanup } = await startRpcMode({ withAuth: true, responseDelayMs: 0 });
+
+		try {
+			lineHandler(JSON.stringify({ id: "missing-execution", type: "prompt", message: "Hello" }));
+
+			await vi.waitFor(() => {
+				expect(getPromptResponses(rpcIo.outputLines, "missing-execution")).toEqual([
+					expect.objectContaining({ success: true }),
+				]);
+			});
+		} finally {
+			await cleanup();
+		}
+	});
+
+	it("emits one rejected disposition when prompt preflight fails", async () => {
 		const { lineHandler, cleanup } = await startRpcMode({
 			withAuth: false,
 			responseDelayMs: 0,
@@ -225,10 +334,8 @@ describe("RPC prompt response semantics", () => {
 					id: "b1",
 					type: "response",
 					command: "prompt",
-					success: false,
-					error: expect.stringContaining(
-						"No API key found for fake-provider.\n\nConfigure an AI provider and model in Mortise Settings.",
-					),
+					success: true,
+					data: { status: "rejected", reason: "preflight-failed" },
 				});
 			});
 		} finally {
@@ -250,11 +357,234 @@ describe("RPC prompt response semantics", () => {
 					type: "response",
 					command: "prompt",
 					success: true,
+					data: { status: "started", attemptId: expect.any(String) },
 				});
 			});
 		} finally {
 			await cleanup();
 		}
+	});
+
+	it("retries a failed durability settlement under the original Attempt identity", async () => {
+		const { lineHandler, cleanup } = await startRpcMode({
+			withAuth: true,
+			responseDelayMs: 0,
+			failSettlementOnce: true,
+		});
+
+		try {
+			lineHandler(
+				JSON.stringify({
+					id: "settlement-prompt",
+					type: "prompt",
+					message: "Hello",
+				}),
+			);
+			let attemptId: string | undefined;
+			await vi.waitFor(() => {
+				attemptId = getStartedAttemptId(rpcIo.outputLines, "settlement-prompt");
+				expect(attemptId).toEqual(expect.any(String));
+				const records = parseOutputLines(rpcIo.outputLines);
+				expect(records).toContainEqual(
+					expect.objectContaining({
+						type: "settlement_failed",
+						attemptId,
+						attempt: 1,
+						error: "disk temporarily unavailable",
+					}),
+				);
+				expect(records.some((record) => record.type === "agent_settled")).toBe(false);
+			});
+
+			lineHandler(
+				JSON.stringify({
+					id: "settlement-retry",
+					type: "retry_settlement",
+					attemptId,
+				}),
+			);
+
+			await vi.waitFor(() => {
+				expect(getCommandResponses(rpcIo.outputLines, "settlement-retry", "retry_settlement")).toEqual([
+					expect.objectContaining({ success: true }),
+				]);
+				expect(parseOutputLines(rpcIo.outputLines)).toContainEqual(
+					expect.objectContaining({
+						type: "agent_settled",
+						attemptId,
+					}),
+				);
+			});
+		} finally {
+			await cleanup();
+		}
+	});
+
+	it("isolates pending tool cleanup to the runtime being disabled or closed", async () => {
+		rpcIo.outputLines = [];
+		rpcIo.lineHandler = undefined;
+		const siblings: Array<ReturnType<typeof createFakeRuntime>> = [];
+		const defaultRuntime = createFakeRuntime("default-session", () => {
+			const sibling = createFakeRuntime(`session-${siblings.length + 1}`);
+			siblings.push(sibling);
+			return sibling;
+		});
+		void runRpcMode(defaultRuntime as never);
+		await vi.waitFor(() => expect(rpcIo.lineHandler).toBeDefined());
+		const lineHandler = rpcIo.lineHandler!;
+		const send = (command: Record<string, unknown>) => lineHandler(JSON.stringify(command));
+
+		send({ id: "open-a", type: "open_runtime", runtimeId: "runtime-a", cwd: process.cwd(), inMemory: true });
+		send({ id: "open-b", type: "open_runtime", runtimeId: "runtime-b", cwd: process.cwd(), inMemory: true });
+		await vi.waitFor(() => expect(siblings).toHaveLength(2));
+		const [runtimeA, runtimeB] = siblings;
+		if (!runtimeA || !runtimeB) throw new Error("Sibling runtimes were not created");
+
+		for (const runtimeId of ["runtime-a", "runtime-b"]) {
+			send({ id: `execution-on-${runtimeId}`, type: "enable_tool_execution_interceptor", runtimeId, enabled: true });
+			send({ id: `results-on-${runtimeId}`, type: "enable_tool_results", runtimeId, enabled: true });
+			send({
+				id: `tools-${runtimeId}`,
+				type: "register_tools",
+				runtimeId,
+				tools: [{ name: "host_tool", description: "Host tool", inputSchema: { type: "object" } }],
+			});
+		}
+		await vi.waitFor(() => {
+			expect(runtimeA.hostTool.name).toBe("host_tool");
+			expect(runtimeB.hostTool.name).toBe("host_tool");
+		});
+
+		let disabledBResolved = false;
+		const disabledA = runtimeA.controls.toolExecutionHandler({
+			toolName: "write",
+			toolCallId: "disabled-a",
+			input: {},
+			assistantTimestamp: 1,
+		});
+		const disabledB = runtimeB.controls
+			.toolExecutionHandler({
+				toolName: "write",
+				toolCallId: "disabled-b",
+				input: {},
+				assistantTimestamp: 1,
+			})
+			.then((value) => {
+				disabledBResolved = true;
+				return value;
+			});
+		send({ id: "disable-a", type: "enable_tool_execution_interceptor", runtimeId: "runtime-a", enabled: false });
+		await expect(disabledA).resolves.toMatchObject({ action: "block" });
+		await sleep(20);
+		expect(disabledBResolved).toBe(false);
+		const disabledBRequest = parseOutputLines(rpcIo.outputLines).find(
+			(record) => record.type === "tool_execution_request" && record.toolCallId === "disabled-b",
+		);
+		if (!disabledBRequest) throw new Error("Runtime B interceptor request was not emitted");
+		send({
+			type: "tool_execution_response",
+			id: disabledBRequest.id,
+			runtimeId: "runtime-b",
+			sessionId: runtimeB.session.sessionId,
+			attemptId: runtimeB.session.attemptId,
+			action: "allow",
+		});
+		await expect(disabledB).resolves.toEqual({ action: "allow" });
+
+		send({
+			id: "execution-on-a-again",
+			type: "enable_tool_execution_interceptor",
+			runtimeId: "runtime-a",
+			enabled: true,
+		});
+		const executionA = runtimeA.controls.toolExecutionHandler({
+			toolName: "write",
+			toolCallId: "close-execution-a",
+			input: {},
+			assistantTimestamp: 1,
+		});
+		let executionBResolved = false;
+		const executionB = runtimeB.controls
+			.toolExecutionHandler({
+				toolName: "write",
+				toolCallId: "close-execution-b",
+				input: {},
+				assistantTimestamp: 1,
+			})
+			.then((value) => {
+				executionBResolved = true;
+				return value;
+			});
+		const resultA = runtimeA.controls.toolResultHandler({
+			toolName: "write",
+			toolCallId: "close-result-a",
+			input: {},
+			content: [],
+			isError: false,
+			assistantTimestamp: 1,
+		});
+		let resultBResolved = false;
+		const resultB = runtimeB.controls
+			.toolResultHandler({
+				toolName: "write",
+				toolCallId: "close-result-b",
+				input: {},
+				content: [],
+				isError: false,
+				assistantTimestamp: 1,
+			})
+			.then(() => {
+				resultBResolved = true;
+			});
+		const executeA = runtimeA.hostTool.execute("close-execute-a", {});
+		let executeBResolved = false;
+		const executeB = runtimeB.hostTool.execute("close-execute-b", {}).then((value) => {
+			executeBResolved = true;
+			return value;
+		});
+
+		send({ id: "close-a", type: "close_runtime", runtimeId: "runtime-a" });
+		await expect(executionA).resolves.toMatchObject({ action: "block" });
+		await expect(resultA).rejects.toThrow("Runtime closed before the host recorded the tool result");
+		await expect(executeA).rejects.toThrow("Runtime closed before the host tool completed");
+		await sleep(20);
+		expect(executionBResolved).toBe(false);
+		expect(resultBResolved).toBe(false);
+		expect(executeBResolved).toBe(false);
+
+		const pendingB = parseOutputLines(rpcIo.outputLines).filter((record) => record.runtimeId === "runtime-b");
+		const executionRequestB = pendingB.find((record) => record.toolCallId === "close-execution-b");
+		const resultRequestB = pendingB.find((record) => record.toolCallId === "close-result-b");
+		const executeRequestB = pendingB.find((record) => record.toolCallId === "close-execute-b");
+		if (!executionRequestB || !resultRequestB || !executeRequestB)
+			throw new Error("Runtime B requests were not emitted");
+		send({
+			type: "tool_execution_response",
+			id: executionRequestB.id,
+			runtimeId: "runtime-b",
+			sessionId: runtimeB.session.sessionId,
+			attemptId: runtimeB.session.attemptId,
+			action: "allow",
+		});
+		send({
+			type: "tool_result_response",
+			id: resultRequestB.id,
+			runtimeId: "runtime-b",
+			sessionId: runtimeB.session.sessionId,
+			attemptId: runtimeB.session.attemptId,
+			status: "acknowledged",
+		});
+		send({
+			type: "tool_execute_response",
+			id: executeRequestB.id,
+			runtimeId: "runtime-b",
+			sessionId: runtimeB.session.sessionId,
+			attemptId: runtimeB.session.attemptId,
+			content: "ok",
+		});
+		await expect(executionB).resolves.toMatchObject({ action: "allow" });
+		await expect(resultB).resolves.toBeUndefined();
+		await expect(executeB).resolves.toMatchObject({ content: [{ type: "text", text: "ok" }] });
 	});
 
 	it("emits the user persistence event only after canonical JSONL publication", async () => {
@@ -266,9 +596,19 @@ describe("RPC prompt response semantics", () => {
 		});
 
 		try {
-			lineHandler(JSON.stringify({ id: "durable-1", type: "prompt", message: "Hello", clientMutationId }));
+			lineHandler(
+				JSON.stringify({
+					id: "durable-1",
+					type: "prompt",
+					message: "Hello",
+					clientMutationId,
+				}),
+			);
 
+			let attemptId: string | undefined;
 			await vi.waitFor(() => {
+				attemptId = getStartedAttemptId(rpcIo.outputLines, "durable-1");
+				expect(attemptId).toEqual(expect.any(String));
 				const records = parseOutputLines(rpcIo.outputLines);
 				expect(
 					records.some(
@@ -292,7 +632,11 @@ describe("RPC prompt response semantics", () => {
 				expect(settledIndex).toBeGreaterThan(persistedIndex);
 
 				const persistedEvent = records[persistedIndex];
-				expect(persistedEvent).toMatchObject({ type: "pi_user_message_persisted", clientMutationId });
+				expect(persistedEvent).toMatchObject({
+					type: "pi_user_message_persisted",
+					clientMutationId,
+					attemptId,
+				});
 
 				const sessionFile = getSessionFile();
 				expect(sessionFile).toBe(persistedEvent.sessionFile);
@@ -337,7 +681,8 @@ describe("RPC prompt response semantics", () => {
 				const records = parseOutputLines(rpcIo.outputLines);
 				expect(
 					records.some(
-						(record) => record.type === "pi_user_message_persisted" && record.clientMutationId === clientMutationId,
+						(record) =>
+							record.type === "pi_user_message_persisted" && record.clientMutationId === clientMutationId,
 					),
 				).toBe(true);
 
@@ -377,7 +722,12 @@ describe("RPC prompt response semantics", () => {
 
 		try {
 			lineHandler(
-				JSON.stringify({ id: "published-1", type: "prompt", message: "First", clientMutationId: "mutation-first" }),
+				JSON.stringify({
+					id: "published-1",
+					type: "prompt",
+					message: "First",
+					clientMutationId: "mutation-first",
+				}),
 			);
 			await vi.waitFor(() => {
 				expect(parseOutputLines(rpcIo.outputLines).some((record) => record.type === "agent_settled")).toBe(true);
@@ -385,7 +735,14 @@ describe("RPC prompt response semantics", () => {
 
 			rpcIo.outputLines = [];
 			const clientMutationId = "mutation-existing-session";
-			lineHandler(JSON.stringify({ id: "published-2", type: "prompt", message: "Second", clientMutationId }));
+			lineHandler(
+				JSON.stringify({
+					id: "published-2",
+					type: "prompt",
+					message: "Second",
+					clientMutationId,
+				}),
+			);
 
 			await vi.waitFor(() => {
 				const records = parseOutputLines(rpcIo.outputLines);
@@ -421,8 +778,10 @@ describe("RPC prompt response semantics", () => {
 
 		try {
 			lineHandler(JSON.stringify({ id: "b3-start", type: "prompt", message: "Start" }));
+			let attemptId: string | undefined;
 			await vi.waitFor(() => {
-				expect(getPromptResponses(rpcIo.outputLines, "b3-start")).toHaveLength(1);
+				attemptId = getStartedAttemptId(rpcIo.outputLines, "b3-start");
+				expect(attemptId).toEqual(expect.any(String));
 			});
 
 			rpcIo.outputLines = [];
@@ -443,10 +802,100 @@ describe("RPC prompt response semantics", () => {
 					type: "response",
 					command: "prompt",
 					success: true,
+					data: { status: "queued", attemptId },
 				});
 			});
 
 			await sleep(150);
+		} finally {
+			await cleanup();
+		}
+	});
+
+	it("withdraws one Pi-owned queued message by client mutation id", async () => {
+		const { lineHandler, cleanup } = await startRpcMode({ withAuth: true, responseDelayMs: 150 });
+
+		try {
+			lineHandler(JSON.stringify({ id: "withdraw-start", type: "prompt", message: "Start" }));
+			await vi.waitFor(() => expect(getStartedAttemptId(rpcIo.outputLines, "withdraw-start")).toEqual(expect.any(String)));
+
+			lineHandler(JSON.stringify({
+				id: "withdraw-follow-up",
+				type: "follow_up",
+				message: "Remove only this",
+				clientMutationId: "mutation-withdraw-1",
+			}));
+			await vi.waitFor(() => expect(rpcIo.outputLines.some((line) => line.includes('"id":"withdraw-follow-up"'))).toBe(true));
+
+			lineHandler(JSON.stringify({
+				id: "withdraw-command",
+				type: "withdraw_queued",
+				clientMutationId: "mutation-withdraw-1",
+			}));
+			await vi.waitFor(() => {
+				const response = rpcIo.outputLines.map(line => JSON.parse(line)).find(record => record.id === "withdraw-command");
+				expect(response).toMatchObject({ success: true, data: { status: "removed" } });
+			});
+		} finally {
+			await cleanup();
+		}
+	});
+
+	it("accepts steering into the active Pi Attempt without a host-issued identity", async () => {
+		const { lineHandler, cleanup } = await startRpcMode({ withAuth: true, responseDelayMs: 100 });
+
+		try {
+			lineHandler(JSON.stringify({ id: "active-start", type: "prompt", message: "Start" }));
+			let attemptId: string | undefined;
+			await vi.waitFor(() => {
+				attemptId = getStartedAttemptId(rpcIo.outputLines, "active-start");
+				expect(attemptId).toEqual(expect.any(String));
+			});
+
+			lineHandler(JSON.stringify({ id: "active-steer", type: "steer", message: "Use this direction" }));
+
+			await vi.waitFor(() => {
+				expect(getCommandResponses(rpcIo.outputLines, "active-steer", "steer")).toEqual([
+					expect.objectContaining({
+						success: true,
+						data: { status: "accepted", attemptId },
+					}),
+				]);
+			});
+		} finally {
+			await cleanup();
+		}
+	});
+
+	it("settles a handled host prompt without emitting an Agent Loop", async () => {
+		const { lineHandler, cleanup } = await startRpcMode({
+			withAuth: true,
+			responseDelayMs: 0,
+			extensionFactories: [
+				(pi) => {
+					pi.on("input", () => ({ action: "handled" }));
+				},
+			],
+		});
+
+		try {
+			lineHandler(
+				JSON.stringify({
+					id: "handled-prompt",
+					type: "prompt",
+					message: "Handled",
+				}),
+			);
+
+			await vi.waitFor(() => {
+				const records = parseOutputLines(rpcIo.outputLines);
+				const attemptId = getStartedAttemptId(rpcIo.outputLines, "handled-prompt");
+				expect(attemptId).toEqual(expect.any(String));
+				expect(records).toContainEqual(
+					expect.objectContaining({ type: "agent_settled", attemptId }),
+				);
+				expect(records.some((record) => record.type === "agent_start")).toBe(false);
+			});
 		} finally {
 			await cleanup();
 		}

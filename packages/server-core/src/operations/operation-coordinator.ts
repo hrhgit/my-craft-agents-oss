@@ -124,6 +124,7 @@ export class OperationCoordinator {
           return
         }
         this.update(operationId, 'failed', {
+          ...(typeof error?.resultRef === 'string' ? { resultRef: error.resultRef } : {}),
           error: {
             code: typeof error?.code === 'string' ? error.code : 'OPERATION_FAILED',
             message: error instanceof Error ? error.message : String(error),

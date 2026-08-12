@@ -320,7 +320,7 @@ describe("AgentSession model and extension characterization", () => {
 		});
 		harnesses.push(harness);
 
-		await harness.session.bindExtensions({ shutdownHandler: () => {} });
+		await harness.session.bindExtensions({});
 		await harness.session.reload();
 
 		expect(lifecycleEvents).toEqual(["start:startup", "shutdown:reload", "start:reload"]);

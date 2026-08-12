@@ -28,8 +28,8 @@ import {
 import { RemovedSessionFieldError } from '../types'
 import {
   readSessionUiMetadata as readPiSessionUiMetadata,
-  SessionManager as PiSessionManager,
 } from '@mortise/pi-coding-agent/host-facade'
+import { SessionManager as PiSessionManager } from '@mortise/pi-coding-agent/internal/host-facade'
 
 function tmpRoot(): string {
   const dir = join(tmpdir(), `tree-jsonl-test-${Date.now()}-${Math.random().toString(36).slice(2)}`)

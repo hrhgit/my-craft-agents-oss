@@ -28,7 +28,7 @@ await Promise.all([
 	}),
 	build({
 		...common,
-		entryPoints: [join(repoRoot, "packages/coding-agent/src/modes/rpc/public.ts")],
-		outfile: join(repoRoot, "packages/coding-agent/dist/modes/rpc/rpc-client.cjs"),
+		entryPoints: [join(repoRoot, "packages/coding-agent/src/internal/rpc.ts")],
+		outfile: join(repoRoot, "packages/coding-agent/dist/internal/rpc.cjs"),
 	}),
 ]);

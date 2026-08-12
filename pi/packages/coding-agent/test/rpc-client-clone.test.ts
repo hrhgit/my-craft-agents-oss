@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
+import * as publicApi from "../src/index.ts";
 import { PiRuntimeHandle, RpcClient } from "../src/modes/rpc/rpc-client.ts";
+import { PI_RPC_COMMANDS } from "../src/modes/rpc/rpc-types.ts";
 
 type RpcClientPrivate = {
 	send: (command: { type: string }, timeoutMs?: number | null) => Promise<unknown>;
@@ -16,19 +18,20 @@ type RpcClientInternals = {
 	handleLine: (line: string) => void;
 };
 
-function emitAgentEnd(internals: RpcClientInternals, runtimeId?: string): void {
+function emitAgentEnd(internals: RpcClientInternals, runtimeId?: string, attemptId = "attempt-a"): void {
 	internals.handleLine(
 		JSON.stringify({
 			type: "agent_end",
 			messages: [],
 			willRetry: true,
+			attemptId,
 			...(runtimeId ? { runtimeId } : {}),
 		}),
 	);
 }
 
-function emitAgentSettled(internals: RpcClientInternals, runtimeId?: string): void {
-	internals.handleLine(JSON.stringify({ type: "agent_settled", ...(runtimeId ? { runtimeId } : {}) }));
+function emitAgentSettled(internals: RpcClientInternals, runtimeId?: string, attemptId = "attempt-a"): void {
+	internals.handleLine(JSON.stringify({ type: "agent_settled", attemptId, ...(runtimeId ? { runtimeId } : {}) }));
 }
 
 describe("RpcClient clone", () => {
@@ -64,24 +67,37 @@ describe("RpcClient clone", () => {
 		});
 	});
 
-	it("sends the clone RPC command", async () => {
+	it("does not expose Pi-owned Session replacement commands", () => {
 		const client = new RpcClient();
-		const privateClient = client as unknown as RpcClientPrivate;
-		const send = vi.fn(async () => ({
-			type: "response",
-			command: "clone",
-			success: true,
-			data: { cancelled: false },
-		}));
-		privateClient.send = send;
-		privateClient.getData = <T>(response: unknown): T => {
-			return (response as { data: T }).data;
-		};
+		expect(PI_RPC_COMMANDS).not.toEqual(
+			expect.arrayContaining([
+				"new_session",
+				"switch_session",
+				"fork",
+				"fork_session",
+				"clone",
+				"bash",
+				"abort_bash",
+				"abort_retry",
+			]),
+		);
+		expect(client).not.toHaveProperty("newSession");
+		expect(client).not.toHaveProperty("switchSession");
+		expect(client).not.toHaveProperty("fork");
+		expect(client).not.toHaveProperty("forkSession");
+		expect(client).not.toHaveProperty("clone");
+		expect(client).not.toHaveProperty("bash");
+		expect(client).not.toHaveProperty("abortBash");
+		expect(client).not.toHaveProperty("abortRetry");
+	});
 
-		const result = await client.clone();
-
-		expect(send).toHaveBeenCalledWith({ type: "clone" }, null);
-		expect(result).toEqual({ cancelled: false });
+	it("does not expose raw Pi execution or Session lifecycle classes", () => {
+		expect(publicApi).not.toHaveProperty("AgentSession");
+		expect(publicApi).not.toHaveProperty("AgentSessionRuntime");
+		expect(publicApi).not.toHaveProperty("createAgentSession");
+		expect(publicApi).not.toHaveProperty("SessionManager");
+		expect(publicApi).not.toHaveProperty("RpcClient");
+		expect(publicApi).not.toHaveProperty("PiRuntimeHandle");
 	});
 });
 
@@ -90,11 +106,12 @@ describe("RpcClient logical settlement", () => {
 		const client = new RpcClient();
 		const internals = client as unknown as RpcClientInternals;
 		let settled = false;
-		const waiting = client.waitForIdle().then(() => {
+		const waiting = client.waitForIdle("attempt-a").then(() => {
 			settled = true;
 		});
 
 		emitAgentEnd(internals);
+		emitAgentSettled(internals, undefined, "attempt-b");
 		await Promise.resolve();
 		expect(settled).toBe(false);
 
@@ -106,9 +123,11 @@ describe("RpcClient logical settlement", () => {
 	it("collectEvents retains intermediate agent_end events through agent_settled", async () => {
 		const client = new RpcClient();
 		const internals = client as unknown as RpcClientInternals;
-		const collecting = client.collectEvents();
+		const collecting = client.collectEvents("attempt-a");
 
+		emitAgentEnd(internals, undefined, "attempt-b");
 		emitAgentEnd(internals);
+		emitAgentSettled(internals, undefined, "attempt-b");
 		emitAgentSettled(internals);
 
 		await expect(collecting).resolves.toEqual([
@@ -272,11 +291,14 @@ describe("RpcClient Pi shell API methods", () => {
 		await expect(client.invokeExtensionCommandResult("prompt-automation", "[{}]")).resolves.toEqual({
 			invoked: true,
 		});
-		expect(send).toHaveBeenCalledWith({
-			type: "invoke_extension_command",
-			commandId: "prompt-automation",
-			args: "[{}]",
-		}, null);
+		expect(send).toHaveBeenCalledWith(
+			{
+				type: "invoke_extension_command",
+				commandId: "prompt-automation",
+				args: "[{}]",
+			},
+			null,
+		);
 	});
 
 	it("routes contribution actions with an expected extension owner", async () => {
@@ -290,12 +312,15 @@ describe("RpcClient Pi shell API methods", () => {
 		await expect(client.invokeExtensionCommandResult("status-open", undefined, "status-extension")).resolves.toEqual({
 			invoked: true,
 		});
-		expect(send).toHaveBeenCalledWith({
-			type: "invoke_extension_command",
-			commandId: "status-open",
-			args: undefined,
-			ownerExtensionId: "status-extension",
-		}, null);
+		expect(send).toHaveBeenCalledWith(
+			{
+				type: "invoke_extension_command",
+				commandId: "status-open",
+				args: undefined,
+				ownerExtensionId: "status-extension",
+			},
+			null,
+		);
 	});
 
 	it("forwards structured host tool results to the RPC subprocess", async () => {
@@ -398,12 +423,13 @@ describe("PiRuntimeHandle", () => {
 			isStreaming: true,
 		});
 		let settled = false;
-		const waiting = handle.waitForIdle().then(() => {
+		const waiting = handle.waitForIdle("attempt-a").then(() => {
 			settled = true;
 		});
 
 		emitAgentEnd(internals, "runtime-a");
-		emitAgentSettled(internals, "runtime-b");
+		emitAgentSettled(internals, "runtime-b", "attempt-a");
+		emitAgentSettled(internals, "runtime-a", "attempt-b");
 		await Promise.resolve();
 		expect(settled).toBe(false);
 
@@ -421,8 +447,10 @@ describe("PiRuntimeHandle", () => {
 			sessionId: "session-a",
 			isStreaming: true,
 		});
-		const collecting = handle.collectEvents();
+		const collecting = handle.collectEvents("attempt-a");
 
+		emitAgentEnd(internals, "runtime-a", "attempt-b");
+		emitAgentSettled(internals, "runtime-a", "attempt-b");
 		emitAgentEnd(internals, "runtime-a");
 		emitAgentSettled(internals, "runtime-a");
 

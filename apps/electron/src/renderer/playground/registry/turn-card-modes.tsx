@@ -4,6 +4,8 @@ import { Play, RotateCcw } from 'lucide-react'
 import {
   TurnCard,
   UserMessageBubble,
+  ActivityCardsOverlay,
+  extractOverlayCards,
   type ActivityItem,
   type ResponseContent,
 } from '@mortise/ui'
@@ -85,6 +87,26 @@ const simpleBashNpm: ActivityItem = {
   timestamp: now - 2000,
 }
 
+// Windows shell tool sample (real pi session shape: toolName 'pwsh', displayName 'Run Command')
+const simplePwsh: ActivityItem = {
+  id: 'simple-pwsh',
+  type: 'tool',
+  status: 'completed',
+  toolName: 'pwsh',
+  toolInput: {
+    command: 'Get-ChildItem "$env:USERPROFILE\\.mortise\\logs" | Select-Object Name, Length, LastWriteTime',
+    timeout: 120,
+  },
+  displayName: 'Run Command',
+  content: [
+    'Name                 Length LastWriteTime',
+    '----                 ------ --------------',
+    'runtime.log           4271750 8/11/2026 10:04:18 PM',
+    'runtime.log.1         5226772 8/10/2026  3:53:46 PM',
+  ].join('\n'),
+  timestamp: now - 1500,
+}
+
 // Simple MCP tool samples
 const simpleSlack: ActivityItem = {
   id: 'simple-slack',
@@ -151,6 +173,9 @@ function TurnCardModesDemo({
   initialMode?: DisplayMode
 }) {
   const [mode, setMode] = useState<DisplayMode>(initialMode)
+
+  // Activity detail overlay (Input/Output cards) opened from tool rows
+  const [detailActivity, setDetailActivity] = useState<ActivityItem | null>(null)
 
   // Playback state
   const [isPlaying, setIsPlaying] = useState(false)
@@ -298,8 +323,18 @@ function TurnCardModesDemo({
         animateResponse={hasPlaybackStarted}
         onOpenFile={(path) => console.log('[Playground] Open file:', path)}
         onOpenUrl={(url) => console.log('[Playground] Open URL:', url)}
-        onOpenActivityDetails={(activity) => console.log('[Playground] Open activity details:', activity.id, activity.toolName)}
+        onOpenActivityDetails={(activity) => setDetailActivity(activity)}
       />
+
+      {/* Real detail overlay — same component the app uses when clicking a tool row */}
+      {detailActivity && (
+        <ActivityCardsOverlay
+          isOpen={true}
+          onClose={() => setDetailActivity(null)}
+          cards={extractOverlayCards(detailActivity)}
+          title={detailActivity.displayName || detailActivity.toolName || 'Activity'}
+        />
+      )}
     </div>
   )
 }
@@ -372,6 +407,7 @@ export const turnCardModesComponents: ComponentEntry[] = [
             simpleEdit,
             simpleBashGit,
             simpleBashNpm,
+            simplePwsh,
             simpleSlack,
             simpleStripe,
           ],
@@ -389,11 +425,22 @@ export const turnCardModesComponents: ComponentEntry[] = [
             simpleEdit,
             simpleBashGit,
             simpleBashNpm,
+            simplePwsh,
             simpleSlack,
             simpleStripe,
           ],
           response: shortResponse,
           initialMode: 'informative',
+        },
+      },
+      {
+        name: 'Windows: pwsh shell tool',
+        description: 'Pwsh (Windows shell tool) — click the row to open Command + Output',
+        props: {
+          userMessage: '列出日志目录里最近修改的文件',
+          activities: [simplePwsh],
+          response: shortResponse,
+          initialMode: 'detailed',
         },
       },
     ],
@@ -402,6 +449,7 @@ export const turnCardModesComponents: ComponentEntry[] = [
       activities: [
         simpleRead,
         simpleBashGit,
+        simplePwsh,
         simpleSlack,
       ],
       response: shortResponse,

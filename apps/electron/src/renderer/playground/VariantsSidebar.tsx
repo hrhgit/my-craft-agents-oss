@@ -9,6 +9,7 @@ interface VariantsSidebarProps {
   props: Record<string, unknown>
   onPropsChange: (props: Record<string, unknown>) => void
   isOpen: boolean
+  locale: 'zh-CN' | 'en'
 }
 
 export function VariantsSidebar({
@@ -18,6 +19,7 @@ export function VariantsSidebar({
   props,
   onPropsChange,
   isOpen,
+  locale,
 }: VariantsSidebarProps) {
   if (!isOpen || !component) return null
 
@@ -34,7 +36,7 @@ export function VariantsSidebar({
       {hasVariants && (
         <div className="p-4 border-b border-border">
           <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">
-            Variants
+            {locale === 'zh-CN' ? '变体' : 'Variants'}
           </h2>
           <div className="space-y-1">
             {component.variants!.map(variant => (
@@ -64,7 +66,7 @@ export function VariantsSidebar({
       {hasProps && (
         <div className="p-4">
           <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">
-            Props
+            {locale === 'zh-CN' ? '属性' : 'Props'}
           </h2>
           <div className="space-y-3">
             {component.props.map(propDef => (
@@ -83,7 +85,7 @@ export function VariantsSidebar({
       {!hasVariants && !hasProps && (
         <div className="p-4">
           <p className="text-sm text-muted-foreground italic">
-            No variants or props defined.
+            {locale === 'zh-CN' ? '未定义变体或属性。' : 'No variants or props defined.'}
           </p>
         </div>
       )}

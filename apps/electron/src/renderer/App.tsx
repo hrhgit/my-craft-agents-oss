@@ -637,6 +637,13 @@ export default function App() {
   const sessionSelectionRef = useRef(sessionSelection)
   sessionSelectionRef.current = sessionSelection
 
+  // Completion-notification dedup: the Pi projection path (agent_settled
+  // handoff) and the legacy session-event path ('complete') both fire for the
+  // same logical turn completion, and the projection event is always delivered
+  // first. When the projection path already surfaced a completion notification,
+  // the legacy path must not show a second one.
+  const lastProjectionCompletionNotificationRef = useRef<{ sessionId: string; at: number } | null>(null)
+
   // Notification system - shows native OS notifications and badge count
   const handleNavigateToSession = useCallback((sessionId: string) => {
     // Navigate to the session via central routing (uses allSessions filter)
@@ -672,12 +679,22 @@ export default function App() {
     store.set(sessionMetaMapAtom, nextMetaMap)
 
     if (!updatedSession.hidden) {
+      // Record only when the notification can actually be shown (window
+      // unfocused). The legacy 'complete' path consumes this record to avoid
+      // showing a duplicate notification for the same completion; if the
+      // projection path was gated off, the legacy path remains the fallback.
+      if (!isWindowFocused) {
+        lastProjectionCompletionNotificationRef.current = {
+          sessionId: handoff.sessionId,
+          at: Date.now(),
+        }
+      }
       const preview = handoff.preview
         ? stripMarkdown(handoff.preview.substring(0, 200)).substring(0, 100) || undefined
         : undefined
       showSessionNotification(updatedSession, preview)
     }
-  }, [showSessionNotification, store, trackSessionActivity, updateSessionDirect])
+  }, [isWindowFocused, showSessionNotification, store, trackSessionActivity, updateSessionDirect])
 
   usePiProjectionSync(sessionSelection.selected, handlePiProjectionEventApplied)
 
@@ -879,14 +896,24 @@ export default function App() {
           // Show notification on complete (when window is not focused)
           // Skip hidden sessions (mini-agent sessions) - they shouldn't trigger notifications
           if (event.type === 'complete' && !updatedSession.hidden) {
-            // Get the last assistant message as preview.
-            const lastMessage = updatedSession.messages.findLast(
-              m => m.role === 'assistant' && !m.isIntermediate
-            )
-            // Strip markdown so OS notifications display clean plain text
-            const rawPreview = lastMessage?.content?.substring(0, 200) || undefined
-            const preview = rawPreview ? stripMarkdown(rawPreview).substring(0, 100) || undefined : undefined
-            showSessionNotification(updatedSession, preview)
+            // The Pi projection path (agent_settled handoff) already notified
+            // for this turn — it is delivered before the legacy complete event
+            // and guards against replayed events. Skip to avoid double
+            // notifications; this path stays as fallback when projection events
+            // were lost or the projection path was gated off (window focused).
+            const projectionNotified = lastProjectionCompletionNotificationRef.current
+            const projectionAlreadyNotified = projectionNotified?.sessionId === sessionId
+              && Date.now() - projectionNotified.at < 10_000
+            if (!projectionAlreadyNotified) {
+              // Get the last assistant message as preview.
+              const lastMessage = updatedSession.messages.findLast(
+                m => m.role === 'assistant' && !m.isIntermediate
+              )
+              // Strip markdown so OS notifications display clean plain text
+              const rawPreview = lastMessage?.content?.substring(0, 200) || undefined
+              const preview = rawPreview ? stripMarkdown(rawPreview).substring(0, 100) || undefined : undefined
+              showSessionNotification(updatedSession, preview)
+            }
           }
         }
 
@@ -1225,7 +1252,7 @@ export default function App() {
         name: attachment.name,
         mediaType: attachment.mimeType,
         size: attachment.size,
-      }))))
+      })), sendingMidStream))
       const userOverlayCarrier: Message = {
         id: optimisticMessageId,
         role: 'user',

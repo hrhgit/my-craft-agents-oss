@@ -16,6 +16,7 @@ import {
   electronBuildExecutablePath,
   publishBuildBunToolchain,
   releaseElectronBuild,
+  resolveReusableElectronBuildId,
   resolveElectronBuildExecutable,
   seedUvToolchainCacheFromCompletedBuild,
   withElectronBuildForPackaging,
@@ -204,6 +205,55 @@ describe('mortise-ui immutable Electron build cache', () => {
     expect(readFileSync(join(repoRoot, 'apps/electron/dist/resources/fixture.txt'), 'utf8')).toBe('live-before')
     releaseElectronBuild(lease)
   }, 20_000)
+
+  it('selects the newest valid immutable build for default reuse', () => {
+    const root = tempRoot('mortise-ui-build-default-reuse-')
+    const repoRoot = join(root, 'repo')
+    const buildRoot = join(root, 'cache')
+    initGitRepo(repoRoot)
+
+    const first = acquireElectronBuild({
+      repoRoot,
+      buildRoot,
+      runId: 'reuse-first',
+      runDir: createRun(root, 'reuse-first'),
+      build: sourceRoot => seedBuildOutputs(sourceRoot, 'first'),
+      now: () => new Date('2026-01-01T00:00:00.000Z'),
+      retainCount: 4,
+    })
+    releaseElectronBuild(first)
+
+    write(repoRoot, 'apps/electron/src/main.ts', 'export const value = 2\n')
+    const second = acquireElectronBuild({
+      repoRoot,
+      buildRoot,
+      runId: 'reuse-second',
+      runDir: createRun(root, 'reuse-second'),
+      build: sourceRoot => seedBuildOutputs(sourceRoot, 'second'),
+      now: () => new Date('2026-01-02T00:00:00.000Z'),
+      retainCount: 4,
+    })
+    releaseElectronBuild(second)
+
+    write(repoRoot, 'apps/electron/src/main.ts', 'export const value = 3\n')
+    const development = acquireElectronBuild({
+      repoRoot,
+      buildRoot,
+      runId: 'reuse-development',
+      runDir: createRun(root, 'reuse-development'),
+      mode: 'development',
+      build: sourceRoot => seedBuildOutputs(sourceRoot, 'development'),
+      now: () => new Date('2026-01-03T00:00:00.000Z'),
+      retainCount: 4,
+    })
+    releaseElectronBuild(development)
+
+    expect(resolveReusableElectronBuildId({ buildRoot, mode: 'production' })).toBe(second.buildId)
+    expect(resolveReusableElectronBuildId({ buildRoot, mode: 'development' })).toBe(development.buildId)
+
+    rmSync(join(second.appDir, 'dist', 'main.cjs'), { force: true })
+    expect(resolveReusableElectronBuildId({ buildRoot, mode: 'production' })).toBe(first.buildId)
+  }, 30_000)
 
   it('packages directly from a leased immutable capsule and detects input mutation', () => {
     const root = tempRoot('mortise-electron-build-direct-package-')

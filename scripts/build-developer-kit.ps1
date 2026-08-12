@@ -1,6 +1,7 @@
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
   [switch]$NoArchive,
+  [switch]$FreshSource,
   [switch]$Worker,
   [string]$OutputRoot,
   [string]$BunExecutable
@@ -22,6 +23,7 @@ $BunExecutable = [IO.Path]::GetFullPath($BunExecutable)
 if (-not $Worker) {
   $orchestratorArgs = @("run", (Join-Path $repoRoot "scripts\build-developer-kit.ts"))
   if ($NoArchive) { $orchestratorArgs += "--no-archive" }
+  if ($FreshSource) { $orchestratorArgs += "--fresh-source" }
   & $BunExecutable @orchestratorArgs
   if ($LASTEXITCODE -ne 0) { throw "Developer Kit orchestrator failed with exit code $LASTEXITCODE" }
   return

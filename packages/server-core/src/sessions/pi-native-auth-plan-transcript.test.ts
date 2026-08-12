@@ -11,6 +11,13 @@ const workspace = {
   id: 'ws_test',
   name: 'Test Workspace',
   rootPath: '/tmp/pi-native-transcript-test',
+  primaryLocationId: 'local',
+  locations: [{
+    id: 'local',
+    name: 'Local',
+    rootName: 'pi-native-transcript-test',
+    endpoint: { kind: 'local', rootPath: '/tmp/pi-native-transcript-test' },
+  }],
   createdAt: 1,
 }
 
@@ -99,10 +106,10 @@ describe('Pi projection transcript boundary', () => {
     await processEvent(native, { type: 'typed_error', error: { code: 'unknown', title: 'Failed', message: 'again' } })
 
     expect(native.messages).toEqual([])
-    expect(emitted.map(event => event.type)).toEqual([])
+    expect(emitted.map(event => event.type)).toEqual(['error', 'typed_error'])
   })
 
-  it('queues and replays input without requiring a stored user Message', async () => {
+  it('routes a running-session follow-up into Pi without creating a host execution queue', async () => {
     const manager = new SessionManager()
     const emitted: Array<{ type: string }> = []
     ;(manager as unknown as { persistSession: () => void }).persistSession = () => {}
@@ -113,22 +120,29 @@ describe('Pi projection transcript boundary', () => {
       workspace as never,
       { messagesLoaded: true, isProcessing: true },
     )
+    const followUp = mock(async () => true)
+    native.agent = { followUp, redirect: mock(async () => false), projectQueuedUser: mock(() => {}) } as never
     ;(manager as unknown as { sessions: Map<string, unknown> }).sessions.set(native.id, native)
 
-    let ackId = ''
-    await manager.sendMessage(native.id, 'queued', undefined, undefined, undefined, undefined, undefined, id => { ackId = id })
+    let acceptedId = ''
+    await manager.sendMessage(
+      native.id,
+      'queued',
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      false,
+      id => { acceptedId = id },
+    )
     expect(native.messages).toEqual([])
+    expect(followUp).toHaveBeenCalledTimes(1)
     expect(native.messageQueue).toHaveLength(1)
-    expect(ackId).toBe(native.messageQueue[0]!.messageId!)
+    expect(acceptedId).toBe(native.messageQueue[0]!.messageId!)
     expect(emitted).toEqual([])
-
-    ;(manager as unknown as { getOrCreateAgent: () => Promise<never> }).getOrCreateAgent = mock(async () => {
-      throw new Error('expected runtime stop')
-    })
-    await expect(manager.sendMessage(
-      native.id, 'queued', undefined, undefined, undefined, ackId, undefined, undefined, undefined, true,
-    )).resolves.toBeUndefined()
-    expect(native.messages).toEqual([])
   })
 
   it('derives recovery context from ordered Pi projection entities', () => {

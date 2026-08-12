@@ -220,4 +220,30 @@ describe("SessionManager async durability", () => {
 		expect(session.getDurabilityState().failed).toBe(true);
 		expect(() => session.appendCustomEntry("after-failure", true)).toThrow();
 	});
+
+	it("recovers a failed append with one atomic rewrite and no duplicate entries", async () => {
+		const session = createSession();
+		const file = session.getSessionFile()!;
+		const userId = session.appendMessage({ role: "user", content: "publish", timestamp: Date.now() });
+		const assistantId = session.appendMessage(assistantMessage("published"));
+		await session.flush();
+
+		rmSync(file, { force: true });
+		mkdirSync(file);
+		const pendingId = session.appendCustomEntry("retryable-failure", { sequence: 1 });
+		await expect(session.flush()).rejects.toBeInstanceOf(Error);
+
+		rmSync(file, { recursive: true, force: true });
+		await session.retryFlush();
+
+		const entries = readJsonl(file);
+		const entryIds = entries.filter((entry) => entry.type !== "session").map((entry) => entry.id);
+		expect(entryIds).toEqual([userId, assistantId, pendingId]);
+		expect(new Set(entryIds).size).toBe(3);
+		expect(session.getDurabilityState()).toMatchObject({
+			pendingEntries: 0,
+			pendingRevisions: 0,
+			failed: false,
+		});
+	});
 });

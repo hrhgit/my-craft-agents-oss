@@ -200,7 +200,7 @@ function getAttributionHeaders(model: Model<any>, sessionId?: string): Record<st
  * @example
  * ```typescript
  * // Minimal - uses defaults
- * const { session } = await createAgentSession();
+ * const { session } = await createAgentSession({});
  *
  * // With explicit model
  * import { getModel } from '@mortise/pi-ai';
@@ -229,7 +229,7 @@ function getAttributionHeaders(model: Model<any>, sessionId?: string): Record<st
  * });
  * ```
  */
-export async function createAgentSession(options: CreateAgentSessionOptions = {}): Promise<CreateAgentSessionResult> {
+export async function createAgentSession(options: CreateAgentSessionOptions): Promise<CreateAgentSessionResult> {
 	const cwd = resolvePath(options.cwd ?? options.sessionManager?.getCwd() ?? process.cwd());
 	const agentDir = options.agentDir ? resolvePath(options.agentDir) : getDefaultAgentDir();
 	let resourceLoader = options.resourceLoader;

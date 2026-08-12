@@ -130,16 +130,18 @@ export function SkillImportDialog({
           <span className="text-xs text-muted-foreground">
             {t('skillsImport.selectedCount', { count: selectedPaths.size })}
           </span>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            semanticId="skills.import.toggle-all"
-            onClick={toggleAll}
-            disabled={importing}
-          >
+          <label className="flex cursor-pointer select-none items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground">
+            <input
+              type="checkbox"
+              checked={allSelected}
+              disabled={importing}
+              onChange={toggleAll}
+              className="size-4 shrink-0 accent-foreground"
+              aria-label={allSelected ? t('skillsImport.deselectAll') : t('skillsImport.selectAll')}
+              data-mortise-semantic-id="skills.import.toggle-all"
+            />
             {allSelected ? t('skillsImport.deselectAll') : t('skillsImport.selectAll')}
-          </Button>
+          </label>
         </div>
 
         <ScrollArea className="max-h-[min(50vh,420px)] -mx-2 px-2">

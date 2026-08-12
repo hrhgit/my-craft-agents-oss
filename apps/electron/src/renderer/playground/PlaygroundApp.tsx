@@ -19,6 +19,8 @@ import type { ComponentVariant } from './registry/types'
 
 const SELECTED_STORAGE_KEY = 'playground-selected-component'
 const VARIANTS_SIDEBAR_KEY = 'playground-variants-sidebar-open'
+const LOCALE_STORAGE_KEY = 'mortise.playground.global.locale.v1'
+type PlaygroundLocale = 'zh-CN' | 'en'
 
 function requestedScenario(): { componentId: string | null; variant: string | null } {
   const query = new URLSearchParams(window.location.search)
@@ -74,6 +76,13 @@ export function PlaygroundApp() {
   })
   const [props, setProps] = React.useState<Record<string, unknown>>({})
   const [selectedVariant, setSelectedVariant] = React.useState<string | null>(null)
+  const [locale, setLocale] = React.useState<PlaygroundLocale>(() => {
+    try {
+      return localStorage.getItem(LOCALE_STORAGE_KEY) === 'en' ? 'en' : 'zh-CN'
+    } catch {
+      return 'zh-CN'
+    }
+  })
   const [variantsSidebarOpen, setVariantsSidebarOpen] = React.useState(() => {
     try {
       const stored = localStorage.getItem(VARIANTS_SIDEBAR_KEY)
@@ -162,6 +171,11 @@ export function PlaygroundApp() {
     }
   }, [variantsSidebarOpen])
 
+  React.useEffect(() => {
+    document.documentElement.lang = locale
+    try { localStorage.setItem(LOCALE_STORAGE_KEY, locale) } catch { /* Ignore storage errors */ }
+  }, [locale])
+
   const selectedComponent = selectedId && registry
     ? (registry.getComponentById(selectedId) ?? null)
     : null
@@ -222,11 +236,20 @@ export function PlaygroundApp() {
         <div className="flex items-center gap-3">
           <MortiseSymbol className="h-5 w-5" />
           <h1 className="font-semibold text-foreground font-sans">
-            Design System Playground
+            {locale === 'zh-CN' ? '界面组件预览' : 'Design System Playground'}
           </h1>
         </div>
         <div className="flex items-center gap-2">
           <ThemeToggle />
+          <Select value={locale} onValueChange={value => setLocale(value as PlaygroundLocale)}>
+            <SelectTrigger className="h-8 w-[92px] bg-foreground/5 border-border/50 text-xs" aria-label="Playground language">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="zh-CN">中文</SelectItem>
+              <SelectItem value="en">English</SelectItem>
+            </SelectContent>
+          </Select>
           <Select value={effectiveColorTheme ?? 'default'} onValueChange={handleThemeChange}>
             <SelectTrigger className="h-8 w-[170px] bg-foreground/5 border-border/50 text-xs">
               <SelectValue placeholder="Theme" />
@@ -247,7 +270,7 @@ export function PlaygroundApp() {
                 ? 'bg-foreground/10 text-foreground'
                 : 'text-muted-foreground hover:text-foreground hover:bg-foreground/5'
             )}
-            title={variantsSidebarOpen ? 'Hide variants' : 'Show variants'}
+            title={variantsSidebarOpen ? (locale === 'zh-CN' ? '隐藏变体' : 'Hide variants') : (locale === 'zh-CN' ? '显示变体' : 'Show variants')}
           >
             <PanelRight className="w-4 h-4" />
           </button>
@@ -261,6 +284,7 @@ export function PlaygroundApp() {
           categories={categories}
           selectedId={selectedId}
           onSelect={setSelectedId}
+          locale={locale}
         />
 
         {/* Content area - full height preview */}
@@ -275,11 +299,12 @@ export function PlaygroundApp() {
             <ComponentPreview
               component={selectedComponent}
               props={props}
+              locale={locale}
             />
           </section>
         ) : (
           <div className="flex-1 flex items-center justify-center text-muted-foreground" role={scenario.componentId ? 'alert' : undefined}>
-            {scenario.componentId ? `Unknown scenario: ${scenario.componentId}` : 'Select a component from the sidebar'}
+            {scenario.componentId ? `${locale === 'zh-CN' ? '未知场景' : 'Unknown scenario'}: ${scenario.componentId}` : (locale === 'zh-CN' ? '请从左侧选择一个组件' : 'Select a component from the sidebar')}
           </div>
         )}
 
@@ -291,6 +316,7 @@ export function PlaygroundApp() {
           props={props}
           onPropsChange={handlePropsChange}
           isOpen={variantsSidebarOpen}
+          locale={locale}
         />
       </div>
     </div>

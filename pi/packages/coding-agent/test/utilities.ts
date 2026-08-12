@@ -17,7 +17,7 @@ import { ModelRegistry } from "../src/core/model-registry.ts";
 import type { ResourceLoader } from "../src/core/resource-loader.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
-import { createCodingTools } from "../src/index.ts";
+import { createCodingTools } from "../src/core/tools/index.ts";
 
 /**
  * API key for authenticated tests. Tests using this should be wrapped in

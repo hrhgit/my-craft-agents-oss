@@ -11,6 +11,7 @@ import {
   DEVELOPER_KIT_BUILD_SCHEMA_VERSION,
   readValidDeveloperKitBuildManifest,
   releaseDeveloperKitBuildLease,
+  resolveReusableDeveloperKitBuild,
   writeDeveloperKitStagingOwner,
 } from '../developer-kit-build-manifest.ts'
 
@@ -140,5 +141,47 @@ describe('Developer Kit immutable build manifest', () => {
     expect(result.removed).toContain('.staging-abandoned')
     expect(result.removed).toContain('invalid-build')
     expect(result.retained).toContain('.staging-active')
+  })
+
+  it('selects the newest fast-validated build for the active Bun toolchain', () => {
+    const root = mkdtempSync(join(tmpdir(), 'mortise-developer-kit-reuse-'))
+    roots.push(root)
+    const buildsRoot = join(root, 'builds')
+
+    const createBuild = (sourceId: string, createdAt: string, bunSha = bunExecutableSha256): string => {
+      const buildId = computeDeveloperKitBuildId(sourceId, true, bunSha)
+      const buildDir = join(buildsRoot, buildId)
+      const artifactDirectory = join(buildDir, 'artifacts', 'mortise-developer-kit-0.1.0-win-x64')
+      const artifactPath = join(artifactDirectory, 'bin', 'mortise-ui.exe')
+      mkdirSync(dirname(artifactPath), { recursive: true })
+      writeFileSync(artifactPath, sourceId)
+      const artifacts = collectArtifactInventory(join(buildDir, 'artifacts'))
+      writeFileSync(join(buildDir, 'build.json'), JSON.stringify({
+        schemaVersion: DEVELOPER_KIT_BUILD_SCHEMA_VERSION,
+        buildId,
+        sourceId,
+        bunExecutableSha256: bunSha,
+        archiveDisabled: true,
+        createdAt,
+        artifactDirectory,
+        sizeBytes: artifactInventorySize(artifacts),
+        artifacts,
+        platform: process.platform,
+        arch: process.arch,
+        immutable: true,
+      }))
+      return buildId
+    }
+
+    createBuild('1'.repeat(64), new Date(1).toISOString())
+    const newest = createBuild('2'.repeat(64), new Date(2).toISOString())
+    createBuild('3'.repeat(64), new Date(3).toISOString(), 'f'.repeat(64))
+
+    expect(resolveReusableDeveloperKitBuild({
+      buildRoot: root,
+      bunExecutableSha256,
+      preferredBuildId: newest,
+      verification: 'fast',
+    })?.buildId).toBe(newest)
   })
 })

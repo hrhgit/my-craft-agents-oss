@@ -38,6 +38,7 @@ type PiEvent = PiAgentEvent | AgentSessionEvent;
  * - tool_execution_end → tool_result
  * - agent_end → ignored (one logical run may contain multiple attempts)
  * - agent_settled → complete
+ * - settlement_failed → non-terminal retry status
  * - compaction_start → status (with "Compacting" keyword)
  * - compaction_end → info/error
  * - auto_retry_start → status
@@ -142,6 +143,15 @@ export class PiEventAdapter extends BaseEventAdapter {
           }
         }
         break;
+
+      case 'settlement_failed': {
+        const failed = event as Extract<AgentSessionEvent, { type: 'settlement_failed' }>;
+        yield {
+          type: 'status',
+          message: `Saving the Session failed; retrying persistence (attempt ${failed.attempt})...`,
+        };
+        break;
+      }
 
       // ============================================================
       // Turn events
@@ -633,6 +643,9 @@ export class PiEventAdapter extends BaseEventAdapter {
   private getToolDisplayName(toolName: string): string | undefined {
     switch (toolName) {
       case 'Bash':
+        return 'Run Command';
+      case 'pwsh':
+        // Windows shell tool — same friendly name as Bash on other platforms.
         return 'Run Command';
       case 'Read':
         return 'Read File';

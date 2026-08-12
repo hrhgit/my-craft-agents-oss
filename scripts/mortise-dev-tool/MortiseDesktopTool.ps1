@@ -549,12 +549,12 @@ namespace MortiseDevTool
             developerKitRunner = new ProcessRunner();
             developerKitButton.Enabled = false;
             developerKitButton.Text = "正在构建开发者套件";
-            AppendCommand("bun", "run", "scripts/build-developer-kit.ts");
+            AppendCommand("bun", "run", "scripts/build-developer-kit.ts", "--no-archive");
             try
             {
                 developerKitRunner.Start(
                     "bun",
-                    new[] { "run", "scripts/build-developer-kit.ts" },
+                    new[] { "run", "scripts/build-developer-kit.ts", "--no-archive" },
                     repoRoot,
                     "developer-kit");
             }

@@ -9,11 +9,11 @@ import type { ModelRegistry } from "../model-registry.ts";
 import { SessionActivityRegistry } from "../session-activity-registry.ts";
 import type { SessionManager } from "../session-manager.ts";
 import type { BuildSystemPromptOptions } from "../system-prompt.ts";
+import { runWithExtensionInvocationOrigin } from "./invocation-context.ts";
 import type {
 	BeforeAgentStartEvent,
 	BeforeAgentStartEventResult,
 	BeforeProviderRequestEvent,
-	CompactOptions,
 	ContextEvent,
 	ContextEventResult,
 	ContextUsage,
@@ -38,7 +38,6 @@ import type {
 	ProviderConfig,
 	RegisteredCommand,
 	RegisteredTool,
-	ReplacedSessionContext,
 	ResolvedCommand,
 	ResourcesDiscoverEvent,
 	ResourcesDiscoverResult,
@@ -105,32 +104,6 @@ interface ExtensionEmitOptions {
 	activations?: readonly ExtensionActivation[];
 }
 
-export type NewSessionHandler = (options?: {
-	cwd?: string;
-	parentSession?: string;
-	setup?: (sessionManager: SessionManager) => Promise<void>;
-	withSession?: (ctx: ReplacedSessionContext) => Promise<void>;
-}) => Promise<{ cancelled: boolean }>;
-
-export type ForkHandler = (
-	entryId: string,
-	options?: { position?: "before" | "at"; withSession?: (ctx: ReplacedSessionContext) => Promise<void> },
-) => Promise<{ cancelled: boolean }>;
-
-export type NavigateTreeHandler = (
-	targetId: string,
-	options?: { summarize?: boolean; customInstructions?: string; replaceInstructions?: boolean; label?: string },
-) => Promise<{ cancelled: boolean }>;
-
-export type SwitchSessionHandler = (
-	sessionPath: string,
-	options?: { withSession?: (ctx: ReplacedSessionContext) => Promise<void> },
-) => Promise<{ cancelled: boolean }>;
-
-export type ReloadHandler = () => Promise<void>;
-
-export type ShutdownHandler = () => void;
-
 /**
  * Helper function to emit session_shutdown event to extensions.
  * Returns true if the event was emitted, false if there were no handlers.
@@ -194,18 +167,11 @@ export class ExtensionRunner {
 	private getModel: () => Model<any> | undefined = () => undefined;
 	private isIdleFn: () => boolean = () => true;
 	private getSignalFn: () => AbortSignal | undefined = () => undefined;
+	private getAttemptIdFn: () => string | undefined = () => undefined;
 	private waitForIdleFn: () => Promise<void> = async () => {};
-	private abortFn: () => void = () => {};
 	private hasPendingMessagesFn: () => boolean = () => false;
 	private getContextUsageFn: () => ContextUsage | undefined = () => undefined;
-	private compactFn: (options?: CompactOptions) => void = () => {};
 	private getSystemPromptFn: () => string = () => "";
-	private newSessionHandler: NewSessionHandler = async () => ({ cancelled: false });
-	private forkHandler: ForkHandler = async () => ({ cancelled: false });
-	private navigateTreeHandler: NavigateTreeHandler = async () => ({ cancelled: false });
-	private switchSessionHandler: SwitchSessionHandler = async () => ({ cancelled: false });
-	private reloadHandler: ReloadHandler = async () => {};
-	private shutdownHandler: ShutdownHandler = () => {};
 	private commandDiagnostics: ResourceDiagnostic[] = [];
 	private staleMessage: string | undefined;
 
@@ -254,11 +220,9 @@ export class ExtensionRunner {
 		this.getModel = contextActions.getModel;
 		this.isIdleFn = contextActions.isIdle;
 		this.getSignalFn = contextActions.getSignal;
-		this.abortFn = contextActions.abort;
+		this.getAttemptIdFn = contextActions.getAttemptId ?? (() => undefined);
 		this.hasPendingMessagesFn = contextActions.hasPendingMessages;
-		this.shutdownHandler = contextActions.shutdown;
 		this.getContextUsageFn = contextActions.getContextUsage;
-		this.compactFn = contextActions.compact;
 		this.getSystemPromptFn = contextActions.getSystemPrompt;
 
 		// Flush provider registrations queued during extension loading
@@ -301,20 +265,10 @@ export class ExtensionRunner {
 	bindCommandContext(actions?: ExtensionCommandContextActions): void {
 		if (actions) {
 			this.waitForIdleFn = actions.waitForIdle;
-			this.newSessionHandler = actions.newSession;
-			this.forkHandler = actions.fork;
-			this.navigateTreeHandler = actions.navigateTree;
-			this.switchSessionHandler = actions.switchSession;
-			this.reloadHandler = actions.reload;
 			return;
 		}
 
 		this.waitForIdleFn = async () => {};
-		this.newSessionHandler = async () => ({ cancelled: false });
-		this.forkHandler = async () => ({ cancelled: false });
-		this.navigateTreeHandler = async () => ({ cancelled: false });
-		this.switchSessionHandler = async () => ({ cancelled: false });
-		this.reloadHandler = async () => {};
 	}
 
 	setUIContext(uiContext?: ExtensionUIContext): void {
@@ -378,7 +332,7 @@ export class ExtensionRunner {
 	}
 
 	invalidate(
-		message = "This extension ctx is stale after session replacement or reload. Do not use a captured pi or command ctx after ctx.newSession(), ctx.fork(), ctx.switchSession(), or ctx.reload(). For newSession, fork, and switchSession, move post-replacement work into withSession and use the ctx passed to withSession. For reload, do not use the old ctx after await ctx.reload().",
+		message = "This extension ctx is stale after runtime replacement or reload. Do not use a captured pi or command ctx after the runtime changes.",
 	): void {
 		if (!this.staleMessage) {
 			this.staleMessage = message;
@@ -390,6 +344,14 @@ export class ExtensionRunner {
 		if (this.staleMessage) {
 			throw new Error(this.staleMessage);
 		}
+	}
+
+	private runInInvocationContext<T>(action: () => T): T {
+		const attemptId = this.getAttemptIdFn();
+		return runWithExtensionInvocationOrigin(
+			attemptId ? { kind: "attempt", attemptId } : { kind: "runtime" },
+			action,
+		);
 	}
 
 	onError(listener: ExtensionErrorListener): () => void {
@@ -474,14 +436,6 @@ export class ExtensionRunner {
 	}
 
 	/**
-	 * Request a graceful shutdown. Called by extension tools and event handlers.
-	 * The actual shutdown behavior is provided by the mode via bindExtensions().
-	 */
-	shutdown(): void {
-		this.shutdownHandler();
-	}
-
-	/**
 	 * Create an ExtensionContext for use in event handlers and tool execution.
 	 * Context values are resolved at call time, so changes via bindCore/bindUI are reflected.
 	 */
@@ -531,25 +485,13 @@ export class ExtensionRunner {
 				runner.assertActive();
 				return runner.getSignalFn();
 			},
-			abort: () => {
-				runner.assertActive();
-				runner.abortFn();
-			},
 			hasPendingMessages: () => {
 				runner.assertActive();
 				return runner.hasPendingMessagesFn();
 			},
-			shutdown: () => {
-				runner.assertActive();
-				runner.shutdownHandler();
-			},
 			getContextUsage: () => {
 				runner.assertActive();
 				return runner.getContextUsageFn();
-			},
-			compact: (options) => {
-				runner.assertActive();
-				runner.compactFn(options);
 			},
 			getSystemPrompt: () => {
 				runner.assertActive();
@@ -569,26 +511,6 @@ export class ExtensionRunner {
 		context.waitForIdle = () => {
 			this.assertActive();
 			return this.waitForIdleFn();
-		};
-		context.newSession = (options) => {
-			this.assertActive();
-			return this.newSessionHandler(options);
-		};
-		context.fork = (entryId, options) => {
-			this.assertActive();
-			return this.forkHandler(entryId, options);
-		};
-		context.navigateTree = (targetId, options) => {
-			this.assertActive();
-			return this.navigateTreeHandler(targetId, options);
-		};
-		context.switchSession = (sessionPath, options) => {
-			this.assertActive();
-			return this.switchSessionHandler(sessionPath, options);
-		};
-		context.reload = () => {
-			this.assertActive();
-			return this.reloadHandler();
 		};
 		return context;
 	}
@@ -615,7 +537,9 @@ export class ExtensionRunner {
 
 			for (const handler of handlers) {
 				try {
-					const handlerResult = await handler(event, this.createContext(ext.id));
+					const handlerResult = await this.runInInvocationContext(() =>
+						handler(event, this.createContext(ext.id)),
+					);
 
 					if (this.isSessionBeforeEvent(event) && handlerResult) {
 						result = handlerResult as SessionBeforeEventResult;
@@ -650,9 +574,9 @@ export class ExtensionRunner {
 			for (const handler of handlers) {
 				try {
 					const currentEvent: MessageEndEvent = { ...event, message: currentMessage };
-					const handlerResult = (await handler(currentEvent, this.createContext(ext.id))) as
-						| MessageEndEventResult
-						| undefined;
+					const handlerResult = (await this.runInInvocationContext(() =>
+						handler(currentEvent, this.createContext(ext.id)),
+					)) as MessageEndEventResult | undefined;
 					if (!handlerResult?.message) continue;
 
 					if (handlerResult.message.role !== currentMessage.role) {
@@ -692,9 +616,9 @@ export class ExtensionRunner {
 
 			for (const handler of handlers) {
 				try {
-					const handlerResult = (await handler(currentEvent, this.createContext(ext.id))) as
-						| ToolResultEventResult
-						| undefined;
+					const handlerResult = (await this.runInInvocationContext(() =>
+						handler(currentEvent, this.createContext(ext.id)),
+					)) as ToolResultEventResult | undefined;
 					if (!handlerResult) continue;
 
 					if (handlerResult.content !== undefined) {
@@ -741,7 +665,7 @@ export class ExtensionRunner {
 			if (!handlers || handlers.length === 0) continue;
 
 			for (const handler of handlers) {
-				const handlerResult = await handler(event, this.createContext(ext.id));
+				const handlerResult = await this.runInInvocationContext(() => handler(event, this.createContext(ext.id)));
 
 				if (handlerResult) {
 					result = handlerResult as ToolCallEventResult;
@@ -762,7 +686,9 @@ export class ExtensionRunner {
 
 			for (const handler of handlers) {
 				try {
-					const handlerResult = await handler(event, this.createContext(ext.id));
+					const handlerResult = await this.runInInvocationContext(() =>
+						handler(event, this.createContext(ext.id)),
+					);
 					if (handlerResult) {
 						return handlerResult as UserBashEventResult;
 					}
@@ -792,7 +718,9 @@ export class ExtensionRunner {
 			for (const handler of handlers) {
 				try {
 					const event: ContextEvent = { type: "context", messages: currentMessages };
-					const handlerResult = await handler(event, this.createContext(ext.id));
+					const handlerResult = await this.runInInvocationContext(() =>
+						handler(event, this.createContext(ext.id)),
+					);
 
 					if (handlerResult && (handlerResult as ContextEventResult).messages) {
 						currentMessages = (handlerResult as ContextEventResult).messages!;
@@ -826,7 +754,9 @@ export class ExtensionRunner {
 						type: "before_provider_request",
 						payload: currentPayload,
 					};
-					const handlerResult = await handler(event, this.createContext(ext.id));
+					const handlerResult = await this.runInInvocationContext(() =>
+						handler(event, this.createContext(ext.id)),
+					);
 					if (handlerResult !== undefined) {
 						currentPayload = handlerResult;
 					}
@@ -877,7 +807,7 @@ export class ExtensionRunner {
 						systemPrompt: currentSystemPrompt,
 						systemPromptOptions,
 					};
-					const handlerResult = await handler(event, ctx);
+					const handlerResult = await this.runInInvocationContext(() => handler(event, ctx));
 
 					if (handlerResult) {
 						const result = handlerResult as BeforeAgentStartEventResult;
@@ -929,7 +859,9 @@ export class ExtensionRunner {
 			for (const handler of handlers) {
 				try {
 					const event: ResourcesDiscoverEvent = { type: "resources_discover", cwd, reason };
-					const handlerResult = await handler(event, this.createContext(ext.id));
+					const handlerResult = await this.runInInvocationContext(() =>
+						handler(event, this.createContext(ext.id)),
+					);
 					const result = handlerResult as ResourcesDiscoverResult | undefined;
 
 					if (result?.skillPaths?.length) {
@@ -974,7 +906,9 @@ export class ExtensionRunner {
 						source,
 						streamingBehavior,
 					};
-					const result = (await handler(event, this.createContext(ext.id))) as InputEventResult | undefined;
+					const result = (await this.runInInvocationContext(() => handler(event, this.createContext(ext.id)))) as
+						| InputEventResult
+						| undefined;
 					if (result?.action === "handled") return result;
 					if (result?.action === "transform") {
 						currentText = result.text;

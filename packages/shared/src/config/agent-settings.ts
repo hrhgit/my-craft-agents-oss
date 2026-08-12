@@ -2,10 +2,10 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:f
 import { basename, extname, join } from 'node:path';
 import {
   buildSystemPrompt,
-  createAllToolDefinitions,
   DEFAULT_COMPACTION_PROMPT,
   parseFrontmatter,
 } from '@mortise/pi-coding-agent';
+import { createAllToolDefinitions } from '@mortise/pi-coding-agent/internal/host-facade';
 import { normalizeSessionToolName } from '@mortise/session-tools-core';
 import {
   getSessionHostToolDefs,

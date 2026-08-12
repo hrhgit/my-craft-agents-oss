@@ -13,7 +13,7 @@ import {
 	createLsTool,
 	createReadTool,
 	createWriteTool,
-} from "../src/index.ts";
+} from "../src/core/tools/index.ts";
 import * as shellModule from "../src/utils/shell.ts";
 
 const readTool = createReadTool(process.cwd());

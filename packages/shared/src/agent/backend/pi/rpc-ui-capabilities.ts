@@ -1,4 +1,4 @@
-import type { RpcHostUICapabilities } from '@mortise/pi-coding-agent/rpc';
+import type { RpcHostUICapabilities } from '@mortise/pi-coding-agent/internal/rpc';
 
 declare const __MORTISE_PRODUCTION_BUILD__: boolean | undefined;
 

@@ -56,7 +56,7 @@ Extension manifests have one Mortise runtime contract and do not accept `targets
 
 Tool approval modes, policy decisions, persisted approval state, and approval GUI are owned by the bundled `mortise-permissions` Extension. Core discovery and runtime code may expose only generic configuration snapshots, frontend channels, lifecycle events, and neutral tool execution interception; it must not interpret permission modes or inject permission state into model context.
 
-Unopened Workspaces must not scan or execute project Extensions during application boot. Concurrent Workspace opens and first Session creation join the same preparation Promise; a failed warmup remains a Workspace-scoped degraded state and cannot block Session input or other Workspaces.
+Unopened Workspaces must not scan or execute project Extensions during application boot. Concurrent Workspace opens and first Session creation join the same preparation Promise; a failed warmup remains a Workspace-scoped degraded state and cannot block Session input or other Workspaces. Workspace and product-integration requests from Extensions route through declared Mortise host capabilities. Commands for the current Session enter that Pi Session's unified command queue, where Pi accepts, queues, or rejects them. Extensions must not bypass the Session state machine or create a second Pi runtime for the same persistent Session.
 
 # Change Impact
 

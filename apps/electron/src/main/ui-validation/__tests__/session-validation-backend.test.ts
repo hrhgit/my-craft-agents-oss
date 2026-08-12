@@ -52,7 +52,8 @@ describe('Session validation backend', () => {
 
     expect(controller.backendFactory(backendArgs('ws-a', createDefaultBackend, { sessionId: 'session-b', provisional: false }))).toBe(fallback)
     const backend = controller.backendFactory(backendArgs('ws-a', createDefaultBackend, { sessionId: 'session-a', provisional: false }))
-    await expect(backend.chat('same payload').next()).rejects.toThrow('planned persistence failure')
+    await expect(backend.chat('same payload', undefined, {}).next())
+      .rejects.toThrow('planned persistence failure')
     expect(controller.status()?.diagnostics.chatAttempts).toBe(1)
   })
 
@@ -64,7 +65,8 @@ describe('Session validation backend', () => {
 
     expect(controller.backendFactory(backendArgs('ws-b', createDefaultBackend))).toBe(fallback)
     const backend = controller.backendFactory(backendArgs('ws-a', createDefaultBackend))
-    await expect(backend.chat('hello').next()).rejects.toThrow('planned failure')
+    await expect(backend.chat('hello', undefined, {}).next())
+      .rejects.toThrow('planned failure')
     expect(controller.status()?.phase).toBe('claimed')
   })
 
@@ -112,7 +114,7 @@ describe('Session validation backend', () => {
       sessionId, workspaceRoot,
     }))
 
-    const first = await backend.chat('durable user').next()
+    const first = await backend.chat('durable user', undefined, {}).next()
     const sessionFile = tryGetSessionFilePath('ws-a', sessionId)
 
     expect(first.value).toEqual({ type: 'pi_user_message_persisted' })
@@ -159,7 +161,9 @@ describe('Session validation backend', () => {
     const backend = controller.backendFactory(backendArgs('ws-a', () => ({} as never), {
       sessionId, provisional: false, workspaceRoot,
     }))
-    for await (const _event of backend.chat('accepted message')) { /* drain deterministic turn */ }
+    for await (const _event of backend.chat('accepted message', undefined, {})) {
+      /* drain deterministic turn */
+    }
 
     expect(lstatSync(projectionPath).isDirectory()).toBe(true)
     expect(controller.status()).toMatchObject({

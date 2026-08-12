@@ -8,6 +8,7 @@ const utilsPath = fileURLToPath(new URL("./webui-process-utils.ps1", import.meta
 const launcherPath = fileURLToPath(new URL("./start-webui.ps1", import.meta.url));
 const instanceLauncherPath = fileURLToPath(new URL("./start-webui-instance.ps1", import.meta.url));
 const clientLauncherPath = fileURLToPath(new URL("./start-webui-client.ps1", import.meta.url));
+const stopLauncherPath = fileURLToPath(new URL("./stop-webui.ps1", import.meta.url));
 const packageJsonPath = fileURLToPath(new URL("../package.json", import.meta.url));
 const webuiViteConfigPath = fileURLToPath(new URL("../apps/webui/vite.config.ts", import.meta.url));
 const windowsTest = process.platform === "win32" ? test : test.skip;
@@ -183,7 +184,7 @@ describe("WebUI process lifecycle utilities", () => {
     expect(scripts["server:dev:webui"]).toContain("MORTISE_WEBUI_DIR=apps/webui/src");
     expect(scripts["server:dev:webui"]).toContain("server:dev:raw");
     expect(scripts["server:dev:webui"]).not.toContain("webui:build");
-    expect(scripts["server:dev:raw"]).toContain("server:build:subprocess");
+    expect(scripts["server:dev:raw"]).toContain("server:build:subprocess:if-needed");
     expect(scripts["server:dev:raw"]).toContain("server:dev:runtime");
     expect(scripts["server:dev:runtime"]).not.toContain("server:build:subprocess");
   });
@@ -202,15 +203,28 @@ describe("WebUI process lifecycle utilities", () => {
     expect(portmuxIndex).toBeGreaterThan(cleanupIndex);
   });
 
-  test("repeated launcher invocations create frontend-only clients", () => {
+  test("reuses the primary WebUI by default and creates frontend-only clients explicitly", () => {
     const instanceLauncher = readFileSync(instanceLauncherPath, "utf8");
     const clientLauncher = readFileSync(clientLauncherPath, "utf8");
 
+    expect(instanceLauncher).toContain("[switch]$NewClient");
     expect(instanceLauncher).toContain("Get-MortiseServerEndpoint -RequireWebuiAutoLogin");
     expect(instanceLauncher).toContain("Start-SharedClientInstance");
+    expect(instanceLauncher.indexOf("$existingUrl = Get-RunningWebuiUrl")).toBeLessThan(
+      instanceLauncher.indexOf("if ($null -ne (Get-MortiseServerEndpoint -RequireWebuiAutoLogin))"),
+    );
     expect(clientLauncher).toContain("apps/webui/vite.config.ts");
     expect(clientLauncher).not.toContain("Start-HeadlessServer");
     expect(clientLauncher).not.toContain("server:dev:webui");
     expect(clientLauncher).not.toContain("Stop-LegacyWebuiRpcProcess");
+  });
+
+  test("releases temporary and legacy WebUI port allocations", () => {
+    const stopLauncher = readFileSync(stopLauncherPath, "utf8");
+    expect(stopLauncher).toContain("craft-agent-webui\\portmux\\client-");
+    expect(stopLauncher).toContain(".craft-agent\\portmux\\webui-instance-");
+    expect(stopLauncher).toContain("portmux --json release --project");
+    expect(stopLauncher).toContain("Test-IsEphemeralWebuiProject");
+    expect(stopLauncher).toContain("$null -ne $_.assigned_port");
   });
 });

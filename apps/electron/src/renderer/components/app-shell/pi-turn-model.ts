@@ -893,10 +893,14 @@ export function buildPiTurns(
       || entity.kind === 'agent_settled' || entity.kind === 'runtime_error'
   )
   const sortedUsers = [...users.values()].sort((a, b) => a.seq - b.seq)
-  for (const batch of batchAssistantRecords(assistants.values(), sortedUsers)) {
+  // Queued follow-ups stay composer-adjacent until the runtime accepts them,
+  // so they must not split or finalize the turn currently streaming. Only
+  // non-queued users act as batch boundaries.
+  const boundaryUsers = sortedUsers.filter(user => user.queued !== true)
+  for (const batch of batchAssistantRecords(assistants.values(), boundaryUsers)) {
     const assistant = batch.record
     const timelineSeq = assistantTimelineSeq(assistant, sortedUsers)
-    const hasLaterUser = sortedUsers.some(user => user.seq > (batch.userSeq ?? timelineSeq))
+    const hasLaterUser = boundaryUsers.some(user => user.seq > (batch.userSeq ?? timelineSeq))
     const turnPayload = record(assistant.turnEntity?.payload)
     const latestTurnComplete = assistant.turnEntity?.kind === 'turn_end' || turnPayload?.status === 'completed'
     const batchComplete = hasLaterUser || runtimeStopped || (!hasAgentLifecycle && latestTurnComplete)

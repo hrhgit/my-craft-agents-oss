@@ -13,6 +13,7 @@
  * Modes use this class and add their own I/O layer on top.
  */
 
+import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname } from "node:path";
 import type { Agent, AgentEvent, AgentMessage, AgentState, AgentTool, ThinkingLevel } from "@mortise/pi-agent-core";
@@ -60,11 +61,9 @@ import {
 	type MessageEndEvent,
 	type MessageStartEvent,
 	type MessageUpdateEvent,
-	type ReplacedSessionContext,
 	type SessionBeforeCompactResult,
 	type SessionBeforeTreeResult,
 	type SessionStartEvent,
-	type ShutdownHandler,
 	type ToolCallEventResult,
 	type ToolDefinition,
 	type ToolExecutionEndEvent,
@@ -76,7 +75,13 @@ import {
 	type TurnStartEvent,
 	wrapRegisteredTools,
 } from "./extensions/index.ts";
+import {
+	type ExtensionInvocationOrigin,
+	getExtensionInvocationOrigin,
+	runWithExtensionInvocationOrigin,
+} from "./extensions/invocation-context.ts";
 import { emitSessionShutdownEvent } from "./extensions/runner.ts";
+import type { ReplacedSessionContext } from "./extensions/types.ts";
 import type { BashExecutionMessage, CustomMessage } from "./messages.ts";
 import type { ModelRegistry } from "./model-registry.ts";
 import { findInitialModel } from "./model-resolver.ts";
@@ -129,7 +134,7 @@ export function parseSkillBlock(text: string): ParsedSkillBlock | null {
 }
 
 /** Session-specific events that extend the core AgentEvent */
-export type AgentSessionEvent =
+export type AgentSessionEvent = (
 	| Exclude<AgentEvent, { type: "agent_end" }>
 	| {
 			type: "agent_end";
@@ -163,15 +168,31 @@ export type AgentSessionEvent =
 	  }
 	| { type: "auto_retry_end"; success: boolean; attempt: number; finalError?: string }
 	| { type: "agent_settled" }
+	| { type: "settlement_failed"; error: string; attempt: number }
 	| {
 			type: "pi_user_message_persisted";
 			clientMutationId: string;
 			entryId: string;
 			sessionFile: string;
-	  };
+	  }
+) & { attemptId?: string };
 
 /** Listener function for agent session events */
 export type AgentSessionEventListener = (event: AgentSessionEvent) => void;
+
+export type SessionCommandDisposition =
+	| { status: "started"; attemptId: string }
+	| { status: "accepted"; attemptId: string }
+	| { status: "queued"; attemptId: string }
+	| {
+			status: "rejected";
+			reason:
+				| "not-running"
+				| "already-running"
+				| "compaction-in-progress"
+				| "invalid-state"
+				| "preflight-failed";
+	  };
 
 // ============================================================================
 // Types
@@ -228,8 +249,6 @@ export interface ExtensionBindings {
 	publishFrontendState?: ExtensionRuntimeState["publishFrontendState"];
 	capabilitiesContextFactory?: (extensionId: string) => ExtensionCapabilitiesContext;
 	commandContextActions?: ExtensionCommandContextActions;
-	abortHandler?: () => void;
-	shutdownHandler?: ShutdownHandler;
 	onError?: ExtensionErrorListener;
 	/**
 	 * Host-side execution interceptor for tool calls.
@@ -308,8 +327,8 @@ export interface PromptOptions {
 	streamingBehavior?: "steer" | "followUp";
 	/** Source of input for extension input event handlers. Defaults to "interactive". */
 	source?: InputSource;
-	/** Internal hook used by RPC mode to observe prompt preflight acceptance or rejection. */
-	preflightResult?: (success: boolean) => void;
+	/** Internal hook used by RPC mode to acknowledge command disposition before settlement. */
+	commandResult?: (result: SessionCommandDisposition) => void;
 	/**
 	 * Replace the system prompt for this turn (and subsequent turns until changed).
 	 *
@@ -382,6 +401,9 @@ export class AgentSession {
 	private _eventListeners: AgentSessionEventListener[] = [];
 	private _logicalRunPromise: Promise<void> | undefined = undefined;
 	private _logicalRunResolve: (() => void) | undefined = undefined;
+	private _activeAttemptId: string | undefined = undefined;
+	private _settlementPromise: Promise<void> | undefined = undefined;
+	private _settlementAttempt = 0;
 
 	/** Tracks pending steering messages for UI display. Removed when delivered. */
 	private _steeringMessages: string[] = [];
@@ -431,8 +453,6 @@ export class AgentSession {
 	private _extensionUIContextFactory?: (extensionId: string) => ExtensionUIContext;
 	private _extensionCapabilitiesContextFactory?: (extensionId: string) => ExtensionCapabilitiesContext;
 	private _extensionCommandContextActions?: ExtensionCommandContextActions;
-	private _extensionAbortHandler?: () => void;
-	private _extensionShutdownHandler?: ShutdownHandler;
 	private _extensionErrorListener?: ExtensionErrorListener;
 	private _toolExecutionHandler?: ToolExecutionHandler;
 	private _toolResultHandler?: ToolResultHandler;
@@ -648,9 +668,26 @@ export class AgentSession {
 
 	/** Emit an event to all listeners */
 	private _emit(event: AgentSessionEvent): void {
+		const emitted =
+			event.attemptId || !this._activeAttemptId
+				? event
+				: ({ ...event, attemptId: this._activeAttemptId } as AgentSessionEvent);
 		for (const l of this._eventListeners) {
-			l(event);
+			l(emitted);
 		}
+	}
+
+	/** Pi-issued identity for the currently active Attempt. */
+	get attemptId(): string | undefined {
+		return this._activeAttemptId;
+	}
+
+	private _startAttempt(): string {
+		if (this._activeAttemptId) throw new Error(`Attempt ${this._activeAttemptId} is already active`);
+		const attemptId = randomUUID();
+		this._activeAttemptId = attemptId;
+		this._ensureLogicalRunPromise();
+		return attemptId;
 	}
 
 	private _emitQueueUpdate(): void {
@@ -682,11 +719,48 @@ export class AgentSession {
 		resolve();
 	}
 
-	private async _emitAgentSettled(): Promise<void> {
-		await this.sessionManager.flush();
-		await this._emitPersistedUserMessages();
-		await this._extensionRunner.emit({ type: "agent_settled" });
-		this._emit({ type: "agent_settled" });
+	private async _emitAgentSettled(attemptId = this._activeAttemptId, retryPersistence = false): Promise<void> {
+		if (!attemptId) return;
+		if (this._activeAttemptId !== attemptId) {
+			throw new Error(`Settlement does not belong to the active Attempt`);
+		}
+		if (this._settlementPromise) return this._settlementPromise;
+
+		const settlement = (async () => {
+			try {
+				if (retryPersistence) await this.sessionManager.retryFlush();
+				else await this.sessionManager.flush();
+				await this._emitPersistedUserMessages();
+				if (this._activeAttemptId !== attemptId) {
+					throw new Error(`Execution changed before settlement completed`);
+				}
+				await this._extensionRunner.emit({ type: "agent_settled" });
+				this._activeAttemptId = undefined;
+				this._settlementAttempt = 0;
+				this._emit({ type: "agent_settled", ...(attemptId ? { attemptId } : {}) });
+			} catch (error) {
+				const attempt = ++this._settlementAttempt;
+				this._emit({
+					type: "settlement_failed",
+					...(attemptId ? { attemptId } : {}),
+					attempt,
+					error: error instanceof Error ? error.message : String(error),
+				});
+				throw error;
+			}
+		})();
+		this._settlementPromise = settlement;
+		try {
+			await settlement;
+		} finally {
+			if (this._settlementPromise === settlement) this._settlementPromise = undefined;
+		}
+	}
+
+	/** Retry persistence for a completed Agent run without starting another run. */
+	async retrySettlement(attemptId: string): Promise<void> {
+		if (this.isStreaming) throw new Error("Cannot retry settlement while the Agent is streaming");
+		await this._emitAgentSettled(attemptId, true);
 	}
 
 	/** Resolve the pending retry promise */
@@ -992,7 +1066,7 @@ export class AgentSession {
 		}
 
 		this._extensionRunner.invalidate(
-			"This extension ctx is stale after session replacement or reload. Do not use a captured pi or command ctx after ctx.newSession(), ctx.fork(), ctx.switchSession(), or ctx.reload(). For newSession, fork, and switchSession, move post-replacement work into withSession and use the ctx passed to withSession. For reload, do not use the old ctx after await ctx.reload().",
+			"This extension ctx is stale after runtime replacement or reload. Do not use a captured pi or command ctx after the runtime changes.",
 		);
 		this._disconnectFromAgent();
 		this._eventListeners = [];
@@ -1305,6 +1379,7 @@ export class AgentSession {
 	// =========================================================================
 
 	private async _runAgentPrompt(messages: AgentMessage | AgentMessage[]): Promise<void> {
+		const attemptId = this._activeAttemptId;
 		try {
 			await this.agent.prompt(messages);
 			while (await this._handlePostAgentRun()) {
@@ -1312,7 +1387,7 @@ export class AgentSession {
 			}
 		} finally {
 			try {
-				await this._emitAgentSettled();
+				await this._emitAgentSettled(attemptId);
 			} finally {
 				this._flushPendingBashMessages();
 				this._resolveLogicalRun();
@@ -1321,15 +1396,20 @@ export class AgentSession {
 	}
 
 	/** Resume an interrupted run after closing any incomplete persisted tool batch. */
-	async continueFromHistory(preflightResult?: (success: boolean) => void, systemPrompt?: string): Promise<void> {
+	async continueFromHistory(
+		commandResult?: (result: SessionCommandDisposition) => void,
+		systemPrompt?: string,
+	): Promise<void> {
+		if (this.isStreaming || this._activeAttemptId) {
+			commandResult?.({ status: "rejected", reason: "already-running" });
+			return;
+		}
+		const attemptId = this._startAttempt();
 		try {
 			await this.prepareForFirstRequest();
 			if (systemPrompt !== undefined) {
 				this._hostSystemPromptOverride = systemPrompt;
 				this.refreshSystemPrompt();
-			}
-			if (this.isStreaming) {
-				throw new Error("Agent is already processing. Wait for completion before continuing.");
 			}
 			if (!this.model) throw new Error(formatNoModelSelectedMessage());
 			if (!this._modelRegistry.hasConfiguredAuth(this.model)) {
@@ -1400,16 +1480,17 @@ export class AgentSession {
 			await this.sessionManager.flush();
 			this.agent.state.messages = this.sessionManager.buildSessionContext().messages;
 		} catch (error) {
-			preflightResult?.(false);
+			if (this._activeAttemptId === attemptId && !this.isStreaming) this._activeAttemptId = undefined;
+			commandResult?.({ status: "rejected", reason: "preflight-failed" });
 			throw error;
 		}
-		preflightResult?.(true);
+		commandResult?.({ status: "started", attemptId });
 		try {
 			await this.agent.continue();
 			while (await this._handlePostAgentRun()) await this.agent.continue();
 		} finally {
 			try {
-				await this._emitAgentSettled();
+				await this._emitAgentSettled(attemptId);
 			} finally {
 				this._flushPendingBashMessages();
 				this._resolveLogicalRun();
@@ -1468,8 +1549,9 @@ export class AgentSession {
 	 */
 	async prompt(text: string, options?: PromptOptions): Promise<void> {
 		const expandPromptTemplates = options?.expandPromptTemplates ?? true;
-		const preflightResult = options?.preflightResult;
+		const commandResult = options?.commandResult;
 		let messages: AgentMessage[] | undefined;
+		let attemptId = this._activeAttemptId;
 
 		try {
 			await this.prepareForFirstRequest();
@@ -1497,10 +1579,14 @@ export class AgentSession {
 			// Handle extension commands first (execute immediately, even during streaming)
 			// Extension commands manage their own LLM interaction via pi.sendMessage()
 			if (expandPromptTemplates && text.startsWith("/")) {
+				if (!attemptId) attemptId = this._startAttempt();
 				const handled = await this._tryExecuteExtensionCommand(text);
 				if (handled) {
 					// Extension command executed, no prompt to send
-					preflightResult?.(true);
+					commandResult?.({ status: "started", attemptId });
+					if (this._activeAttemptId === attemptId && !this.isStreaming) {
+						await this._emitAgentSettled(attemptId);
+					}
 					return;
 				}
 			}
@@ -1516,7 +1602,11 @@ export class AgentSession {
 					this.isStreaming ? options?.streamingBehavior : undefined,
 				);
 				if (inputResult.action === "handled") {
-					preflightResult?.(true);
+					if (!attemptId) attemptId = this._startAttempt();
+					commandResult?.({ status: "started", attemptId });
+					if (this._activeAttemptId === attemptId && !this.isStreaming) {
+						await this._emitAgentSettled(attemptId);
+					}
 					return;
 				}
 				if (inputResult.action === "transform") {
@@ -1541,10 +1631,11 @@ export class AgentSession {
 				}
 				if (options.streamingBehavior === "followUp") {
 					await this._queueFollowUp(expandedText, currentImages, options?.clientMutationId);
+					commandResult?.({ status: "queued", attemptId: this._activeAttemptId! });
 				} else {
 					await this._queueSteer(expandedText, currentImages, options?.clientMutationId);
+					commandResult?.({ status: "accepted", attemptId: this._activeAttemptId! });
 				}
-				preflightResult?.(true);
 				return;
 			}
 
@@ -1643,7 +1734,8 @@ export class AgentSession {
 				this.agent.state.systemPrompt = this._baseSystemPrompt;
 			}
 		} catch (error) {
-			preflightResult?.(false);
+			if (this._activeAttemptId === attemptId && !this.isStreaming) this._activeAttemptId = undefined;
+			commandResult?.({ status: "rejected", reason: "preflight-failed" });
 			throw error;
 		}
 
@@ -1651,7 +1743,8 @@ export class AgentSession {
 			return;
 		}
 
-		preflightResult?.(true);
+		if (!attemptId) attemptId = this._startAttempt();
+		commandResult?.({ status: "started", attemptId });
 		await this._runAgentPrompt(messages);
 		await this.waitForRetry();
 	}
@@ -1672,7 +1765,10 @@ export class AgentSession {
 		const ctx = this._extensionRunner.createCommandContext(command.extensionId);
 
 		try {
-			await command.handler(args, ctx);
+			await runWithExtensionInvocationOrigin(
+				this._activeAttemptId ? { kind: "attempt", attemptId: this._activeAttemptId } : { kind: "runtime" },
+				() => command.handler(args, ctx),
+			);
 			return true;
 		} catch (err) {
 			// Emit error via extension runner
@@ -1724,7 +1820,11 @@ export class AgentSession {
 	 * @param images Optional image attachments to include with the message
 	 * @throws Error if text is an extension command
 	 */
-	async steer(text: string, images?: ImageContent[], options?: { clientMutationId?: string }): Promise<void> {
+	async steer(
+		text: string,
+		images?: ImageContent[],
+		options?: { clientMutationId?: string },
+	): Promise<SessionCommandDisposition> {
 		// Check for extension commands (cannot be queued) before the streaming guard:
 		// extension commands must reject with their specific error even while idle.
 		if (text.startsWith("/")) {
@@ -1732,7 +1832,7 @@ export class AgentSession {
 		}
 
 		if (!this.isStreaming) {
-			throw new Error("Cannot steer because the agent is not streaming");
+			return { status: "rejected", reason: "not-running" };
 		}
 
 		// Expand skill commands and prompt templates
@@ -1740,6 +1840,7 @@ export class AgentSession {
 		expandedText = expandPromptTemplate(expandedText, [...this.promptTemplates]);
 
 		await this._queueSteer(expandedText, images, options?.clientMutationId);
+		return { status: "accepted", attemptId: this._activeAttemptId! };
 	}
 
 	/**
@@ -1753,7 +1854,8 @@ export class AgentSession {
 		text: string,
 		images?: ImageContent[],
 		options?: { clientMutationId?: string; attachments?: UserAttachmentMetadata[] },
-	): Promise<void> {
+	): Promise<SessionCommandDisposition> {
+		if (!this.isStreaming || !this._activeAttemptId) return { status: "rejected", reason: "not-running" };
 		// Check for extension commands (cannot be queued)
 		if (text.startsWith("/")) {
 			this._throwIfExtensionCommand(text);
@@ -1764,6 +1866,22 @@ export class AgentSession {
 		expandedText = expandPromptTemplate(expandedText, [...this.promptTemplates]);
 
 		await this._queueFollowUp(expandedText, images, options?.clientMutationId, options?.attachments);
+		return { status: "queued", attemptId: this._activeAttemptId };
+	}
+
+	/** Withdraw one queued Session command before the Agent Loop consumes it. */
+	withdrawQueued(clientMutationId: string): { status: "removed" } | { status: "rejected"; reason: "already-consumed" } {
+		const removed = this.agent.removeQueuedMessage(clientMutationId);
+		if (!removed) return { status: "rejected", reason: "already-consumed" };
+		const text = removed.role === "user" ? this._getUserMessageText(removed) : "";
+		if (text) {
+			const steeringIndex = this._steeringMessages.indexOf(text);
+			if (steeringIndex >= 0) this._steeringMessages.splice(steeringIndex, 1);
+			const followUpIndex = this._followUpMessages.indexOf(text);
+			if (followUpIndex >= 0) this._followUpMessages.splice(followUpIndex, 1);
+		}
+		this._emitQueueUpdate();
+		return { status: "removed" };
 	}
 
 	/**
@@ -1826,19 +1944,20 @@ export class AgentSession {
 	/**
 	 * Send a custom message to the session. Creates a CustomMessageEntry.
 	 *
-	 * Handles three cases:
-	 * - Streaming: queues message, processed when loop pulls from queue
-	 * - Not streaming + triggerTurn: appends to state/session, starts new turn
-	 * - Not streaming + no trigger: appends to state/session, no turn
+	 * A custom message may affect an already authorized turn or be appended as
+	 * context, but it cannot create a new logical run.
 	 *
 	 * @param message Custom message with customType, content, display, details
-	 * @param options.triggerTurn If true and not streaming, triggers a new LLM turn
-	 * @param options.deliverAs Delivery mode: "steer", "followUp", or "nextTurn"
+	 * @param options.deliverAs Delivery mode: "steer" or "nextTurn"
 	 */
 	async sendCustomMessage<T = unknown>(
 		message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
-		options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" },
+		options?: { deliverAs?: "steer" | "nextTurn" },
 	): Promise<void> {
+		const deliverAs = (options as { deliverAs?: string } | undefined)?.deliverAs;
+		if (deliverAs !== undefined && deliverAs !== "steer" && deliverAs !== "nextTurn") {
+			throw new Error(`Unsupported custom-message delivery mode: ${deliverAs}`);
+		}
 		const appMessage = {
 			role: "custom" as const,
 			customType: message.customType,
@@ -1847,16 +1966,10 @@ export class AgentSession {
 			details: message.details,
 			timestamp: Date.now(),
 		} satisfies CustomMessage<T>;
-		if (options?.deliverAs === "nextTurn") {
+		if (deliverAs === "nextTurn") {
 			this._pendingNextTurnMessages.push(appMessage);
 		} else if (this.isStreaming) {
-			if (options?.deliverAs === "followUp") {
-				this.agent.followUp(appMessage);
-			} else {
-				this.agent.steer(appMessage);
-			}
-		} else if (options?.triggerTurn) {
-			await this._runAgentPrompt(appMessage);
+			this.agent.steer(appMessage);
 		} else {
 			this.agent.state.messages.push(appMessage);
 			this.sessionManager.appendCustomMessageEntry(
@@ -1871,8 +1984,7 @@ export class AgentSession {
 	}
 
 	/**
-	 * Send a user message to the agent. Always triggers a turn.
-	 * When the agent is streaming, use deliverAs to specify how to queue the message.
+	 * Submit a user message through the same Pi Session command state machine.
 	 *
 	 * @param content User message content (string or content array)
 	 * @param options.deliverAs Delivery mode when streaming: "steer" or "followUp"
@@ -1880,6 +1992,7 @@ export class AgentSession {
 	async sendUserMessage(
 		content: string | (TextContent | ImageContent)[],
 		options?: { deliverAs?: "steer" | "followUp" },
+		_origin: ExtensionInvocationOrigin = { kind: "runtime" },
 	): Promise<void> {
 		// Normalize content to text string + optional images
 		let text: string;
@@ -1901,11 +2014,9 @@ export class AgentSession {
 			if (images.length === 0) images = undefined;
 		}
 
-		// Use prompt() with expandPromptTemplates: false to skip command handling and template expansion
 		await this.prompt(text, {
-			expandPromptTemplates: false,
-			streamingBehavior: options?.deliverAs,
 			images,
+			streamingBehavior: options?.deliverAs,
 			source: "extension",
 		});
 	}
@@ -2843,12 +2954,6 @@ export class AgentSession {
 		if (bindings.commandContextActions !== undefined) {
 			this._extensionCommandContextActions = bindings.commandContextActions;
 		}
-		if (bindings.abortHandler !== undefined) {
-			this._extensionAbortHandler = bindings.abortHandler;
-		}
-		if (bindings.shutdownHandler !== undefined) {
-			this._extensionShutdownHandler = bindings.shutdownHandler;
-		}
 		if (bindings.onError !== undefined) {
 			this._extensionErrorListener = bindings.onError;
 		}
@@ -2882,12 +2987,6 @@ export class AgentSession {
 		}
 		if (bindings.commandContextActions !== undefined) {
 			this._extensionCommandContextActions = bindings.commandContextActions;
-		}
-		if (bindings.abortHandler !== undefined) {
-			this._extensionAbortHandler = bindings.abortHandler;
-		}
-		if (bindings.shutdownHandler !== undefined) {
-			this._extensionShutdownHandler = bindings.shutdownHandler;
 		}
 		if (bindings.onError !== undefined) {
 			this._extensionErrorListener = bindings.onError;
@@ -3005,7 +3104,18 @@ export class AgentSession {
 
 		runner.bindCore(
 			{
-				sendMessage: (message, options) => {
+				sendMessage: (message, options, origin = { kind: "runtime" }) => {
+					const activeAttemptId = this._activeAttemptId;
+					const staleExecution = origin.kind === "attempt" && origin.attemptId !== activeAttemptId;
+					const unscopedDuringExecution = origin.kind === "runtime" && activeAttemptId !== undefined;
+					if (staleExecution || unscopedDuringExecution) {
+						runner.emitError({
+							extensionPath: "<runtime>",
+							event: "send_message",
+							error: "Extension custom message does not belong to the active Attempt",
+						});
+						return;
+					}
 					this.sendCustomMessage(message, options).catch((err) => {
 						runner.emitError({
 							extensionPath: "<runtime>",
@@ -3014,8 +3124,8 @@ export class AgentSession {
 						});
 					});
 				},
-				sendUserMessage: (content, options) => {
-					this.sendUserMessage(content, options).catch((err) => {
+				sendUserMessage: (content, options, origin = { kind: "runtime" }) => {
+					this.sendUserMessage(content, options, origin).catch((err) => {
 						runner.emitError({
 							extensionPath: "<runtime>",
 							event: "send_user_message",
@@ -3052,29 +3162,9 @@ export class AgentSession {
 				getModel: () => this.model,
 				isIdle: () => !this.isStreaming,
 				getSignal: () => this.agent.signal,
-				abort: () => {
-					if (this._extensionAbortHandler) {
-						this._extensionAbortHandler();
-						return;
-					}
-					void this.abort();
-				},
+				getAttemptId: () => this._activeAttemptId,
 				hasPendingMessages: () => this.pendingMessageCount > 0,
-				shutdown: () => {
-					this._extensionShutdownHandler?.();
-				},
 				getContextUsage: () => this.getContextUsage(),
-				compact: (options) => {
-					void (async () => {
-						try {
-							const result = await this.compact(options?.customInstructions);
-							options?.onComplete?.(result);
-						} catch (error) {
-							const err = error instanceof Error ? error : new Error(String(error));
-							options?.onError?.(err);
-						}
-					})();
-				},
 				getSystemPrompt: () => this.systemPrompt,
 			},
 			{
@@ -3256,7 +3346,6 @@ export class AgentSession {
 			this._extensionUIContextFactory ||
 			this._extensionCapabilitiesContextFactory ||
 			this._extensionCommandContextActions ||
-			this._extensionShutdownHandler ||
 			this._extensionErrorListener;
 		if (hasBindings) {
 			await this._extensionRunner.emit({ type: "session_start", reason: "reload" });
@@ -4028,7 +4117,8 @@ export class AgentSession {
 			Object.getOwnPropertyDescriptors(this._extensionRunner.createCommandContext()),
 		) as ReplacedSessionContext;
 		context.sendMessage = (message, options) => this.sendCustomMessage(message, options);
-		context.sendUserMessage = (content, options) => this.sendUserMessage(content, options);
+		context.sendUserMessage = (content, options) =>
+			this.sendUserMessage(content, options, getExtensionInvocationOrigin());
 		return context;
 	}
 

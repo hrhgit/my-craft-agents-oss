@@ -1,5 +1,6 @@
 import { describe, expect, it, jest } from 'bun:test'
 import { PiAgent } from '../pi-agent.ts'
+import { EventQueue } from '../backend/event-queue.ts'
 import { AbortReason } from '../core/session-lifecycle.ts'
 import type { BackendConfig } from '../backend/types.ts'
 import type { PiProjectionEventV1, PiProjectionSnapshotV1 } from '../../protocol/pi-projection.ts'
@@ -32,7 +33,7 @@ function createAgent(): PiAgent {
 }
 
 describe('PiAgent abort', () => {
-  it('keeps the Mortise event stream open across retry attempts until agent_settled', () => {
+  it('keeps the Mortise event stream open across retry attempts until agent_settled', async () => {
     const emitted: PiProjectionEventV1[] = []
     const agent = new PiAgent({
       provider: 'pi',
@@ -42,28 +43,32 @@ describe('PiAgent abort', () => {
       onPiProjectionEvent: event => emitted.push(event),
     } satisfies BackendConfig)
     ;(agent as any).rpcClient = { runtimeId: 'runtime-test' }
-    ;(agent as any).eventQueue.reset()
+    const eventQueue = new EventQueue()
+    ;(agent as any).activeAttemptId = 'execution-test'
+    ;(agent as any).activeEventStream = { attemptId: 'execution-test', queue: eventQueue }
 
-    ;(agent as any).handlePiEvent({ type: 'agent_start' })
+    ;(agent as any).handlePiEvent({ type: 'agent_start', attemptId: 'execution-test' })
     ;(agent as any).handlePiEvent({
-      type: 'agent_end', willRetry: true,
+      type: 'agent_end', attemptId: 'execution-test', willRetry: true,
       messages: [{ role: 'assistant', stopReason: 'error' }],
     })
-    expect((agent as any).eventQueue.isComplete).toBe(false)
+    expect(eventQueue.isComplete).toBe(false)
     expect(emitted.at(-1)).toMatchObject({
       kind: 'agent_end', payload: { status: 'failed', willRetry: true, settlementPending: true },
     })
 
-    ;(agent as any).handlePiEvent({ type: 'auto_retry_start', attempt: 1, maxAttempts: 3 })
-    ;(agent as any).handlePiEvent({ type: 'agent_end', willRetry: false, messages: [] })
-    expect((agent as any).eventQueue.isComplete).toBe(false)
+    ;(agent as any).handlePiEvent({ type: 'auto_retry_start', attemptId: 'execution-test', attempt: 1, maxAttempts: 3 })
+    ;(agent as any).handlePiEvent({ type: 'agent_end', attemptId: 'execution-test', willRetry: false, messages: [] })
+    expect(eventQueue.isComplete).toBe(false)
 
-    ;(agent as any).handlePiEvent({ type: 'agent_settled' })
-    expect((agent as any).eventQueue.isComplete).toBe(true)
+    ;(agent as any).handlePiEvent({ type: 'agent_settled', attemptId: 'execution-test' })
+    expect(eventQueue.isComplete).toBe(true)
     expect(emitted.filter(event => event.kind === 'agent_settled')).toEqual([
       expect.objectContaining({ payload: expect.objectContaining({ status: 'completed' }) }),
     ])
-    expect(((agent as any).eventQueue.queue as Array<{ type: string }>).filter(event => event.type === 'complete')).toHaveLength(1)
+    const drained = []
+    for await (const event of eventQueue.drain()) drained.push(event)
+    expect(drained.filter(event => event.type === 'complete')).toHaveLength(1)
 
     agent.destroy()
   })
@@ -126,7 +131,9 @@ describe('PiAgent abort', () => {
     let releaseAbort!: () => void
     const abortAcknowledged = new Promise<void>(resolve => { releaseAbort = resolve })
     ;(agent as any)._isProcessing = true
-    ;(agent as any).rpcClient = { abort: () => abortAcknowledged }
+    ;(agent as any).activeAttemptId = 'execution-abort'
+    ;(agent as any).activeEventStream = { attemptId: 'execution-abort', queue: new EventQueue() }
+    ;(agent as any).rpcClient = { abort: async () => { await abortAcknowledged; return { status: 'accepted', attemptId: 'execution-abort' } } }
 
     let settled = false
     const aborting = agent.abort(AbortReason.UserStop).then(() => { settled = true })
@@ -138,13 +145,13 @@ describe('PiAgent abort', () => {
 
     let adaptedEvents = 0
     ;(agent as any).adapter = { adaptEvent: () => { adaptedEvents++; return [] } }
-    ;(agent as any).handlePiEvent({ type: 'message_update' })
+    ;(agent as any).handlePiEvent({ type: 'message_update', attemptId: 'execution-abort' })
     expect(adaptedEvents).toBe(0)
-    ;(agent as any).handlePiEvent({ type: 'turn_end' })
+    ;(agent as any).handlePiEvent({ type: 'turn_end', attemptId: 'execution-abort' })
     expect(adaptedEvents).toBe(1)
 
     releaseAbort()
-    ;(agent as any).handlePiEvent({ type: 'agent_settled' })
+    ;(agent as any).handlePiEvent({ type: 'agent_settled', attemptId: 'execution-abort' })
     await aborting
     expect(settled).toBe(true)
 
@@ -155,6 +162,8 @@ describe('PiAgent abort', () => {
     const agent = createAgent()
     let released = false
     ;(agent as any)._isProcessing = true
+    ;(agent as any).activeAttemptId = 'execution-failed-abort'
+    ;(agent as any).activeEventStream = { attemptId: 'execution-failed-abort', queue: new EventQueue() }
     ;(agent as any).rpcClient = {
       runtimeId: 'runtime-test',
       abort: async () => { throw new Error('transport closed') },
@@ -173,9 +182,11 @@ describe('PiAgent abort', () => {
     const agent = createAgent()
     let released = false
     ;(agent as any)._isProcessing = true
+    ;(agent as any).activeAttemptId = 'execution-stalled-abort'
+    ;(agent as any).activeEventStream = { attemptId: 'execution-stalled-abort', queue: new EventQueue() }
     ;(agent as any).rpcClient = {
       runtimeId: 'runtime-test',
-      abort: () => new Promise<void>(() => {}),
+      abort: () => new Promise(() => {}),
     }
     ;(agent as any).rpcHostLease = { release: async () => { released = true } }
 
@@ -200,22 +211,24 @@ describe('PiAgent abort', () => {
     let releaseRuntime!: () => void
     const runtimeReleased = new Promise<void>(resolve => { releaseRuntime = resolve })
     let waiterSettled = false
-    ;(agent as any).eventQueue.reset()
+    const eventQueue = new EventQueue()
+    ;(agent as any).activeAttemptId = 'execution-replaced'
+    ;(agent as any).activeEventStream = { attemptId: 'execution-replaced', queue: eventQueue }
     ;(agent as any).rpcClient = { runtimeId: 'runtime-replaced' }
     ;(agent as any).rpcHostLease = { release: () => runtimeReleased }
-    void (agent as any).waitForAgentSettled().then(() => { waiterSettled = true })
+    void (agent as any).waitForAgentSettled('execution-replaced').then(() => { waiterSettled = true })
 
     const disposing = agent.disposeForRestart()
     await Promise.resolve()
 
     expect((agent as any).rpcClient).toBeNull()
-    expect((agent as any).eventQueue.isComplete).toBe(false)
+    expect(eventQueue.isComplete).toBe(false)
     expect(waiterSettled).toBe(false)
 
     releaseRuntime()
     await disposing
 
-    expect((agent as any).eventQueue.isComplete).toBe(true)
+    expect(eventQueue.isComplete).toBe(true)
     expect(waiterSettled).toBe(true)
   })
 
@@ -268,10 +281,12 @@ describe('PiAgent abort', () => {
     const agent = createAgent()
     let released = false
     ;(agent as any)._isProcessing = true
-    ;(agent as any).eventQueue.reset()
+    const eventQueue = new EventQueue()
+    ;(agent as any).activeAttemptId = 'execution-force-abort'
+    ;(agent as any).activeEventStream = { attemptId: 'execution-force-abort', queue: eventQueue }
     ;(agent as any).rpcClient = {
       runtimeId: 'runtime-force-abort',
-      abort: () => new Promise<void>(() => {}),
+      abort: () => new Promise(() => {}),
     }
     ;(agent as any).rpcHostLease = {
       release: async () => { released = true },
@@ -286,7 +301,7 @@ describe('PiAgent abort', () => {
 
       expect(released).toBe(true)
       expect((agent as any).rpcClient).toBeNull()
-      expect((agent as any).eventQueue.isComplete).toBe(true)
+      expect(eventQueue.isComplete).toBe(true)
     } finally {
       jest.useRealTimers()
       agent.destroy()

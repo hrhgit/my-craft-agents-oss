@@ -20,6 +20,7 @@ import {
   reapAbandonedPackageRuns,
   recoverElectronPackagePublication,
   resolveExpectedPackageBuildId,
+  resolvePackageFreshSource,
   resolvePackageCacheVerification,
   resolvePackageReleaseDir,
   resolvePackageTarget,
@@ -97,14 +98,22 @@ describe('production bundle validation composition', () => {
     }
   })
 
-  test('resolves public Pi workspace exports from source without requiring generated dist files', () => {
-    expect(resolvePiWorkspaceSourceImport('@mortise/pi-coding-agent/rpc', repositoryRoot)).toBe(
-      resolve(repositoryRoot, 'pi/packages/coding-agent/src/modes/rpc/public.ts'),
+  test('resolves only approved internal Pi workspace boundaries from source', () => {
+    expect(resolvePiWorkspaceSourceImport('@mortise/pi-coding-agent/internal/rpc', repositoryRoot)).toBe(
+      resolve(repositoryRoot, 'pi/packages/coding-agent/src/internal/rpc.ts'),
+    )
+    expect(resolvePiWorkspaceSourceImport('@mortise/pi-coding-agent/internal/host-facade', repositoryRoot)).toBe(
+      resolve(repositoryRoot, 'pi/packages/coding-agent/src/internal/host-facade.ts'),
     )
     expect(resolvePiWorkspaceSourceImport('@mortise/pi-ai/oauth', repositoryRoot)).toBe(
       resolve(repositoryRoot, 'pi/packages/ai/src/oauth.ts'),
     )
-    expect(resolvePiWorkspaceSourceImport('@mortise/pi-tui', repositoryRoot)).toBeUndefined()
+    expect(() => resolvePiWorkspaceSourceImport('@mortise/pi-coding-agent/rpc', repositoryRoot))
+      .toThrow('not an approved production source boundary')
+    expect(() => resolvePiWorkspaceSourceImport('@mortise/pi-coding-agent/unknown', repositoryRoot))
+      .toThrow('not an approved production source boundary')
+    expect(() => resolvePiWorkspaceSourceImport('@mortise/pi-tui', repositoryRoot))
+      .toThrow('not an approved production source boundary')
     expect(resolvePiWorkspaceSourceImport('@mortise/shared', repositoryRoot)).toBeUndefined()
   })
 
@@ -331,6 +340,24 @@ describe('production bundle validation composition', () => {
     expect(resolveExpectedPackageBuildId([])).toBeUndefined()
     expect(() => resolveExpectedPackageBuildId(['--expected-build-id', 'not-a-build'])).toThrow('lowercase SHA-256')
     expect(() => resolveExpectedPackageBuildId(['--expected-build-id'])).toThrow('lowercase SHA-256')
+  })
+
+  test('reuses builds by default and requires an explicit source freshness request', () => {
+    const expectedBuildId = 'a'.repeat(64)
+    expect(resolvePackageFreshSource([])).toBe(false)
+    expect(resolvePackageFreshSource(['--fresh-source'])).toBe(true)
+    expect(() => resolvePackageFreshSource([
+      '--fresh-source',
+      '--expected-build-id',
+      expectedBuildId,
+    ])).toThrow('cannot be combined')
+
+    const packageElectron = readSource(resolve(repositoryRoot, 'scripts/build/package-electron.ts'))
+    expect(packageElectron).toContain('resolveReusableElectronBuildId({ buildRoot, mode')
+    expect(packageElectron).toContain("args.includes('--fresh-source')")
+    expect(packageElectron).toContain('if (expectedBuildId) throw error')
+    expect(packageElectron).toContain("if (!freshSource) {\n        throw new Error('No reusable Electron build is available.")
+    expect(packageElectron).not.toContain('falling back to current source')
   })
 
   test('composes run-scoped package inputs without legacy staging directories', () => {

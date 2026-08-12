@@ -10,6 +10,30 @@ const piWorkspacePackages = new Map([
   ['@mortise/pi-coding-agent', 'pi/packages/coding-agent'],
 ])
 
+const approvedPiWorkspaceSourceImports = new Set([
+  '@mortise/pi-agent-core',
+  '@mortise/pi-ai',
+  '@mortise/pi-ai/api-registry',
+  '@mortise/pi-ai/bedrock-provider',
+  '@mortise/pi-ai/env-api-keys',
+  '@mortise/pi-ai/model-utils',
+  '@mortise/pi-ai/models',
+  '@mortise/pi-ai/oauth',
+  '@mortise/pi-ai/providers/register-builtins',
+  '@mortise/pi-ai/session-resources',
+  '@mortise/pi-ai/stream',
+  '@mortise/pi-ai/transport/errors',
+  '@mortise/pi-ai/types',
+  '@mortise/pi-ai/utils/diagnostics',
+  '@mortise/pi-ai/utils/event-stream',
+  '@mortise/pi-ai/utils/overflow',
+  '@mortise/pi-ai/web-search',
+  '@mortise/pi-coding-agent',
+  '@mortise/pi-coding-agent/host-facade',
+  '@mortise/pi-coding-agent/internal/host-facade',
+  '@mortise/pi-coding-agent/internal/rpc',
+])
+
 interface PiWorkspacePackageManifest {
   main?: string
   exports?: Record<string, string | { import?: string; default?: string }>
@@ -29,10 +53,17 @@ export function resolvePiWorkspaceSourceImport(
   specifier: string,
   root = repositoryRoot,
 ): string | undefined {
+  if (!specifier.startsWith('@mortise/pi-')) return undefined
+  if (!approvedPiWorkspaceSourceImports.has(specifier)) {
+    throw new Error(`Pi workspace import ${specifier} is not an approved production source boundary`)
+  }
+
   const workspacePackage = [...piWorkspacePackages].find(([name]) => (
     specifier === name || specifier.startsWith(`${name}/`)
   ))
-  if (!workspacePackage) return undefined
+  if (!workspacePackage) {
+    throw new Error(`Approved Pi workspace import ${specifier} has no source package mapping`)
+  }
 
   const [packageName, relativeDirectory] = workspacePackage
   const packageDirectory = resolve(root, relativeDirectory)

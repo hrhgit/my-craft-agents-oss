@@ -11,14 +11,7 @@ export {
 	loadExtensionFromFactory,
 	loadExtensions,
 } from "./loader.ts";
-export type {
-	ExtensionErrorListener,
-	ForkHandler,
-	NavigateTreeHandler,
-	NewSessionHandler,
-	ShutdownHandler,
-	SwitchSessionHandler,
-} from "./runner.ts";
+export type { ExtensionErrorListener } from "./runner.ts";
 export { ExtensionRunner } from "./runner.ts";
 export type {
 	AfterProviderResponseEvent,
@@ -39,7 +32,6 @@ export type {
 	BeforeProviderRequestEventResult,
 	BuildSystemPromptOptions,
 	// Context
-	CompactOptions,
 	// Events - Agent
 	ContextEvent,
 	// Event Results
@@ -49,8 +41,6 @@ export type {
 	CustomToolResultEvent,
 	EditToolCallEvent,
 	EditToolResultEvent,
-	ExecOptions,
-	ExecResult,
 	Extension,
 	ExtensionActions,
 	// API
@@ -132,7 +122,6 @@ export type {
 	// Commands
 	RegisteredCommand,
 	RegisteredTool,
-	ReplacedSessionContext,
 	ResolvedCommand,
 	// Events - Resources
 	ResourcesDiscoverEvent,

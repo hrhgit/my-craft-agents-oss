@@ -33,6 +33,13 @@ describe('OperationResultArtifactStore', () => {
     await expect(store.read('first-turn-1', 'first-turn')).resolves.toEqual(result)
   })
 
+  it('stores generic domain results under an operation-specific artifact', async () => {
+    const { store } = await createStore()
+    const result = { schemaVersion: 1, operationId: 'export-1', artifactId: 'artifact-1' }
+    await store.write('export-1', 'session-export', result)
+    await expect(store.read('export-1', 'session-export')).resolves.toEqual(result)
+  })
+
   it('distinguishes missing and corrupt artifacts', async () => {
     const { store } = await createStore()
     await expect(store.read('missing', 'session-export')).rejects.toMatchObject({ code: 'OPERATION_RESULT_MISSING' })

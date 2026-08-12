@@ -12,6 +12,7 @@
 | `product.workspace.edit-modal` | Workspace 创建与编辑是有边界的短任务，使用同类模态界面 | `workspace-state` |
 | `product.layout.toggle` | 右上布局按钮按分组数量执行打开或聚焦/恢复 | `universal-layout` |
 | `product.session.navigate` | 普通会话导航替换当前 Conversation 标签；只有显式新开意图新增标签 | `universal-layout`、`session-lifecycle` |
+| `product.session.continue-interrupted` | 中断只恢复历史与状态；用户或明确业务入口请求继续后，才以新 Attempt 续接 | `session-lifecycle`、`conversation-ui` |
 
 当实现与本文含义冲突时，先修正语义或明确产品决定，不能用已有界面偶然行为替代。
 

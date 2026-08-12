@@ -86,7 +86,7 @@ import { existsSync, readFileSync } from 'fs'
 import { RPC_CHANNELS, parseWorkspaceTransferRequestV1 } from '@mortise/shared/protocol'
 import { clearRuntimeLayoutProcessEnvironment } from '@mortise/session-tools-core/runtime'
 import { SessionManager, setSessionPlatform, setSessionRuntimeHooks, type SessionBackendFactory } from '@mortise/server-core/sessions'
-import { createAutomationWorkspaceCapabilityProvider, createFilePreviewProvider, createMessagingSessionCapabilityProvider, createSessionShareCapabilityProvider, createSessionTransferCapabilityProvider, getWorkspaceAllowedDirs, validateFilePath } from '@mortise/server-core'
+import { createAutomationWorkspaceCapabilityProvider, createDefaultOperationCoordinator, createFilePreviewProvider, createMessagingSessionCapabilityProvider, createSessionShareCapabilityProvider, createSessionTransferCapabilityProvider, getWorkspaceAllowedDirs, validateFilePath } from '@mortise/server-core'
 import { executeAutomationWorkspaceOperationV1 } from '@mortise/server-core/handlers/rpc/automations'
 import { registerAutomationWorkspaceRpcHandlers } from '@mortise/server-core/handlers'
 import { AutomationIngressTokenRegistry, createAutomationIngressHandler } from '@mortise/server-core/services'
@@ -742,6 +742,8 @@ app.whenReady().then(async () => {
         },
       })
 
+      const operationCoordinator = createDefaultOperationCoordinator()
+
       // Bootstrap the WS RPC server via shared bootstrap function.
       const instance = await bootstrapServer<SessionManager, HandlerDeps>({
         serverToken,
@@ -787,8 +789,8 @@ app.whenReady().then(async () => {
         },
         createSessionManager: () => {
           const sm = new SessionManager(uiValidationSessionBackend
-            ? { createSessionBackend: uiValidationSessionBackend }
-            : {})
+            ? { createSessionBackend: uiValidationSessionBackend, operationCoordinator }
+            : { operationCoordinator })
           if (isHeadless) return sm
           sm.setBrowserPaneManager(browserPaneManager!)
           sm.setCapabilityPrompt(async (request) => {
@@ -987,6 +989,7 @@ app.whenReady().then(async () => {
               ...(webuiLayoutCoordinator ? { webui: webuiLayoutCoordinator } : {}),
             },
             messagingRegistry: messagingHandle.registry,
+            operationCoordinator,
           }
         },
         // Headless: register only core handlers (no GUI handlers for browser, settings, etc.)

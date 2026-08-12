@@ -295,8 +295,10 @@ export function extractOverlayData(activity: ActivityItem): OverlayData | null {
   // Edit/Write tools are handled directly by the click handler (multi-diff overlay)
   // so they fall through to the generic handler if they reach here
 
-  // Bash tool → Terminal overlay
-  if (toolName === 'bash') {
+  // Bash/Pwsh tools → Terminal overlay
+  // Pwsh is the Windows shell tool name (pi names the shell tool "pwsh" on
+  // Windows instead of "bash"), so it must render through the same terminal path.
+  if (toolName === 'bash' || toolName === 'pwsh') {
     const parsed = parseBashResult(rawContent)
     return {
       type: 'terminal',
@@ -304,7 +306,7 @@ export function extractOverlayData(activity: ActivityItem): OverlayData | null {
       output: parsed.output,
       exitCode: parsed.exitCode,
       description: (input?.description as string) || activity.displayName || '',
-      toolType: 'bash',
+      toolType: toolName === 'pwsh' ? 'pwsh' : 'bash',
       error: activity.error,
     }
   }
@@ -408,6 +410,11 @@ export function formatToolCommandPreview(
   // Wrapper commands pass through the raw CLI input for best fidelity.
   if (normalized === 'browser_tool' && typeof input.command === 'string' && input.command.trim()) {
     return input.command.trim()
+  }
+
+  // Pwsh runs the command via -Command, not a --command flag.
+  if (normalized === 'pwsh' && typeof input.command === 'string' && input.command.trim()) {
+    return `pwsh -Command ${formatCliValue(input.command.trim())}`
   }
 
   const entries = Object.entries(input)

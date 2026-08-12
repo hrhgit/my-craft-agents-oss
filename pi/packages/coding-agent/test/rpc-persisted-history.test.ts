@@ -100,8 +100,10 @@ describe("RPC persisted history compatibility", () => {
 				cwd,
 				sessionPath,
 			});
-			const eventsPromise = runtime.collectEvents(30_000);
-			await runtime.prompt("new question", undefined, { clientMutationId: "mutation-history-1" });
+			const disposition = await runtime.prompt("new question", undefined, { clientMutationId: "mutation-history-1" });
+			expect(disposition.status).toBe("started");
+			if (disposition.status !== "started") throw new Error("Prompt was not started");
+			const eventsPromise = runtime.collectEvents(disposition.attemptId, 30_000);
 			const events = await eventsPromise;
 
 			expect(providerRequests).toBe(1);
@@ -192,13 +194,15 @@ describe("RPC persisted history compatibility", () => {
 		try {
 			await client.start();
 			const runtime = await client.openRuntime({ runtimeId: "resume-runtime", cwd, sessionPath });
-			const settled = runtime.collectEvents(30_000);
-			await runtime.continue({ systemPrompt: "persisted child template" });
+			const disposition = await runtime.continue({ systemPrompt: "persisted child template" });
+			expect(disposition.status).toBe("started");
+			if (disposition.status !== "started") throw new Error("Continue was not started");
+			const settled = runtime.collectEvents(disposition.attemptId, 30_000);
 			await settled;
 
 			const messages = (requestBody?.messages ?? []) as Array<{ role?: string; content?: string }>;
 			expect(messages).toContainEqual(
-				expect.objectContaining({ role: "system", content: "persisted child template" }),
+				expect.objectContaining({ role: "developer", content: "persisted child template" }),
 			);
 			expect(messages.some((message) => message.role === "user" && /continue/i.test(String(message.content)))).toBe(
 				false,
@@ -308,8 +312,10 @@ describe("RPC persisted history compatibility", () => {
 				persistInitialState: true,
 			});
 
-			const settled = child.waitForIdle(30_000);
-			await child.prompt("child task");
+			const disposition = await child.prompt("child task", undefined, {});
+			expect(disposition.status).toBe("started");
+			if (disposition.status !== "started") throw new Error("Child prompt was not started");
+			const settled = child.waitForIdle(disposition.attemptId, 30_000);
 			await settled;
 			const listedChildren = await parent.listChildSessions("parent-session");
 			expect(listedChildren).toEqual([

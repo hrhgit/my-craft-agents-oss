@@ -141,7 +141,7 @@ Draft 是 Workspace 级、尚未公开的编辑状态。它可以保存 composer
 
 ### Publication
 
-普通 New 在用户提交首条消息前仍然只是 Workspace 级 Draft。提交首条消息时，backend 必须先取得该 `sessionId` 的 turn 控制权，再把 Session identity 创建、首条 UserMessage 持久化和必要的 host metadata 处理组成一个不会暴露半成品的边界。代码中的 provisional runtime 只是实现阶段，不是独立的产品对象。
+普通 New 在用户提交首条消息前仍然只是 Workspace 级 Draft。提交首条消息时，backend 将创建请求路由到唯一的 Pi runtime；Pi Session 接受首条命令后，把 Session identity 创建和首条 UserMessage 持久化组成一个不会暴露半成品的规范边界，Mortise 随后处理必要的产品 metadata。代码中的 provisional runtime 只是实现阶段，不是独立的产品对象。
 
 首条 UserMessage 成功追加、flush 并取得 durable acknowledgement 后，Session identity 即可被其他 backend 读取；它不需要等待首个 assistant message。随后产生的每条完整 AgentMessage 仍按自己的 tree entry 粒度独立持久化和共享。
 
@@ -154,10 +154,10 @@ Session 的公开可见性还必须遵守 Mortise metadata、UI overlay 和 proj
 ```mermaid
 stateDiagram-v2
     [*] --> Draft
-    Draft --> PublishedSession: 取得控制权并 durable 首条 UserMessage
+    Draft --> PublishedSession: Pi 接受命令并 durable 首条 UserMessage
     Draft --> Draft: 首轮持久化失败
-    PublishedSession --> ActiveTurn: 取得下一次 turn 控制权
-    ActiveTurn --> PublishedSession: agent_settled + host settlement 后释放控制权
+    PublishedSession --> ActiveTurn: Pi 接受 Session 命令并创建 Attempt
+    ActiveTurn --> PublishedSession: Pi agent_settled，Mortise 完成产品投影结算
 ```
 
 ### Session 与消息
@@ -170,7 +170,7 @@ Session 是已跨过 publication boundary 的可恢复对话实体。内嵌 Agen
 - **Durable**：规范 message 或队列条目已持久化。
 - **Published**：首条 UserMessage 已 durable，Session identity 已成为可读取的规范实体；不以首个 assistant message 为门槛。
 - **Runtime settled**：内嵌 Agent runtime 已发出 `agent_settled`，当前 Agent Loop 不再推进。
-- **Host settled**：在 runtime settled 之后，Mortise 必要的 metadata、projection、工具副作用旁路记录和输入处置也已持久化；只有此时才能报告 turn 完成并释放控制权。
+- **Host settled**：在 runtime settled 之后，Mortise 必要的 metadata、projection、工具副作用旁路记录和输入处置也已持久化；只有此时才能向依赖产品投影的调用方报告完整结算。它不决定 Pi Attempt 是否结束。
 
 客户端、RPC 和 Automation 不应将这些边界压缩成一个模糊的“成功”。
 
@@ -185,20 +185,20 @@ Session 是已跨过 publication boundary 的可恢复对话实体。内嵌 Agen
 - 推理增量只用于流式展示，不升级为用户可见的长期活动；完整原始推理仍完整保存在本地会话记录中，并与推理摘要使用独立标签或字段区分，历史视图默认只保留摘要。
 - 工具活动保留开始与完成时间戳供运行计时和耗时展示，但过程排序必须使用投影事件序号或等价的单调事件顺序，不能依赖时间戳排序。
 
-### Turn、attempt 与 logical run
+### Attempt 执行模型
 
 - **Turn** 是一次 assistant response cycle，包括它的 tool call 和 tool result。`turn_end` 只结束当前 turn。
-- **Attempt** 是一次底层 Agent execution，通常从 `agent_start` 到 `agent_end`。它用于区分重试、恢复和诊断中的不同执行段，不是普通用户需要理解或操作的产品实体。
-- **Logical run** 是从一次 prompt 被接受开始，经过运行时继续处理，直到内嵌 Agent runtime 发出 `agent_settled` 的连续运行。Mortise 在此之后仍要完成 host settlement，才能向客户端投影最终完成。
+- **Attempt** 是 Pi Session 接受一次执行命令后创建的运行代际。它由 Pi 分配稳定的 `attemptId`，用于关联事件、工具调用、副作用记录和结束状态，并隔离旧 Attempt 的迟到结果；`attemptId` 是事件归属标识，不是 Mortise 签发的执行权限。Attempt 从 Pi 接受命令开始，到完成、失败或中断结束。一旦结束便不得重新激活，后续执行必须创建新的 Attempt。
+- **Logical run** 是由一次已接受的用户或业务意图产生的用户可见运行。它可以包含多个 turn；只有通过明确的中断续接请求，才可以跨越多个 Attempt。Pi 决定 Attempt 的运行与终止事实，Mortise 依据 Pi 的持久化状态和生命周期事件建立产品投影。
 
-一个 logical run 可以包含多个 turn、provider auto-retry、compaction continuation 和运行时接受的后续投递。`agent_end` 只是底层 attempt 边界，不是 Mortise 的最终完成信号。
+Pi 内部用于 Provider 退避的重试次数不是新的 Attempt。Provider auto-retry、compaction continuation 和只补持久化的 settlement retry 可以在同一 Attempt 内发生。`agent_end` 只表示 Pi 内部执行段结束，`agent_settled` 表示当前 Attempt 已由 Pi 完成规范结算；Mortise 的投影、通知或外部 operation 结算可以随后完成，但不得反向改变 Pi 的 Session 生命周期事实。
 
 - **Steer** 表达“改变当前 turn 方向”的意图。native steer 被接受时，它留在当前 turn 内并继续使用当前控制权；native steer 不可用、拒绝或未及时接受时，降级为下一次 turn 的待发送消息，并明确显示已经降级。
-- **Follow-up** 不延长当前 turn。它先留在发送方 backend 的待发送区；当前 turn 完成并释放控制权后，下一次 turn 必须重新竞争。竞争失败时不标记 accepted、不进入共享 transcript、不自动重试、不转发、不创建 branch，原内容留在待发送区，之后只能由用户或 Agent 再次明确发送。
-- **Retry** 表达在不改变用户意图的前提下恢复未完成运行。Provider auto-retry 是当前 logical run 的内部恢复，中间 `agent_end` 不得被 UI 投影为最终完成。
+- **Follow-up** 不延长当前 turn。它进入目标 Pi Session 的命令队列，由 Pi 根据当前状态接受、排队或拒绝；尚未被 Pi 接受并持久化的内容不进入共享 transcript，也不得由 Mortise 静默重试或伪装为已发送。
+- **Retry** 只表示某个具体层级重新尝试自己的可安全操作，不等同于中断续接。Provider auto-retry 是当前 Attempt 内部的模型请求恢复，中间 `agent_end` 不得被 UI 投影为最终完成。
 - **Stop/abort** 终止当前运行，并在必要 settlement 完成后投影为 interrupted。晚到事件不能越过该边界将运行改回 completed。
 
-用户主动 Stop 只终止当前 turn。backend 完成有限收尾后释放控制权；未完成的流式内容丢弃，已经 durable 的消息保留，未被 Agent 消费的待发送内容保留其 identity、附件和 metadata。Stop 后待发送消息不会自动回放，新的明确发送或继续动作才能重新投递它们。同一个 turn 可以有多条 follow-up，按顺序保留且保持独立 identity；待发送区有明确上限，超过上限的新输入必须拒绝但不能丢弃原内容。
+用户主动 Stop 只终止当前 Attempt。Pi 完成有限收尾并进入可再次接受命令的状态；未完成的流式内容丢弃，已经 durable 的消息保留，未被 Agent 消费的待发送内容保留其 identity、附件和 metadata。Stop 后待发送消息不会自动回放，新的明确发送或继续动作才能重新投递它们。同一个 turn 可以有多条 follow-up，按顺序保留且保持独立 identity；待发送区有明确上限，超过上限的新输入必须拒绝但不能丢弃原内容。
 
 UI 将 follow-up 待发送区固定放在 composer 正上方，而不是把尚未投递的内容显示成正式 transcript 中的用户气泡。每条消息使用一行紧凑预览，长内容可以省略显示，但完整内容、附件和其他 metadata 仍由发送方 backend 保留；竞争失败显示为未接受/待发送，不得静默丢弃或自动重试。消息真正进入 Agent context 并完成 canonical durability 后，才离开待发送区并成为 transcript 中的用户消息。
 
@@ -206,31 +206,71 @@ UI 将 follow-up 待发送区固定放在 composer 正上方，而不是把尚�
 
 编辑待发送消息时，必须先撤回后台队列并恢复到当前草稿，不能在队列仍持有该消息的同时复制一份新草稿。
 
-### Session 控制权
+### Workspace 与 Session 分层
 
-Electron backend 与 WebUI backend 独立管理各自的 Agent Loop；Agent Loop 是 backend 的临时子进程，不是控制权持有者。每台机器按需运行一个全局的本地内存协调器，以 `sessionId` 作为控制键，不按 Workspace 或文件夹分区，也不持久化控制记录。协调器只负责授权和关系登记，不执行模型、工具或 Session 文件写入。backend 取得 turn-scoped control handle 后，才能接受该 Session 的输入、启动 Agent Loop、执行工具和写入规范 transcript；Agent Loop 不能直接取得协调器控制权或操作系统锁。
+Mortise 的产品运行模型按以下层级划分：
 
-控制权按 turn 持有，而不是按整个 Session 或无限延伸的 logical run 持有。一个 turn 只有在 Agent runtime 发出 `agent_settled`，且 backend 完成消息持久化、工具副作用旁路记录和 host settlement 后才结束，之后释放控制权。多个 backend 竞争同一 Session 时，失败方直接收到明确冲突，不排队、不自动重试、不转发、不接管、不创建 branch。当前语义只保证同机协调，不支持跨机器同时写同一 Session。
+```text
+Workspace                         Mortise
+└── Session                       Pi
+    ├── 输入队列、历史树与压缩      Pi
+    └── Attempt / Turn             Pi
+        └── Agent Loop             Pi
+            ├── Provider 请求与重试
+            └── 工具调用循环
+```
+
+Mortise 是 Workspace 与产品集成层的事实源，负责 Workspace 生命周期、把前端、CLI、Messaging 和 Automation 的请求路由到目标 Session、提供宿主能力，并订阅 Pi 的长期 Session 事件流建立界面与跨模块投影。Mortise 可以记录当前 `attemptId` 供投影和诊断使用，但不得维护一套独立于 Pi 的 Attempt 状态机，也不向 Pi 签发 execution 权限来决定 Session 是否能够运行。
+
+Pi 是 Session 及其以下运行状态的唯一事实源，负责 Session 历史、命令队列、prompt、steer、follow-up、compact、abort、Attempt 创建与终止、Agent Loop、Provider 重试和工具循环。所有能够改变 Session 运行状态的入口必须汇入同一个 Pi Session 状态机，由 Pi 根据 `idle`、`running`、`stopping` 等状态接受、排队或拒绝，不能存在绕开该状态机的第二条启动路径。
+
+一个持久 Session 在同一时刻只能由一个规范 Pi runtime 拥有。Mortise 负责 Session 到 Pi runtime 的唯一发现与路由，避免 Electron、WebUI 或其他 backend 各自启动竞争实例；这项 runtime ownership 只解决实例唯一性，不管理 Attempt，也不裁决 Pi 已经接受的 Session 命令。
+
+Pi 在接受命令后先发布 `attempt_started`，后续 Session、消息和工具事件均携带同一 `attemptId`，结束时发布 `agent_settled`。Mortise 通过长期事件订阅自下而上应用这些事实；旧 Attempt 的迟到事件只能按 `attemptId` 隔离，不能依靠 Mortise 缺少预先授权而把 Pi 已合法启动的新 Attempt 当作 stale 事件。
 
 可能产生外部副作用的工具使用独立、版本化的旁路记录，至少包含稳定的 `toolCallId`、`attemptId`、`started`、`completed` 或 `outcome-unknown`，不混入 Session transcript。持久化失败、传输失败和只读工具失败可以由 backend 本地自动重试；`outcome-unknown` 作为结构化工具结果交给模型决定核验、重试、换方案或停止。用户界面不提供通用的直接工具重试按钮；模型明确选择重试时，宿主只执行正常的工具格式、权限和运行状态检查。
 
-控制句柄按 turn 失效。释放后旧 backend 的晚到消息、工具结果和运行事件不得写入 transcript、改变 Session 状态或影响新 backend，最多记录诊断。协调器不可达不撤销已有 backend 持有的控制权，也不打断其正常运行；新控制请求必须等待协调器重启并从存活 backend 和操作系统锁重建关系后重新提交，恢复期间不接受、不排队，也不能绕过协调器。backend 关闭采用有上限的正常收尾：停止新输入和新工具，完成可确认的消息与工具收尾，处理结果未知的工具，再释放控制句柄；超过时限的运行被终止。最后一个 backend 关闭后不再保留 Agent Loop 或 Automation 执行进程。
+Attempt 结束后，旧 Attempt 的晚到消息、工具结果和运行事件不得写入当前 transcript 状态或影响新 Attempt，最多记录诊断。backend 关闭采用有上限的正常收尾：停止接收新的产品请求，要求所拥有的 Pi runtime 停止新工具并完成可确认的消息与工具收尾，处理结果未知的工具；超过时限的运行被终止。最后一个 backend 关闭后不再保留由它启动的 Agent Loop 或 Automation 执行进程。
 
-### 中断与恢复
+### 重试分类
 
-恢复未完成的运行时，Mortise 不向正式 transcript 追加一条伪造的“继续”用户消息。恢复也不承诺外部模型能够保留中断请求的内部状态或从某个 token 精确续写；它从 Session tree 当前分支中最后一个已经持久化且一致的输入位置重新开始 execution。Tree 的 `parentId` 路径是恢复位置的规范来源，不另建一套平行的恢复历史。
+不同层级的重试不得压缩成同一个“恢复”状态：
 
-最后一条中断 assistant 回复中已经完整产生的可见内容应继续属于同一条用户可见回复，并在模型能力允许时作为续写参考。完整的历史消息、已经完成的 tool call 和 tool result 继续保留；不完整的 thinking、tool call、provider signature 和其他协议片段不能作为可靠上下文。当前 Provider 无法可靠续写时，可以退回最后一个完整输入重新生成，但不能伪装成精确续写。
+| 机制 | Attempt 身份 | 行为边界 |
+| --- | --- | --- |
+| Provider 瞬时错误重试 | 保持当前 Attempt | 只重试可安全恢复的模型请求，不创建新的 Attempt |
+| 上下文溢出后的 compact-and-retry | 保持当前 Attempt | 先压缩上下文，再继续当前受控执行 |
+| 持久化或 settlement retry | 保持当前 Attempt | 只补齐持久化与结算，不重新运行模型或工具 |
+| 中断续接 | 创建新 Attempt | 基于整理后的规范历史继续原有意图 |
+| 应用或 backend 重启 | 旧 Attempt 终止 | 只恢复历史展示，不自动启动新 Attempt |
 
-一次恢复可以产生新的 attempt，但不因此创建新的用户任务或新的 assistant 对话消息。UI 按以下方式表达：
+认证刷新、子任务恢复等具体能力可以复用上述机制，但必须明确选择重试层级。只有在旧 Attempt 已经终止且调用方明确请求继续时，才进入中断续接；工具结果未知时不得借任何重试名义自动重放。
 
-- 尚未出现可见 assistant 内容时，自动重试只显示临时运行状态，不增加隔断。
-- 已出现部分内容或经历应用断开后恢复时，在同一条 assistant 回复内保留一个轻量的“已从中断处恢复”边界，然后继续显示内容；不新开消息，也不完全无痕拼接。
-- 连接或运行错误属于该回复的执行状态，不是 assistant 正文。恢复成功后错误状态收束为轻量恢复标记；最终无法恢复时才保留“已中断”状态和继续入口。
-- Attempt 细节可以出现在诊断或展开信息中，但普通对话只呈现同一个 logical run 和同一条 assistant 回复。
-- 中断恢复按工具的实际状态闭合：已完成工具直接保留完整原始结果，只有未开始、已中断或结果未知的工具补充对应状态；通用中断提示不推断中断原因，并保持简洁。
-- 只供模型恢复使用的系统上下文作为独立、隐藏的会话事件，按原始语义位于前一轮工具结果之后、下一条用户消息之前，不拼入或显示在用户消息中。
-- 运行计时在崩溃恢复时不得延续到应用重开时刻；缺少正常终止事件时，以崩溃前上一条完整持久化消息的最后时刻作为计时终点，不把关闭或离线时段计入运行时长。
+### 中断续接协议
+
+中断续接用于在旧 Attempt 已经终止后，基于规范历史创建新 Attempt 并继续原有用户意图。它定义“怎样安全继续”，不决定“何时自动继续”。应用重启、连接断开、发现中断历史或运行失败本身都不得自动触发续接。
+
+中断续接统一执行以下步骤：
+
+1. 确认旧 Attempt 已由 Pi 终止；它的晚到事件、工具结果和 settlement 不得进入新 Attempt。
+2. 以 Session tree 当前分支的 `parentId` 路径定位最后一个完整、已持久化且一致的历史位置，不另建平行恢复历史。
+3. 保留完整消息、已经完成的 tool call 和 tool result；不完整的 assistant 流、thinking、tool call、provider signature 和其他协议片段不得作为可靠上下文。
+4. 对没有完整 tool result 的工具调用写入明确的 `outcome-unknown`，不得假定工具未执行或自动重放。
+5. 写入独立且隐藏的 `attempt_interrupted` 上下文，供模型核验当前状态；不得伪造或修改用户消息。
+6. 调用方明确请求继续后，将续接命令路由到目标 Pi Session；Pi 从整理后的历史创建新的 Attempt。
+7. 新 Attempt 按正常事件、工具、副作用和 host settlement 合同运行；协议不承诺从中断 token 精确续写，也不得把重新生成伪装成精确续写。
+
+中断续接可以保持同一个用户意图和用户可见回复关系，但诊断必须能区分新旧 Attempt。普通界面无需暴露 Attempt 身份，只需显示中断状态、明确的继续入口，以及续接后必要的轻量边界。
+
+### 续接触发策略
+
+- 用户明确点击继续、重新发送或发出等价操作时，可以请求中断续接。
+- Mortise 外部的 Extension、Automation、Agent tool 或子任务通过产品入口提交续接意图；运行在目标 Pi Session 内部的 Extension 可以向同一个 Session 命令队列提交续接命令，但不能绕开 Pi 状态机直接启动 Agent Loop。
+- Provider 自动重试和 settlement retry 不属于中断续接，也不创建新 Attempt。
+- 应用启动、backend 重启、通信恢复、历史加载或检测到旧 `running` 状态时，只把旧 Attempt 闭合为 `interrupted`，不得自动续接。
+- 工具处于 `outcome-unknown` 时，后续 Attempt 必须先核验、换方案或由模型明确决定是否重试，宿主不得直接重放。
+
+运行计时在崩溃或重启后不得延续到应用重开时刻；缺少正常终止事件时，以崩溃前上一条完整持久化消息的最后时刻作为计时终点，不把关闭或离线时段计入运行时长。
 
 ## Extension 语义
 
@@ -242,6 +282,7 @@ Extension 是 Mortise 可扩展性的一级提供者；Mortise 尽量保持通�
 - 全局 Extension 目录和 `<workspace>/.mortise/extensions` 都是正式来源。打开或附加 Workspace 时，backend 立即发现并加载这些来源中的 Extension；约定目录内的 Extension 默认信任并允许执行，不设置逐 Workspace 或逐 Extension 授权，也不扫描工作区其他位置的任意脚本。
 - 未来引入“模式”后，由模式配置在该模式下启用或关闭哪些 Extension 能力。这是模式对全局能力集的选择，不是 Workspace 自己拥有另一套 Extension 管理。
 - Extension backend 是来自正式来源的受信任本地代码，以用户系统权限在子进程中运行；这是长期信任模型，不是等待未来权限沙箱替代的过渡状态。安装界面可以显示来源并说明其本地代码权限，但不能用并不具备强制隔离能力的权限开关制造安全错觉。
+- Extension 可以请求发送用户消息、steer、follow-up、compact、interrupt、创建 Session 或子任务。涉及 Workspace 和产品集成的请求通过 Mortise 路由；涉及当前 Session 的运行命令汇入该 Pi Session 的统一命令队列，由 Pi 状态机接受、排队或拒绝。Extension 不得绕开 Session 状态机直接启动 Agent Loop，也不得创建第二个 Pi runtime 竞争同一持久 Session。
 - 每个 backend 独立加载和管理自己的 Extension runtime。运行中的 Extension 文件变化不立即热重载；当前实例继续运行，修改在下一次 backend 或 Workspace 重新加载时生效。单个 Extension 加载或运行失败只禁用并警告该 Extension，不得拖垮其他 Extension、Session 或 backend；同一次加载中不反复自动重试。
 - 扩展启停开关只写入下次加载的期望状态，不卸载或改变已创建 runtime 中的工具、命令、权限处理器和 GUI；只有成功的显式重载或新 runtime 创建才应用新状态，重载失败时保留旧 runtime 及 GUI。
 - Extension GUI 仍只能通过 Mortise 的版本化 contribution API 进入产品界面，但这个 UI 边界不会同时将 backend 变成 sandboxed code，也不限制 backend 直接使用当前用户拥有的文件、网络和进程能力。

@@ -6,7 +6,7 @@ import type {
   RpcClientEventListener,
   RpcClientOptions,
   RpcRuntimeOpenOptions,
-} from '@mortise/pi-coding-agent';
+} from '@mortise/pi-coding-agent/internal/rpc';
 import { PiHostManager, PiHostProtocolError, type PiHostAcquireOptions } from '../pi-host-manager.ts';
 
 const MORTISE_AGENT_DIR = 'C:/Users/test/.mortise/agent';

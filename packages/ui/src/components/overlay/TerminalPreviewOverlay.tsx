@@ -44,6 +44,8 @@ function getToolConfig(toolType: ToolType): {
       return { icon: Search, label: 'Grep', variant: 'green' }
     case 'glob':
       return { icon: FolderSearch, label: 'Glob', variant: 'purple' }
+    case 'pwsh':
+      return { icon: Terminal, label: 'Pwsh', variant: 'gray' }
     default:
       return { icon: Terminal, label: 'Bash', variant: 'gray' }
   }

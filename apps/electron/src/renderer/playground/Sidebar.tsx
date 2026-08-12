@@ -7,11 +7,13 @@ interface SidebarProps {
   categories: CategoryGroup[]
   selectedId: string | null
   onSelect: (id: string) => void
+  locale: 'zh-CN' | 'en'
 }
 
 const STORAGE_KEY = 'playground-expanded-categories'
 
-export function Sidebar({ categories, selectedId, onSelect }: SidebarProps) {
+export function Sidebar({ categories, selectedId, onSelect, locale }: SidebarProps) {
+  const [query, setQuery] = React.useState('')
   const [expandedCategories, setExpandedCategories] = React.useState<Set<string>>(() => {
     // Try to restore from localStorage, otherwise collapse all by default
     try {
@@ -47,11 +49,34 @@ export function Sidebar({ categories, selectedId, onSelect }: SidebarProps) {
     })
   }
 
+  const normalizedQuery = query.trim().toLocaleLowerCase()
+  const visibleCategories = normalizedQuery
+    ? categories
+      .map(category => ({
+        ...category,
+        components: category.components.filter(component => [
+          component.name,
+          component.id,
+          component.description,
+          component.source?.file,
+          component.source?.symbol,
+        ].join(' ').toLocaleLowerCase().includes(normalizedQuery)),
+      }))
+      .filter(category => category.components.length > 0)
+    : categories
+
   return (
     <nav className="w-56 shrink-0 border-r border-border bg-background overflow-y-auto">
       <div className="p-3 space-y-1">
-        {categories.map(category => {
-          const isExpanded = expandedCategories.has(category.name)
+        <input
+          value={query}
+          onChange={event => setQuery(event.target.value)}
+          placeholder={locale === 'zh-CN' ? '搜索组件、来源或导出名' : 'Search UI'}
+          aria-label={locale === 'zh-CN' ? '搜索界面组件' : 'Search UI components'}
+          className="mb-2 w-full rounded border border-border bg-foreground/5 px-2 py-1.5 text-sm outline-none focus:ring-1 focus:ring-ring"
+        />
+        {visibleCategories.map(category => {
+          const isExpanded = normalizedQuery.length > 0 || expandedCategories.has(category.name)
 
           return (
             <div key={category.name}>
@@ -94,6 +119,9 @@ export function Sidebar({ categories, selectedId, onSelect }: SidebarProps) {
             </div>
           )
         })}
+        {visibleCategories.length === 0 && (
+          <p className="px-2 py-4 text-sm text-muted-foreground">{locale === 'zh-CN' ? '没有匹配的组件。' : 'No matching UI.'}</p>
+        )}
       </div>
     </nav>
   )

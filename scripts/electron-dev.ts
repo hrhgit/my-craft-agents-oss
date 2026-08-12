@@ -4,12 +4,14 @@
  */
 
 import { spawn, type Subprocess } from "bun";
-import { existsSync, rmSync, cpSync, readFileSync, statSync, mkdirSync, readdirSync } from "fs";
+import { existsSync, rmSync, cpSync, readFileSync, statSync, mkdirSync } from "fs";
 import { homedir } from "os";
 import { join, basename } from "path";
 import { connect as connectTcp } from "node:net";
 import * as esbuild from "esbuild";
 import { downloadUv, type Platform, type Arch } from "./build/common";
+import { latestInputMtime, needsDevBuild } from "./build/dev-build-freshness";
+import { needsSessionMcpDevBuild } from "./build/session-mcp-dev-build";
 import { configureSharedBackend } from "./shared-backend-discovery";
 import {
   startElectronDevControlServer,
@@ -172,25 +174,6 @@ function cleanViteCache(): void {
   }
 }
 
-function latestMtime(rootPath: string): number {
-  if (!existsSync(rootPath)) return 0;
-
-  const stats = statSync(rootPath);
-  if (!stats.isDirectory()) return stats.mtimeMs;
-
-  let latest = stats.mtimeMs;
-  for (const entry of readdirSync(rootPath, { withFileTypes: true })) {
-    latest = Math.max(latest, latestMtime(join(rootPath, entry.name)));
-  }
-  return latest;
-}
-
-function needsBuild(outputPath: string, sourcePaths: string[]): boolean {
-  if (!existsSync(outputPath)) return true;
-  const outputMtime = statSync(outputPath).mtimeMs;
-  return sourcePaths.some(sourcePath => latestMtime(sourcePath) > outputMtime);
-}
-
 async function waitForFilesReady(filePaths: string[], timeoutMs = 10000): Promise<boolean> {
   const startTime = Date.now();
   while (Date.now() - startTime < timeoutMs) {
@@ -209,7 +192,7 @@ function copyResources(): void {
   if (!existsSync(srcDir)) return;
 
   const forceCopy = process.env.MORTISE_DEV_FORCE_COPY_RESOURCES === "1";
-  if (!forceCopy && existsSync(destDir) && latestMtime(destDir) >= latestMtime(srcDir)) {
+  if (!forceCopy && existsSync(destDir) && latestInputMtime(destDir) >= latestInputMtime(srcDir)) {
     console.log("📦 Resources unchanged, reusing dist/resources");
     return;
   }
@@ -224,7 +207,7 @@ function copyResources(): void {
 async function buildWaWorker(): Promise<void> {
   if (
     process.env.MORTISE_DEV_FORCE_REBUILD_WORKER !== "1" &&
-    !needsBuild(WHATSAPP_WORKER_OUTPUT, [
+    !needsDevBuild(WHATSAPP_WORKER_OUTPUT, [
       join(WHATSAPP_WORKER_DIR, "src"),
       join(WHATSAPP_WORKER_DIR, "package.json"),
       join(ROOT_DIR, "scripts/build-wa-worker.ts"),
@@ -251,10 +234,7 @@ async function buildWaWorker(): Promise<void> {
 async function buildMcpServers(): Promise<void> {
   if (
     process.env.MORTISE_DEV_FORCE_REBUILD_MCP !== "1" &&
-    !needsBuild(SESSION_SERVER_OUTPUT, [
-      join(SESSION_SERVER_DIR, "src"),
-      join(SESSION_SERVER_DIR, "package.json"),
-    ])
+    !needsSessionMcpDevBuild(ROOT_DIR)
   ) {
     console.log("🌉 MCP server unchanged, reusing dist/index.js");
     return;
@@ -283,7 +263,7 @@ async function buildMcpServers(): Promise<void> {
 async function buildPiRuntime(): Promise<void> {
   if (
     process.env.MORTISE_DEV_FORCE_REBUILD_PI !== "1" &&
-    !needsBuild(PI_RUNTIME_OUTPUT, [
+    !needsDevBuild(PI_RUNTIME_OUTPUT, [
       join(ROOT_DIR, "pi/packages/ai/src"),
       join(ROOT_DIR, "pi/packages/ai/package.json"),
       join(ROOT_DIR, "pi/packages/agent/src"),

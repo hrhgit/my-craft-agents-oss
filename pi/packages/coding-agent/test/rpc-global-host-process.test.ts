@@ -71,7 +71,7 @@ describe("Pi RPC GlobalHost process", () => {
 		const first = new RpcClient(options);
 		clients.push(first);
 		await first.start();
-		await expect(first.getCapabilities()).resolves.toMatchObject({ protocolVersion: 3 });
+		await expect(first.getCapabilities()).resolves.toMatchObject({ protocolVersion: 4 });
 		const hostState = readPiGlobalHostState(root);
 		expect(hostState?.pid).toBeDefined();
 		if (hostState) hostPids.push(hostState.pid);
@@ -142,6 +142,62 @@ describe("Pi RPC GlobalHost process", () => {
 		if (restartedState) hostPids.push(restartedState.pid);
 	}, 120_000);
 
+	it("releases a client-owned default runtime when its host disconnects", async () => {
+		const root = join(tmpdir(), `pi-global-host-default-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+		const cwd = process.cwd();
+		mkdirSync(root, { recursive: true });
+		writeFileSync(
+			join(root, "models.json"),
+			JSON.stringify({
+				providers: {
+					test: {
+						baseUrl: "http://127.0.0.1:1/v1",
+						api: "openai-completions",
+						apiKey: "test-key",
+						models: [{ id: "model-a" }],
+					},
+				},
+			}),
+			"utf8",
+		);
+		roots.push(root);
+		const options = {
+			command: process.execPath,
+			runtimePath: join(process.cwd(), "dist", "bun", "headless.js"),
+			cwd,
+			provider: "test",
+			model: "model-a",
+			env: { MORTISE_AGENT_DIR: root },
+			globalHost: { enabled: true, agentDir: root },
+			pipeStderr: false,
+		};
+
+		const first = new RpcClient(options);
+		clients.push(first);
+		await first.start();
+		await expect(first.getState()).resolves.toMatchObject({ sessionId: expect.any(String) });
+		const hostState = readPiGlobalHostState(root);
+		expect(hostState?.pid).toBeDefined();
+		if (hostState) hostPids.push(hostState.pid);
+
+		const second = new RpcClient(options);
+		clients.push(second);
+		await second.start();
+		await expect(second.getState()).rejects.toThrow("Runtime not found: default");
+
+		await first.stop();
+		let secondState: Awaited<ReturnType<RpcClient["getState"]>> | undefined;
+		for (let attempt = 0; attempt < 50 && !secondState; attempt++) {
+			try {
+				secondState = await second.getState();
+			} catch {
+				await new Promise((resolve) => setTimeout(resolve, 20));
+			}
+		}
+		expect(secondState).toMatchObject({ sessionId: expect.any(String) });
+		expect(readPiGlobalHostState(root)?.pid).toBe(hostState?.pid);
+	}, 120_000);
+
 	it("isolates host generations that share one agent directory", async () => {
 		const root = join(tmpdir(), `pi-global-host-generation-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 		const cwd = process.cwd();
@@ -179,7 +235,7 @@ describe("Pi RPC GlobalHost process", () => {
 		});
 		clients.push(first);
 		await first.start();
-		await expect(first.getCapabilities()).resolves.toMatchObject({ protocolVersion: 3 });
+		await expect(first.getCapabilities()).resolves.toMatchObject({ protocolVersion: 4 });
 		const firstState = readPiGlobalHostState(root, firstInstanceId);
 		expect(firstState?.instanceId).toBe(firstInstanceId);
 		if (firstState) hostPids.push(firstState.pid);
@@ -195,7 +251,7 @@ describe("Pi RPC GlobalHost process", () => {
 		});
 		clients.push(second);
 		await second.start();
-		await expect(second.getCapabilities()).resolves.toMatchObject({ protocolVersion: 3 });
+		await expect(second.getCapabilities()).resolves.toMatchObject({ protocolVersion: 4 });
 		const secondState = readPiGlobalHostState(root, secondInstanceId);
 		expect(secondState?.instanceId).toBe(secondInstanceId);
 		expect(secondState?.pid).not.toBe(firstState?.pid);

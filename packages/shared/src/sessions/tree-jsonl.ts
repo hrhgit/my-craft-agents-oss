@@ -7,11 +7,11 @@ import { closeSync, existsSync, openSync, readFileSync, readSync, statSync } fro
 import { dirname } from 'path';
 import {
   readSessionUiMetadata as readPiSessionUiMetadata,
-  SessionManager as PiSessionManager,
   setMortiseSessionMetadata as setPiMortiseSessionMetadata,
   writeSessionUiMetadata as writePiSessionUiMetadata,
   type HostSessionUiMetadataV1,
 } from '@mortise/pi-coding-agent/host-facade';
+import { SessionManager as PiSessionManager } from '@mortise/pi-coding-agent/internal/host-facade';
 import type { MessageRole } from '@mortise/core/types';
 import type {
   MortiseSessionMetadata,
@@ -464,13 +464,13 @@ export function looksLikeTreeSessionJsonl(sessionFile: string): boolean {
 export function readTreeSessionJsonl(sessionFile: string): ParsedTreeSession | null {
   try {
     // Keep the raw first-line header reader so Mortise metadata (`header.mortise`)
-    // is preserved. Pi's public SessionManager intentionally ignores Mortise's
+    // is preserved. Pi's internal SessionManager intentionally ignores Mortise's
     // opaque header extension fields.
     const header = readTreeSessionHeader(sessionFile);
     if (!header) return null;
 
     // Delegate JSONL entry parsing/migration/tree indexing to Pi's public
-    // SessionManager instead of reimplementing Pi's session entry parser here.
+    // internal SessionManager instead of reimplementing Pi's session entry parser here.
     const manager = PiSessionManager.open(sessionFile);
     const entries = manager.getEntries() as unknown as TreeSessionEntry[];
 
@@ -604,7 +604,7 @@ function piMessagesEquivalent(existing: TreeAgentMessage, expected: PiAppendMess
 }
 
 /**
- * Import canonical transcript entries through Pi's public SessionManager API.
+ * Import canonical transcript entries through Mortise's internal Pi SessionManager boundary.
  *
  * The caller must create the header file first (Mortise is allowed to write
  * header metadata). This function appends only user/assistant/tool transcript

@@ -6,7 +6,7 @@ import {
   type RpcClientEvent,
   type RpcClientOptions,
   type RpcRuntimeOpenOptions,
-} from '@mortise/pi-coding-agent/rpc';
+} from '@mortise/pi-coding-agent/internal/rpc';
 import { writeRuntimeLog } from '../../utils/runtime-log.ts';
 
 const DEFAULT_IDLE_TIMEOUT_MS = 0;
@@ -337,3 +337,8 @@ export class PiHostManager {
 }
 
 export const piHostManager = new PiHostManager();
+
+/** Narrow public lifecycle operation; runtime acquisition stays module-internal. */
+export function invalidateBackendRuntimes(reason = 'configuration-changed'): Promise<void> {
+  return piHostManager.invalidateAll(reason);
+}

@@ -4,8 +4,6 @@ export * from './conversation-summary.ts';
 export type { TextContent, ImageContent, ToolResult } from './tool-result.ts';
 export { errorResponse, successResponse, mcpErrorResponse, getResultText } from './tool-result.ts';
 
-// Export PiAgent for direct use
-export { PiAgent, PiBackend } from './pi-agent.ts';
 export type { PiSpawnChildSessionOptions, PiSpawnChildSessionResult, PiChildSessionInfo } from './pi-agent.ts';
 export * from './errors.ts';
 
@@ -46,30 +44,11 @@ export {
   isValidThinkingLevel,
 } from './thinking-levels.ts';
 
-// Export BaseAgent - shared abstract class for all agent backends
-export {
-  BaseAgent,
-  // Mini agent configuration (centralized for all backends)
-  type MiniAgentConfig,
-  MINI_AGENT_TOOLS,
-  MINI_AGENT_MCP_KEYS,
-} from './base-agent.ts';
-
-// Export backend abstraction - unified interface for AI agents
-export {
-  // Factory
-  createBackend,
-  // Types
-  type AgentBackend,
-  type ModelProvider,
-  type BackendConfig,
-  type PlanCallback,
-  type ChatOptions,
-  type RecoveryMessage,
-  type PiExtensionCommand,
-  // Enums
-  AbortReason as BackendAbortReason,
-} from './backend/index.ts';
+// Runtime lifecycle factories and AgentBackend are intentionally not part of
+// the public package surface. Mortise server composition imports the internal
+// backend module directly; product and Extension consumers receive only data
+// contracts and host capabilities.
+export type { PiExtensionCommand } from './backend/types.ts';
 
 // Export core utilities for shared agent logic
 export * from './core/index.ts';

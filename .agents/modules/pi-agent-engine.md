@@ -6,6 +6,7 @@ summary: Model-independent agent loop, message state, tool execution, and retry 
 status: active
 when_to_read:
   - model-independent agent loop, tool execution, retry, stream, steering, or state changes
+  - Provider retry behavior or the boundary between retry counters and Pi Attempt identity
 tags:
   - agent-loop
   - tool-call
@@ -13,6 +14,7 @@ tags:
   - stream
   - state
   - steering
+  - runtime-retry
 entrypoints:
   - pi/packages/agent/src/index.ts
   - pi/packages/agent/src/agent.ts
@@ -46,7 +48,7 @@ The public package entry exports the agent state machine; loop internals consume
 
 # Invariants
 
-State updates and emitted events remain ordered; abort and retry paths preserve a coherent message history.
+State updates and emitted events remain ordered; abort and retry paths preserve a coherent message history. Provider retry counters and internal `agent_start`/`agent_end` segments remain inside the current Pi Attempt and do not create a new `attemptId`. The engine does not automatically continue an interrupted Session; continuation requires an explicit Session command.
 
 # Change Impact
 

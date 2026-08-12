@@ -7,7 +7,6 @@ import * as fs from "node:fs";
 import { createRequire } from "node:module";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import * as _bundledPiAgentCore from "@mortise/pi-agent-core";
 import * as _bundledPiAi from "@mortise/pi-ai";
 import * as _bundledPiAiOauth from "@mortise/pi-ai/oauth";
 import { createJiti } from "jiti/static";
@@ -21,8 +20,6 @@ import { getAgentDir, getPackageDir, isBunBinary } from "../../config.ts";
 import * as _bundledPiCodingAgentExtensionApi from "../../extension-api.ts";
 import { resolvePath } from "../../utils/paths.ts";
 import { createEventBus, type EventBus } from "../event-bus.ts";
-import type { ExecOptions } from "../exec.ts";
-import { execCommand } from "../exec.ts";
 import type {
 	ExtensionManifestDiagnostic,
 	ExtensionManifestStatus,
@@ -30,6 +27,7 @@ import type {
 } from "../extension-manifest.ts";
 import { getProcessGlobalBackgroundTaskCoordinator } from "../global-background-tasks.ts";
 import { createSyntheticSourceInfo } from "../source-info.ts";
+import { getExtensionInvocationOrigin } from "./invocation-context.ts";
 import type {
 	Extension,
 	ExtensionActivation,
@@ -72,7 +70,6 @@ function getVirtualModules(): Record<string, unknown> {
 		"@sinclair/typebox": _bundledTypebox,
 		"@sinclair/typebox/compile": _bundledTypeboxCompile,
 		"@sinclair/typebox/value": _bundledTypeboxValue,
-		"@mortise/pi-agent-core": _bundledPiAgentCore,
 		"@mortise/pi-ai": _bundledPiAi,
 		"@mortise/pi-ai/oauth": _bundledPiAiOauth,
 		"@mortise/pi-coding-agent": _bundledPiCodingAgentExtensionApi,
@@ -90,7 +87,7 @@ function getAliases(): Record<string, string> {
 	if (_aliases) return _aliases;
 
 	const packageDir = getPackageDir();
-	const packageIndex = path.join(packageDir, "dist", "index.js");
+	const extensionApiEntry = path.join(packageDir, "dist", "extension-api.js");
 
 	const typeboxEntry = require.resolve("typebox");
 	const typeboxCompileEntry = require.resolve("typebox/compile");
@@ -105,14 +102,11 @@ function getAliases(): Record<string, string> {
 		return fileURLToPath(import.meta.resolve(specifier));
 	};
 
-	const piCodingAgentEntry = packageIndex;
-	const piAgentCoreEntry = resolveWorkspaceOrImport("agent/dist/index.js", "@mortise/pi-agent-core");
 	const piAiEntry = resolveWorkspaceOrImport("ai/dist/index.js", "@mortise/pi-ai");
 	const piAiOauthEntry = resolveWorkspaceOrImport("ai/dist/oauth.js", "@mortise/pi-ai/oauth");
 
 	_aliases = {
-		"@mortise/pi-coding-agent": piCodingAgentEntry,
-		"@mortise/pi-agent-core": piAgentCoreEntry,
+		"@mortise/pi-coding-agent": extensionApiEntry,
 		"@mortise/pi-ai": piAiEntry,
 		"@mortise/pi-ai/oauth": piAiOauthEntry,
 		typebox: typeboxEntry,
@@ -165,7 +159,7 @@ export function createExtensionRuntime(): ExtensionRuntime {
 		invalidate: (message) => {
 			state.staleMessage ??=
 				message ??
-				"This extension ctx is stale after session replacement or reload. Do not use a captured pi or command ctx after ctx.newSession(), ctx.fork(), ctx.switchSession(), or ctx.reload(). For newSession, fork, and switchSession, move post-replacement work into withSession and use the ctx passed to withSession. For reload, do not use the old ctx after await ctx.reload().";
+				"This extension ctx is stale after runtime replacement or reload. Do not use a captured pi or command ctx after the runtime changes.";
 		},
 		// Pre-bind: queue registrations so bindCore() can flush them once the
 		// model registry is available. bindCore() replaces both with direct calls.
@@ -192,7 +186,6 @@ export function createExtensionRuntime(): ExtensionRuntime {
 function createExtensionAPI(
 	extension: Extension,
 	runtime: ExtensionRuntime,
-	cwd: string,
 	eventBus: EventBus,
 	environment: ExtensionLoadMetadata,
 ): ExtensionAPI {
@@ -272,12 +265,15 @@ function createExtensionAPI(
 		// Action methods - delegate to shared runtime
 		sendMessage(message, options): void {
 			runtime.assertActive();
-			runtime.sendMessage(message, options);
+			if ((options as { deliverAs?: string } | undefined)?.deliverAs === "steer") {
+				throw new Error("Extension custom messages cannot steer an Agent execution");
+			}
+			runtime.sendMessage(message, options, getExtensionInvocationOrigin());
 		},
 
 		sendUserMessage(content, options): void {
 			runtime.assertActive();
-			runtime.sendUserMessage(content, options);
+			runtime.sendUserMessage(content, options, getExtensionInvocationOrigin());
 		},
 
 		appendEntry(customType: string, data?: unknown): void {
@@ -298,11 +294,6 @@ function createExtensionAPI(
 		setLabel(entryId: string, label: string | undefined): void {
 			runtime.assertActive();
 			runtime.setLabel(entryId, label);
-		},
-
-		exec(command: string, args: string[], options?: ExecOptions) {
-			runtime.assertActive();
-			return execCommand(command, args, options?.cwd ?? cwd, options);
 		},
 
 		getActiveTools(): string[] {
@@ -449,7 +440,7 @@ async function loadExtension(
 		}
 
 		const extension = createExtension(extensionPath, resolvedPath, metadata, activation);
-		const api = createExtensionAPI(extension, runtime, cwd, eventBus, metadata);
+		const api = createExtensionAPI(extension, runtime, eventBus, metadata);
 		await factory(api);
 
 		return { extension, error: null };
@@ -464,7 +455,7 @@ async function loadExtension(
  */
 export async function loadExtensionFromFactory(
 	factory: ExtensionFactory,
-	cwd: string,
+	_cwd: string,
 	eventBus: EventBus,
 	runtime: ExtensionRuntime,
 	extensionPath = "<inline>",
@@ -472,8 +463,7 @@ export async function loadExtensionFromFactory(
 	metadata: ExtensionLoadMetadata = { id: "inline", agentDir: getAgentDir() },
 ): Promise<Extension> {
 	const extension = createExtension(extensionPath, extensionPath, metadata, activation);
-	const resolvedCwd = resolvePath(cwd);
-	const api = createExtensionAPI(extension, runtime, resolvedCwd, eventBus, metadata);
+	const api = createExtensionAPI(extension, runtime, eventBus, metadata);
 	await factory(api);
 	return extension;
 }

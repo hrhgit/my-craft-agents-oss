@@ -147,7 +147,6 @@ describe('session settlement RPC contract', () => {
       _onAck: unknown,
       _rpcContext: unknown,
       _isQueuedReplay: unknown,
-      _isAutomaticResume: unknown,
       onAccepted?: (messageId: string) => void,
     ) => {
       onAccepted?.('accepted-message')

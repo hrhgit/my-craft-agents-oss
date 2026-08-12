@@ -15,7 +15,7 @@ import { Terminal, Copy, Check } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import { parseAnsi, stripAnsi, isGrepContentOutput, parseGrepOutput } from './ansi-parser'
 
-export type ToolType = 'bash' | 'grep' | 'glob'
+export type ToolType = 'bash' | 'pwsh' | 'grep' | 'glob'
 
 export interface TerminalOutputProps {
   /** The command that was executed */

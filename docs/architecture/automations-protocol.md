@@ -378,13 +378,11 @@ event Session. A fixed Session ID that no longer exists blocks the action and
 produces a diagnostic; the host MUST NOT substitute the active UI Session or
 create a new Session.
 
-`followUp` and `steer` inherit Session control behavior. A steer accepted during
-the current turn stays within that turn. A steer that cannot be delivered before
-the turn ends becomes a next-turn pending message only through the Session
-fallback contract. A follow-up does not extend the current turn: after release,
-it must compete for the next turn, and a conflict leaves it unaccepted.
-Automations MUST NOT redefine turn ordering, interrupt, retry, or pending-message
-semantics.
+`followUp` and `steer` enter the target Pi Session command state machine. Pi
+decides whether a steer is accepted into the current Attempt and whether a
+follow-up is queued for later processing, then persists the accepted user
+message under that Session. Automations MUST NOT define or acquire Attempt
+ownership, nor redefine ordering, interrupt, retry, or pending-message semantics.
 
 Environment and event-data expansion occurs exactly once before dispatch. The
 rendered prompt and a redacted reference to its input event are recorded for
@@ -541,8 +539,8 @@ non-terminal state.
 Prompt action terminal meaning is target-specific:
 
 - new Session: the first-turn transaction crossed durable publication;
-- existing Session: follow-up won next-turn control and became a durable
-  UserMessage, or steer was accepted for the active turn;
+- existing Session: the target Pi Session accepted and durably persisted the
+  follow-up UserMessage, or accepted steer for the active turn;
 - webhook: the outbound request reached its terminal retry result.
 
 Run aggregation is deterministic:
@@ -765,7 +763,7 @@ Contract acceptance requires automated coverage for:
 - overlap `skip` and `queue-one` behavior;
 - action ordering, continue/stop failure policy, and overall partial status;
 - new Session publication boundary, fixed and event Session validation,
-  follow-up recompetition, steer and next-turn fallback, Session deletion, and
+  follow-up queueing, steer acceptance, Session deletion, and
   model/provider fallback diagnostics;
 - webhook success, terminal failure, immediate/deferred retry, stable attempt
   identities, response truncation, secret redaction, and unknown-outcome crash
