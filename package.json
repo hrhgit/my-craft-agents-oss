@@ -98,6 +98,7 @@
     "build:wa-worker": "bun run scripts/build-wa-worker.ts",
     "electron:build:assets": "cd apps/electron && bun scripts/copy-assets.ts",
     "electron:build:packaging-inputs": "bun run scripts/build/stage-electron-packaging-inputs.ts",
+    "build:seed-uv-toolchain": "bun run scripts/build/seed-current-uv-toolchain.ts",
     "electron:build:source": "bun run electron:build:main && bun run electron:build:preload && bun run electron:build:renderer && bun run electron:build:resources && bun run electron:build:packaging-inputs",
     "electron:build": "bun run scripts/build/produce-electron-build.ts",
     "electron:start": "bun run scripts/electron-start.ts",

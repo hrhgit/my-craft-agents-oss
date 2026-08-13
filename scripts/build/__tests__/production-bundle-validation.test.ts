@@ -32,6 +32,7 @@ import {
   publishBuildBunToolchain,
 } from '../electron-build-cache'
 import { runFrozenDependencyInstall } from '../dependency-view-cache'
+import { seedCurrentUvToolchain } from '../seed-current-uv-toolchain'
 
 const repositoryRoot = resolve(import.meta.dir, '../../..')
 const temporaryRoots: string[] = []
@@ -153,6 +154,9 @@ describe('production bundle validation composition', () => {
     expect(scripts['test:build-validation']).toContain("--path-ignore-patterns='output/**'")
     expect(scripts['validate:ci']).toContain('bun run test:build-validation')
     expect(scripts['validate:ci']).toContain('bun run validate:production-bundles')
+    expect(scripts['build:seed-uv-toolchain']).toBe('bun run scripts/build/seed-current-uv-toolchain.ts')
+    expect(validationWorkflow.match(/version: "0\.10\.6"/g)?.length).toBe(2)
+    expect(validationWorkflow.match(/run: bun run build:seed-uv-toolchain/g)?.length).toBe(2)
     expect(buildModule).not.toContain('command: "bun run validate:dev"')
     expect(buildModule).not.toContain('command: "bun run validate:ci"')
     for (const command of [
@@ -577,6 +581,31 @@ win:
       if (previous === undefined) delete process.env.MORTISE_BUILD_TOOLCHAIN_CACHE_DIR
       else process.env.MORTISE_BUILD_TOOLCHAIN_CACHE_DIR = previous
     }
+  })
+
+  test('publishes only the pinned uv version from the current environment', () => {
+    const root = mkdtempSync(join(tmpdir(), 'mortise-seed-uv-toolchain-'))
+    temporaryRoots.push(root)
+    const sourceBinary = join(root, 'uv.exe')
+    writeFileSync(sourceBinary, 'verified uv executable', 'utf8')
+
+    const published = seedCurrentUvToolchain({
+      cacheRoot: join(root, 'cache'),
+      executable: sourceBinary,
+      platform: 'win32',
+      arch: 'x64',
+      readVersion: () => 'uv 0.10.6 (fixture)',
+    })
+    expect(existsSync(published)).toBe(true)
+    expect(readFileSync(published, 'utf8')).toBe('verified uv executable')
+
+    expect(() => seedCurrentUvToolchain({
+      cacheRoot: join(root, 'wrong-version-cache'),
+      executable: sourceBinary,
+      platform: 'win32',
+      arch: 'x64',
+      readVersion: () => 'uv 0.11.0 (fixture)',
+    })).toThrow('Expected uv 0.10.6')
   })
 
   test('rejects a missing local uv toolchain without attempting a download', async () => {
