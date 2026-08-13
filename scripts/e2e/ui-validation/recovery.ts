@@ -28,28 +28,11 @@ mkdirSync(sourceMortise, { recursive: true })
 mkdirSync(sourceAgent, { recursive: true })
 mkdirSync(sourceWorkspace, { recursive: true })
 const stateDatabase = getMortiseStateDatabasePath(sourceMortise)
-const stateStore = MultiWriterStore.openSync({
-  databasePath: stateDatabase,
-  writerId: `mortise-ui-recovery-${randomUUID()}`,
-  writerVersion: MORTISE_STATE_WRITER_VERSION,
-})
 const createdAt = Date.now()
-try {
-  writeStateRecord(stateStore, getWorkspaceConfigRecordIdentity(sourceWorkspace), {
-    id: 'recovery-workspace', name: 'Recovery Workspace', slug: 'recovery-workspace', createdAt, updatedAt: createdAt,
-  })
-  writeStateRecord(stateStore, { namespace: GLOBAL_CONFIG_RECORD_NAMESPACE, key: GLOBAL_CONFIG_RECORD_KEY }, {
-  setupDeferred: true,
-  activeWorkspaceId: 'recovery-workspace',
-  activeSessionId: null,
-  notificationsEnabled: false,
-  })
-} finally {
-  stateStore.close()
-}
 const topologyStore = new WorkspaceTopologyStore({ databasePath: stateDatabase, writerId: `mortise-ui-recovery-topology-${randomUUID()}` })
+let canonicalWorkspaceRoot: string
 try {
-  topologyStore.create({
+  const workspace = topologyStore.create({
     schemaVersion: 2,
     id: 'recovery-workspace',
     name: 'Recovery Workspace',
@@ -62,8 +45,29 @@ try {
     }],
     createdAt,
   })
+  const primary = workspace.locations.find(location => location.id === workspace.primaryLocationId)
+  if (!primary || primary.endpoint.kind !== 'local') throw new Error('Recovery Workspace has no canonical local primary location')
+  canonicalWorkspaceRoot = primary.endpoint.rootPath
 } finally {
   topologyStore.close()
+}
+const stateStore = MultiWriterStore.openSync({
+  databasePath: stateDatabase,
+  writerId: `mortise-ui-recovery-${randomUUID()}`,
+  writerVersion: MORTISE_STATE_WRITER_VERSION,
+})
+try {
+  writeStateRecord(stateStore, getWorkspaceConfigRecordIdentity(canonicalWorkspaceRoot), {
+    id: 'recovery-workspace', name: 'Recovery Workspace', slug: 'recovery-workspace', createdAt, updatedAt: createdAt,
+  })
+  writeStateRecord(stateStore, { namespace: GLOBAL_CONFIG_RECORD_NAMESPACE, key: GLOBAL_CONFIG_RECORD_KEY }, {
+    setupDeferred: true,
+    activeWorkspaceId: 'recovery-workspace',
+    activeSessionId: null,
+    notificationsEnabled: false,
+  })
+} finally {
+  stateStore.close()
 }
 writeFileSync(join(sourceAgent, 'settings.json'), JSON.stringify({
   defaultProvider: 'ui-validation-local',

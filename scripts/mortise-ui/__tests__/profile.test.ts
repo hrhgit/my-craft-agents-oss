@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'bun:test'
 import { randomUUID } from 'node:crypto'
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join, relative, resolve } from 'node:path'
 import { getSessionFilePath, getSessionPath, listSessions, loadSession, setSharedPiSessionsDirForTests } from '@mortise/shared/sessions'
@@ -244,6 +244,39 @@ describe('mortise-ui profiles', () => {
     expect(existsSync(join(profile.mortiseConfigDir, 'config.json'))).toBe(false)
   })
 
+  it('clones topology locations through their canonical filesystem identity', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'mortise-ui-profile-')); roots.push(root)
+    const mortise = join(root, 'source-mortise')
+    mkdirSync(mortise)
+    const sourceWorkspace = join(root, 'real-workspace')
+    const linkedWorkspace = join(root, 'linked-workspace')
+    mkdirSync(sourceWorkspace)
+    symlinkSync(sourceWorkspace, linkedWorkspace, process.platform === 'win32' ? 'junction' : 'dir')
+    const topology = seedTopology(mortise, {
+      schemaVersion: 2,
+      id: 'ws-linked',
+      name: 'Linked',
+      nameSource: 'custom',
+      slug: 'linked',
+      revision: 1,
+      primaryLocationId: 'primary',
+      locations: [{ id: 'primary', name: 'Primary', rootName: 'linked-workspace', endpoint: { kind: 'local', rootPath: linkedWorkspace } }],
+      createdAt: 1,
+    })
+    const primary = topology.locations.find(location => location.id === topology.primaryLocationId)!
+    const canonicalRoot = primary.endpoint.kind === 'local' ? primary.endpoint.rootPath : ''
+    seedStateRecord(mortise, canonicalRoot.replace(/\\/g, '/'), {
+      id: 'ws-linked', name: 'Linked', slug: 'linked', createdAt: 1, updatedAt: 1,
+    })
+
+    const profile = await prepareProfile({ profileDir: join(root, 'profile'), mode: 'clone', sourceMortiseConfigDir: mortise })
+    const clonedTopology = readTopology(profile.mortiseConfigDir, 'ws-linked')
+    const clonedPrimary = clonedTopology.locations.find(location => location.id === clonedTopology.primaryLocationId)!
+    const clonedRoot = clonedPrimary.endpoint.kind === 'local' ? clonedPrimary.endpoint.rootPath : ''
+    expect(clonedRoot).toStartWith(join(profile.root, 'workspace-clones'))
+    expect(readWorkspaceRecord(profile.mortiseConfigDir, clonedRoot)).toMatchObject({ id: 'ws-linked' })
+  })
+
   it('resolves portable workspace roots before reading their SQLite records', async () => {
     const root = mkdtempSync(join(tmpdir(), 'mortise-ui-profile-')); roots.push(root)
     const mortise = join(root, 'source-mortise')
@@ -398,10 +431,13 @@ function readWorkspaceRecord(mortiseConfigDir: string, rootPath: string): Record
   return readStateRecord(mortiseConfigDir, rootPath.replace(/\\/g, '/')) as Record<string, JsonValue>
 }
 
-function seedTopology(mortiseConfigDir: string, workspace: Parameters<WorkspaceTopologyStore['create']>[0]): void {
+function seedTopology(
+  mortiseConfigDir: string,
+  workspace: Parameters<WorkspaceTopologyStore['create']>[0],
+): ReturnType<WorkspaceTopologyStore['create']> {
   const store = new WorkspaceTopologyStore({ databasePath: join(mortiseConfigDir, 'state.sqlite'), writerId: `profile-test-${randomUUID()}` })
   try {
-    store.create(workspace)
+    return store.create(workspace)
   } finally {
     store.close()
   }
