@@ -110,6 +110,7 @@ import type { WorkspaceSwitchDestination } from '@/components/workspace/useWorks
 import { getFileManagerName } from '@/lib/platform'
 import { rendererLog } from '@/lib/logger'
 import { hasPlatformCapability } from '@/lib/platform-capabilities'
+import { resolveAppStartupState } from '@/lib/app-startup-state'
 import { ActionRegistryProvider } from '@/actions'
 import { toast } from 'sonner'
 
@@ -630,7 +631,7 @@ export default function App() {
         const wsId = await window.electronAPI.getWindowWorkspace()
         setWindowWorkspaceId(wsId)
 
-        setAppState('ready')
+        setAppState(resolveAppStartupState(wsId))
       } catch (error) {
         console.error('Failed to initialize app:', error)
         setAppState('ready')

@@ -54,6 +54,26 @@ describe('window renderer query', () => {
     expect(new URLSearchParams(search).get('sessionId')).toBe('release-readiness')
   })
 
+  it('restores a child session from the initial renderer route', () => {
+    const query = buildInitialWindowRendererQuery({
+      workspaceId: 'workspace-a',
+      focused: true,
+      initialRoute: 'allSessions/session/release-readiness',
+      layoutWindowId: 'standalone:42',
+      layoutReadOnly: true,
+    })
+    const search = new URLSearchParams(query).toString()
+
+    expect(new URLSearchParams(search).get('route')).toBe('allSessions/session/release-readiness')
+    expect(query).toEqual({
+      workspaceId: 'workspace-a',
+      focused: 'true',
+      route: 'allSessions/session/release-readiness',
+      layoutWindowId: 'standalone:42',
+      layoutReadOnly: '1',
+    })
+  })
+
   it('lets an ordinary primary startup replace restored panels with the empty conversation route', () => {
     expect(applyInitialWindowNavigation({
       workspaceId: 'workspace-a',

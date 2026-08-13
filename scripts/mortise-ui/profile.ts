@@ -139,33 +139,77 @@ function redirectClonedWorkspaceRoots(mortiseConfigDir: string, profileRoot: str
   const databasePath = stateDatabasePath(mortiseConfigDir)
   if (!existsSync(databasePath)) return
   const store = openProfileStateStore(mortiseConfigDir)
+  const topologyStore = new WorkspaceTopologyStore({
+    databasePath,
+    writerId: `mortise-ui-profile-topology-redirect-${process.pid}-${randomUUID()}`,
+  })
   try {
     const configRecord = store.getRecord(GLOBAL_CONFIG_RECORD_NAMESPACE, GLOBAL_CONFIG_RECORD_KEY)
-    if (!configRecord) return
-    const config = configRecord.value as { workspaces?: Array<Record<string, JsonValue>> }
-    if (!Array.isArray(config.workspaces)) return
+    const config = configRecord?.value as { workspaces?: Array<Record<string, JsonValue>> } | undefined
+    const topology = topologyStore.list()
+    const legacyWorkspaces = Array.isArray(config?.workspaces) ? config.workspaces : []
+    const hasLocalTopology = topology.some(workspace => workspace.locations.some(location => location.endpoint.kind === 'local'))
+    if (legacyWorkspaces.length === 0 && !hasLocalTopology) return
+
     const cloneRoot = join(profileRoot, 'workspace-clones')
     mkdirSync(cloneRoot, { recursive: true })
-    const workspaces = config.workspaces.map((workspace, index) => {
-      const identity = typeof workspace.id === 'string' && /^[A-Za-z0-9._-]+$/.test(workspace.id)
-        ? workspace.id
-        : `workspace-${index + 1}`
-      const sourceRootPath = workspace.rootPath
-      if (typeof sourceRootPath !== 'string' || sourceRootPath.length === 0) {
-        throw new Error(`Cloned workspace ${identity} has no current rootPath`)
-      }
-      const rootPath = join(cloneRoot, identity)
-      mkdirSync(rootPath, { recursive: true })
-      const sourceIdentity = getWorkspaceConfigRecordIdentity(expandPath(sourceRootPath))
+
+    const clonedRoots = new Map<string, string>()
+    const cloneWorkspaceRoot = (sourceRootPath: string, workspaceId: string, locationId?: string): string => {
+      const expandedSourceRoot = expandPath(sourceRootPath)
+      const sourceIdentity = getWorkspaceConfigRecordIdentity(expandedSourceRoot)
+      const existing = clonedRoots.get(sourceIdentity.namespace)
+      if (existing) return existing
+
+      const safeWorkspaceId = /^[A-Za-z0-9._-]+$/.test(workspaceId) ? workspaceId : 'workspace'
+      const safeLocationId = locationId && /^[A-Za-z0-9._-]+$/.test(locationId) ? locationId : undefined
+      const rootPath = join(cloneRoot, safeLocationId ? `${safeWorkspaceId}-${safeLocationId}` : safeWorkspaceId)
       const workspaceRecord = store.getRecord(sourceIdentity.namespace, sourceIdentity.key)
       if (!workspaceRecord) {
-        throw new Error(`Cloned workspace ${identity} has no SQLite workspace configuration`)
+        throw new Error(`Cloned workspace ${workspaceId} has no SQLite workspace configuration at ${expandedSourceRoot}`)
       }
+      mkdirSync(rootPath, { recursive: true })
       writeStateRecord(store, getWorkspaceConfigRecordIdentity(rootPath).namespace, workspaceRecord.value)
-      return { ...workspace, rootPath }
-    })
-    writeStateRecord(store, GLOBAL_CONFIG_RECORD_NAMESPACE, { ...config, workspaces } as JsonValue)
+      clonedRoots.set(sourceIdentity.namespace, rootPath)
+      return rootPath
+    }
+
+    for (const workspace of topology) {
+      for (const location of workspace.locations) {
+        if (location.endpoint.kind !== 'local') continue
+        const rootPath = cloneWorkspaceRoot(
+          location.endpoint.rootPath,
+          workspace.id,
+          location.id === workspace.primaryLocationId ? undefined : location.id,
+        )
+        topologyStore.apply({
+          schemaVersion: 1,
+          operation: 'replace-endpoint',
+          workspaceId: workspace.id,
+          locationId: location.id,
+          rootName: location.rootName,
+          endpoint: { kind: 'local', rootPath },
+          expectedRevision: topologyStore.get(workspace.id)!.revision,
+          operationId: `mortise-ui-clone:${workspace.id}:${location.id}:${randomUUID()}`,
+        })
+      }
+    }
+
+    if (configRecord && config && legacyWorkspaces.length > 0) {
+      const workspaces = legacyWorkspaces.map((workspace, index) => {
+        const identity = typeof workspace.id === 'string' && /^[A-Za-z0-9._-]+$/.test(workspace.id)
+          ? workspace.id
+          : `workspace-${index + 1}`
+        const sourceRootPath = workspace.rootPath
+        if (typeof sourceRootPath !== 'string' || sourceRootPath.length === 0) {
+          throw new Error(`Cloned workspace ${identity} has no current rootPath`)
+        }
+        return { ...workspace, rootPath: cloneWorkspaceRoot(sourceRootPath, identity) }
+      })
+      writeStateRecord(store, GLOBAL_CONFIG_RECORD_NAMESPACE, { ...config, workspaces } as JsonValue)
+    }
   } finally {
+    topologyStore.close()
     store.close()
   }
 }

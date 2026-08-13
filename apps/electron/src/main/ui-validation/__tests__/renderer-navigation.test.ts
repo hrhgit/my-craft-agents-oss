@@ -110,6 +110,24 @@ describe('loadRendererTarget', () => {
     expect(loads).toBe(0)
   })
 
+  it('reloads an exact target when window-local bootstrap identity changed', async () => {
+    const webContents = new FakeWebContents()
+    webContents.url = 'file:///app/index.html'
+    let loads = 0
+    await loadRendererTarget({
+      isDestroyed: () => false,
+      webContents,
+      loadURL: async (url: string) => {
+        loads += 1
+        queueMicrotask(() => {
+          webContents.url = url
+          webContents.emit('did-finish-load')
+        })
+      },
+    }, webContents.url, { timeoutMs: 500, forceReload: true })
+    expect(loads).toBe(1)
+  })
+
   it('accepts index bootstrap route parameters after the requested document loads', async () => {
     const webContents = new FakeWebContents()
     webContents.url = 'file:///app/playground.html?scenario=component'

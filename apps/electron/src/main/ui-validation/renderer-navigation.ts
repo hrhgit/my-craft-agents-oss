@@ -36,7 +36,7 @@ export function rendererPageUrl(current: string, page: 'index.html' | 'playgroun
 export async function loadRendererTarget(
   window: RendererNavigationWindow,
   targetUrl: string,
-  options: { timeoutMs?: number; signal?: AbortSignal } = {},
+  options: { timeoutMs?: number; signal?: AbortSignal; forceReload?: boolean } = {},
 ): Promise<void> {
   const timeoutMs = options.timeoutMs ?? UI_VALIDATION_DEFAULT_TIMEOUT_MS
   if (!Number.isFinite(timeoutMs) || timeoutMs < 1 || timeoutMs > UI_VALIDATION_MAX_WAIT_MS) {
@@ -49,7 +49,7 @@ export async function loadRendererTarget(
   await waitForCurrentNavigation(window, timeoutMs, options.signal)
   const remainingMs = Math.max(1, deadline - Date.now())
   const target = normalizedUrl(targetUrl)
-  if (matchesRendererTarget(window.webContents.getURL(), targetUrl) && !window.webContents.isLoadingMainFrame()) return
+  if (!options.forceReload && matchesRendererTarget(window.webContents.getURL(), targetUrl) && !window.webContents.isLoadingMainFrame()) return
 
   await new Promise<void>((resolveNavigation, rejectNavigation) => {
     let settled = false

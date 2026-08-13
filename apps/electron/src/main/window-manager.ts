@@ -794,12 +794,12 @@ export class WindowManager {
       parentWebContentsId,
     } = options ?? {}
 
-    const deepLink = `mortise://allSessions/session/${sessionId}`
+    const initialRoute = `allSessions/session/${sessionId}`
 
     const childWindow = this.createWindow({
       workspaceId,
       focused: true,
-      initialDeepLink: deepLink,
+      initialRoute,
       width,
       height,
       customTitle: title || sessionId,

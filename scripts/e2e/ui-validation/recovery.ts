@@ -1,6 +1,16 @@
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import {
+  GLOBAL_CONFIG_RECORD_KEY,
+  GLOBAL_CONFIG_RECORD_NAMESPACE,
+  MORTISE_STATE_WRITER_VERSION,
+  getMortiseStateDatabasePath,
+} from '@mortise/shared/config/state-contract'
+import { MultiWriterStore, type JsonValue } from '@mortise/shared/storage'
+import { WorkspaceTopologyStore } from '@mortise/shared/workspaces'
+import { getWorkspaceConfigRecordIdentity } from '@mortise/shared/workspaces/state-contract'
 import { requestMortiseUiHost } from '../../mortise-ui/client.ts'
 import { startMortiseUiRun, stopMortiseUiRun } from '../../mortise-ui/controller.ts'
 
@@ -17,16 +27,63 @@ const sourceWorkspace = join(sourceRoot, 'workspace')
 mkdirSync(sourceMortise, { recursive: true })
 mkdirSync(sourceAgent, { recursive: true })
 mkdirSync(sourceWorkspace, { recursive: true })
-writeFileSync(join(sourceMortise, 'config.json'), JSON.stringify({
+const stateDatabase = getMortiseStateDatabasePath(sourceMortise)
+const stateStore = MultiWriterStore.openSync({
+  databasePath: stateDatabase,
+  writerId: `mortise-ui-recovery-${randomUUID()}`,
+  writerVersion: MORTISE_STATE_WRITER_VERSION,
+})
+const createdAt = Date.now()
+try {
+  writeStateRecord(stateStore, getWorkspaceConfigRecordIdentity(sourceWorkspace), {
+    id: 'recovery-workspace', name: 'Recovery Workspace', slug: 'recovery-workspace', createdAt, updatedAt: createdAt,
+  })
+  writeStateRecord(stateStore, { namespace: GLOBAL_CONFIG_RECORD_NAMESPACE, key: GLOBAL_CONFIG_RECORD_KEY }, {
   setupDeferred: true,
   activeWorkspaceId: 'recovery-workspace',
   activeSessionId: null,
-  workspaces: [{ id: 'recovery-workspace', name: 'Recovery Workspace', rootPath: sourceWorkspace, createdAt: Date.now() }],
-}, null, 2))
+  notificationsEnabled: false,
+  })
+} finally {
+  stateStore.close()
+}
+const topologyStore = new WorkspaceTopologyStore({ databasePath: stateDatabase, writerId: `mortise-ui-recovery-topology-${randomUUID()}` })
+try {
+  topologyStore.create({
+    schemaVersion: 2,
+    id: 'recovery-workspace',
+    name: 'Recovery Workspace',
+    nameSource: 'custom',
+    slug: 'recovery-workspace',
+    revision: 1,
+    primaryLocationId: 'primary',
+    locations: [{
+      id: 'primary', name: 'Primary', rootName: 'workspace', endpoint: { kind: 'local', rootPath: sourceWorkspace },
+    }],
+    createdAt,
+  })
+} finally {
+  topologyStore.close()
+}
 writeFileSync(join(sourceAgent, 'settings.json'), JSON.stringify({
   defaultProvider: 'ui-validation-local',
   defaultModel: 'ui-validation-model',
 }, null, 2))
+
+function writeStateRecord(
+  store: MultiWriterStore,
+  identity: { namespace: string; key: string },
+  value: JsonValue,
+): void {
+  const result = store.mutateRecord({
+    namespace: identity.namespace,
+    key: identity.key,
+    value,
+    expectedVersion: null,
+    operationId: randomUUID(),
+  })
+  if (result.status !== 'applied') throw new Error(`Failed to seed recovery state ${identity.namespace}/${identity.key}`)
+}
 writeFileSync(join(sourceAgent, 'models.json'), JSON.stringify({
   providers: {
     'ui-validation-local': {
@@ -87,7 +144,6 @@ try {
     target: { ref: newSession.ref },
     action: 'click',
     mode: 'physical',
-    waitUntil: { kind: 'state', scope: 'sessions', phase: 'ready', detail: { count: 1 }, timeoutMs: 60_000 },
     timeoutMs: 60_000,
   })
   const primarySession = await command<Snapshot>('ui.snapshot', { webContentsId: first.webContentsId })
@@ -111,15 +167,27 @@ try {
     target: { ref: send.ref },
     action: 'click',
     mode: 'physical',
-    waitUntil: { kind: 'state', scope: 'sessions', phase: 'ready', detail: { count: 1 }, timeoutMs: 60_000 },
+    waitUntil: { kind: 'state', scope: 'sessions', phase: 'busy', timeoutMs: 60_000 },
     timeoutMs: 60_000,
   })
 
+  const accepted = await command<{ observed?: { entityId?: string } }>('ui.wait', {
+    webContentsId: first.webContentsId,
+    predicate: { kind: 'state', scope: 'session', phase: 'busy' },
+    timeoutMs: 60_000,
+  })
+  const publishedSessionId = accepted.observed?.entityId
+  if (!publishedSessionId) throw new Error('Accepted recovery message did not expose its published Session identity.')
+  if (publishedSessionId !== sessionId && !sessionId.startsWith('draft:')) {
+    throw new Error(`Published recovery Session identity changed unexpectedly: ${sessionId} -> ${publishedSessionId}`)
+  }
+  const recoverySessionId = publishedSessionId
+
   const opened = await command<{ webContentsId: number; workspaceId: string; role: string; sessionId: string }>(
     'diagnostics.window.open',
-    { webContentsId: first.webContentsId, sessionId },
+    { webContentsId: first.webContentsId, sessionId: recoverySessionId },
   )
-  if (opened.role !== 'child-session' || opened.sessionId !== sessionId || opened.workspaceId !== first.workspaceId) {
+  if (opened.role !== 'child-session' || opened.sessionId !== recoverySessionId || opened.workspaceId !== first.workspaceId) {
     throw new Error(`Diagnostic command did not create the expected child AppShell: ${JSON.stringify(opened)}`)
   }
   await command('ui.wait', {
@@ -134,13 +202,13 @@ try {
   })
   await command('ui.wait', {
     webContentsId: opened.webContentsId,
-    predicate: { kind: 'state', scope: 'route', phase: 'ready', detail: { surface: 'chat', sessionId } },
+    predicate: { kind: 'state', scope: 'route', phase: 'ready', detail: { surface: 'chat', sessionId: recoverySessionId } },
     timeoutMs: 60_000,
     stableForMs: 100,
   })
   const windows = await command<WindowInfo[]>('ui.windows')
   const childWindow = windows.find(window => window.webContentsId === opened.webContentsId)
-  if (windows.length !== 2 || childWindow?.role !== 'child-session' || childWindow.sessionId !== sessionId
+  if (windows.length !== 2 || childWindow?.role !== 'child-session' || childWindow.sessionId !== recoverySessionId
     || childWindow.parentWebContentsId !== first.webContentsId) {
     throw new Error(`Second managed window did not expose stable child-session identity: ${JSON.stringify(windows)}`)
   }
@@ -149,7 +217,7 @@ try {
     throw new Error(`Unselected multi-window snapshot did not fail with AMBIGUOUS_TARGET: ${JSON.stringify(ambiguous)}`)
   }
   const childSnapshot = await command<Snapshot>('ui.snapshot', { webContentsId: opened.webContentsId })
-  if (!nodes(childSnapshot).some(node => node.semanticId === composer.semanticId)) {
+  if (!nodes(childSnapshot).some(node => node.semanticId === `composer.${recoverySessionId}.input`)) {
     throw new Error('Child AppShell did not expose the selected session composer through business semantics.')
   }
   await command('ui.window', { webContentsId: opened.webContentsId, action: 'close' })

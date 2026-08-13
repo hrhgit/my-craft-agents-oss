@@ -1410,7 +1410,7 @@ app.whenReady().then(async () => {
             targetUrl.pathname = targetUrl.pathname.replace(/[^/]*$/, 'index.html')
             targetUrl.search = ''
             targetUrl.hash = ''
-            await loadRendererTarget(window, targetUrl.toString())
+            await loadRendererTarget(window, targetUrl.toString(), { forceReload: true })
             return {
               route: resolvedRoute.route,
               ready: resolvedRoute.ready,

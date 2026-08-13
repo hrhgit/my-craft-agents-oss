@@ -206,13 +206,8 @@ export function registerWorkspaceGuiHandlers(server: RpcServer, deps: HandlerDep
     if (!session || session.workspaceId !== workspaceId) {
       throw new Error(`Session is not available in the Pi-first UI: ${sessionId}`)
     }
-    const deepLink = `mortise://allSessions/session/${sessionId}`
-    windowManager.createWindow({
+    windowManager.createChildSessionWindow(sessionId, {
       workspaceId,
-      focused: true,
-      initialDeepLink: deepLink,
-      role: 'child-session',
-      sessionId,
     })
   })
 

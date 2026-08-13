@@ -5,6 +5,7 @@ import { homedir, tmpdir } from 'node:os'
 import { join, relative, resolve } from 'node:path'
 import { getSessionFilePath, getSessionPath, listSessions, loadSession, setSharedPiSessionsDirForTests } from '@mortise/shared/sessions'
 import { MultiWriterStore, type JsonValue } from '@mortise/shared/storage'
+import { WorkspaceTopologyStore } from '@mortise/shared/workspaces'
 import { prepareProfile } from '../profile.ts'
 
 const roots: string[] = []
@@ -190,21 +191,56 @@ describe('mortise-ui profiles', () => {
     const mortise = join(root, 'source-mortise')
     mkdirSync(mortise)
     const sourceWorkspace = join(root, 'real-workspace')
+    const sourceAssets = join(root, 'real-assets')
+    mkdirSync(sourceWorkspace)
+    mkdirSync(sourceAssets)
     seedStateRecord(mortise, sourceWorkspace.replace(/\\/g, '/'), {
+      id: 'ws-1', name: 'Real', slug: 'real', createdAt: 1, updatedAt: 1,
+    })
+    seedStateRecord(mortise, sourceAssets.replace(/\\/g, '/'), {
       id: 'ws-1', name: 'Real', slug: 'real', createdAt: 1, updatedAt: 1,
     })
     seedStateRecord(mortise, 'config', {
       workspaces: [{ id: 'ws-1', name: 'Real', rootPath: sourceWorkspace }],
       activeWorkspaceId: 'ws-1', activeSessionId: null,
     })
+    seedTopology(mortise, {
+      schemaVersion: 2,
+      id: 'ws-1',
+      name: 'Real',
+      nameSource: 'custom',
+      slug: 'real',
+      revision: 4,
+      primaryLocationId: 'primary',
+      locations: [
+        { id: 'primary', name: 'Primary', rootName: 'real-workspace', endpoint: { kind: 'local', rootPath: sourceWorkspace } },
+        { id: 'assets', name: 'Assets', rootName: 'real-assets', endpoint: { kind: 'local', rootPath: sourceAssets } },
+        {
+          id: 'remote', name: 'Remote', rootName: 'remote-root',
+          endpoint: { kind: 'remote', url: 'wss://example.invalid', remoteWorkspaceId: 'remote-ws', credentialRef: 'remote-key' },
+        },
+      ],
+      createdAt: 1,
+    })
     const profile = await prepareProfile({ profileDir: join(root, 'profile'), mode: 'clone', sourceMortiseConfigDir: mortise })
     const cloned = readConfigRecord(profile.mortiseConfigDir)
+    const clonedTopology = readTopology(profile.mortiseConfigDir, 'ws-1')
     expect(cloned.workspaces[0].rootPath).toStartWith(join(profile.root, 'workspace-clones'))
     expect(cloned.workspaces[0].rootPath).not.toBe(sourceWorkspace)
     expect(existsSync(cloned.workspaces[0].rootPath)).toBe(true)
     expect(readWorkspaceRecord(profile.mortiseConfigDir, cloned.workspaces[0].rootPath)).toMatchObject({
       id: 'ws-1', name: 'Real', slug: 'real',
     })
+    const clonedPrimary = clonedTopology.locations.find(location => location.id === 'primary')!
+    const clonedAssets = clonedTopology.locations.find(location => location.id === 'assets')!
+    expect(clonedPrimary.endpoint).toEqual({ kind: 'local', rootPath: cloned.workspaces[0].rootPath })
+    expect(clonedAssets.endpoint.kind).toBe('local')
+    expect(clonedAssets.endpoint.kind === 'local' ? clonedAssets.endpoint.rootPath : '').toStartWith(join(profile.root, 'workspace-clones'))
+    expect(clonedAssets.endpoint.kind === 'local' ? clonedAssets.endpoint.rootPath : '').not.toBe(sourceAssets)
+    expect(clonedTopology.locations.find(location => location.id === 'remote')?.endpoint).toEqual({
+      kind: 'remote', url: 'wss://example.invalid', remoteWorkspaceId: 'remote-ws', credentialRef: 'remote-key',
+    })
+    expect(clonedTopology.revision).toBe(6)
     expect(existsSync(join(profile.mortiseConfigDir, 'config.json'))).toBe(false)
   })
 
@@ -360,6 +396,26 @@ function readConfigRecord(mortiseConfigDir: string): ProfileConfigRecord {
 
 function readWorkspaceRecord(mortiseConfigDir: string, rootPath: string): Record<string, JsonValue> {
   return readStateRecord(mortiseConfigDir, rootPath.replace(/\\/g, '/')) as Record<string, JsonValue>
+}
+
+function seedTopology(mortiseConfigDir: string, workspace: Parameters<WorkspaceTopologyStore['create']>[0]): void {
+  const store = new WorkspaceTopologyStore({ databasePath: join(mortiseConfigDir, 'state.sqlite'), writerId: `profile-test-${randomUUID()}` })
+  try {
+    store.create(workspace)
+  } finally {
+    store.close()
+  }
+}
+
+function readTopology(mortiseConfigDir: string, workspaceId: string): NonNullable<ReturnType<WorkspaceTopologyStore['get']>> {
+  const store = new WorkspaceTopologyStore({ databasePath: join(mortiseConfigDir, 'state.sqlite'), writerId: `profile-test-${randomUUID()}` })
+  try {
+    const workspace = store.get(workspaceId)
+    expect(workspace).not.toBeNull()
+    return workspace!
+  } finally {
+    store.close()
+  }
 }
 
 function readStateRecord(mortiseConfigDir: string, namespace: string): JsonValue {
