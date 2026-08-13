@@ -46,6 +46,7 @@ export interface StageDeveloperKitResult {
 }
 
 interface StageDeveloperKitDependencies {
+  platform?: NodeJS.Platform
   buildDeveloperKit?: (options: {
     sourceRoot: string
     expectedSourceId: string
@@ -57,7 +58,7 @@ export function stageDeveloperKitForInstaller(
   options: StageDeveloperKitOptions,
   dependencies: StageDeveloperKitDependencies = {},
 ): StageDeveloperKitResult {
-  if (process.platform !== 'win32') {
+  if ((dependencies.platform ?? process.platform) !== 'win32') {
     throw new Error('Offline Developer Kit installer staging is supported on Windows only.')
   }
   if (!/^[0-9a-f]{64}$/.test(options.expectedSourceId)) {

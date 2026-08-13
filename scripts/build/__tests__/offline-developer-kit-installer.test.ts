@@ -97,6 +97,7 @@ describe('offline Developer Kit installer contract', () => {
       bunExecutable: process.execPath,
       runId: 'cached-kit-test',
     }, {
+      platform: 'win32',
       buildDeveloperKit: () => { buildCalls += 1 },
     })
 
@@ -123,7 +124,7 @@ describe('offline Developer Kit installer contract', () => {
       developerKitBuildRoot: join(root, 'kit-builds'),
       bunExecutable: process.execPath,
       runId: 'missing-kit-test',
-    })).toThrow('--source-root is required')
+    }, { platform: 'win32' })).toThrow('--source-root is required')
   })
 
   test('prepares direct immutable inputs without copying the Developer Kit tree', () => {
@@ -142,7 +143,7 @@ describe('offline Developer Kit installer contract', () => {
       bunExecutable: process.execPath,
       provenanceOutputPath: provenancePath,
       runId: 'direct-kit-test',
-    })
+    }, { platform: 'win32' })
 
     expect(result.artifactDirectory).toBe(fixture.artifactDirectory)
     expect(result.stagedKitDirectory).toBe(fixture.artifactDirectory)

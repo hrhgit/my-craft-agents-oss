@@ -168,6 +168,7 @@ describe('immutable build source snapshot', () => {
     write(root, 'pi/package.json', '{"name":"fixture-pi","private":true,"devDependencies":{"fixture-tool":"file:tools/fixture-tool"}}\n')
     write(root, 'pi/tools/fixture-tool/package.json', '{"name":"fixture-tool","version":"1.0.0","bin":{"fixture-tool":"bin.js"}}\n')
     write(root, 'pi/tools/fixture-tool/bin.js', '#!/usr/bin/env node\nconsole.log("fixture tool")\n')
+    if (process.platform !== 'win32') chmodSync(join(root, 'pi', 'tools', 'fixture-tool', 'bin.js'), 0o755)
     runBun(root, ['install', '--no-progress', '--no-summary'])
     runNpm(join(root, 'pi'), ['install', '--package-lock-only', '--ignore-scripts', '--no-audit', '--no-fund'])
     runGit(root, ['add', '.'])
