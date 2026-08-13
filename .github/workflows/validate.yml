@@ -168,7 +168,7 @@ jobs:
         run: npm ci --ignore-scripts
 
       - name: Build
-        run: npm run build
+        run: npm run build:workspace
 
       - name: Check
         run: npm run check

@@ -1988,19 +1988,29 @@ export async function runRpcMode(
 			}
 			const extensionServiceScope = requestedExtensionServiceScope;
 			const workspaceServiceKey = requestedWorkspaceServiceKey;
-			let extensionServiceParentRegistry: import("../../core/extensions/service-registry.ts").ExtensionServiceRegistry | undefined;
+			let extensionServiceParentRegistry:
+				| import("../../core/extensions/service-registry.ts").ExtensionServiceRegistry
+				| undefined;
 			if (globalHostFactory) {
 				const globalBinding = await ensureDefaultBinding();
 				const globalRegistry = globalBinding.session.extensionRunner.getExtensionServiceRegistry();
 				if (extensionServiceScope === "workspace") {
 					if (!workspaceServiceKey) {
-						return error(id, "open_runtime", "Workspace Extension service runtimes require extensionServiceWorkspaceKey");
+						return error(
+							id,
+							"open_runtime",
+							"Workspace Extension service runtimes require extensionServiceWorkspaceKey",
+						);
 					}
 					extensionServiceParentRegistry = globalRegistry;
 				} else if (workspaceServiceKey) {
 					const workspaceOwner = workspaceServiceOwners.get(workspaceServiceKey);
 					if (!workspaceOwner) {
-						return error(id, "open_runtime", `Workspace Extension service runtime is not prepared: ${workspaceServiceKey}`);
+						return error(
+							id,
+							"open_runtime",
+							`Workspace Extension service runtime is not prepared: ${workspaceServiceKey}`,
+						);
 					}
 					extensionServiceParentRegistry = workspaceOwner.session.extensionRunner.getExtensionServiceRegistry();
 				} else {
@@ -2615,9 +2625,8 @@ export async function runRpcMode(
 						.getExtensionServiceCatalog()
 						.providers.filter((provider) => provider.capability === command.capability),
 				);
-			case "extension_services_invoke":
-				{
-					const runtimeId = session.extensionRunner.getExtensionServiceCatalog().runtimeId;
+			case "extension_services_invoke": {
+				const runtimeId = session.extensionRunner.getExtensionServiceCatalog().runtimeId;
 				try {
 					const progress: unknown[] = [];
 					const output = await session.extensionRunner.invokeExtensionService(
@@ -2643,17 +2652,19 @@ export async function runRpcMode(
 				} catch (invokeError) {
 					const extensionError = invokeError instanceof ExtensionServiceError ? invokeError : undefined;
 					const status = extensionError
-						? ({
-								extension_service_unavailable: "unavailable",
-								extension_service_ambiguous: "ambiguous",
-								extension_service_operation_unknown: "failed",
-								extension_service_invalid_input: "invalid_input",
-								extension_service_invalid_output: "invalid_output",
-								extension_service_cancelled: "cancelled",
-								extension_service_timed_out: "timed_out",
-								extension_service_runtime_stale: "runtime_stale",
-								extension_service_failed: "failed",
-							} as const)[extensionError.code]
+						? (
+								{
+									extension_service_unavailable: "unavailable",
+									extension_service_ambiguous: "ambiguous",
+									extension_service_operation_unknown: "failed",
+									extension_service_invalid_input: "invalid_input",
+									extension_service_invalid_output: "invalid_output",
+									extension_service_cancelled: "cancelled",
+									extension_service_timed_out: "timed_out",
+									extension_service_runtime_stale: "runtime_stale",
+									extension_service_failed: "failed",
+								} as const
+							)[extensionError.code]
 						: "failed";
 					return success(id, "extension_services_invoke", {
 						protocolVersion: 1,
@@ -2667,7 +2678,7 @@ export async function runRpcMode(
 						},
 					});
 				}
-				}
+			}
 			case "extension_services_cancel":
 				return success(id, "extension_services_cancel", {
 					cancelled: session.extensionRunner.cancelExtensionService(command.requestId),

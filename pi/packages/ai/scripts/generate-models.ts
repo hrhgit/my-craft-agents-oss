@@ -902,6 +902,16 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					baseUrl = `${variant.basePath}/v1`;
 				}
 
+				// These OpenCode endpoints use /v1/chat/completions even when models.dev
+				// reports @ai-sdk/openai. Preserve the verified transport contract.
+				if (
+					(variant.provider === "opencode" && modelId === "grok-build-0.1") ||
+					((variant.provider === "opencode" || variant.provider === "opencode-go") && modelId === "kimi-k2.6")
+				) {
+					api = "openai-completions";
+					baseUrl = `${variant.basePath}/v1`;
+				}
+
 				if (variant.provider === "opencode" && modelId === "grok-build-0.1") {
 					compat = { ...(compat ?? {}), supportsReasoningEffort: false };
 				}
@@ -946,7 +956,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 						cacheRead: m.cost?.cache_read || 0,
 						cacheWrite: m.cost?.cache_write || 0,
 					},
-					...(compat ? { compat } : {}),
+					...(api === "openai-completions" && compat ? { compat } : {}),
 					contextWindow: m.limit?.context || 4096,
 					maxTokens: m.limit?.output || 4096,
 				});

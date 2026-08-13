@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { ELECTRON_BUILD_BLOCK_SPECS } from './build-inputs.ts'
 import { computeBuildBlockId, computeBuildBlockInputId, type BuildBlockContext } from './build-block-cache.ts'
-import { buildToolchainExecutableSha256 } from './electron-build-cache.ts'
+import { buildToolchainExecutableSha256 } from './toolchain-identity.ts'
 
 const repoRoot = resolve(import.meta.dir, '..', '..')
 const context: BuildBlockContext = {

@@ -54,7 +54,6 @@ async function main() {
 		if (!isWaiting) process.stdout.write("You: ");
 	};
 
-	let activeExecutionId: string | undefined;
 	rl.on("line", async (line) => {
 		if (isWaiting) return;
 		if (line.trim() === "exit") {
@@ -63,9 +62,7 @@ async function main() {
 		}
 
 		isWaiting = true;
-		activeExecutionId = crypto.randomUUID();
-		await client.promptAndWait(activeExecutionId, line);
-		activeExecutionId = undefined;
+		await client.promptAndWait(line);
 		console.log("\n");
 		isWaiting = false;
 		prompt();
@@ -74,7 +71,7 @@ async function main() {
 	rl.on("SIGINT", () => {
 		if (isWaiting) {
 			console.log("\n[Aborting...]");
-			if (activeExecutionId) client.abort(activeExecutionId);
+			client.abort();
 		} else {
 			client.stop();
 			process.exit(0);

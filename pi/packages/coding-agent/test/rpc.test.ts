@@ -13,12 +13,9 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 describe.skipIf(!process.env.ANTHROPIC_API_KEY && !process.env.ANTHROPIC_OAUTH_TOKEN)("RPC mode", () => {
 	let client: RpcClient;
 	let sessionDir: string;
-	let executionCounter: number;
-	const nextExecutionId = () => `rpc-test-execution-${++executionCounter}`;
-	const promptAndWait = (message: string) => client.promptAndWait(nextExecutionId(), message);
+	const promptAndWait = (message: string) => client.promptAndWait(message);
 
 	beforeEach(() => {
-		executionCounter = 0;
 		sessionDir = join(tmpdir(), `pi-rpc-test-${Date.now()}`);
 		client = new RpcClient({
 			runtimePath: join(__dirname, "..", "dist", "bun", "headless.js"),
@@ -96,7 +93,7 @@ describe.skipIf(!process.env.ANTHROPIC_API_KEY && !process.env.ANTHROPIC_OAUTH_T
 		await promptAndWait("Say hello");
 
 		// Compact
-		const result = await client.compact(nextExecutionId());
+		const result = await client.compact();
 		expect(result.summary).toBeDefined();
 		expect(result.tokensBefore).toBeGreaterThan(0);
 

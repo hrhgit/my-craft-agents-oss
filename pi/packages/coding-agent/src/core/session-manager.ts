@@ -2376,9 +2376,10 @@ export class SessionManager {
 								.join("\n")
 					).trim() || undefined
 				: undefined;
-			const error = lastAssistant?.stopReason === "error" && typeof lastAssistant.errorMessage === "string"
-				? lastAssistant.errorMessage
-				: undefined;
+			const error =
+				lastAssistant?.stopReason === "error" && typeof lastAssistant.errorMessage === "string"
+					? lastAssistant.errorMessage
+					: undefined;
 			const history = messages.slice(-50).flatMap((message) => {
 				const record = message as unknown as Record<string, unknown>;
 				const content = record.content;

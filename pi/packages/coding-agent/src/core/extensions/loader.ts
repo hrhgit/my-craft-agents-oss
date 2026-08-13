@@ -128,10 +128,12 @@ type HandlerFn = (...args: unknown[]) => Promise<unknown>;
  * Create a runtime with throwing stubs for action methods.
  * Runner.bindCore() replaces these with real implementations.
  */
-export function createExtensionRuntime(options: {
-	scope?: import("../extension-manifest.ts").ExtensionCapabilityScopeV1;
-	parentServiceRegistry?: ExtensionServiceRegistry;
-} = {}): ExtensionRuntime {
+export function createExtensionRuntime(
+	options: {
+		scope?: import("../extension-manifest.ts").ExtensionCapabilityScopeV1;
+		parentServiceRegistry?: ExtensionServiceRegistry;
+	} = {},
+): ExtensionRuntime {
 	const notInitialized = () => {
 		throw new Error("Extension runtime not initialized. Action methods cannot be called during extension loading.");
 	};

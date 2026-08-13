@@ -898,23 +898,33 @@ describe("RPC prompt response semantics", () => {
 
 		try {
 			lineHandler(JSON.stringify({ id: "withdraw-start", type: "prompt", message: "Start" }));
-			await vi.waitFor(() => expect(getStartedAttemptId(rpcIo.outputLines, "withdraw-start")).toEqual(expect.any(String)));
+			await vi.waitFor(() =>
+				expect(getStartedAttemptId(rpcIo.outputLines, "withdraw-start")).toEqual(expect.any(String)),
+			);
 
-			lineHandler(JSON.stringify({
-				id: "withdraw-follow-up",
-				type: "follow_up",
-				message: "Remove only this",
-				clientMutationId: "mutation-withdraw-1",
-			}));
-			await vi.waitFor(() => expect(rpcIo.outputLines.some((line) => line.includes('"id":"withdraw-follow-up"'))).toBe(true));
+			lineHandler(
+				JSON.stringify({
+					id: "withdraw-follow-up",
+					type: "follow_up",
+					message: "Remove only this",
+					clientMutationId: "mutation-withdraw-1",
+				}),
+			);
+			await vi.waitFor(() =>
+				expect(rpcIo.outputLines.some((line) => line.includes('"id":"withdraw-follow-up"'))).toBe(true),
+			);
 
-			lineHandler(JSON.stringify({
-				id: "withdraw-command",
-				type: "withdraw_queued",
-				clientMutationId: "mutation-withdraw-1",
-			}));
+			lineHandler(
+				JSON.stringify({
+					id: "withdraw-command",
+					type: "withdraw_queued",
+					clientMutationId: "mutation-withdraw-1",
+				}),
+			);
 			await vi.waitFor(() => {
-				const response = rpcIo.outputLines.map(line => JSON.parse(line)).find(record => record.id === "withdraw-command");
+				const response = rpcIo.outputLines
+					.map((line) => JSON.parse(line))
+					.find((record) => record.id === "withdraw-command");
 				expect(response).toMatchObject({ success: true, data: { status: "removed" } });
 			});
 		} finally {
@@ -972,9 +982,7 @@ describe("RPC prompt response semantics", () => {
 				const records = parseOutputLines(rpcIo.outputLines);
 				const attemptId = getStartedAttemptId(rpcIo.outputLines, "handled-prompt");
 				expect(attemptId).toEqual(expect.any(String));
-				expect(records).toContainEqual(
-					expect.objectContaining({ type: "agent_settled", attemptId }),
-				);
+				expect(records).toContainEqual(expect.objectContaining({ type: "agent_settled", attemptId }));
 				expect(records.some((record) => record.type === "agent_start")).toBe(false);
 			});
 		} finally {

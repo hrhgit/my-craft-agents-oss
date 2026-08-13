@@ -133,7 +133,15 @@ describe('production bundle validation composition', () => {
     const buildModulePath = resolve(repositoryRoot, '.agents/modules/build-release-observability.md')
     const buildModule = readSource(buildModulePath)
     const moduleCommands = moduleValidationCommands(buildModulePath)
+    const validationWorkflow = readSource(resolve(repositoryRoot, '.github/workflows/validate.yml'))
+    const piPackage = JSON.parse(readSource(resolve(repositoryRoot, 'pi/package.json'))) as {
+      scripts: Record<string, string>
+    }
     expect(scripts['bootstrap:ci']).toContain('bun run pi:build:binary')
+    expect(validationWorkflow).toContain('run: npm run build:workspace')
+    expect(validationWorkflow).not.toContain('run: npm run build\n')
+    expect(piPackage.scripts['build:workspace']).not.toContain('generate-models')
+    expect(piPackage.scripts['build:workspace']).not.toContain('generate-image-models')
     expect(scripts['electron:build']).toBe('bun run scripts/build/produce-electron-build.ts')
     expect(scripts['electron:build:source']).toContain('bun run electron:build:resources')
     expect(scripts['validate:production-node-bundles']).toBe(
@@ -142,6 +150,7 @@ describe('production bundle validation composition', () => {
     expect(scripts['validate:dev']?.startsWith('bun run validate:production-node-bundles &&')).toBe(true)
     expect(scripts['validate:production-bundles']).toBe('bun run scripts/build/validate-production-bundles.ts')
     expect(scripts['test:build-validation']).toContain('bundle-portability.test.ts')
+    expect(scripts['test:build-validation']).toContain("--path-ignore-patterns='output/**'")
     expect(scripts['validate:ci']).toContain('bun run test:build-validation')
     expect(scripts['validate:ci']).toContain('bun run validate:production-bundles')
     expect(buildModule).not.toContain('command: "bun run validate:dev"')
@@ -198,6 +207,27 @@ describe('production bundle validation composition', () => {
     )
     expect(environment.PATH).toBe(`${dirname(bunExecutable)}${delimiter}${resolve(repositoryRoot, 'machine-node')}`)
     expect(environment.Path).toBeUndefined()
+  })
+
+  test('keeps Pi provenance independent from root workspace package resolution', () => {
+    const provenance = readSource(resolve(repositoryRoot, 'scripts/build/write-pi-build-provenance.ts'))
+    const freshness = readSource(resolve(repositoryRoot, 'scripts/build/check-pi-freshness.ts'))
+    const toolchainIdentity = readSource(resolve(repositoryRoot, 'scripts/build/toolchain-identity.ts'))
+
+    expect(provenance).toContain("from './toolchain-identity.ts'")
+    expect(freshness).toContain("from './toolchain-identity.ts'")
+    expect(provenance).not.toContain('electron-build-cache')
+    expect(freshness).not.toContain('electron-build-cache')
+    expect(toolchainIdentity).not.toContain('@mortise/')
+  })
+
+  test('emits completions compatibility only for completions models', () => {
+    const generator = readSource(resolve(repositoryRoot, 'pi/packages/ai/scripts/generate-models.ts'))
+    expect(generator).toContain('variant.provider === "opencode" && modelId === "grok-build-0.1"')
+    expect(generator).toContain('modelId === "kimi-k2.6"')
+    expect(generator).toContain('api = "openai-completions"')
+    expect(generator).toContain('baseUrl = `${variant.basePath}/v1`')
+    expect(generator).toContain('...(api === "openai-completions" && compat ? { compat } : {})')
   })
 
   test('publishes a verified standard Bun command for nested npm lifecycle scripts', () => {

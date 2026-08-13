@@ -1763,7 +1763,10 @@ export class PiRuntimeHandle {
 		input: unknown;
 		timeoutMs?: number;
 	}): Promise<ExtensionServiceResultV1> {
-		return this.requestData<ExtensionServiceResultV1>({ type: "extension_services_invoke", ...input }, input.timeoutMs);
+		return this.requestData<ExtensionServiceResultV1>(
+			{ type: "extension_services_invoke", ...input },
+			input.timeoutMs,
+		);
 	}
 	extensionServicesCancel(requestId: string): Promise<boolean> {
 		return this.requestData<{ cancelled: boolean }>({ type: "extension_services_cancel", requestId }).then(

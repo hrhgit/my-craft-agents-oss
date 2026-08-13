@@ -35,6 +35,9 @@ import { writeJsonAtomic } from './files.ts'
 import { getProcessStartTime, matchesProcessIdentity } from './process-identity.ts'
 import { ELECTRON_BUILD_BLOCK_SPECS, ELECTRON_BUILD_INPUTS } from './build-inputs.ts'
 import { runBuildBlock, type BuildBlockContext, type BuildBlockManifest } from './build-block-cache.ts'
+import { buildToolchainExecutableSha256 } from './toolchain-identity.ts'
+
+export { buildToolchainExecutableSha256 } from './toolchain-identity.ts'
 
 export const ELECTRON_BUILD_SCHEMA_VERSION = 5
 export const ELECTRON_BUILD_PRODUCER_VERSION = 'electron-production-v4'
@@ -1484,15 +1487,6 @@ function positiveInteger(value: number | undefined, fallback: number): number {
 
 function shortBuildId(buildId: string): string {
   return buildId.slice(0, 12)
-}
-
-let cachedToolchainExecutableSha256: string | undefined
-export function buildToolchainExecutableSha256(executable = process.execPath): string {
-  if (executable !== process.execPath) {
-    return createHash('sha256').update(readFileSync(executable)).digest('hex')
-  }
-  cachedToolchainExecutableSha256 ??= createHash('sha256').update(readFileSync(executable)).digest('hex')
-  return cachedToolchainExecutableSha256
 }
 
 function currentBuildToolchainIdentity(executable = process.execPath): ElectronBuildToolchainIdentity {

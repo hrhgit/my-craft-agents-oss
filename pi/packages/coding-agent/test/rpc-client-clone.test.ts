@@ -217,10 +217,7 @@ describe("RpcClient Pi shell API methods", () => {
 		});
 
 		await expect(client.compact("keep decisions")).resolves.toMatchObject({ summary: "done" });
-		expect(send).toHaveBeenCalledWith(
-			{ type: "compact", customInstructions: "keep decisions" },
-			null,
-		);
+		expect(send).toHaveBeenCalledWith({ type: "compact", customInstructions: "keep decisions" }, null);
 	});
 
 	it("keeps compact pending beyond the default request timeout", async () => {

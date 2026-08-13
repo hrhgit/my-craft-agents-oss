@@ -13,10 +13,11 @@ import type {
 	ExtensionInteractionCancelReasonV1,
 	ExtensionInteractionRequestV1,
 	ExtensionInteractionResponseV1,
+	ExtensionServiceCatalogV1,
+	ExtensionServiceResultV1,
 	ExtensionUIContribution,
 	ExtensionUIValidationDefinitionV1,
 } from "../../core/extensions/types.ts";
-import type { ExtensionServiceCatalogV1, ExtensionServiceResultV1 } from "../../core/extensions/types.ts";
 import type { GlobalBackgroundTaskSnapshot } from "../../core/global-background-tasks.ts";
 import type {
 	HostExtensionsResult,

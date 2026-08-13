@@ -152,8 +152,8 @@ class PendingMessageQueue {
 	}
 
 	remove(clientMutationId: string): AgentMessage | undefined {
-		const index = this.messages.findIndex((message) =>
-			message.role === "user" && message.clientMutationId === clientMutationId,
+		const index = this.messages.findIndex(
+			(message) => message.role === "user" && message.clientMutationId === clientMutationId,
 		);
 		if (index < 0) return undefined;
 		return this.messages.splice(index, 1)[0];

@@ -53,9 +53,7 @@ describe("AgentSession prompt characterization", () => {
 		});
 		const retryFlush = vi.spyOn(harness.sessionManager, "retryFlush").mockImplementation(originalFlush);
 
-		await expect(harness.session.prompt("persist me")).rejects.toThrow(
-			"disk temporarily unavailable",
-		);
+		await expect(harness.session.prompt("persist me")).rejects.toThrow("disk temporarily unavailable");
 
 		const attemptId = harness.session.attemptId;
 		expect(attemptId).toEqual(expect.any(String));
@@ -72,9 +70,7 @@ describe("AgentSession prompt characterization", () => {
 
 		expect(retryFlush).toHaveBeenCalledTimes(1);
 		expect(harness.session.attemptId).toBeUndefined();
-		expect(harness.eventsOfType("agent_settled")).toEqual([
-			expect.objectContaining({ attemptId }),
-		]);
+		expect(harness.eventsOfType("agent_settled")).toEqual([expect.objectContaining({ attemptId })]);
 	});
 
 	it("handles a tool call turn and waits for the follow-up LLM response", async () => {
@@ -446,9 +442,7 @@ describe("AgentSession prompt characterization", () => {
 		await harness.session.prepareForFirstRequest();
 		harness.session.agent.state.model = undefined as unknown as Model<any>;
 
-		await expect(harness.session.prompt("hi")).rejects.toThrow(
-			"No model selected.",
-		);
+		await expect(harness.session.prompt("hi")).rejects.toThrow("No model selected.");
 	});
 
 	it("throws when prompting without configured auth", async () => {

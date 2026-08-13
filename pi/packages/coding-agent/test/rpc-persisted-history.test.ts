@@ -100,7 +100,9 @@ describe("RPC persisted history compatibility", () => {
 				cwd,
 				sessionPath,
 			});
-			const disposition = await runtime.prompt("new question", undefined, { clientMutationId: "mutation-history-1" });
+			const disposition = await runtime.prompt("new question", undefined, {
+				clientMutationId: "mutation-history-1",
+			});
 			expect(disposition.status).toBe("started");
 			if (disposition.status !== "started") throw new Error("Prompt was not started");
 			const eventsPromise = runtime.collectEvents(disposition.attemptId, 30_000);
