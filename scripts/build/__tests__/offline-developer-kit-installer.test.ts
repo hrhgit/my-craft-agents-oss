@@ -35,7 +35,7 @@ describe('offline Developer Kit installer contract', () => {
     const serverWorkflow = readRepoFile('.github/workflows/validate-server.yml')
 
     expect(common).toContain("export const BUN_VERSION = 'bun-v1.3.14'")
-    expect(validationWorkflow.match(/bun-version: "1\.3\.14"/g)?.length).toBe(3)
+    expect(validationWorkflow.match(/bun-version: "1\.3\.14"/g)?.length).toBe(4)
     expect(serverWorkflow.match(/bun-version: "1\.3\.14"/g)?.length).toBe(1)
     expect(`${common}\n${validationWorkflow}\n${serverWorkflow}`).not.toMatch(/bun-v1\.3\.(?:9|10)|bun-version: "1\.3\.(?:9|10)"/)
   })
