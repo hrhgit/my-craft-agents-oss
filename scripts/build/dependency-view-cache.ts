@@ -318,7 +318,11 @@ function materializeDependencyView(sourceRoot: string, viewRoot: string, manifes
     removeDirectory(destinationRoot)
     mkdirSync(destinationRoot, { recursive: true })
     for (const entry of readdirSync(cachedRoot, { withFileTypes: true })) {
-      materializeDependencyEntry(join(cachedRoot, entry.name), join(destinationRoot, entry.name), entry.name.startsWith('@'))
+      materializeDependencyEntry(
+        join(cachedRoot, entry.name),
+        join(destinationRoot, entry.name),
+        entry.name.startsWith('@') || entry.name === '.bin',
+      )
     }
   }
   for (const link of manifest.sourceLinks) {

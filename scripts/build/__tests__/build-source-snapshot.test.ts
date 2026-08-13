@@ -186,7 +186,9 @@ describe('immutable build source snapshot', () => {
       expect(realpathSync(join(materialized.sourceRoot, 'node_modules', '@fixture', 'example')).startsWith(realpathSync(materialized.sourceRoot)))
         .toBe(true)
       const toolName = process.platform === 'win32' ? 'fixture-tool.cmd' : 'fixture-tool'
-      expect(existsSync(join(materialized.sourceRoot, 'pi', 'node_modules', '.bin', toolName))).toBe(true)
+      const toolPath = join(materialized.sourceRoot, 'pi', 'node_modules', '.bin', toolName)
+      expect(existsSync(toolPath)).toBe(true)
+      expect(realpathSync(toolPath).startsWith(realpathSync(materialized.sourceRoot))).toBe(true)
       expect(realpathSync(join(materialized.sourceRoot, 'pi', 'node_modules', 'fixture-tool')).startsWith(realpathSync(materialized.sourceRoot)))
         .toBe(true)
     } finally {
