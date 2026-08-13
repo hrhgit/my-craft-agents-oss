@@ -315,14 +315,14 @@ HTML renders in a **sandboxed iframe** with these restrictions:
 |---------|--------|---------|
 | JavaScript execution | **Blocked** | `sandbox` attr without `allow-scripts` |
 | Form submission | **Blocked** | No `allow-forms` |
-| Link navigation | **Blocked** | Sandbox prevents all navigation |
+| Link navigation | **Opens externally** | `<base target="_top">` + `allow-top-navigation-by-user-activation`; Electron's `will-navigate` handler intercepts clicks and opens them in the system browser |
 | Popups / new windows | **Blocked** | No `allow-popups` |
 | CSS styling | **Allowed** | Inline, embedded, and `<style>` tags work |
 | Images (`https://`) | **Allowed** | External images load normally |
 | Images (`data:`) | **Allowed** | Base64-encoded images work |
-| Embedded fonts | **Allowed** | Google Fonts and other CDN fonts load |
+| Embedded fonts | **Partially allowed** | App CSP allows `font-src 'self' data: https://fonts.gstatic.com` — Google Fonts load; other CDN font hosts may be blocked |
 
-**No HTML sanitization is needed** — the `sandbox` attribute provides complete process-level isolation. Malicious scripts, forms, and navigation are all blocked at the browser engine level.
+**No HTML sanitization is needed** — the `sandbox` attribute provides process-level isolation. Malicious scripts and forms are blocked at the browser engine level; link clicks are intercepted and only open in the system browser.
 
 ## Best Practices
 

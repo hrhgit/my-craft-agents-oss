@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'bun:test'
 import { createHash } from 'node:crypto'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { PROTOCOL_VERSION, REQUIRED_PROTOCOL_CAPABILITIES } from '@mortise/shared/protocol'
@@ -10,7 +10,9 @@ const {
   assertPackagedArtifactMatches,
   authenticodeContentSha256,
   createWorkspaceHandshakeEnvelope,
+  dedupeDeveloperKitAgainstHost,
   readWorkspaceProtocolContract,
+  resolvePackagedLayout,
   restoreRuntimePackageManifest,
   validatePackagedLayout,
 } = require('./afterPack.cjs') as {
@@ -27,6 +29,8 @@ const {
     protocolContract: WorkspaceProtocolContract,
   ) => Record<string, unknown>
   readWorkspaceProtocolContract: (projectDir: string) => WorkspaceProtocolContract
+  resolvePackagedLayout: (context: Record<string, unknown>, options?: { isDeveloperHost?: boolean }) => Record<string, unknown>
+  dedupeDeveloperKitAgainstHost: (layout: Record<string, string>) => Array<{ relative: string }>
   restoreRuntimePackageManifest: (
     layout: Record<string, string>,
     context: { packager: { projectDir: string } },
@@ -42,6 +46,7 @@ interface WorkspaceProtocolContract {
 const roots: string[] = []
 const originalBinaryRuntimeOverride = process.env.MORTISE_PI_BINARY_RUNTIME
 const originalCodeSigningRequirement = process.env.MORTISE_REQUIRE_CODE_SIGNING
+const originalDeveloperHostBuild = process.env.MORTISE_DEV_HOST_BUILD
 
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
@@ -49,6 +54,8 @@ afterEach(() => {
   else process.env.MORTISE_PI_BINARY_RUNTIME = originalBinaryRuntimeOverride
   if (originalCodeSigningRequirement === undefined) delete process.env.MORTISE_REQUIRE_CODE_SIGNING
   else process.env.MORTISE_REQUIRE_CODE_SIGNING = originalCodeSigningRequirement
+  if (originalDeveloperHostBuild === undefined) delete process.env.MORTISE_DEV_HOST_BUILD
+  else process.env.MORTISE_DEV_HOST_BUILD = originalDeveloperHostBuild
 })
 
 function createLayout() {
@@ -119,6 +126,7 @@ function createLayout() {
   return {
     platform: 'win32',
     arch: 'x64',
+    isDeveloperHost: false,
     productFilename: 'Mortise Developer Host',
     resourcesDir,
     appRoot,
@@ -135,6 +143,20 @@ function createLayout() {
 }
 
 describe('packaged Electron layout', () => {
+  it('classifies the Developer Host through the explicit hook option', () => {
+    const context = {
+      electronPlatformName: 'win32',
+      arch: 'x64',
+      appOutDir: 'release-devhost/win-unpacked',
+      packager: {
+        appInfo: { productFilename: 'Mortise Developer Host' },
+      },
+    }
+
+    expect(resolvePackagedLayout(context, { isDeveloperHost: true }).isDeveloperHost).toBe(true)
+    expect(resolvePackagedLayout(context).isDeveloperHost).toBe(false)
+  })
+
   it('uses the staged shared protocol contract for the packaged workspace handshake', () => {
     const projectDir = mkdtempSync(join(tmpdir(), 'mortise-workspace-protocol-'))
     roots.push(projectDir)
@@ -222,6 +244,65 @@ describe('packaged Electron layout', () => {
       .toBe('{"name":"@mortise/electron","main":"dist/main.cjs"}\n')
   })
 
+  it('deduplicates byte-identical Developer Host runtime files against the host', () => {
+    const layout = createLayout()
+    addDeveloperKit(layout, 'b'.repeat(64))
+    const kitBun = join(layout.resourcesDir, 'developer-kit', 'dev-host', 'resources', 'vendor', 'bun', 'bun.exe')
+    const hostBun = layout.bunExecutable
+    const kitPi = join(layout.resourcesDir, 'developer-kit', 'dev-host', 'resources', 'pi-runtime', 'pi.exe')
+    const hostPi = layout.piExecutable
+    mkdirSync(dirname(kitPi), { recursive: true })
+    writeFileSync(kitBun, 'fixture')
+    writeFileSync(kitPi, 'fixture')
+
+    const entries = dedupeDeveloperKitAgainstHost(layout)
+
+    expect(entries).toEqual(expect.arrayContaining([
+      { relative: 'resources/pi-runtime/pi.exe' },
+      { relative: 'resources/vendor/bun/bun.exe' },
+    ]))
+    expect(entries).toHaveLength(2)
+    expect(existsSync(kitBun)).toBe(false)
+    expect(existsSync(kitPi)).toBe(false)
+    expect(existsSync(hostBun)).toBe(true)
+    expect(existsSync(hostPi)).toBe(true)
+    const manifest = JSON.parse(readFileSync(join(layout.resourcesDir, 'developer-kit', 'dev-host-dedup.json'), 'utf8')) as {
+      schemaVersion: number
+      entries: Array<{ relative: string }>
+    }
+    expect(manifest.schemaVersion).toBe(1)
+    expect(manifest.entries).toEqual(entries)
+    expect(() => validatePackagedLayout(layout)).not.toThrow()
+  })
+
+  it('rejects a deduplicated Developer Host file that diverges from the host runtime', () => {
+    const layout = createLayout()
+    addDeveloperKit(layout, 'b'.repeat(64))
+    const kitExtra = join(layout.resourcesDir, 'developer-kit', 'dev-host', 'resources', 'extra.js')
+    mkdirSync(dirname(kitExtra), { recursive: true })
+    writeFileSync(kitExtra, 'fixture')
+    const hostExtra = join(layout.resourcesDir, 'extra.js')
+    writeFileSync(hostExtra, 'fixture')
+    const provenancePath = join(layout.resourcesDir, 'developer-kit', 'build-provenance.json')
+    const provenance = JSON.parse(readFileSync(provenancePath, 'utf8')) as { artifacts: Array<Record<string, unknown>> }
+    provenance.artifacts.push({
+      path: 'dev-host/resources/extra.js',
+      sizeBytes: 7,
+      sha256: createHash('sha256').update('fixture').digest('hex'),
+    })
+    writeFileSync(provenancePath, JSON.stringify(provenance))
+
+    const entries = dedupeDeveloperKitAgainstHost(layout)
+    expect(entries).toEqual(expect.arrayContaining([
+      { relative: 'resources/vendor/bun/bun.exe' },
+      { relative: 'resources/extra.js' },
+    ]))
+    expect(entries).toHaveLength(2)
+    writeFileSync(hostExtra, 'tampered')
+
+    expect(() => validatePackagedLayout(layout)).toThrow('Deduplicated Developer Kit artifact does not match the host runtime')
+  })
+
   it('allows the Developer Kit to carry its own Bun runtime', () => {
     const layout = createLayout()
     addDeveloperKit(layout)
@@ -242,9 +323,19 @@ describe('packaged Electron layout', () => {
 
   it('requires the source-matched Developer Kit in a Windows Mortise package', () => {
     const layout = createLayout()
-    layout.productFilename = 'Mortise'
+    layout.isDeveloperHost = false
 
     expect(() => validatePackagedLayout(layout)).toThrow('missing the Developer Kit')
+  })
+
+  it('does not require installer Developer Kit provenance in the Developer Host payload', () => {
+    const layout = createLayout()
+    const incompleteKitDirectory = join(layout.resourcesDir, 'developer-kit')
+    mkdirSync(incompleteKitDirectory, { recursive: true })
+    writeFileSync(join(incompleteKitDirectory, 'placeholder.txt'), 'not an installer kit')
+    layout.isDeveloperHost = true
+
+    expect(() => validatePackagedLayout(layout)).not.toThrow()
   })
 
   it('rejects a build capsule for another platform architecture', () => {

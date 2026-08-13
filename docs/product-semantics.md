@@ -73,6 +73,9 @@ Attempt 结束后，旧 Attempt 的晚到消息、工具结果和运行事件不
 - Mortise 对当前支持的自有数据使用一个规范 authority，不通过无期 fallback、alias、dual-write 或并行 runtime 维持已被替换的架构。
 - 规范数据共享不表示 backend 运行状态共享。每个 backend 独立管理自己的 Agent Loop、Extension runtime、Automation scheduler、客户端投影和内存状态；它们只通过明确的规范文件或存储合同共享 Session、Workspace、配置、Automation 定义和其他持久数据。
 - 历史数据导入只能是显式、离线的迁移操作，不是启动时的运行时读取路径。
+- provider 定义永不携带凭据。API key 与 OAuth token 只通过显式凭据入口进入受保护的凭据存储，不在 provider 定义、普通 DTO、配置导出或日志中暴露 secrets。
+- 全局 AI 配置与草稿以 `state.sqlite` 为唯一权威。被退役的 JSON 配置文件既不被读取也不被改写，只有显式的清理/清除操作才删除相关文件；UI 偏好与主题属于独立的客户端偏好存储，不属于全局配置权威范围。
+- 历史数据迁移是跨进程串行的一次性根迁移，只导入明确允许的项；sessions、providers、credentials、defaults 与无关设置绝不导入。
 - 不同版本的已安装和源码开发 backend 可以共享同一 Mortise config/data directory 并存运行。共享数据层使用原子事务、幂等 operation identity、乐观并发、版本化 schema 和 capability negotiation 作为安全边界。
 - 对规范共享数据，不兼容的写能力只限制为 read-only，而不是依赖全局 backend lock 或为每个 backend 创建不同的可变副本。按 backend 类型保存的布局和 Extension 可选状态是明确归属的客户端投影，不是规范共享数据的复制品。
 
@@ -126,7 +129,7 @@ flowchart TD
 - 模型标签是替代多默认的轻量组织机制：模型可以被打上任意自由文本标签（例如 常用、快速、轻量），标签属于全局模型配置（models.json），不属于会话或工作区状态。
 - 带标签的模型在会话页模型切换器中显示标签徽标；设置页提供“仅显示标签模型”开关（全局 UI 偏好，`shellGui.mortise.showTaggedModelsOnly`）。开启后，会话页切换器只列出带标签的模型，并以单级列表展示（每项直接给出模型与所属供应商），不再使用供应商→模型的二级分组；未开启或不存在带标签模型时保持原有的分组/平铺行为。
 - 模型的基础能力（图片输入、思考、上下文窗口、最大输出、显示名称）可以在设置页按模型直接编辑；这些字段是模型的既有配置属性，不因标签或筛选模式改变。
-- 读图代理模型：可以为没有读图能力（`input` 不含 `image`）的模型指定另一个已配置模型作为读图代理（模型级配置 `visionProxyModelId`）。读图代理采用双层机制：① 自动转录兑底——用户消息含图且活动模型无读图能力时，回合注入前自动调用代理模型描述图片，以结构化文本块注入回合，保证图片不被静默丢弃；② 按需读图工具——无读图能力模型可主动调用读图工具（图片路径 + 可选问题），由代理模型针对性回答。两者共享会话级缓存（图片内容哈希 + 问题指纹）防止重复调用：同一图片同一需求只调用一次代理模型，工具优先复用已有描述；带新问题的调用是带上下文的增量调用。无代理模型可解析时不静默丢弃图片：图片落盘并注入说明文本，提示配置读图代理模型。读图代理仅在活动模型无读图能力时启用，代理模型必须支持图片输入；描述为内部机制，不改变会话持久化内容，中断续接后重新走同一转录路径（缓存命中零成本）。
+- 读图代理模型：可以为没有读图能力（`input` 不含 `image`）的模型指定另一个已配置模型作为读图代理（模型级配置 `visionProxy`（`{ provider, model }` 结构））。读图代理采用双层机制：① 自动转录兑底——用户消息含图且活动模型无读图能力时，回合注入前自动调用代理模型描述图片，以结构化文本块注入回合，保证图片不被静默丢弃；② 按需读图工具——无读图能力模型可主动调用读图工具（图片路径 + 可选问题），由代理模型针对性回答。两者共享会话级缓存（图片内容哈希 + 问题指纹）防止重复调用：同一图片同一需求只调用一次代理模型，工具优先复用已有描述；带新问题的调用是带上下文的增量调用。无代理模型可解析时不静默丢弃图片：图片落盘并注入说明文本，提示配置读图代理模型。读图代理仅在活动模型无读图能力时启用，代理模型必须支持图片输入；描述为内部机制，不改变会话持久化内容，中断续接后重新走同一转录路径（缓存命中零成本）。
 
 ## Workspace 与内容
 
@@ -208,10 +211,12 @@ Draft 是 Workspace 级、尚未公开的编辑状态。它可以保存 composer
 - 首条消息提交失败时保留，以便用户重试。
 
 “新建会话”和普通启动默认进入 Workspace 级空 Draft，而不是提前创建空 Session。
+- Workspace 级空 Draft 渲染完整 composer，不显示欢迎语或预设提示。
 
 普通 Session 协调能力可以由界面、CLI、模型工具、Extension 或 Automation 请求创建新 Session，但创建命令必须同时携带首条用户消息，并复用同一个首轮事务与 publication boundary；它不是创建一个可见的空 Session。调用方可以提供名称、模型、附件等创建选项，但这些选项不能单独发布 Session。
 
 普通 Session 创建与 `subagent` 子任务委派不是同一种产品动作。前者创建进入 Workspace 普通 Session 集合的可恢复对话；后者创建由父 Session 私有拥有的子智能体任务，继续遵守自己的作用域、列表和生命周期合同。普通会话协调工具不得借用或扩展 `subagent` 来实现普通 Session 创建。
+- 斜杠命令只在对应能力没有 Mortise GUI 控件时保持可见；能力已有 GUI 入口时，对应斜杠命令不进入内置命令集合，扩展命令仍可动态注册。
 
 ### Publication
 
@@ -340,6 +345,7 @@ UI 将 follow-up 待发送区固定放在 composer 正上方，而不是把尚�
 Mortise Messaging 网关是 host 侧的产品能力，负责把 Telegram、WhatsApp、Feishu 等外部消息通道接入 Mortise 会话。它不是独立产品，也不拥有第二套会话状态机。
 
 - 入站消息映射到稳定的 Workspace/Session 上下文（binding 语义），消息经适配器归一化后进入目标 Session 的用户消息投递合同；通道确认不得先于 durable 接受，即只有目标 Session 规范消息被可靠持久化后，才向通道确认收到。
+- binding 键的稳定粒度是 `(platform, channelId, threadId)`。Telegram 论坛超级群组的不同话题（`message_thread_id`）可以绑定到不同 Session；同一通道、不同话题不共享绑定。
 - 回复和后续消息通过与普通 Session 相同的会话合同产生，再经网关适配器回到原通道；Messaging 不复制 Pi 的 Session/Attempt 状态机，也不为消息创建另一条持久化路径。
 - 不同通道的适配器拥有各自的配对、访问控制、重连和重复投递语义；远程媒体可能超过本地附件限制，由通道合同负责降级或明确失败。
 - Messaging 绑定、连接状态和设置是 Mortise UI 的产品面；通道成功与否以目标 Session 的持久化与结算为准，不以网关自身的交互速度为准。
@@ -352,6 +358,7 @@ Extension 是 Mortise 可扩展性的一级提供者；Mortise 尽量保持通�
 - Extension 统一运行在 Mortise 的内嵌 headless Agent runtime 中。它可以注册工具、命令、Provider、生命周期处理或其他后台能力，也可以选择向 Mortise GUI 发布 contribution；GUI 是可选能力，不是另一种运行模式，也不是每个 Extension 的必需条件。
 - Extension 的安装和基础可用范围属于应用全局。默认情况下，已安装的 Extension 能力对所有 Workspace 可用；Workspace 不单独保存一套 Extension 开启和关闭状态。
 - 全局 Extension 目录和 `<workspace>/.mortise/extensions` 都是正式来源。打开或附加 Workspace 时，backend 立即发现并加载这些来源中的 Extension；约定目录内的 Extension 默认信任并允许执行，不设置逐 Workspace 或逐 Extension 授权，也不扫描工作区其他位置的任意脚本。
+- 应用启动时不得扫描或执行尚未打开 Workspace 的项目 Extension。项目 Extension 只在对应 Workspace 实际附加时发现并加载，不能因为应用启动或全局初始化而提前执行。
 - 未来引入“模式”后，由模式配置在该模式下启用或关闭哪些 Extension 能力。这是模式对全局能力集的选择，不是 Workspace 自己拥有另一套 Extension 管理。
 - Extension backend 是来自正式来源的受信任本地代码，以用户系统权限在子进程中运行；这是长期信任模型，不是等待未来权限沙箱替代的过渡状态。安装界面可以显示来源并说明其本地代码权限，但不能用并不具备强制隔离能力的权限开关制造安全错觉。
 - Extension 可以请求发送用户消息、steer、follow-up、compact、interrupt、创建 Session 或子任务。涉及 Workspace 和产品集成的请求通过 Mortise 路由；涉及当前 Session 的运行命令汇入该 Pi Session 的统一命令队列，由 Pi 状态机接受、排队或拒绝。Extension 不得绕开 Session 状态机直接启动 Agent Loop，也不得创建第二个 Pi runtime 竞争同一持久 Session。
@@ -359,7 +366,7 @@ Extension 是 Mortise 可扩展性的一级提供者；Mortise 尽量保持通�
 - 每个 backend 独立加载和管理自己的 Extension runtime。运行中的 Extension 文件变化不立即热重载；当前实例继续运行，修改在下一次 backend 或 Workspace 重新加载时生效。单个 Extension 加载或运行失败只禁用并警告该 Extension，不得拖垮其他 Extension、Session 或 backend；同一次加载中不反复自动重试。
 - 扩展启停开关只写入下次加载的期望状态，不卸载或改变已创建 runtime 中的工具、命令、权限处理器和 GUI；只有成功的显式重载或新 runtime 创建才应用新状态，重载失败时保留旧 runtime 及 GUI。
 - Extension GUI 仍只能通过 Mortise 的版本化 contribution API 进入产品界面，但这个 UI 边界不会同时将 backend 变成 sandboxed code，也不限制 backend 直接使用当前用户拥有的文件、网络和进程能力。
-- Extension GUI 是 Extension runtime 发布的版本化、可序列化 contribution，不是 Extension 代码进入 Mortise renderer。
+- Extension GUI 是 Extension runtime 发布的版本化 contribution。V1 host-rendered 形态是版本化、可序列化的贡献描述，由宿主组件渲染；V2 前端形态是构建后的静态模块，经宿主生成的模块 URL（Electron `mortise-extension://`、WebUI `/api/extensions/ui/`）在 renderer 中加载执行，前端不派生文件系统路径；无论哪种形态，Extension backend 代码都不因此进入 renderer。
 - Mortise 信任 host/RPC 注入的 Workspace、Session、runtime 和 Extension identity，不信任 contribution 内容自报身份。
 - Host-rendered UI 是默认边界。需要自由应用 UI 时使用宿主分配区域内的隔离 sandbox；sandbox 不获得父 DOM、凭据、Electron IPC、任意网络或文件系统权限。
 - Extension 声明内容归属、placement intent 和优先级；Mortise 决定共享区域的实际位置、容量、顺序、overflow、focus、冲突和响应式退化。
@@ -395,6 +402,8 @@ Skills 是 Agent 可自动发现并按需读取的用户资源。全局 Skills �
 - 未选择 Workspace 时仍可查看、新建和编辑全局 Skills；技能管理不能依赖一个虚构或默认 Workspace。
 - 有活动 Workspace 时，有效技能集合由全局与项目资源合并而成。同一 `slug` 冲突时，Workspace Skill 覆盖全局 Skill；这表示项目规则的局部优先级，不会修改或删除全局文件。
 - 新建 Skill 默认使用全局范围，用户可以明确选择当前 Workspace 范围。编辑已有 Skill 时保持其来源范围，不静默迁移。
+- Skill 的激活入口：用户可以通过 `/skill:<name>` 斜杠命令展开调用（命令注册名为 `skill:{name}`）；模型也可以通过系统提示自动发现并按需读取。`disable-model-invocation` 关闭模型侧自动发现，只保留用户侧入口；Skill 元数据不授予任何工具或权限。
+- Skill 支持导出与导入：与 Automations 共用资源 bundle 合同，导入时校验目标范围（全局或当前 Workspace）与选中项，逐条报告结果。
 - Skill 的长期新建和编辑使用应用外壳中的固定管理页面或详情区。Automations、Settings 等同类高频管理也遵守这一界面含义；弹窗只用于短暂选择、确认、凭据或必须阻断当前操作的任务。
 - 前端与运行时通过版本化领域合同、稳定语义动作和可观察状态解耦。自动化测试可以批量复用同一个宿主，但不得把 DOM 结构或视觉坐标当成产品合同。
 
@@ -424,6 +433,7 @@ Automation 的导出和导入是明确的用户操作，不等于直接复制或
 ## 设置与模型选择
 
 - AI connection、model 和 thinking defaults 是全局设置，集中显示在一个 `Default` 区域。
+- 首次启动 onboarding 是产品引导入口，引导中配置的提供者与凭据按全局设置语义保存；受限表面（如 Browser）不承载 Agent onboarding。
 - 这些 default 没有 Workspace 级 override；Session 仍可以按需选择它自己的连接、模型和 thinking level。
 - 语义 model reference 可以表示“跟随当前 Session”或“跟随某个全局 default slot”，而不需要把当前 model ID 复制成新配置。
 - 从 provider 获取远程模型只刷新候选列表；只有用户明确选择某个模型后，才将该单个模型加入配置。
@@ -436,6 +446,9 @@ Automation 的导出和导入是明确的用户操作，不等于直接复制或
 Electron 和 WebUI 是同一 Mortise 产品的不同平台投影，但不以功能完全对等为目标。
 
 - 它们在实际支持的能力上共享 domain model、state boundary 和可复用 UI。
+- 界面本地化以翻译键 parity 为合同：各 locale 必须与主语言保持键一致，缺失键视为不完整；支持语言是用户可见能力。主题是全局 UI 偏好（`~/.mortise/theme.json` 与 `~/.mortise/themes/*.json`），支持热更新，Workspace 可以设置默认主题。
+- 开发态自动登录只允许绑定 localhost（`127.0.0.1`），由显式环境开关（`MORTISE_WEBUI_AUTO_LOGIN`）控制，不得逃逸到远程或非 localhost 启动边界。
+- 除 Electron 与 WebUI 外，只读 viewer 客户端用于查看导出的 Session 或共享链接（`/s/{id}`），不承载交互编辑能力。
 - Electron 是完整桌面表面，负责原生窗口、操作系统集成、本地资源、BrowserView 和其他 privileged capability。
 - WebUI 是有意简化的子集。它可以隐藏不支持的能力，或通过 typed capability 明确降级；不得用假实现伪装支持原生窗口、detach、系统对话框或 Electron Browser content。
 - 文件读写、搜索、终端命令和进程始终由管理目标 Workspace 位置的 backend 执行。目标位置离线、被移除或不可访问时明确失败，不自动切换到同一 Workspace 的另一个位置。
@@ -447,6 +460,7 @@ Electron 和 WebUI 是同一 Mortise 产品的不同平台投影，但不以功�
 构建产物是不可变、可验证身份的内容寻址产物。构建与打包入口默认按当前源码身份（sourceId）决定复用或重建，保证安装包、Developer Kit 与测试宿主反映当前工作树源码，不静默携带陈旧构建。
 
 - 构建与打包默认捕获当前源码身份并与既有不可变构建比对：源码未变动才复用既有构建，源码变动则重建。重建时块级缓存只构建变动的构建块，未变动的块直接复用其已验证产物。
+- 内嵌 headless Agent runtime（pi）的生产构建不得 import TUI/terminal 组件，不得残留 interactive/standalone CLI、launcher、updater、terminal asset 或 fallback entrypoints；这是 fail-closed 的可验证构建不变量。
 - 隔离构建的依赖视图拥有独立于普通源码内容的身份，由锁文件、工作区清单、安装配置、工具链版本和目标平台决定。普通源码变化继续复用已验证的不可变依赖视图，只有依赖身份变化才执行安装并原子发布新视图；复用不得把旧源码工作区链接或可变构建输出带入新快照。
 - 显式指定构建编号（如 `--expected-build-id`）或外部源码身份（如 `--source-id`）时按编号固定复用或校验，不执行默认的内容寻址选择。
 - 快速桌面端测试默认记录测试宿主的构建身份；宿主 sourceId 与当前工作树源码不一致时给出警告，`MORTISE_UI_REQUIRE_FRESH=1`（或 `--require-fresh`）时提升为启动失败。测试验收必须反映被验收的构建身份，不得把陈旧宿主当成当前源码的验收证据。

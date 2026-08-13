@@ -44,7 +44,10 @@ export const ELECTRON_BUILD_PRODUCER_VERSION = 'electron-production-v4'
 const DEFAULT_REPO_ROOT = resolve(import.meta.dir, '..', '..')
 const DEFAULT_BUILD_ROOT = resolve(DEFAULT_REPO_ROOT, 'output', 'electron-builds')
 const DEFAULT_RETAIN_COUNT = 2
-const DEFAULT_MAX_BYTES = 2 * 1024 * 1024 * 1024
+// Budget must comfortably fit every build mode's retained identities
+// (production, development, ui-validation) so mode-grouped retention is not
+// silently defeated by the byte budget.
+const DEFAULT_MAX_BYTES = 12 * 1024 * 1024 * 1024
 const BUILD_LOCK_STALE_MS = 60_000
 const STAGING_STALE_MS = 60 * 60 * 1_000
 const ACTIVE_RUN_STATUSES = new Set(['starting', 'ready', 'stopping'])
@@ -316,7 +319,13 @@ export function acquireElectronBuild(options: AcquireElectronBuildOptions): Mort
   const buildDir = join(buildRoot, 'builds', buildId)
   try {
     return withFileLock(join(buildRoot, 'locks', buildId), () => {
-      let manifest = readValidBuildManifest(buildDir, fingerprint, buildRoot, true)
+      let manifest = readValidBuildManifest(
+        buildDir,
+        fingerprint,
+        buildRoot,
+        true,
+        options.verification ?? 'full',
+      )
       let publishedNewBuild = false
 
       if (!manifest) {
@@ -710,7 +719,20 @@ function cleanupElectronBuildCacheLocked(options: CleanupElectronBuildOptions & 
   const inspected = inspectBuildDirectories(buildRoot, protectedIds)
   const builds = inspected.builds
   const newestFirst = [...builds].sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-  const retainedUnreferenced = new Set(newestFirst.filter(build => !protectedIds.has(build.buildId)).slice(0, retainCount).map(build => build.buildId))
+  // Retain by build mode so production, development and ui-validation
+  // caches do not evict each other. Each mode keeps its newest retainCount
+  // identities; protected (leased/building) identities are always retained.
+  const retainedUnreferenced = new Set<string>()
+  const newestByMode = new Map<ElectronBuildMode, MortiseUiBuildManifest[]>()
+  for (const build of newestFirst) {
+    if (protectedIds.has(build.buildId)) continue
+    const list = newestByMode.get(build.mode) ?? []
+    list.push(build)
+    newestByMode.set(build.mode, list)
+  }
+  for (const list of newestByMode.values()) {
+    for (const build of list.slice(0, retainCount)) retainedUnreferenced.add(build.buildId)
+  }
   const removedBuildIds: string[] = [...inspected.removed]
   const failedBuildIds: string[] = [...inspected.failed]
   let totalBytes = builds.reduce((sum, build) => sum + build.sizeBytes, 0)

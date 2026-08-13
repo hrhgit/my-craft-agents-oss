@@ -19,12 +19,12 @@ To create a definition, save this current V3 document fragment as `automation.js
 
 ```json
 {
-  "id": "automation_daily_summary_01",
+  "id": "automation.daily-summary-01",
   "name": "Daily summary",
   "enabled": true,
   "triggers": [
     {
-      "id": "trigger_daily_summary_01",
+      "id": "trigger.daily-summary-01",
       "type": "time",
       "schedule": {
         "kind": "cron",
@@ -35,7 +35,7 @@ To create a definition, save this current V3 document fragment as `automation.js
   ],
   "actions": [
     {
-      "id": "action_daily_summary_01",
+      "id": "action.daily-summary-01",
       "type": "prompt",
       "prompt": "Summarize the current workspace activity.",
       "target": { "kind": "new-session" }
@@ -88,7 +88,7 @@ Use a five- or six-field cron expression and an optional IANA timezone:
 
 ```json
 {
-  "id": "trigger_weekday_report_01",
+  "id": "trigger.weekday-report-01",
   "type": "time",
   "schedule": {
     "kind": "cron",
@@ -102,7 +102,7 @@ Use a five- or six-field cron expression and an optional IANA timezone:
 
 ```json
 {
-  "id": "trigger_release_reminder_01",
+  "id": "trigger.release-reminder-01",
   "type": "time",
   "schedule": {
     "kind": "once",
@@ -116,7 +116,7 @@ Use a five- or six-field cron expression and an optional IANA timezone:
 
 ```json
 {
-  "id": "trigger_health_check_01",
+  "id": "trigger.health-check-01",
   "type": "time",
   "schedule": {
     "kind": "interval",
@@ -130,7 +130,7 @@ Use a five- or six-field cron expression and an optional IANA timezone:
 
 ```json
 {
-  "id": "trigger_agent_failure_01",
+  "id": "trigger.agent-failure-01",
   "type": "event",
   "source": "agent",
   "eventType": "PostToolUseFailure",
@@ -153,13 +153,13 @@ Example fixed Session delivery:
 
 ```json
 {
-  "id": "action_follow_up_01",
+  "id": "action.follow-up-01",
   "type": "prompt",
   "prompt": "Review the event payload and report the regression.",
   "eventData": "append-json",
   "target": {
     "kind": "session",
-    "session": { "id": "session_01HXEXAMPLE" },
+    "session": { "id": "session.01HXEXAMPLE" },
     "delivery": "followUp"
   }
 }
@@ -171,7 +171,7 @@ Definitions containing a time trigger cannot use `event-session`, because no tri
 
 ```json
 {
-  "id": "action_webhook_01",
+  "id": "action.webhook-01",
   "type": "webhook",
   "url": "https://example.com/hooks/mortise",
   "method": "POST",
@@ -182,13 +182,13 @@ Definitions containing a time trigger cannot use `event-session`, because no tri
     "type": "bearer",
     "token": {
       "provider": "mortise-secrets",
-      "id": "secret_webhook_token_01"
+      "id": "secret.webhook-token-01"
     }
   }
 }
 ```
 
-Secrets are references to Mortise secret storage, never literal passwords or tokens in a definition. Resource bundle export replaces a sensitive literal header with an explicit secret dependency instead of silently dropping the field.
+Secrets used in `auth` are references to Mortise secret storage, not literal passwords or tokens in the definition. `headers` values that are not `${mortise-secret:id}` references are sent as-is, so keep literal tokens out of definitions. Resource bundle export replaces a sensitive literal header with an explicit secret dependency instead of silently dropping the field.
 
 Resource bundles carry each complete Automation definition with its required Session, secret, and external or Extension event-source dependencies. Import reconnects dependencies that can be identified in the target Workspace. An entry with missing dependencies is still imported, marked configuration-incomplete, and kept disabled. Batch import reports an isolated result for each entry, so one malformed or incomplete definition does not block valid definitions.
 

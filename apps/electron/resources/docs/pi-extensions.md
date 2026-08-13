@@ -210,6 +210,7 @@ Manifest V1 is strict: unknown fields, invalid identifiers, and invalid SemVer v
     },
     "capabilities": ["commands.deploy", "ui.contributions"],
     "permissions": ["workspace.files.read"],
+    "subagents": [],
     "loadOrder": {
       "priority": 20,
       "after": ["deployment-core"],
@@ -232,6 +233,7 @@ Manifest V1 is strict: unknown fields, invalid identifiers, and invalid SemVer v
 | `optionalDependencies` | Optional integration ranges. Missing or incompatible entries produce a warning but do not block loading. |
 | `conflicts` | Extension IDs and version ranges that cannot load with this extension. A matching active conflict blocks the declaring extension. |
 | `capabilities` | Stable feature identifiers advertised for catalog, tooling, and review. This does not grant privileged access. |
+| `subagents` | Optional list of agent sub-task templates. Up to 64 entries, unique IDs, each with optional tools (max 128) and prompt. |
 | `permissions` | Requested host-permission identifiers for review and future mediation. Backend extension code still runs with the Pi process permissions; sandbox app permissions remain separately enforced. |
 | `loadOrder.priority` | Deterministic tie-breaker; higher values load first when no dependency or explicit ordering edge applies. |
 | `loadOrder.after`, `loadOrder.before` | Optional ordering hints by extension ID. A hint-only cycle produces a warning and falls back to priority then ID order. A required-dependency cycle blocks every extension in the cycle. |
@@ -1000,16 +1002,14 @@ For sandbox apps, also verify:
 5. Multiple sandbox apps remain isolated on the same surface.
 6. The validation bridge exposes meaningful controls and state without requiring coordinate-only interaction.
 
-## Widget Convenience API
+## Extension UI Contribution API
 
-`ctx.ui.setWidget(key, string[], { placement })` maps directly to a versioned
-text contribution in RPC mode. Use `ctx.ui.upsertContribution` for structured
-content, explicit surfaces, actions, and richer validation semantics. Both APIs
-share the same contribution lifecycle and renderer; no legacy widget protocol
-is accepted.
+Extensions publish UI through the versioned contribution API:
+`ctx.ui.upsertContribution(...)` / `removeContribution(...)` for structured
+content, explicit surfaces, actions, and validation semantics. There is no
+separate widget protocol and no legacy widget wire event is accepted.
 
 TUI component factories never cross the Pi RPC boundary.
-
 ## Examples Reference
 
 | Example | Description | Key APIs |

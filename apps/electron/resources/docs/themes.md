@@ -18,7 +18,7 @@ protocol. Neither side reads the other's theme object.
 |--------|-------|
 | **Owner** | Pi (the underlying TUI agent) |
 | **Storage** | Pi `settings.json` / Pi-internal theme state (never read by Mortise) |
-| **Consumers** | Pi CLI terminal rendering; the `theme` argument passed to Pi extension widget `renderFn(width, theme)` |
+| **Consumers** | Pi CLI terminal rendering (TUI theme stays inside Pi) |
 | **Fields** | Terminal-oriented attributes — colors, text styles (bold/dim/italic), ANSI mappings |
 | **Lifecycle** | Loaded and mutated entirely inside the `Pi RpcClient` child process |
 
@@ -39,24 +39,22 @@ The rest of this document describes the **GUI theme only**.
 
 ### Decoupling Protocol
 
-Pi and Mortise exchange only versioned, serializable contributions. In RPC
-mode, `ctx.ui.setWidget(key, string[], { placement })` is an authoring
-convenience that Pi converts directly into a V1 text contribution on
-`composer.above` or `composer.below`. Clearing the widget emits a contribution
-removal. Mortise validates and renders the contribution through the same host
-surfaces used by `ctx.ui.upsertContribution`; there is no widget-specific wire
-event or renderer adapter. Function-based TUI widgets remain local to the TUI
-and are not serialized to Mortise.
+Pi and Mortise exchange only versioned, serializable contributions. Extensions
+publish UI through the versioned contribution API (`ctx.ui.upsertContribution(...)`
+/ `removeContribution(...)`); there is no widget-specific wire event or renderer
+adapter. The Mortise host validates and renders contributions through the same
+host surfaces. Function-based TUI widgets remain local to Pi and are not
+serialized to Mortise.
 
 Consequences of this contract:
 
 - Mortise GUI does not touch the Pi theme object.
 - Mortise GUI theme (the 6-color OKLCH palette) is independent of the Pi TUI
   theme. Changing one does not affect the other.
-- Pi extensions cannot reach the Mortise GUI theme, the DOM, or Electron APIs —
-  they run in the child process and only receive `(width, theme)`.
+- Pi extensions run in the child process and cannot reach the Mortise GUI
+  theme, the DOM, or Electron APIs directly.
 
-For the `renderFn` contract from the extension author's perspective, see
+For the extension contribution contract from the author's perspective, see
 [pi-extensions.md](./pi-extensions.md).
 
 ## GUI Theme Reference

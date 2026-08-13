@@ -9,7 +9,7 @@ The `image-preview` block renders local image files inline in chat messages — 
 | Format | Best For | Rendering |
 |--------|----------|-----------|
 | **`image-preview` block** | Screenshots, captures, visual diffs | Inline fit-to-container + fullscreen viewer |
-| **`pdf-preview` block** | PDF reports and documents | First page inline + full navigation |
+| **`pdf-preview` block** | PDF reports and documents | First page inline + full document scroll in fullscreen |
 | **`html-preview` block** | Rich HTML content | Sandboxed iframe rendering |
 
 **Key principle:** Images are already files on disk. Reference them directly with an absolute path in `src`.
@@ -41,9 +41,9 @@ Do NOT use `image-preview` when:
 ```
 ````
 
-### Multiple Items (Tabs)
+### Multiple Items (Card Stack)
 
-Use `items` to show related images with tab navigation.
+Use `items` to show related images as a swipeable card stack.
 
 ````
 ```image-preview
@@ -57,7 +57,7 @@ Use `items` to show related images with tab navigation.
 ```
 ````
 
-Content loads lazily on tab switch and is cached once loaded.
+All items load in parallel when the block mounts and stay cached afterwards.
 
 ### Config Fields
 
@@ -67,7 +67,7 @@ Content loads lazily on tab switch and is cached once loaded.
 | `title` | No | string | Header title (defaults to "Image Preview") |
 | `items` | Yes* | array | Array of image items with `src` and optional `label` |
 | `items[].src` | Yes | string | Absolute path to image file |
-| `items[].label` | No | string | Tab label |
+| `items[].label` | No | string | Card label (also used as alt text and in the fullscreen item navigator) |
 
 *Either `src` (single) or `items` (multiple) is required. If both are present, `items` takes precedence.
 
@@ -81,14 +81,16 @@ Formats like HEIC/HEIF/TIFF may not render in-app. For those files, use external
 ## Rendering Behavior
 
 ### Inline Preview
-- Fixed 400px preview area
+- Fixed 320px-high preview area
 - Image is rendered with `object-contain` (no cropping)
 - Expand button opens fullscreen overlay
-- Multi-item blocks show item navigator in the header
+- Multi-item blocks render as a swipeable card stack (drag to advance, tap the top card to open fullscreen)
 
 ### Fullscreen Overlay
 - Larger fit-to-container image view
-- Item navigation (arrows/dropdown) for multi-item sets
+- Item navigation (arrows/label dropdown) for multi-item sets
+- Zoom controls in the header (in/out, presets, fit, reset)
+- Scroll-wheel zoom, drag to pan, double-click resets the view
 - Copy path action in header
 - File path badge supports external open/reveal actions
 

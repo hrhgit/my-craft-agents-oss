@@ -286,7 +286,17 @@ export function packageElectron(args = process.argv.slice(2)): void {
       timings.sourceCapture = elapsedMs(sourceCaptureStartedAt)
       console.log(`[electron-package] Source snapshot ${capturedSource.sourceId.slice(0, 12)} ready.`)
       const acquisitionStartedAt = performance.now()
-      lease = acquireElectronBuild({ runId, runDir, repoRoot: buildSourceRoot, buildRoot, mode, capturedSource })
+      lease = acquireElectronBuild({
+        runId,
+        runDir,
+        repoRoot: buildSourceRoot,
+        buildRoot,
+        mode,
+        capturedSource,
+        // A final-package hit only needs a validated build identity. A cache
+        // miss still verifies full content while staging the installer input.
+        verification: packageCacheRequested ? 'fast' : 'full',
+      })
       timings.electronBuildAcquisition = elapsedMs(acquisitionStartedAt)
     }
     const buildEnvironment = createElectronBuildCommandEnvironment(

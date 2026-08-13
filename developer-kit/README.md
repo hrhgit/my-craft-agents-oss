@@ -1,6 +1,6 @@
 # Mortise Developer Kit
 
-The Mortise Developer Kit is an optional, separately versioned extension-authoring toolset. Windows offline installers include it as a default-selected component; it is not required to install or run Mortise.
+The Mortise Developer Kit is an extension-authoring and AI-operated UI validation toolset that ships with the Windows installer as a default-selected component. It is not separately versioned: the bundled Developer Host is built from the same source identity as Mortise and is validated against the installed host. The Developer Host reuses the Mortise host runtime through same-volume links and runs as an isolated test instance with its own userData; it does not run without the installed host.
 
 The kit contains:
 

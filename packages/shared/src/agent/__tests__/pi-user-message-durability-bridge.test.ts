@@ -1,12 +1,28 @@
 import { describe, expect, it } from 'bun:test';
 import type { AgentEvent } from '@mortise/core/types';
 import type { BackendConfig } from '../backend/types.ts';
+import { EventQueue } from '../backend/event-queue.ts';
 import { PiAgent } from '../pi-agent.ts';
 
-function createAgent(): PiAgent {
+function createAgent(): { agent: PiAgent; eventQueue: EventQueue } {
   const agent = new PiAgent({
     provider: 'pi',
-    workspace: { id: 'ws-test', name: 'Test Workspace', rootPath: '/tmp/mortise-test' } as any,
+    workspace: {
+      schemaVersion: 2,
+      id: 'ws-test',
+      name: 'Test Workspace',
+      nameSource: 'custom',
+      slug: 'test-workspace',
+      revision: 1,
+      primaryLocationId: 'primary',
+      locations: [{
+        id: 'primary',
+        name: 'Primary',
+        rootName: 'mortise-test',
+        endpoint: { kind: 'local', rootPath: '/tmp/mortise-test' },
+      }],
+      createdAt: Date.now(),
+    } as any,
     session: {
       id: 'session-test',
       mortiseId: 'session-test',
@@ -17,17 +33,14 @@ function createAgent(): PiAgent {
     isHeadless: true,
   } satisfies BackendConfig);
   (agent as any).rpcClient = { runtimeId: 'runtime-test' };
-  (agent as any).eventQueue.reset();
-  return agent;
-}
-
-function queuedEvents(agent: PiAgent): AgentEvent[] {
-  return (agent as any).eventQueue.queue as AgentEvent[];
+  const eventQueue = new EventQueue();
+  (agent as any).activeEventStream = { queue: eventQueue };
+  return { agent, eventQueue };
 }
 
 describe('Pi user-message durability bridge', () => {
   it('queues the persisted marker before logical completion', () => {
-    const agent = createAgent();
+    const { agent, eventQueue } = createAgent();
 
     try {
       (agent as any).handlePiEvent({
@@ -38,18 +51,18 @@ describe('Pi user-message durability bridge', () => {
       });
       (agent as any).handlePiEvent({ type: 'agent_settled' });
 
-      expect(queuedEvents(agent).map(event => event.type)).toEqual([
+      expect(((eventQueue as any).queue as AgentEvent[]).map(event => event.type)).toEqual([
         'pi_user_message_persisted',
         'complete',
       ]);
-      expect((agent as any).eventQueue.isComplete).toBe(true);
+      expect(eventQueue.isComplete).toBe(true);
     } finally {
       agent.destroy();
     }
   });
 
   it('does not suppress the persisted marker while discarding late aborted content', () => {
-    const agent = createAgent();
+    const { agent, eventQueue } = createAgent();
 
     try {
       (agent as any).suppressAbortedTurnEvents = true;
@@ -65,7 +78,7 @@ describe('Pi user-message durability bridge', () => {
       });
       (agent as any).handlePiEvent({ type: 'agent_settled' });
 
-      expect(queuedEvents(agent).map(event => event.type)).toEqual([
+      expect(((eventQueue as any).queue as AgentEvent[]).map(event => event.type)).toEqual([
         'pi_user_message_persisted',
         'complete',
       ]);

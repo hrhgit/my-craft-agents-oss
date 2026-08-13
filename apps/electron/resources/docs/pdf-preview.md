@@ -8,7 +8,7 @@ The `pdf-preview` block renders PDF files inline in chat messages — showing th
 
 | Format | Best For | Rendering |
 |--------|----------|-----------|
-| **`pdf-preview` block** | PDF documents, reports, invoices | First page inline, full navigation in fullscreen |
+| **`pdf-preview` block** | PDF documents, reports, invoices | First page inline, full document scroll in fullscreen |
 | **`html-preview` block** | Emails, newsletters, styled HTML | Sandboxed iframe with full CSS |
 | **`image-preview` block** | Screenshots, captures, visual diffs | Inline fit-to-container + fullscreen viewer |
 | **`datatable`/`spreadsheet`** | Structured data, tables | Interactive sortable/filterable tables |
@@ -153,7 +153,7 @@ When the user references a PDF they have locally:
 - **White background** — standard for PDF documents
 - **Expand button** (top-right corner, visible on hover) opens fullscreen view
 - **Header bar** shows FileText icon and title
-- No pagination controls inline — use fullscreen for multi-page navigation
+- No pagination controls inline — open fullscreen to scroll the whole document
 
 ### Fullscreen Overlay
 - **Full page-by-page navigation** with prev/next buttons
@@ -165,7 +165,7 @@ When the user references a PDF they have locally:
 ### Performance Notes
 - PDFs are loaded as binary data (`Uint8Array`) via IPC — efficient even for large files
 - The pdf.js worker handles decoding and rendering in a background thread
-- Inline preview only renders page 1 — remaining pages load on-demand in fullscreen
+- Inline preview only renders page 1; fullscreen renders all pages
 - The file object is memoized to prevent unnecessary re-renders
 
 ## Integration with Read Tool

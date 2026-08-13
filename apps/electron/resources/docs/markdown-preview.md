@@ -119,7 +119,7 @@ The plans folder (under `plansFolderPath`) holds session plans. To display one i
 
 ## Rendering Behavior
 
-- The file's contents are passed through the same markdown renderer chat uses. GFM tables, syntax-highlighted code, headings, lists, blockquotes, and inline math all work.
+- The file's contents are passed through the same markdown renderer chat uses. GFM tables, syntax-highlighted code, headings, lists, blockquotes, and block math (`$$...$$`) all work. Single-dollar inline math (`$...$`) is intentionally disabled so currency strings stay plain text.
 - Inline preview is capped at 400px tall with a bottom fade gradient. Click the expand button (top-right) to expand the height in place.
 - A `markdown-preview` fence **inside** the rendered file falls through to a regular code block — no infinite recursion. Other preview blocks (mermaid, datatable, …) embedded in the file still render.
 - Links inside the rendered markdown route through the same handlers as the rest of chat: file paths open via the OS file manager, URLs open in the system browser.
@@ -157,4 +157,4 @@ Is the content a markdown file (.md, .markdown)?
 ### Links inside the rendered markdown don't open
 - Plain `https://` URLs open in the system browser.
 - Absolute filesystem paths open via the OS file manager.
-- `file://` URLs are blocked by the in-app URL safety layer (`shell.openExternal` can launch local executables on Windows) — use a plain filesystem path or reference the file through another preview block.
+- `file://` URLs are normalized to plain filesystem paths and open through the same file handler as raw paths — no special escaping needed (see the shared markdown link-target resolver).

@@ -73,7 +73,7 @@ Mortise owns its version line; source builds are immutable and isolated; generat
 
 # Change Impact
 
-Feature owners define their validation commands; developer-kit packaging remains version-matched and separately installable.
+Feature owners define their validation commands; the Developer Kit ships with the Windows installer, shares the host runtime through same-volume links, and is not separately versioned or installable.
 
 Bundled binaries and lockfiles are large shared surfaces; concurrent regeneration can overwrite another build's artifacts.
 

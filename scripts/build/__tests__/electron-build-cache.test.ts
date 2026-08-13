@@ -569,6 +569,46 @@ describe('mortise-ui immutable Electron build cache', () => {
     expect(buildIds(buildRoot)).toEqual([completedBuildIds[1]])
   }, 30_000)
 
+  it('retains the newest build per mode so validation caches are not evicted by production builds', () => {
+    const root = tempRoot('mortise-ui-build-mode-retention-')
+    const repoRoot = join(root, 'repo')
+    const buildRoot = join(root, 'cache')
+    initGitRepo(repoRoot)
+    let sequence = 0
+    const build = (sourceRoot: string) => { sequence += 1; seedBuildOutputs(sourceRoot, `build-${sequence}`) }
+    const options = { repoRoot, buildRoot, retainCount: 1, maxBytes: 1_000_000 }
+
+    write(repoRoot, 'apps/electron/src/main.ts', 'export const value = 1\n')
+    const productionFirst = acquireElectronBuild({
+      ...options, mode: 'production', runId: 'prod-a', runDir: createRun(root, 'prod-a'), build,
+    })
+    releaseElectronBuild(productionFirst, { retainCount: 1, maxBytes: 1_000_000 })
+
+    write(repoRoot, 'apps/electron/src/main.ts', 'export const value = 2\n')
+    const productionSecond = acquireElectronBuild({
+      ...options, mode: 'production', runId: 'prod-b', runDir: createRun(root, 'prod-b'), build,
+    })
+    releaseElectronBuild(productionSecond, { retainCount: 1, maxBytes: 1_000_000 })
+
+    write(repoRoot, 'apps/electron/src/main.ts', 'export const value = 3\n')
+    const validationFirst = acquireElectronBuild({
+      ...options, mode: 'ui-validation', runId: 'ui-a', runDir: createRun(root, 'ui-a'), build,
+    })
+    releaseElectronBuild(validationFirst, { retainCount: 1, maxBytes: 1_000_000 })
+
+    write(repoRoot, 'apps/electron/src/main.ts', 'export const value = 4\n')
+    const validationSecond = acquireElectronBuild({
+      ...options, mode: 'ui-validation', runId: 'ui-b', runDir: createRun(root, 'ui-b'), build,
+    })
+    releaseElectronBuild(validationSecond, { retainCount: 1, maxBytes: 1_000_000 })
+
+    const retained = buildIds(buildRoot)
+    expect(retained).toContain(productionSecond.buildId)
+    expect(retained).toContain(validationSecond.buildId)
+    expect(retained).not.toContain(productionFirst.buildId)
+    expect(retained).not.toContain(validationFirst.buildId)
+  }, 30_000)
+
   it('publishes from an immutable snapshot while the live source keeps changing', () => {
     const root = tempRoot('mortise-ui-build-source-race-')
     const repoRoot = join(root, 'repo')

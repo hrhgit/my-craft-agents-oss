@@ -2759,7 +2759,7 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
         }
         const coreConfig: CoreBackendConfig = {
           workspace,
-		  extensionServiceScope: 'workspace',
+          extensionServiceScope: 'session',
           model: context.resolvedModel,
           miniModel: providerConfig?.models?.[0]?.id,
           thinkingLevel: getDefaultThinkingLevel(),
@@ -2825,8 +2825,7 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
   }
 
   private async waitForWorkspaceRuntimeWarmup(workspace: Workspace): Promise<void> {
-    const state = this.workspaceRuntimeWarmups.get(workspace.id)
-    if (state?.status === 'warming') await state.ready
+    await this.ensureWorkspaceRuntimeWarmup(workspace)
   }
 
   /**
@@ -4383,11 +4382,6 @@ export class SessionManager implements ISessionManager, WorkspaceTopologySession
       } else {
         sessionLog.warn(`No configured provider found for session ${managed.id}`)
       }
-
-      // Keep SDK subprocess side-channel files, such as api-error.json,
-      // scoped to this session. Tool metadata now travels through typed Pi
-      // events and no longer uses tool-metadata.json.
-      process.env.MORTISE_SESSION_DIR = getSessionStoragePath(managed.workspace.id, managed.id)
 
       // Set up agentReady promise so title generation can await agent creation
       managed.agentReady = new Promise<void>(r => { managed.agentReadyResolve = r })

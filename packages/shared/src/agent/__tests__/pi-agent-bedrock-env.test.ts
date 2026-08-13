@@ -6,9 +6,20 @@ function createConfig(overrides: Partial<BackendConfig> = {}): BackendConfig {
   return {
     provider: 'pi',
     workspace: {
+      schemaVersion: 2,
       id: 'ws-test',
       name: 'Test Workspace',
-      rootPath: '/tmp/mortise-test',
+      nameSource: 'custom',
+      slug: 'test-workspace',
+      revision: 1,
+      primaryLocationId: 'primary',
+      locations: [{
+        id: 'primary',
+        name: 'Primary',
+        rootName: 'mortise-test',
+        endpoint: { kind: 'local', rootPath: '/tmp/mortise-test' },
+      }],
+      createdAt: Date.now(),
     } as any,
     session: {
       id: 'session-test',
@@ -22,6 +33,24 @@ function createConfig(overrides: Partial<BackendConfig> = {}): BackendConfig {
 }
 
 describe('PiAgent Bedrock env handling', () => {
+  it('keeps Session-scoped directories out of the shared Pi host environment and identity', () => {
+    const agent = new PiAgent(createConfig())
+    const firstEnvironment = (agent as any).piHostEnvironment({
+      PATH: 'fixture-path',
+      MORTISE_SESSION_DIR: 'C:/sessions/first',
+    }) as Record<string, string>
+    const secondEnvironment = (agent as any).piHostEnvironment({
+      PATH: 'fixture-path',
+      MORTISE_SESSION_DIR: 'C:/sessions/second',
+    }) as Record<string, string>
+
+    expect(firstEnvironment.MORTISE_SESSION_DIR).toBeUndefined()
+    expect(secondEnvironment.MORTISE_SESSION_DIR).toBeUndefined()
+    expect(firstEnvironment).toEqual(secondEnvironment)
+
+    agent.destroy()
+  })
+
   it('isolates global hosts by process environment without exposing credentials in the key', () => {
     const agent = new PiAgent(createConfig())
 

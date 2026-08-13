@@ -40,7 +40,7 @@ writeJsonAtomic(join(packagingRoot, 'workspace-rpc-protocol.json'), {
   protocolVersion: PROTOCOL_VERSION,
   protocolCapabilities: [...REQUIRED_PROTOCOL_CAPABILITIES],
 })
-for (const name of ['beforePack.cjs', 'afterPack.cjs', 'afterSign.cjs']) {
+for (const name of ['beforePack.cjs', 'afterPack.cjs', 'afterPack-devhost.cjs', 'afterSign.cjs', 'link-dev-host.ps1']) {
   copyRequired(join(electronDir, 'scripts', name), join(packagingRoot, 'hooks', name))
 }
 cpRequired(join(electronDir, 'build'), join(packagingRoot, 'build'))

@@ -17,6 +17,8 @@ entrypoints:
   - packages/session-mcp-server/src/index.ts
   - packages/session-tools-core/src/index.ts
   - packages/session-tools-core/src/handlers/index.ts
+  - packages/shared/src/agent/pi-agent.ts
+  - packages/server-core/src/sessions/SessionManager.ts
 depends_on:
   - session-lifecycle
   - pi-coding-runtime

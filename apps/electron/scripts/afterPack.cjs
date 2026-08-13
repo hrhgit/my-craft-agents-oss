@@ -35,7 +35,7 @@ function targetArch(context) {
   return typeof context.arch === 'string' ? context.arch : ARCH_NAMES[context.arch] ?? process.arch;
 }
 
-function resolvePackagedLayout(context) {
+function resolvePackagedLayout(context, options = {}) {
   const resourcesDir = context.electronPlatformName === 'darwin'
     ? path.join(context.appOutDir, 'Mortise.app', 'Contents', 'Resources')
     : path.join(context.appOutDir, 'resources');
@@ -57,6 +57,7 @@ function resolvePackagedLayout(context) {
   return {
     platform,
     arch,
+    isDeveloperHost: options.isDeveloperHost === true,
     productFilename: context.packager.appInfo.productFilename,
     resourcesDir,
     appRoot,
@@ -254,9 +255,71 @@ function assertBuildProvenance(layout) {
   return provenance;
 }
 
-function assertDeveloperKitProvenance(layout, sourceId) {
+const DEV_HOST_DEDUP_MANIFEST = 'dev-host-dedup.json';
+const DEV_HOST_LINK_SCRIPT = 'link-dev-host.ps1';
+
+function filesEqualSync(a, b) {
+  const statA = fs.statSync(a);
+  const statB = fs.statSync(b);
+  if (statA.size !== statB.size) return false;
+  const fdA = fs.openSync(a, 'r');
+  const fdB = fs.openSync(b, 'r');
+  const bufferA = Buffer.alloc(1024 * 1024);
+  const bufferB = Buffer.alloc(1024 * 1024);
+  try {
+    let offset = 0;
+    while (offset < statA.size) {
+      const readA = fs.readSync(fdA, bufferA, 0, bufferA.length, offset);
+      const readB = fs.readSync(fdB, bufferB, 0, bufferB.length, offset);
+      if (readA !== readB || !bufferA.subarray(0, readA).equals(bufferB.subarray(0, readB))) return false;
+      offset += readA;
+    }
+    return true;
+  } finally {
+    fs.closeSync(fdA);
+    fs.closeSync(fdB);
+  }
+}
+
+/**
+ * Removes Developer Host runtime files that are byte-identical to the Mortise
+ * host runtime inside the packaged layout. The installer re-links them to the
+ * host files on the same volume, so the Developer Host keeps a complete runtime
+ * without doubling the payload. Returns the deduplicated relative paths.
+ */
+function dedupeDeveloperKitAgainstHost(layout) {
   const developerKitRoot = path.join(layout.resourcesDir, 'developer-kit');
-  const required = layout.platform === 'win32' && layout.productFilename === 'Mortise';
+  const devHostRoot = path.join(developerKitRoot, 'dev-host');
+  if (!fs.existsSync(devHostRoot)) return [];
+  const entries = [];
+  let removedBytes = 0;
+  for (const file of filesUnder(devHostRoot)) {
+    const relative = path.relative(devHostRoot, file);
+    if (relative.startsWith(`resources${path.sep}developer-kit`)) continue;
+    const hostFile = path.join(path.dirname(layout.resourcesDir), relative);
+    if (!fs.existsSync(hostFile) || !fs.statSync(hostFile).isFile()) continue;
+    if (!filesEqualSync(file, hostFile)) continue;
+    fs.rmSync(file, { force: true });
+    removedBytes += fs.statSync(hostFile).size;
+    entries.push({ relative: relative.split(path.sep).join('/') });
+  }
+  const manifestPath = path.join(developerKitRoot, DEV_HOST_DEDUP_MANIFEST);
+  fs.writeFileSync(manifestPath, JSON.stringify({
+    schemaVersion: 1,
+    hostProductFilename: layout.productFilename,
+    sizeBytes: removedBytes,
+    entries,
+  }, null, 2));
+  console.log(`Developer Kit deduplicated against host runtime (${entries.length} files, ${(removedBytes / 1024 / 1024).toFixed(1)} MB)`);
+  return entries;
+}
+
+function assertDeveloperKitProvenance(layout, sourceId) {
+  // The Developer Host becomes one artifact inside the Developer Kit. It is
+  // not an installer and must not validate the kit that will later contain it.
+  if (layout.isDeveloperHost) return;
+  const developerKitRoot = path.join(layout.resourcesDir, 'developer-kit');
+  const required = layout.platform === 'win32';
   if (!fs.existsSync(developerKitRoot)) {
     if (required) throw new Error(`Packaged Windows application is missing the Developer Kit: ${developerKitRoot}`);
     return;
@@ -271,6 +334,12 @@ function assertDeveloperKitProvenance(layout, sourceId) {
     || !Array.isArray(provenance.artifacts)
   ) throw new Error(`Packaged Developer Kit provenance is invalid: ${provenancePath}`);
 
+  const dedupManifestPath = path.join(developerKitRoot, DEV_HOST_DEDUP_MANIFEST);
+  const dedupRelatives = new Set(
+    fs.existsSync(dedupManifestPath)
+      ? (JSON.parse(fs.readFileSync(dedupManifestPath, 'utf8')).entries ?? []).map(entry => `dev-host/${entry.relative}`)
+      : [],
+  );
   const expectedPaths = new Set();
   let totalBytes = 0;
   for (const artifact of provenance.artifacts) {
@@ -284,23 +353,37 @@ function assertDeveloperKitProvenance(layout, sourceId) {
       || !/^[0-9a-f]{64}$/.test(artifact.sha256 ?? '')
       || (artifact.authenticodeSha256 !== undefined && !/^[0-9a-f]{64}$/.test(artifact.authenticodeSha256))
     ) throw new Error(`Packaged Developer Kit provenance has an invalid artifact: ${String(artifact?.path)}`);
-    const packagedPath = path.join(developerKitRoot, ...artifact.path.split('/'));
-    try {
-      assertPackagedArtifactMatches(artifact, packagedPath);
-    } catch (error) {
-      throw new Error(`Packaged Developer Kit artifact does not match provenance: ${artifact.path}`, { cause: error });
+    if (dedupRelatives.has(artifact.path)) {
+      const hostRelative = artifact.path.startsWith('dev-host/') ? artifact.path.slice('dev-host/'.length) : artifact.path;
+      const hostFile = path.join(path.dirname(layout.resourcesDir), ...hostRelative.split('/'));
+      try {
+        assertPackagedArtifactMatches(artifact, hostFile);
+      } catch (error) {
+        throw new Error(`Deduplicated Developer Kit artifact does not match the host runtime: ${artifact.path}`, { cause: error });
+      }
+    } else {
+      const packagedPath = path.join(developerKitRoot, ...artifact.path.split('/'));
+      try {
+        assertPackagedArtifactMatches(artifact, packagedPath);
+      } catch (error) {
+        throw new Error(`Packaged Developer Kit artifact does not match provenance: ${artifact.path}`, { cause: error });
+      }
+      expectedPaths.add(path.resolve(packagedPath));
     }
-    expectedPaths.add(path.resolve(packagedPath));
     totalBytes += artifact.sizeBytes;
   }
   if (provenance.sizeBytes !== totalBytes) throw new Error('Packaged Developer Kit provenance size is invalid.');
+  const allowedExtraFiles = new Set([
+    path.resolve(dedupManifestPath),
+    path.resolve(path.join(developerKitRoot, DEV_HOST_LINK_SCRIPT)),
+  ]);
   const unexpected = filesUnder(developerKitRoot)
     .map(file => path.resolve(file))
-    .filter(file => file !== path.resolve(provenancePath) && !expectedPaths.has(file));
+    .filter(file => file !== path.resolve(provenancePath) && !expectedPaths.has(file) && !allowedExtraFiles.has(file));
   if (unexpected.length > 0) {
     throw new Error(`Packaged Developer Kit contains files without provenance: ${unexpected.join(', ')}`);
   }
-  console.log(`Developer Kit provenance verified (${provenance.buildId.slice(0, 12)}, ${expectedPaths.size} files)`);
+  console.log(`Developer Kit provenance verified (${provenance.buildId.slice(0, 12)}, ${expectedPaths.size} files, ${dedupRelatives.size} deduplicated)`);
 }
 
 function classifyBuildArtifact(layout, artifactPath) {
@@ -600,8 +683,8 @@ async function smokeWorkspaceServer(layout, context) {
   }
 }
 
-module.exports = async function afterPack(context) {
-  const layout = resolvePackagedLayout(context);
+module.exports = async function afterPack(context, options = {}) {
+  const layout = resolvePackagedLayout(context, options);
   const compiledBinary = layout.piExecutable;
 
   assertCanonicalPiRuntime(layout);
@@ -632,6 +715,9 @@ module.exports = async function afterPack(context) {
   }
 
   restoreRuntimePackageManifest(layout, context);
+  if (layout.platform === 'win32' && layout.productFilename === 'Mortise') {
+    dedupeDeveloperKitAgainstHost(layout);
+  }
   validatePackagedLayout(layout);
   await smokeWorkspaceServer(layout, context);
 };
@@ -645,6 +731,8 @@ module.exports.restoreRuntimePackageManifest = restoreRuntimePackageManifest;
 module.exports.authenticodeContentSha256 = authenticodeContentSha256;
 module.exports.assertPackagedArtifactMatches = assertPackagedArtifactMatches;
 module.exports.assertDeveloperKitProvenance = assertDeveloperKitProvenance;
+module.exports.filesEqualSync = filesEqualSync;
+module.exports.dedupeDeveloperKitAgainstHost = dedupeDeveloperKitAgainstHost;
 module.exports.smokeWorkspaceServer = smokeWorkspaceServer;
 module.exports.probeWorkspaceHandshake = probeWorkspaceHandshake;
 module.exports.readWorkspaceProtocolContract = readWorkspaceProtocolContract;

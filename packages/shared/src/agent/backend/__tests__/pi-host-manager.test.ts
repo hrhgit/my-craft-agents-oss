@@ -38,19 +38,19 @@ function capabilities(protocolVersion = 3): RpcCapabilities {
 function createFakeClient(protocolVersion = 3, startupEvent?: Parameters<RpcClientEventListener>[0]) {
   let listener: RpcClientEventListener | undefined;
   const close = mock(async () => undefined);
-  const runtime = {
-    runtimeId: 'runtime-a',
-    runtimeSummary: {
-      runtimeId: 'runtime-a',
-      cwd: 'E:/project',
-      sessionId: 'session-a',
-      isStreaming: false,
-    },
-    close,
-  } as unknown as PiRuntimeHandle;
-  const openRuntime = mock(async (_options: RpcRuntimeOpenOptions) => {
+  const openRuntime = mock(async (options: RpcRuntimeOpenOptions) => {
     if (startupEvent) listener?.(startupEvent);
-    return runtime;
+    const runtimeId = options.runtimeId ?? 'runtime-a';
+    return {
+      runtimeId,
+      runtimeSummary: {
+        runtimeId,
+        cwd: options.cwd,
+        sessionId: options.sessionId ?? runtimeId,
+        isStreaming: false,
+      },
+      close,
+    } as unknown as PiRuntimeHandle;
   });
   const stop = mock(async () => undefined);
   const client = {
@@ -75,6 +75,88 @@ function createFakeClient(protocolVersion = 3, startupEvent?: Parameters<RpcClie
 }
 
 describe('PiHostManager process-level sharing', () => {
+  it('prepares one Workspace service runtime before opening Session runtimes on a host', async () => {
+    const fake = createFakeClient();
+    const manager = new PiHostManager({ createClient: () => fake.client });
+    const runtime = (runtimeId: string): PiHostAcquireOptions => ({
+      key: 'workspace-services',
+      client: {},
+      runtime: {
+        runtimeId,
+        cwd: 'E:/project',
+        agentDir: MORTISE_AGENT_DIR,
+        projectConfigDir: MORTISE_PROJECT_DIR,
+        extensionPaths: ['E:/extensions/example.js'],
+        extensionServiceScope: 'session',
+        extensionServiceWorkspaceKey: 'workspace-a',
+      },
+    });
+
+    const [first, second] = await Promise.all([
+      manager.acquire(runtime('session-a')),
+      manager.acquire(runtime('session-b')),
+    ]);
+
+    expect(fake.openRuntime).toHaveBeenCalledTimes(3);
+    expect(fake.openRuntime.mock.calls[0]?.[0]).toMatchObject({
+      runtimeId: 'workspace-service:workspace-a',
+      extensionServiceScope: 'workspace',
+      extensionServiceWorkspaceKey: 'workspace-a',
+      inMemory: true,
+    });
+    expect(fake.openRuntime.mock.calls.slice(1).map(call => call[0].runtimeId).sort()).toEqual([
+      'session-a',
+      'session-b',
+    ]);
+
+    await first.release();
+    expect(fake.close).toHaveBeenCalledTimes(1);
+    await second.release();
+    expect(fake.close).toHaveBeenCalledTimes(3);
+    await manager.dispose();
+    expect(fake.stop).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the Workspace service alive while another Session runtime is still opening', async () => {
+    const fake = createFakeClient();
+    let releaseSecond!: () => void;
+    const secondBlocked = new Promise<void>(resolve => { releaseSecond = resolve; });
+    fake.openRuntime.mockImplementation(async (options: RpcRuntimeOpenOptions) => {
+      if (options.runtimeId === 'session-b') await secondBlocked;
+      const runtimeId = options.runtimeId ?? 'runtime-a';
+      return {
+        runtimeId,
+        runtimeSummary: { runtimeId, cwd: options.cwd, sessionId: runtimeId, isStreaming: false },
+        close: fake.close,
+      } as unknown as PiRuntimeHandle;
+    });
+    const manager = new PiHostManager({ createClient: () => fake.client });
+    const runtime = (runtimeId: string): PiHostAcquireOptions => ({
+      key: 'workspace-service-pending-open',
+      client: {},
+      runtime: {
+        runtimeId,
+        cwd: 'E:/project',
+        agentDir: MORTISE_AGENT_DIR,
+        projectConfigDir: MORTISE_PROJECT_DIR,
+        extensionServiceScope: 'session',
+        extensionServiceWorkspaceKey: 'workspace-a',
+      },
+    });
+
+    const first = await manager.acquire(runtime('session-a'));
+    const secondPending = manager.acquire(runtime('session-b'));
+    await Bun.sleep(0);
+    await first.release();
+    expect(fake.close).toHaveBeenCalledTimes(1);
+
+    releaseSecond();
+    const second = await secondPending;
+    await second.release();
+    expect(fake.close).toHaveBeenCalledTimes(3);
+    await manager.dispose();
+  });
+
   it('shares one runtime and closes it after the final lease', async () => {
     const fake = createFakeClient();
     const manager = new PiHostManager({
@@ -218,6 +300,38 @@ describe('PiHostManager process-level sharing', () => {
     expect(firstFake.stop).not.toHaveBeenCalled();
     await oldLease.release();
     expect(firstFake.stop).toHaveBeenCalledTimes(1);
+    await newLease.release();
+    await manager.dispose();
+  });
+
+  it('stops an invalidated host after its last Session leaves only the Workspace service', async () => {
+    const firstFake = createFakeClient();
+    const secondFake = createFakeClient();
+    const manager = new PiHostManager({
+      createClient: mock().mockReturnValueOnce(firstFake.client).mockReturnValueOnce(secondFake.client),
+    });
+    const options: PiHostAcquireOptions = {
+      key: 'workspace-service-generation',
+      client: {},
+      runtime: {
+        runtimeId: 'session-a',
+        cwd: 'E:/project',
+        agentDir: MORTISE_AGENT_DIR,
+        projectConfigDir: MORTISE_PROJECT_DIR,
+        extensionServiceScope: 'session',
+        extensionServiceWorkspaceKey: 'workspace-a',
+      },
+    };
+
+    const oldLease = await manager.acquire(options);
+    await manager.invalidateAll('provider-config-changed');
+    expect(firstFake.stop).not.toHaveBeenCalled();
+
+    await oldLease.release();
+    expect(firstFake.stop).toHaveBeenCalledTimes(1);
+
+    const newLease = await manager.acquire(options);
+    expect(secondFake.openRuntime).toHaveBeenCalledTimes(2);
     await newLease.release();
     await manager.dispose();
   });

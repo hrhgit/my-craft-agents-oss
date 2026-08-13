@@ -12,6 +12,10 @@ directories:
   output: release-devhost
   buildResources: dist/resources
 
+# The Developer Host is later copied into the Developer Kit. It is not itself
+# an installer containing a Developer Kit, so it uses the host-specific hook.
+afterPack: dist/packaging-inputs/hooks/afterPack-devhost.cjs
+
 win:
   icon: dist/resources/icon.ico
   target:

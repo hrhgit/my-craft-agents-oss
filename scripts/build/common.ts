@@ -95,20 +95,6 @@ export function getBunDownloadName(platform: Platform, arch: Arch): string {
 }
 
 /**
- * Get uv release artifact filename for a platform/arch combination.
- */
-export function getUvDownloadName(platform: Platform, arch: Arch): string {
-  if (platform === 'darwin' && arch === 'arm64') return 'uv-aarch64-apple-darwin.tar.gz';
-  if (platform === 'darwin' && arch === 'x64') return 'uv-x86_64-apple-darwin.tar.gz';
-  if (platform === 'linux' && arch === 'arm64') return 'uv-aarch64-unknown-linux-gnu.tar.gz';
-  if (platform === 'linux' && arch === 'x64') return 'uv-x86_64-unknown-linux-gnu.tar.gz';
-  if (platform === 'win32' && arch === 'arm64') return 'uv-aarch64-pc-windows-msvc.zip';
-  if (platform === 'win32' && arch === 'x64') return 'uv-x86_64-pc-windows-msvc.zip';
-
-  throw new Error(`Unsupported uv target: ${platform}-${arch}`);
-}
-
-/**
  * Verify SHA256 checksum of a file
  */
 export async function verifySha256(filePath: string, expectedHash: string): Promise<boolean> {
@@ -193,29 +179,12 @@ export async function downloadBun(config: BuildConfig): Promise<void> {
 }
 
 /**
- * Find the first matching file recursively under a directory.
- */
-function findFileRecursive(root: string, fileName: string): string | null {
-  const entries = readdirSync(root, { withFileTypes: true });
-  for (const entry of entries) {
-    const fullPath = join(root, entry.name);
-    if (entry.isFile() && entry.name === fileName) {
-      return fullPath;
-    }
-    if (entry.isDirectory()) {
-      const nested = findFileRecursive(fullPath, fileName);
-      if (nested) return nested;
-    }
-  }
-  return null;
-}
-
-/**
- * Download and verify uv binary, then install it to resources/bin/<platform-arch>/uv(.exe).
+ * Restore a verified local uv binary to resources/bin/<platform-arch>/uv(.exe).
+ * Packaging is offline-first: missing local toolchains fail explicitly instead
+ * of making an implicit network request during a build.
  */
 export async function downloadUv(config: BuildConfig): Promise<void> {
   const { platform, arch, electronDir } = config;
-  const uvDownload = getUvDownloadName(platform, arch);
   const uvBinaryName = platform === 'win32' ? 'uv.exe' : 'uv';
   const platformKey = getPlatformKey(platform, arch);
 
@@ -228,73 +197,35 @@ export async function downloadUv(config: BuildConfig): Promise<void> {
     return;
   }
 
-  const toolchainCache = process.env.MORTISE_BUILD_TOOLCHAIN_CACHE_DIR;
-  if (toolchainCache) {
-    const cachedUv = ensureCachedUv(config, toolchainCache);
-    mkdirSync(targetDir, { recursive: true });
-    copyFileSync(cachedUv, targetPath);
-    if (platform !== 'win32') chmodSync(targetPath, 0o755);
-    console.log(`uv ${UV_VERSION} restored from verified toolchain cache to ${targetPath} ✓`);
-    return;
+  const cachedUv = resolveLocalUvToolchain(config);
+  if (!cachedUv) {
+    throw new Error(
+      `Verified local uv ${UV_VERSION} toolchain is unavailable for ${platformKey}. `
+      + 'Populate MORTISE_BUILD_TOOLCHAIN_CACHE_DIR or a local output/*-builds/toolchains cache; packaging never downloads uv.',
+    );
   }
-
-  console.log(`Downloading uv ${UV_VERSION} for ${platformKey}...`);
-
   mkdirSync(targetDir, { recursive: true });
-  const tempDir = join(electronDir, '.uv-download-temp');
-  rmSync(tempDir, { recursive: true, force: true });
-  mkdirSync(tempDir, { recursive: true });
+  copyFileSync(cachedUv, targetPath);
+  if (platform !== 'win32') chmodSync(targetPath, 0o755);
+  console.log(`uv ${UV_VERSION} restored from verified local toolchain cache to ${targetPath} ✓`);
+}
 
-  try {
-    const assetUrl = `https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/${uvDownload}`;
-    const checksumUrl = `${assetUrl}.sha256`;
-
-    const assetPath = join(tempDir, uvDownload);
-    const checksumPath = join(tempDir, `${uvDownload}.sha256`);
-    const extractDir = join(tempDir, 'extract');
-
-    console.log(`  Downloading ${assetUrl}...`);
-    await $`curl -fsSL --retry 3 --retry-delay 2 -o ${assetPath} ${assetUrl}`;
-
-    console.log('  Downloading checksum...');
-    await $`curl -fsSL --retry 3 --retry-delay 2 -o ${checksumPath} ${checksumUrl}`;
-
-    console.log('  Verifying checksum...');
-    const checksumContent = await Bun.file(checksumPath).text();
-    const hashMatch = checksumContent.match(/[a-fA-F0-9]{64}/);
-    if (!hashMatch) {
-      throw new Error(`Unable to parse checksum from ${checksumPath}`);
-    }
-
-    const isValid = await verifySha256(assetPath, hashMatch[0]);
-    if (!isValid) {
-      throw new Error('uv checksum verification failed');
-    }
-    console.log('  Checksum verified ✓');
-
-    mkdirSync(extractDir, { recursive: true });
-
-    if (uvDownload.endsWith('.zip')) {
-      // Use PowerShell on Windows for consistent extraction support.
-      await $`powershell -NoProfile -ExecutionPolicy Bypass -Command "Expand-Archive -LiteralPath '${assetPath}' -DestinationPath '${extractDir}' -Force"`;
-    } else {
-      await $`tar -xzf ${assetPath} -C ${extractDir}`;
-    }
-
-    const extractedUv = findFileRecursive(extractDir, uvBinaryName);
-    if (!extractedUv) {
-      throw new Error(`Unable to locate ${uvBinaryName} in extracted archive`);
-    }
-
-    copyFileSync(extractedUv, targetPath);
-    if (platform !== 'win32') {
-      await $`chmod +x ${targetPath}`.quiet();
-    }
-
-    console.log(`  uv installed to ${targetPath} ✓`);
-  } finally {
-    rmSync(tempDir, { recursive: true, force: true });
+function resolveLocalUvToolchain(config: BuildConfig): string | undefined {
+  const repoRoot = resolve(config.electronDir, '..', '..');
+  const candidates = [
+    process.env.MORTISE_BUILD_TOOLCHAIN_CACHE_DIR,
+    join(config.rootDir, 'output', 'electron-builds', 'toolchains'),
+    join(config.rootDir, 'output', 'developer-kit-builds', 'toolchains'),
+    join(repoRoot, 'output', 'electron-builds', 'toolchains'),
+    join(repoRoot, 'output', 'developer-kit-builds', 'toolchains'),
+    join(process.cwd(), 'output', 'electron-builds', 'toolchains'),
+    join(process.cwd(), 'output', 'developer-kit-builds', 'toolchains'),
+  ].filter((value): value is string => Boolean(value));
+  for (const cacheRoot of new Set(candidates.map(cacheRoot => resolve(cacheRoot)))) {
+    const cached = resolveCachedUvToolchain(cacheRoot, config);
+    if (cached) return cached;
   }
+  return undefined;
 }
 
 /**
@@ -534,46 +465,6 @@ function publishVerifiedUvToolchainLocked(
     rmSync(stagingManifest, { force: true });
   }
   return cache.binary;
-}
-
-function ensureCachedUv(config: BuildConfig, cacheRoot: string): string {
-  const cache = uvCachePaths(cacheRoot, config.platform, config.arch);
-  const existing = readValidCachedUv(cache.binary, cache.manifest, config.platform, config.arch);
-  if (existing) return existing;
-
-  return withFileLock(cache.lock, () => {
-    const lockedExisting = readValidCachedUv(cache.binary, cache.manifest, config.platform, config.arch);
-    if (lockedExisting) return lockedExisting;
-    mkdirSync(cache.directory, { recursive: true });
-    const stagingDir = join(cache.directory, `.download-${process.pid}-${randomUUID()}`);
-    mkdirSync(stagingDir, { recursive: true });
-    try {
-      const uvDownload = getUvDownloadName(config.platform, config.arch);
-      const assetUrl = `https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/${uvDownload}`;
-      const assetPath = join(stagingDir, uvDownload);
-      const checksumPath = join(stagingDir, `${uvDownload}.sha256`);
-      const extractDir = join(stagingDir, 'extract');
-      console.log(`Downloading uv ${UV_VERSION} for ${config.platform}-${config.arch} into toolchain cache...`);
-      execFileSync('curl', ['-fsSL', '--retry', '3', '--retry-delay', '2', '-o', assetPath, assetUrl], { stdio: 'inherit' });
-      execFileSync('curl', ['-fsSL', '--retry', '3', '--retry-delay', '2', '-o', checksumPath, `${assetUrl}.sha256`], { stdio: 'inherit' });
-      const hashMatch = readFileSync(checksumPath, 'utf8').match(/[a-fA-F0-9]{64}/);
-      if (!hashMatch) throw new Error(`Unable to parse checksum from ${checksumPath}`);
-      const archiveSha256 = createHash('sha256').update(readFileSync(assetPath)).digest('hex');
-      if (archiveSha256 !== hashMatch[0].toLowerCase()) throw new Error('uv checksum verification failed');
-      mkdirSync(extractDir, { recursive: true });
-      if (uvDownload.endsWith('.zip')) {
-        execFileSync('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', `Expand-Archive -LiteralPath '${assetPath.replaceAll("'", "''")}' -DestinationPath '${extractDir.replaceAll("'", "''")}' -Force`], { stdio: 'inherit' });
-      } else {
-        execFileSync('tar', ['-xzf', assetPath, '-C', extractDir], { stdio: 'inherit' });
-      }
-      const extractedUv = findFileRecursive(extractDir, cache.binaryName);
-      if (!extractedUv) throw new Error(`Unable to locate ${cache.binaryName} in extracted archive`);
-      const binarySha256 = createHash('sha256').update(readFileSync(extractedUv)).digest('hex');
-      return publishVerifiedUvToolchainLocked(cache, config, extractedUv, binarySha256);
-    } finally {
-      rmSync(stagingDir, { recursive: true, force: true });
-    }
-  }, { timeoutMs: 600_000, staleMs: 600_000 });
 }
 
 /** Return the verified cached uv binary without downloading or scanning builds. */

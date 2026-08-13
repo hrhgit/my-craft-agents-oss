@@ -110,6 +110,35 @@ describe('SessionManager Workspace runtime warmup', () => {
     }
   })
 
+  it('starts this host process Workspace warmup when the send path arrives first', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'mortise-workspace-warmup-send-first-'))
+    const prepareRuntime = mock(async () => undefined)
+    const factory = mock(() => ({
+      postInit: async () => ({ authInjected: true }),
+      prepareRuntime,
+      destroy: () => undefined,
+    } as unknown as AgentBackend))
+    const manager = new SessionManager({
+      extensionRuntime: extensionRuntimeStub(),
+      createWorkspaceRuntimeBackend: factory,
+    })
+    const workspace = createWorkspace(root)
+    const internals = manager as unknown as {
+      waitForWorkspaceRuntimeWarmup: (workspace: Workspace) => Promise<void>
+    }
+
+    try {
+      await internals.waitForWorkspaceRuntimeWarmup(workspace)
+
+      expect(factory).toHaveBeenCalledTimes(1)
+      expect(prepareRuntime).toHaveBeenCalledTimes(1)
+      expect(manager.getExtensionRuntimeState(workspace.id).preparationStatus).toBe('ready')
+    } finally {
+      await manager.cleanup()
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
   it('degrades instead of rejecting when Workspace resolution fails before backend creation', async () => {
     const workspace = createWorkspace(process.cwd())
     workspace.locations[0] = {

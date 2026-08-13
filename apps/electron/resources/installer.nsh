@@ -59,5 +59,9 @@ FunctionEnd
 !macro customInstall
   ${If} $InstallDeveloperKit == "0"
     RMDir /r "$INSTDIR\resources\developer-kit"
+  ${Else}
+    # The Developer Host shares the host runtime through same-volume links.
+    IfFileExists "$INSTDIR\resources\developer-kit\link-dev-host.ps1" 0 +2
+      nsExec::ExecToLog 'powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\resources\developer-kit\link-dev-host.ps1" "$INSTDIR"'
   ${EndIf}
 !macroend

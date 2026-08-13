@@ -9,8 +9,8 @@ Mortise supports three ways to display tabular data:
 | Format | Best For | Interactivity |
 |--------|----------|---------------|
 | **Markdown table** | Small, simple data (3-4 rows) | None |
-| **`datatable` block** | Query results, comparisons, any data users may sort/filter | Sort, filter, group-by, search |
-| **`spreadsheet` block** | Financial reports, exports, data users may download as .xlsx | Sort, export to Excel/CSV |
+| **`datatable` block** | Query results, comparisons, any data users may sort/group | Sort, group-by |
+| **`spreadsheet` block** | Financial reports, exports, data users may download as .xlsx | Export to Excel/CSV |
 
 **Key principle:** For datasets with 20+ rows, write the data to a JSON file (using the Write tool, in the session data folder) and reference it via `"src"` instead of inlining all rows. This dramatically reduces token usage and cost.
 
@@ -67,7 +67,7 @@ For datasets under 20 rows, inline the data directly in the markdown block:
 | `currency` | Raw number (not formatted) | Dollar amount | `4200000` | $4,200,000 |
 | `percent` | Decimal (0-1 range) | Percentage with color | `0.152` | +15.2% (green) |
 | `boolean` | `true`/`false` | Yes/No | `true` | Yes |
-| `date` | Date string | Formatted date | `"2025-01-15"` | Jan 15, 2025 |
+| `date` | Date string | Raw date string (no auto-formatting) | `"2025-01-15"` | 2025-01-15 |
 | `badge` | String | Colored status pill | `"Active"` | Active (badge) |
 
 **Important notes:**
@@ -184,8 +184,8 @@ Is the data already structured JSON?
   → NO: Use a script to parse CSV, JSON, or unstructured text into the expected structure
 
 Does the user need to export/download?
-  → YES: Use spreadsheet block (supports .xlsx export)
-  → NO: Use datatable block (better sort/filter/group UX)
+  → YES: Use spreadsheet block for financial/export-focused data; datatable full-screen also supports Markdown/CSV/XLSX export
+  → NO: Use datatable block (sort/group UX)
 ```
 
 ### Naming Conventions
@@ -197,7 +197,7 @@ Does the user need to export/download?
 
 - Validate input data exists before processing
 - Keep row keys matching the column `"key"` fields exactly (case-sensitive)
-- For dates, output ISO format strings (`YYYY-MM-DD`) — the `date` column type handles formatting
+- For dates, output ISO format strings (`YYYY-MM-DD`); the `date` column type renders the raw value as-is
 - Don't pre-format numbers in the file; let column types handle rendering (`currency`, `percent`)
 
 ## Troubleshooting

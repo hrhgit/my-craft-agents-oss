@@ -2,26 +2,20 @@
 
 This guide explains how to create and configure skills in Mortise Agent.
 
-> **CLI-first workflow (recommended):** Use `mortise skill ...` commands instead of editing `SKILL.md` files directly.
-> - `mortise skill --help`
-> - Canonical command reference: [mortise-cli.md](./mortise-cli.md)
-
 ## What Are Skills?
 
-Skills are specialized instructions that extend Claude's capabilities for specific tasks. They use **the exact same SKILL.md format as the Claude Code SDK** - making skills fully compatible between systems.
+Skills are specialized instructions that extend Claude's capabilities for specific tasks. They use a **standard SKILL.md format** with `name`/`description` frontmatter.
 
 **Key points:**
-- Skills are invoked via slash commands (e.g., `/commit`, `/review-pr`)
-- Skills can be automatically triggered by file patterns (globs)
-- Skills can pre-approve specific tools to run without prompting
-- The SKILL.md format is identical to what Claude Code uses internally
-
+- Skills are invoked via `/skill:<name>` slash commands (command name `skill:<name>`)
+- Skills are discovered by the model through the system prompt and read on demand; `disable-model-invocation` turns off model-side discovery while keeping the user-side `/skill:` entry
+- The SKILL.md format matches the standard SKILL.md skill format (name/description frontmatter)
 ## Same Format as Claude Code SDK
 
-Mortise Agent uses **the identical SKILL.md format** as the Claude Code SDK. This means:
+Mortise Agent uses **a standard SKILL.md format** with `name`/`description`/optional `disable-model-invocation` frontmatter. This means:
 
-1. **Format compatibility**: Any skill written for Claude Code works in Mortise Agent
-2. **Same core frontmatter fields**: `name`, `description`, `globs`
+1. **Format compatibility**: skills follow the standard SKILL.md frontmatter format (name/description)
+2. **Core frontmatter fields**: `name`, `description`, optional `disable-model-invocation`
 3. **Same content structure**: Markdown body with instructions for Claude
 
 **What Mortise Agent adds:**
@@ -31,7 +25,7 @@ Mortise Agent uses **the identical SKILL.md format** as the Claude Code SDK. Thi
 
 ## Skill Precedence
 
-When a skill is invoked (e.g., `/commit`):
+When a skill is invoked (e.g., `/skill:commit`):
 
 1. **Project skill checked first** - If `{projectRoot}/.mortise/skills/commit/SKILL.md` exists, it's used
 2. **Global Mortise skill as fallback** - Otherwise `~/.mortise/agent/skills/commit/SKILL.md` is checked
@@ -39,14 +33,14 @@ When a skill is invoked (e.g., `/commit`):
 This allows you to:
 - **Override global skills** - Create a project skill with the same slug to replace global behavior
 - **Extend global skills** - Reference global behavior in your custom skill and add project-specific instructions
-- **Create new skills** - Add entirely new skills not in the SDK
+- **Create new skills** - Add entirely new skills
 
 ## Skill Storage
 
 Skills are stored as folders:
 ```
 {projectRoot}/.mortise/skills/{slug}/
-├── SKILL.md          # Required: Skill definition (same format as Claude Code SDK)
+├── SKILL.md          # Required: Skill definition (standard SKILL.md format)
 ├── icon.svg          # Recommended: Skill icon for UI display
 ├── icon.png          # Alternative: PNG icon
 └── (other files)     # Optional: Additional resources
@@ -54,13 +48,13 @@ Skills are stored as folders:
 
 ## SKILL.md Format
 
-The format is identical to Claude Code SDK skills:
+The format is:
 
 ```yaml
 ---
 name: "Skill Display Name"
 description: "Brief description shown in skill list"
-globs: ["*.ts", "*.tsx"]     # Optional: file patterns that trigger skill
+globs: ["*.ts", "*.tsx"]     # Optional: retained as metadata only (does not auto-trigger)
 ---
 
 # Skill Instructions
@@ -89,7 +83,7 @@ Brief description (1-2 sentences) explaining what the skill does.
 
 ### globs (optional)
 Array of glob patterns. When a file matching these patterns is being worked on,
-the skill may be automatically suggested or activated.
+the pattern is retained as metadata only; it does not automatically trigger the skill.
 
 ```yaml
 globs:
@@ -140,7 +134,7 @@ When reviewing code, focus on:
 Every skill should have a visually relevant icon. This helps users quickly identify skills in the UI.
 
 **Icon requirements:**
-- **Filename**: Must be `icon.svg`, `icon.png`, `icon.jpg`, or `icon.jpeg`
+- **Filename**: Must be `icon.svg`, `icon.png`, `icon.jpg`, `icon.jpeg`, or `icon.webp`
 - **Format**: SVG preferred (scalable, crisp at all sizes)
 - **Size**: For PNG/JPG, use at least 64x64 pixels
 
@@ -238,7 +232,7 @@ globs: ["src/**/*.ts", "src/**/*.tsx"]
 
 ## Overriding Global Skills
 
-To customize a global skill like `/commit`:
+To customize a global skill like `/skill:commit`:
 
 1. Create `{projectRoot}/.mortise/skills/commit/SKILL.md`
 2. Write your custom instructions
@@ -268,11 +262,5 @@ This is useful for:
 - Verify YAML frontmatter is valid and required fields (name, description) are present
 
 **Skill not triggering:**
-- Check glob patterns match your files
-- Verify skill is in correct workspace
-
-**Icon not showing:**
-- Use supported formats: svg, png, jpg, jpeg
-- File must be named `icon.{ext}` (not `my-icon.svg`)
-- Check icon file is not corrupted
-- For SVG, ensure valid XML structure
+- Skills are not auto-triggered by file globs. Invoke them explicitly with `/skill:<name>` or let the model read them on demand.
+- Verify the skill is in the correct workspace or global scope.

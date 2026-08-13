@@ -713,6 +713,14 @@ export class PiAgent extends BaseAgent {
 	return `${runtimePath}\u0000${PI_AGENT_DIR}\u0000${environmentFingerprint}`;
   }
 
+  private piHostEnvironment(env: Record<string, string | undefined>): Record<string, string> {
+    const hostEnvironment: Record<string, string> = {};
+    for (const [key, value] of Object.entries(env)) {
+      if (key !== 'MORTISE_SESSION_DIR' && value !== undefined) hostEnvironment[key] = value;
+    }
+    return hostEnvironment;
+  }
+
   private async startRpcClientUnlocked(): Promise<void> {
     const runtime = getBackendRuntime(this.config);
     const cwd = this.resolvedWorkspaceRoot();
@@ -750,6 +758,13 @@ export class PiAgent extends BaseAgent {
       pipeStderr,
     });
 
+	const hostEnvironment = this.piHostEnvironment({
+	  ...createSanitizedEnv(),
+	  ...getProxyEnvVars(),
+	  ...awsEnv,
+	  ...this.config.envOverrides,
+	  MORTISE_DEBUG: (process.argv.includes('--debug') || process.env.MORTISE_DEBUG === '1') ? '1' : '0',
+	});
     const clientOptions: PiRpcClientOptions = {
 	  command: runtimePath,
 	  commandArgs,
@@ -759,13 +774,7 @@ export class PiAgent extends BaseAgent {
       provider: runtime.piAuthProvider,
       model: this._model,
       envMode: 'replace',
-      env: {
-        ...createSanitizedEnv(),
-        ...getProxyEnvVars(),
-        ...awsEnv,
-        ...this.config.envOverrides,
-        MORTISE_DEBUG: (process.argv.includes('--debug') || process.env.MORTISE_DEBUG === '1') ? '1' : '0',
-      },
+	  env: hostEnvironment,
       pipeStderr,
     };
 

@@ -79,7 +79,7 @@ The frozen clock virtualizes the registered application `timer`, `debounce`, `re
 
 ## Source UI Validation Control Plane
 
-`mortise-ui` is available from source or through the separately versioned Mortise Developer Kit. Windows offline installers include the kit as a default-selected optional component; it remains a separate Developer Host and control surface. It exposes an AI-facing validation assistant over the versioned UI control plane; callers do not use Playwright, CDP, selectors, renderer evaluation, or Electron objects directly.
+`mortise-ui` is available from source or through the Mortise Developer Kit bundled with the Windows installer. The kit is a default-selected optional component; its Developer Host is a separate application identity and control surface that reuses the installed Mortise host runtime. It exposes an AI-facing validation assistant over the versioned UI control plane; callers do not use Playwright, CDP, selectors, renderer evaluation, or Electron objects directly.
 
 Cold starts allow up to 15 minutes, while explicitly requested UI waits allow up to 10 minutes; the default cold-start budget is 15 minutes, ordinary host operations default to 2 minutes, and adapter-level waits default to 1 minute.
 

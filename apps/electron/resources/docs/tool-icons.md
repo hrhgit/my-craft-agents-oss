@@ -53,7 +53,7 @@ Icon files (`.png`, `.ico`, `.svg`, `.jpg`) live in the same directory alongside
 }
 ```
 
-3. Restart the app or start a new chat for changes to take effect.
+3. New commands take effect on the next activity row without restarting; already-displayed activity rows keep their previous icon.
 
 ## Command Matching
 
@@ -90,4 +90,4 @@ The app ships with ~57 built-in tool icons covering common CLI tools (git, npm, 
 - **Recommended size**: 64x64 or 128x128 pixels
 - **Formats**: PNG (preferred), ICO, SVG, JPG
 - **Background**: Transparent PNG works best
-- Icons are displayed at 20x20px in the UI, so keep them simple and recognizable
+- Icons render at 12x12px in chat activity rows (20x20px in the settings preview), so keep them simple and recognizable

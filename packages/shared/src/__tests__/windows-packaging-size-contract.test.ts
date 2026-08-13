@@ -15,7 +15,15 @@ describe('Windows packaging size contract', () => {
     };
 
     expect(config.files[0]).toBe('dist/**/*');
-    expect(config.files).toContain('!dist/installer-developer-kit/**/*');
+    // The installer Developer Kit is injected at packaging time from the immutable
+    // kit artifact directory (see package-electron.ts); it is never staged into
+    // resources/app/dist as a second copy.
+    expect(config.files).not.toContain('!dist/installer-developer-kit/**/*');
+    expect(config.win.extraResources.map(resource => resource.to)).not.toContain('developer-kit');
+    expect(config.win.extraResources).toContainEqual({
+      from: 'dist/packaging-inputs/hooks/link-dev-host.ps1',
+      to: 'developer-kit/link-dev-host.ps1',
+    });
     expect(config.files).toContain('!dist/packaging-inputs/**/*');
     expect(config.files).toContain('!**/*.d.ts');
     expect(config.files).toContain('!dist/resources/pi-runtime/**/*');
@@ -40,7 +48,7 @@ describe('Windows packaging size contract', () => {
     }
 
     const buildSource = readFileSync(join(repoRoot, 'scripts/build/common.ts'), 'utf-8');
-    expect(buildSource).toContain('stagePiBinaryRuntime(config, runtimeRoot)');
+    expect(buildSource).toContain('export function stageCompiledPiRuntime(');
     expect(buildSource).not.toContain('stagePiRuntime(config, runtimeRoot)');
     expect(buildSource).not.toContain('MORTISE_PI_BINARY_RUNTIME');
 

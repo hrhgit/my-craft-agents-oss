@@ -216,7 +216,7 @@ Output is deterministic JSON (`href`, `protocol`, `host`, `hostname`, `pathname`
 
 ## Behavior notes
 
-- Browser tools are allowed in **Explore/Safe mode** by default.
+- Browser tools are registered by default and run under the current permission mode (ask or allow-all).
 - Before first browser tool usage, the agent must read this guide (`~/.mortise/docs/browser-tools.md`).
 - Closing browser UI via OS controls may hide the window; use `browser_tool close` for explicit teardown.
 

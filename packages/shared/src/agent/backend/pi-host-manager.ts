@@ -37,6 +37,7 @@ interface HostRecord {
   runtimes: Map<string, { handle: PiRuntimeHandle; refCount: number }>;
   pendingRuntimeOpens: Map<string, Promise<{ handle: PiRuntimeHandle; startupEvents: RpcClientEvent[] }>>;
   pendingStartupEvents: Map<string, RpcClientEvent[]>;
+  workspaceServices: Map<string, { ready: Promise<void>; lease?: PiHostLease; refCount: number }>;
   idleTimer?: ReturnType<typeof setTimeout>;
   unsubscribeLifecycle?: () => void;
   stale?: boolean;
@@ -102,7 +103,103 @@ export class PiHostManager {
       );
     }
 
-    return this.acquireRuntimeLease(record, capabilities, options.runtime);
+    try {
+      let workspaceServiceKey: string | undefined;
+      if (options.runtime.extensionServiceScope !== 'workspace' && options.runtime.extensionServiceWorkspaceKey) {
+        await this.ensureWorkspaceService(record, capabilities, options.runtime);
+        workspaceServiceKey = options.runtime.extensionServiceWorkspaceKey;
+        this.retainWorkspaceService(record, workspaceServiceKey);
+      }
+      try {
+        const lease = await this.acquireRuntimeLease(record, capabilities, options.runtime);
+        return workspaceServiceKey
+          ? this.withWorkspaceServiceLifecycle(record, workspaceServiceKey, lease)
+          : lease;
+      } catch (error) {
+        if (workspaceServiceKey) await this.releaseWorkspaceService(record, workspaceServiceKey);
+        throw error;
+      }
+    } catch (error) {
+      throw error;
+    }
+  }
+
+  private async ensureWorkspaceService(
+    record: HostRecord,
+    capabilities: RpcCapabilities,
+    options: RpcRuntimeOpenOptions,
+  ): Promise<void> {
+    const workspaceKey = options.extensionServiceWorkspaceKey;
+    if (!workspaceKey) return;
+    const existing = record.workspaceServices.get(workspaceKey);
+    if (existing) return existing.ready;
+
+    const state: { ready: Promise<void>; lease?: PiHostLease; refCount: number } = {
+      ready: Promise.resolve(),
+      refCount: 0,
+    };
+    state.ready = (async () => {
+      state.lease = await this.acquireRuntimeLease(record, capabilities, {
+        runtimeId: `workspace-service:${workspaceKey}`,
+        cwd: options.cwd,
+        extensionPaths: options.extensionPaths,
+        extensionServiceScope: 'workspace',
+        extensionServiceWorkspaceKey: workspaceKey,
+        agentDir: options.agentDir,
+        projectConfigDir: options.projectConfigDir,
+        deferResourceLoad: false,
+        persistInitialState: false,
+        inMemory: true,
+        uiCapabilities: {
+          kind: 'none',
+          dialogs: false,
+          contributions: false,
+          interactionSchemas: [],
+        },
+      });
+    })();
+    record.workspaceServices.set(workspaceKey, state);
+    try {
+      await state.ready;
+    } catch (error) {
+      if (record.workspaceServices.get(workspaceKey) === state) {
+        record.workspaceServices.delete(workspaceKey);
+      }
+      throw error;
+    }
+  }
+
+  private retainWorkspaceService(record: HostRecord, workspaceKey: string): void {
+    const state = record.workspaceServices.get(workspaceKey);
+    if (!state?.lease) throw new Error(`Workspace Extension service failed to prepare: ${workspaceKey}`);
+    state.refCount++;
+  }
+
+  private withWorkspaceServiceLifecycle(
+    record: HostRecord,
+    workspaceKey: string,
+    lease: PiHostLease,
+  ): PiHostLease {
+    let releasePromise: Promise<void> | null = null;
+    return {
+      ...lease,
+      release: () => {
+        if (releasePromise) return releasePromise;
+        releasePromise = lease.release().finally(() => this.releaseWorkspaceService(record, workspaceKey));
+        return releasePromise;
+      },
+    };
+  }
+
+  private async releaseWorkspaceService(record: HostRecord, workspaceKey: string): Promise<void> {
+    const state = record.workspaceServices.get(workspaceKey);
+    if (!state) return;
+    state.refCount = Math.max(0, state.refCount - 1);
+    if (state.refCount > 0) return;
+    if (record.workspaceServices.get(workspaceKey) === state) {
+      record.workspaceServices.delete(workspaceKey);
+    }
+    await state.lease?.release();
   }
 
   private async acquireRuntimeLease(
@@ -231,6 +328,7 @@ export class PiHostManager {
       runtimes: new Map(),
       pendingRuntimeOpens: new Map(),
       pendingStartupEvents: new Map(),
+      workspaceServices: new Map(),
     };
     this.log('info', 'host.start', record, { cwd: options.cwd, runtimePath: options.runtimePath });
     record.unsubscribeLifecycle = client.onClientEvent((event) => this.handleLifecycle(record, event));
@@ -313,6 +411,7 @@ export class PiHostManager {
     if (this.hosts.get(record.key) === record) this.hosts.delete(record.key);
     record.unsubscribeLifecycle?.();
     record.unsubscribeLifecycle = undefined;
+    record.workspaceServices.clear();
     await record.client.stop().catch(() => undefined);
     this.log('info', 'host.exit', record, { reason });
   }

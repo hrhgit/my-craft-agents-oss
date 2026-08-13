@@ -358,6 +358,7 @@ describe('production bundle validation composition', () => {
     expect(packageElectron).toContain('Capturing immutable source snapshot')
     expect(packageElectron).toContain('Acquiring pinned build')
     expect(packageElectron).toContain('captureElectronBuildSource({ repoRoot: buildSourceRoot, buildRoot })')
+    expect(packageElectron).toContain("verification: packageCacheRequested ? 'fast' : 'full'")
     expect(packageElectron).not.toContain('No reusable Electron build is available')
     expect(packageElectron).not.toContain('falling back to current source')
   })
@@ -543,6 +544,30 @@ win:
       expect(readFileSync(join(electronDir, 'resources', 'bin', 'win32-x64', 'uv.exe'), 'utf8'))
         .toBe('verified uv fixture')
     } finally {
+      if (previous === undefined) delete process.env.MORTISE_BUILD_TOOLCHAIN_CACHE_DIR
+      else process.env.MORTISE_BUILD_TOOLCHAIN_CACHE_DIR = previous
+    }
+  })
+
+  test('rejects a missing local uv toolchain without attempting a download', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'mortise-uv-toolchain-missing-'))
+    temporaryRoots.push(root)
+    const previous = process.env.MORTISE_BUILD_TOOLCHAIN_CACHE_DIR
+    const previousCwd = process.cwd()
+    process.env.MORTISE_BUILD_TOOLCHAIN_CACHE_DIR = join(root, 'missing-cache')
+    process.chdir(root)
+    try {
+      await expect(downloadUv({
+        platform: 'win32',
+        arch: 'x64',
+        upload: false,
+        uploadLatest: false,
+        uploadScript: false,
+        rootDir: root,
+        electronDir: join(root, 'electron'),
+      })).rejects.toThrow('packaging never downloads uv')
+    } finally {
+      process.chdir(previousCwd)
       if (previous === undefined) delete process.env.MORTISE_BUILD_TOOLCHAIN_CACHE_DIR
       else process.env.MORTISE_BUILD_TOOLCHAIN_CACHE_DIR = previous
     }

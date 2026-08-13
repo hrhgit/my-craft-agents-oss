@@ -12,4 +12,14 @@ preload = ["./scripts/test-process-lifecycle.ts"]
 pathIgnorePatterns = [
   "apps/electron/release/**",
   "output/**",
+  # pi is an independent npm workspace whose tests are vitest-based and run
+  # through `bun run pi:test` (cd pi && bash ./test.sh). Root `bun test`
+  # must not discover them: bun executing vitest suites hangs on several
+  # openai-*/stream tests, which made the full unit run time out.
+  "pi/**",
+  # Build and mortise-ui suites are integration/fixture tests with dedicated
+  # commands. Keeping them out of the root unit discovery avoids running the
+  # same expensive suites twice while preserving their explicit gates.
+  "scripts/build/**",
+  "scripts/mortise-ui/**",
 ]
