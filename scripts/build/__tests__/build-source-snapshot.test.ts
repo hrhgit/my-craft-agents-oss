@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'bun:test'
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import {
   assertMaterializedBuildSourceIdentity,
   captureBuildSource,
@@ -194,6 +194,11 @@ describe('immutable build source snapshot', () => {
       capture.dispose()
     }
   }, 40_000)
+
+  it('pins npm executable links as part of the frozen Pi dependency contract', () => {
+    const source = readFileSync(resolve(import.meta.dir, '../dependency-view-cache.ts'), 'utf8')
+    expect(source).toContain("'--bin-links=true'")
+  })
 
   it('reuses the root dependency view when only source files change', () => {
     const root = createRepository()

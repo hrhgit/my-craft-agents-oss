@@ -86,6 +86,7 @@ export function prepareFrozenPiDependencies(sourceRoot: string, scratchRoot: str
   const installArguments = [
     'ci',
     '--ignore-scripts',
+    '--bin-links=true',
     '--no-audit',
     '--no-fund',
     `--cache=${npmCacheDir}`,
